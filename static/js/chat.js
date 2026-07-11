@@ -12,7 +12,6 @@ import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
-import { svgifyEmoji } from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -44,7 +43,58 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
+
+  function _setForegroundChatBusy(active) {
+    try {
+      window.__odysseusChatBusy = !!active;
+      window.__odysseusChatBusyUntil = active ? Date.now() + 120000 : Date.now() + 1200;
+      window.dispatchEvent(new CustomEvent('odysseus:chat-busy-change', { detail: { active: !!active } }));
+    } catch (_) {}
+  }
   let _pendingContinue = null; // Stores the stopped AI element to merge with new response
+  function _createChatSendPerf() {
+    const started = (performance && performance.now) ? performance.now() : Date.now();
+    let last = started;
+    let reported = false;
+    const stages = [];
+    const now = () => (performance && performance.now) ? performance.now() : Date.now();
+    return {
+      mark(name) {
+        const t = now();
+        stages.push({ name, delta_ms: Math.round(t - last), at_ms: Math.round(t - started) });
+        last = t;
+      },
+      report(extra) {
+        if (reported) return;
+        const total = Math.round(now() - started);
+        const slowStage = stages.some(s => (s.delta_ms || 0) >= 1500);
+        if (total < 1500 && !slowStage) return;
+        reported = true;
+        const payload = JSON.stringify({
+          type: 'chat_send',
+          total_ms: total,
+          stages,
+          extra: extra || '',
+          session: sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : '',
+        });
+        try {
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(`${API_BASE}/api/client-perf`, new Blob([payload], { type: 'application/json' }));
+            return;
+          }
+        } catch (_) {}
+        try {
+          fetch(`${API_BASE}/api/client-perf`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+            credentials: 'same-origin',
+          }).catch(() => {});
+        } catch (_) {}
+      }
+    };
+  }
   // ── Auto-recovery: when a turn's stream silently dies (connection drop) or
   // goes quiet while the connection is alive, re-engage the model with a
   // completion handshake instead of leaving it hung. Capped so it can't loop.
@@ -100,6 +150,114 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const body = msgEl.querySelector('.body');
     if (body) chatRenderer.appendReportButton(body, sessionId);
   }
+
+  function _stripDocumentFenceForChat(text, { final = false } = {}) {
+    let s = String(text || '').replace(/<?\|end\|>?/g, '');
+    const markerMatch = /```(?:create_document|documen(?:t)?)\s*\n/i.exec(s);
+    if (!markerMatch) return s;
+    const before = s.slice(0, markerMatch.index).trimEnd();
+    const fenceStart = markerMatch.index;
+    const openingEnd = s.indexOf('\n', fenceStart);
+    const closeIdx = openingEnd >= 0 ? s.indexOf('\n```', openingEnd + 1) : -1;
+    const after = closeIdx >= 0 ? s.slice(closeIdx + 4).trimStart() : '';
+    const visible = [before, after].filter(Boolean).join('\n\n').trim();
+    return final && !visible ? 'Done.' : visible;
+  }
+
+  function _stripIncompleteRawToolJsonForChat(text) {
+    const s = String(text || '');
+    const starts = ['[{"function"', '[\n{"function"', '{"function"'];
+    let idx = -1;
+    for (const marker of starts) idx = Math.max(idx, s.lastIndexOf(marker));
+    if (idx < 0) return s;
+    const tail = s.slice(idx);
+    // Complete raw OpenAI-style function blobs are removed by stripToolBlocks.
+    // While the stream is still mid-JSON, hide the tail so it never flashes in
+    // the chat bubble as prose.
+    if (!/"type"\s*:\s*"function"/.test(tail) || !/\}\s*\]?\s*(?:<\/?\|(?:assistant|assistan|user|system|tool)\|>?)?\s*$/i.test(tail)) {
+      return s.slice(0, idx);
+    }
+    return s;
+  }
+
+  function _streamDisplayText(text, opts = {}) {
+    return stripToolBlocks(_stripIncompleteRawToolJsonForChat(_stripDocumentFenceForChat(text, opts)));
+  }
+
+  function _showDocumentWritingStatus(contentEl) {
+    const msg = contentEl && contentEl.closest ? contentEl.closest('.msg') : null;
+    const chatBox = document.getElementById('chat-history');
+    if (!msg || !chatBox) {
+      if (contentEl) contentEl.textContent = 'Writing...';
+      return;
+    }
+    let thread = msg._docWritingThread;
+    if (!thread || !thread.isConnected) {
+      thread = document.createElement('div');
+      thread.className = 'agent-thread streaming has-bottom';
+      thread.dataset.docWriting = '1';
+      const prev = msg.previousElementSibling;
+      if (prev && (prev.classList.contains('msg') || prev.classList.contains('agent-thread'))) {
+        thread.classList.add('has-top');
+      }
+      const node = document.createElement('div');
+      node.className = 'agent-thread-node running';
+      node.innerHTML = '<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">▶</span><span class="agent-thread-tool">Writing</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content"></div>';
+      thread.appendChild(node);
+      chatBox.insertBefore(thread, msg);
+      msg._docWritingThread = thread;
+
+      const waveEl = node.querySelector('.agent-thread-wave');
+      if (waveEl) {
+        const waveFrames = ['▁▂▃', '▂▃▄', '▃▄▅', '▄▅▆', '▅▆▇', '▆▅▄', '▅▄▃', '▄▃▂'];
+        let waveIdx = 0;
+        node._waveInterval = setInterval(() => {
+          waveIdx = (waveIdx + 1) % waveFrames.length;
+          waveEl.textContent = waveFrames[waveIdx];
+        }, 100);
+      }
+      node._startTime = Date.now();
+      node._elapsedTicker = setInterval(() => {
+        const hdr = node.querySelector('.agent-thread-header');
+        if (!hdr) return;
+        let el = hdr.querySelector('.agent-thread-elapsed');
+        if (!el) {
+          el = document.createElement('span');
+          el.className = 'agent-thread-elapsed';
+          const icon = hdr.querySelector('.agent-thread-icon');
+          if (icon && icon.nextSibling) hdr.insertBefore(el, icon.nextSibling);
+          else hdr.appendChild(el);
+        }
+        const s = (Date.now() - node._startTime) / 1000;
+        el.textContent = s < 60 ? `${s.toFixed(2)}s` : `${Math.floor(s / 60)}m ${(s % 60).toFixed(2).padStart(5, '0')}s`;
+      }, 50);
+    }
+    msg.style.display = 'none';
+  }
+
+  function _finishDocumentWritingStatus(msg, ok = true) {
+    const thread = msg && msg._docWritingThread;
+    if (!thread || !thread.isConnected) return;
+    thread.classList.remove('streaming');
+    const node = thread.querySelector('.agent-thread-node');
+    if (!node) return;
+    if (node._waveInterval) { clearInterval(node._waveInterval); node._waveInterval = null; }
+    if (node._elapsedTicker) { clearInterval(node._elapsedTicker); node._elapsedTicker = null; }
+    node.classList.remove('running');
+    if (!ok) node.classList.add('error');
+    const icon = node.querySelector('.agent-thread-icon');
+    if (icon) icon.textContent = ok ? '✓' : '✗';
+    const wave = node.querySelector('.agent-thread-wave');
+    if (wave) wave.remove();
+    if (!node.querySelector('.agent-thread-status')) {
+      const status = document.createElement('span');
+      status.className = 'agent-thread-status';
+      status.textContent = ok ? 'done' : 'failed';
+      const header = node.querySelector('.agent-thread-header');
+      if (header) header.appendChild(status);
+    }
+  }
+
   let currentAccumulated = ''; // Track accumulated text across function scope
   let currentHolder = null; // Track current message holder
   let currentSpinner = null; // Track current spinner for stop cleanup
@@ -110,6 +268,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
+  let _staleStreamProbeInFlight = false;
+  const STALE_LOCAL_STREAM_MS = 15000;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -232,7 +392,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // arrow out for the stop icon — otherwise the swap happens mid-flight
       // and the user sees nothing fly out.
       setTimeout(() => {
-        submitBtn.innerHTML = _stopSvg;
+        if (submitBtn.dataset.mode !== 'streaming') return;
+        const msgInput = uiModule.el('message');
+        const hasQueuedText = !!(msgInput && msgInput.value && msgInput.value.trim());
+        submitBtn.innerHTML = hasQueuedText && icons ? icons.send : _stopSvg;
+        submitBtn.dataset.phase = hasQueuedText ? 'queue' : 'processing';
+        submitBtn.title = hasQueuedText ? 'Queue message' : 'Stop generation';
         submitBtn.classList.remove('anim-launch');
         void submitBtn.offsetWidth;
         submitBtn.classList.add('anim-land');
@@ -242,12 +407,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       submitBtn.dataset.mode = 'streaming';
       submitBtn.dataset.phase = 'processing';
       isStreaming = true;
+      _setForegroundChatBusy(true);
       _startStallWatchdog();
     } else if (state === 'idle') {
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
       submitBtn.classList.remove('recording');
       isStreaming = false;
+      _setForegroundChatBusy(false);
       _stopStallWatchdog();
       // Defer to global updater which handles mic/newchat/send modes
       if (window._updateSendBtnIcon) {
@@ -267,6 +434,144 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
   // API key pattern for the guard in handleChatSubmit
   const API_KEY_RE = /^(sk-[a-zA-Z0-9_\-]{20,}|gsk_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_\-]{30,}|xai-[a-zA-Z0-9]{20,})$/;
+
+  const _queuedAgentRequests = [];
+  let _queuedDrainTimer = null;
+  let _queuedPromoteTimer = null;
+  let _queuedRequestSeq = 0;
+  let _queuedBubbleHost = null;
+
+  function _escapeQueueText(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function _ensureQueuedBubbleHost() {
+    const chatBox = document.getElementById('chat-history');
+    if (!chatBox) return null;
+    if (_queuedBubbleHost && _queuedBubbleHost.isConnected) return _queuedBubbleHost;
+    let host = document.getElementById('chat-queued-bubble-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'chat-queued-bubble-host';
+      host.className = 'chat-queued-bubble-host';
+    }
+    chatBox.appendChild(host);
+    _queuedBubbleHost = host;
+    return host;
+  }
+
+  function _createQueuedBubble(item) {
+    const host = _ensureQueuedBubbleHost();
+    if (!host) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'msg msg-user msg-user-queued';
+    wrap.dataset.queueId = item.id;
+    wrap.title = 'Queued - click to send now and stop the current response';
+    wrap.innerHTML = `<div class="role">You <span class="queued-pill"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>Queued</span></div><div class="body">${_escapeQueueText(item.message)}</div>`;
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target && ev.target.closest && ev.target.closest('button, a, textarea, input')) return;
+      _promoteQueuedRequest(item.id);
+    });
+    host.appendChild(wrap);
+    uiModule.scrollHistory();
+    return wrap;
+  }
+
+  function _removeQueuedRequest(id) {
+    const idx = _queuedAgentRequests.findIndex(item => item.id === id);
+    if (idx < 0) return null;
+    const [item] = _queuedAgentRequests.splice(idx, 1);
+    if (item && item.el && item.el.parentNode) item.el.remove();
+    return item;
+  }
+
+  function _setComposerAndSend(message) {
+    const input = uiModule.el('message');
+    if (!input) return false;
+    input.value = message;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (uiModule.autoResize) uiModule.autoResize(input);
+    setTimeout(() => {
+      handleChatSubmit({ preventDefault() {} }).catch(err => {
+        console.error('queued send failed', err);
+        try { uiModule.showError && uiModule.showError('Queued send failed: ' + (err?.message || err)); } catch (_) {}
+      });
+    }, 0);
+    return true;
+  }
+
+  function _sendQueuedWhenIdle(item) {
+    if (!item) return;
+    const trySend = () => {
+      if (isStreaming || _sendInFlight) {
+        _queuedPromoteTimer = setTimeout(trySend, 220);
+        return;
+      }
+      _queuedPromoteTimer = null;
+      _setComposerAndSend(item.message);
+    };
+    if (_queuedPromoteTimer) clearTimeout(_queuedPromoteTimer);
+    _queuedPromoteTimer = setTimeout(trySend, 320);
+  }
+
+  function _promoteQueuedRequest(id) {
+    const item = _removeQueuedRequest(id);
+    if (!item) return;
+    if (!isStreaming && !_sendInFlight) {
+      _setComposerAndSend(item.message);
+      return;
+    }
+    try { uiModule.showToast && uiModule.showToast('Sending queued request now'); } catch (_) {}
+    const input = uiModule.el('message');
+    const submitBtn = document.querySelector('.send-btn');
+    if (input) {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (submitBtn) submitBtn.click();
+    _sendQueuedWhenIdle(item);
+  }
+
+  function _queueAgentRequest(message) {
+    const msg = String(message || '').trim();
+    if (!msg) return false;
+    const item = { id: `q${++_queuedRequestSeq}`, message: msg, createdAt: Date.now(), el: null };
+    item.el = _createQueuedBubble(item);
+    _queuedAgentRequests.push(item);
+    try { uiModule.showToast && uiModule.showToast(_queuedAgentRequests.length === 1 ? 'Queued for after this response' : `${_queuedAgentRequests.length} requests queued`); } catch (_) {}
+    return true;
+  }
+
+  export function queueStreamingComposerRequest() {
+    if (!isStreaming) return false;
+    const queuedInput = uiModule.el('message');
+    const queuedText = (queuedInput && queuedInput.value || '').trim();
+    if (!queuedText) return false;
+    if (fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount()) {
+      try { uiModule.showError && uiModule.showError('Finish the current response before queueing messages with attachments.'); } catch (_) {}
+      return true;
+    }
+    if (_queueAgentRequest(queuedText)) {
+      queuedInput.value = '';
+      queuedInput.dispatchEvent(new Event('input', { bubbles: true }));
+      if (uiModule.autoResize) uiModule.autoResize(queuedInput);
+      try { window._updateSendBtnIcon && window._updateSendBtnIcon(); } catch (_) {}
+    }
+    return true;
+  }
+
+  function _drainQueuedAgentRequests() {
+    if (isStreaming || _sendInFlight || !_queuedAgentRequests.length) return;
+    if (_queuedDrainTimer) return;
+    _queuedDrainTimer = setTimeout(() => {
+      _queuedDrainTimer = null;
+      if (isStreaming || _sendInFlight || !_queuedAgentRequests.length) return;
+      const next = _queuedAgentRequests[0];
+      if (!next) return;
+      _removeQueuedRequest(next.id);
+      _setComposerAndSend(next.message);
+    }, 180);
+  }
 
 
   /**
@@ -291,8 +596,18 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       return;
     }
 
-    // If currently streaming, stop it
+    // If currently streaming, keyboard Enter can queue a non-empty composer.
+    // Clicking the stop icon should still stop normally, even if text exists.
     if (isStreaming) {
+      const queueRequestedAt = Number(window.__odysseusQueueStreamingSubmit || 0);
+      const shouldQueueStreamingSubmit = queueRequestedAt && Date.now() - queueRequestedAt < 1200;
+      window.__odysseusQueueStreamingSubmit = 0;
+      if (shouldQueueStreamingSubmit && queueStreamingComposerRequest()) {
+        return;
+      }
+      if (fileHandlerModule.isUploading && fileHandlerModule.isUploading()) {
+        fileHandlerModule.cancelUpload && fileHandlerModule.cancelUpload();
+      }
       // Cancel server-side research if in progress
       const _cancelSid = sessionModule.getCurrentSessionId();
       if (_cancelSid && _researchingStreamIds.has(_cancelSid)) {
@@ -341,6 +656,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const messageInput = uiModule.el('message');
         if (messageInput) messageInput.disabled = false;
         currentAccumulated = '';
+        _drainQueuedAgentRequests();
         return;
       }
       // Render whatever was accumulated so far
@@ -417,7 +733,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // --- Send-path entry: block re-clicks between submit and stream start ---
     if (_sendInFlight) return;
+    const _sendPerf = _createChatSendPerf();
     _sendInFlight = true;
+    _setForegroundChatBusy(true);
     // Instant visual feedback so the user sees their click was accepted
     // even before the streaming button state kicks in below.
     const _earlyMessageInput = uiModule.el('message');
@@ -425,6 +743,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (submitBtn) submitBtn.classList.add('send-pending');
     const _releaseSendFlag = () => {
       _sendInFlight = false;
+      _setForegroundChatBusy(isStreaming);
       if (_earlyMessageInput) _earlyMessageInput.disabled = false;
       if (submitBtn) submitBtn.classList.remove('send-pending');
     };
@@ -473,8 +792,22 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Materialize pending session (deferred from model click) on first message
     if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+      _sendPerf.mark('pending_session_begin');
       const ok = await sessionModule.materializePendingSession();
+      _sendPerf.mark('pending_session_done');
       if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
+    }
+
+    if (!sessionModule.getCurrentSessionId()) {
+      // Auto-create a session using default chat config. Always fetch fresh
+      // so that a recent Settings change takes effect without a page reload.
+      try {
+        const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
+        if (pending && pending.url && pending.modelId) {
+          const ok = await sessionModule.materializePendingSession();
+          if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
+        }
+      } catch (_) {}
     }
 
     if (!sessionModule.getCurrentSessionId()) {
@@ -483,8 +816,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       try {
         let dc = null;
         try {
+          _sendPerf.mark('default_chat_fetch_begin');
           const dcRes = await fetch('/api/default-chat');
           dc = await dcRes.json();
+          _sendPerf.mark('default_chat_fetch_done');
           if (dc && dc.endpoint_url && dc.model) {
             try { window.__odysseusDefaultChat = dc; } catch (_) {}
           }
@@ -492,8 +827,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           dc = (typeof window !== 'undefined' && window.__odysseusDefaultChat) || null;
         }
         if (dc.endpoint_url && dc.model) {
+          _sendPerf.mark('direct_chat_create_begin');
           await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+          _sendPerf.mark('direct_chat_create_done');
           const ok = await sessionModule.materializePendingSession();
+          _sendPerf.mark('direct_chat_materialize_done');
           if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
         } else {
           el('message').value = '';
@@ -571,6 +909,24 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
+    let firstTokenWaitTimers = [];
+    const clearFirstTokenWaitTimers = () => {
+      firstTokenWaitTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} });
+      firstTokenWaitTimers = [];
+    };
+    const scheduleFirstTokenWaitMessages = () => {
+      clearFirstTokenWaitTimers();
+      const steps = [
+        [20000, 'Still waiting for first token'],
+        [60000, 'Large local model is pre-filling context'],
+        [120000, 'Still working - no tokens yet from the model'],
+      ];
+      firstTokenWaitTimers = steps.map(([ms, text]) => setTimeout(() => {
+        if (!accumulated && spinner && spinner.element && !(currentAbort && currentAbort.signal.aborted)) {
+          spinner.updateMessage(text);
+        }
+      }, ms));
+    };
     const clearProcessingProbe = () => {
       if (processingProbeTimer) {
         clearTimeout(processingProbeTimer);
@@ -631,6 +987,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!skipBubble) {
         _userMsgEl = addMessage('user', userDisplay, null, _pendingAttachInfo ? { attachments: _pendingAttachInfo } : null);
       }
+      _sendPerf.mark('user_bubble_visible');
       messageInput.value = '';
       messageInput.style.height = '';
       messageInput.dispatchEvent(new Event('input'));
@@ -666,9 +1023,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       let ids = [];
       try {
-        ids = await fileHandlerModule.uploadPending();
+        _sendPerf.mark('upload_begin');
+        ids = await fileHandlerModule.uploadPending({ sessionId: sessionModule.getCurrentSessionId() });
+        _sendPerf.mark('upload_done');
       } catch(e) {
         console.error('upload failed', e);
+        _sendPerf.mark('upload_failed');
+      }
+      if (_pendingAttachInfo && !ids.length && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) {
+        if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
+        if (fileHandlerModule.wasLastUploadCancelled && !fileHandlerModule.wasLastUploadCancelled()) {
+          uiModule.showError && uiModule.showError('Upload failed. Attachment kept so you can retry.');
+        }
+        updateSubmitButton('idle', submitBtn);
+        _releaseSendFlag();
+        return;
       }
 
       // Carry over the original message's file-ids on a regenerate so the new
@@ -751,8 +1120,24 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
 
       // Auto-save document editor content before sending so the AI sees latest text
-      if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
-        try { await documentModule.saveDocument(); } catch(e) { console.warn('doc auto-save failed', e); }
+      const activeEmailComposerCtx = documentModule && typeof documentModule.getActiveEmailComposerContext === 'function'
+        ? documentModule.getActiveEmailComposerContext()
+        : null;
+      let activeDocIdForSend = documentModule && typeof documentModule.getCurrentDocId === 'function'
+        ? documentModule.getCurrentDocId()
+        : null;
+      if (activeEmailComposerCtx?.docId) {
+        activeDocIdForSend = activeEmailComposerCtx.docId;
+      }
+      if (documentModule && activeDocIdForSend) {
+        try {
+          _sendPerf.mark('doc_save_begin');
+          await documentModule.saveDocument();
+          _sendPerf.mark('doc_save_done');
+        } catch(e) {
+          console.warn('doc auto-save failed', e);
+          _sendPerf.mark('doc_save_failed');
+        }
       }
 
       // Inject document selection context if present
@@ -783,27 +1168,53 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       fd.append('session', streamSessionId);
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
-      if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
-        try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
-        fd.append('active_doc_id', documentModule.getCurrentDocId());
+      if (documentModule && activeDocIdForSend) {
+        try {
+          _sendPerf.mark('doc_silent_save_begin');
+          await documentModule.saveDocument({ silent: true });
+          _sendPerf.mark('doc_silent_save_done');
+        } catch (_e) {
+          _sendPerf.mark('doc_silent_save_failed');
+        }
+        fd.append('active_doc_id', activeDocIdForSend);
       }
-      // Web toggle: pre-search in Chat mode, tool permission in Agent mode
+      // Active email context — when an email reader is open, pass its
+      // uid/folder/account so "reply", "summarize", "what does this say"
+      // resolve to the email the user is actually looking at instead of
+      // making the agent invent a new markdown draft with fake headers.
+      try {
+        const getEmailCtx = window.__odysseusGetActiveEmailContext;
+        const emCtx = typeof getEmailCtx === 'function' ? getEmailCtx() : null;
+        if (activeEmailComposerCtx && activeEmailComposerCtx.sourceUid) {
+          fd.append('active_email_uid', String(activeEmailComposerCtx.sourceUid));
+          fd.append('active_email_folder', String(activeEmailComposerCtx.sourceFolder || 'INBOX'));
+        } else if (emCtx && emCtx.uid) {
+          fd.append('active_email_uid', String(emCtx.uid));
+          fd.append('active_email_folder', String(emCtx.folder || 'INBOX'));
+          if (emCtx.account) fd.append('active_email_account', String(emCtx.account));
+        }
+      } catch (_e) { /* best-effort */ }
+      // Web toggle: pre-search in Chat mode only. Agent mode should not
+      // opportunistically hit SearXNG just because the chat search toggle is
+      // on; explicit web/current-info requests are handled by the backend
+      // intent gate.
       const toggleState = Storage.loadToggleState();
       let isAgentMode = (toggleState.mode || 'chat') === 'agent';
+      const incognitoChk = el('incognito-toggle');
+      const isIncognito = !!(incognitoChk && incognitoChk.checked);
       // Auto-escalate to agent mode when a document is open — the user expects
       // the AI to see the document and have tools to edit it
-      if (!isAgentMode && documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
+      if (!isIncognito && !isAgentMode && documentModule && activeDocIdForSend) {
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
       if (el('web-toggle').checked) {
-        if (isAgentMode) {
-          fd.append('allow_web_search', 'true');
-        } else {
+        if (!isAgentMode) {
           fd.append('use_web', 'true');
         }
-      } else if (isAgentMode) {
-        fd.append('allow_web_search', 'false');
+      }
+      if (isAgentMode) {
+        fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
@@ -815,8 +1226,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
       }
-      const incognitoChk = el('incognito-toggle');
-      if (incognitoChk && incognitoChk.checked) {
+      if (isIncognito) {
         fd.append('incognito', 'true');
       }
       const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
@@ -908,56 +1318,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         setTimeout(() => spinner.updateMessage('Analyzing sources'), 1500);
       } else {
         spinner.updateMessage('Processing request');
-        const endpointUrlForProbe = sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : null;
-        if (endpointUrlForProbe && modelName) {
-          processingProbeTimer = setTimeout(async () => {
-            processingProbeTimer = null;
-            if (accumulated || !spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted)) return;
-            processingProbeAbort = new AbortController();
-            try {
-              spinner.updateMessage('Checking model endpoint');
-              const status = await _probeCurrentEndpointStatus(endpointUrlForProbe, processingProbeAbort.signal);
-              if (accumulated || !spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted)) return;
-              if (!status) {
-                spinner.updateMessage('Still waiting for model');
-              } else if (status.alive) {
-                const latency = status.latency_ms ? ` (${status.latency_ms}ms)` : '';
-                spinner.updateMessage(`Endpoint online${latency}; waiting for first token`);
-              } else {
-                // Probe confirms the endpoint isn't responding. Don't
-                // sit on a hung fetch — give the user 5s to read the
-                // status, then auto-abort with reason='offline' so the
-                // catch handler shows a clean "switch model" message
-                // instead of leaving the spinner spinning forever.
-                if (status.error) console.warn('Model endpoint probe failed:', status.error);
-                let _countdown = 5;
-                spinner.updateMessage(`Endpoint offline — cancelling in ${_countdown}s`);
-                const _tick = setInterval(() => {
-                  _countdown--;
-                  if (!spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted) || accumulated) {
-                    clearInterval(_tick);
-                    return;
-                  }
-                  if (_countdown > 0) {
-                    spinner.updateMessage(`Endpoint offline — cancelling in ${_countdown}s`);
-                  } else {
-                    clearInterval(_tick);
-                    if (currentAbort && !currentAbort.signal.aborted) {
-                      currentAbort._reason = 'offline';
-                      currentAbort.abort();
-                    }
-                  }
-                }, 1000);
-              }
-            } catch (e) {
-              if (e && e.name !== 'AbortError' && spinner && spinner.element && !accumulated) {
-                spinner.updateMessage('Still waiting for model');
-              }
-            } finally {
-              processingProbeAbort = null;
-            }
-          }, 10000);
-        }
+        scheduleFirstTokenWaitMessages();
       }
       
       const researchBtn = el('research-toggle-btn');
@@ -988,12 +1349,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
         catch { return ''; }
       })();
+      _sendPerf.mark('chat_stream_post_begin');
       const res = await fetch(`${API_BASE}/api/chat_stream`, {
         method: 'POST',
         body: fd,
         headers: { 'X-Tz-Offset': String(_tzOffsetMin), 'X-Tz-Name': _tzName },
         signal: abortCtrl.signal
       });
+      _sendPerf.mark('chat_stream_headers');
+      _sendPerf.report('headers_received');
       
       if (!res.ok) {
         clearResponseTimeout();
@@ -1039,6 +1403,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (_chatLog) _chatLog.setAttribute('aria-busy', 'true');
 
       const reader = res.body.getReader();
+      _sendPerf.mark('reader_ready');
+      _sendPerf.report('reader_ready');
       const decoder = new TextDecoder();
       let buffer = '';
       let metrics = null;
@@ -1051,6 +1417,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let roundHolder = holder;       // Current AI text bubble (changes per round)
       let roundText = '';             // Text accumulated for current round
       let currentToolBubble = null;   // Current tool execution bubble
+      let lastToolThread = null;      // Visible tool timeline for tool-only turns
       let roundFinalized = false;     // Whether current round's text is finalized
       let _sourcesHtml = '';          // Sources box HTML to prepend to body
       let _sourcesExpanded = false;   // Track if user expanded sources during stream
@@ -1058,6 +1425,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let _sourcesType = '';          // 'web' or 'research'
       let _findingsData = null;      // Raw findings data for collapsible box
       // _keepResearchOn removed — clarification state now persisted server-side via DB mode
+      function _metricsTargetForTurn() {
+        const visibleRound = (roundHolder && roundHolder.style.display !== 'none') ? roundHolder : null;
+        const visibleText = visibleRound ? (visibleRound.querySelector('.body')?.textContent || '').trim() : '';
+        if (lastToolThread && lastToolThread.isConnected && (!visibleRound || !visibleText || visibleText === 'Done.')) {
+          return lastToolThread;
+        }
+        return visibleRound || holder;
+      }
       // Insert sources box as a stable DOM node that won't be replaced during streaming.
       // Returns the content container to use for innerHTML updates.
       function _ensureStreamLayout(body) {
@@ -1071,6 +1446,32 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           body.appendChild(contentDiv);
         }
         return contentDiv;
+      }
+      function _ensureVisibleRoundForDelta() {
+        if (!roundHolder || roundHolder.style.display !== 'none') return;
+        const box = document.getElementById('chat-history');
+        if (!box) {
+          roundHolder.style.display = '';
+          return;
+        }
+        const newWrap = document.createElement('div');
+        newWrap.className = 'msg msg-ai msg-continuation streaming';
+        const newRole = document.createElement('div');
+        newRole.className = 'role';
+        const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
+        const requested = holder?._requestedModel || metaS?.model || modelName;
+        const actual = holder?._actualModel || requested;
+        newRole.textContent = _modelRouteLabel(requested, actual) || '';
+        _applyModelColor(newRole, actual);
+        newWrap.appendChild(newRole);
+        const newBody = document.createElement('div');
+        newBody.className = 'body';
+        newWrap.appendChild(newBody);
+        box.appendChild(newWrap);
+        if (lastToolThread && lastToolThread.isConnected) lastToolThread.classList.add('has-bottom');
+        roundHolder = newWrap;
+        roundText = '';
+        roundFinalized = false;
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
@@ -1089,12 +1490,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         'web_search': 'Searching',
         'bash': 'Running',
         'python': 'Running',
-        'create_document': 'Writing',
-        'update_document': 'Writing',
         'read_document': 'Reading',
         'edit_file': 'Editing',
         'read_file': 'Reading',
         'write_file': 'Writing',
+        'create_document': 'Writing',
+        'edit_document': 'Editing',
+        'update_document': 'Rewriting',
+        'suggest_document': 'Reviewing',
         'list_files': 'Browsing',
         'image_gen': 'Generating',
         'generate_image': 'Generating',
@@ -1137,6 +1540,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         uiModule.scrollHistory();
       }
 
+      function _replaceThinkingSpinner(label) {
+        _removeThinkingSpinner();
+        _showThinkingSpinner(label);
+      }
+
       // Auto-show thinking spinner after text stops streaming
       let _textPauseTimer = null;
       function _scheduleThinkingSpinner() {
@@ -1160,10 +1568,24 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let _liveThinkHeader = null;
       let _liveThinkSpinnerSlot = null;
       let _liveThinkTimerEl = null;
+      let _liveThinkTokenCount = 0;
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
+      function _estimateThinkingTokens(text) {
+        const clean = (text || '').trim();
+        if (!clean) return 0;
+        return Math.max(1, Math.ceil(clean.length / 4));
+      }
+
+      function _formatThinkStats(seconds, tokenCount) {
+        const time = seconds ? seconds + 's' : '';
+        const tokens = tokenCount ? tokenCount + ' tok' : '';
+        return time && tokens ? time + ' · ' + tokens : (time || tokens);
+      }
+
       function _replyAfterClosedThinking(text) {
+        text = markdownModule.normalizeThinkingMarkup(text || '');
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
         let last = null;
@@ -1174,7 +1596,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       // Direct render helper for streaming text
       _renderStream = () => {
-        let dt = stripToolBlocks(roundText);
+        let dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText));
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
 
@@ -1253,6 +1675,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // what keeps code-block hover buttons from flickering and avoids the O(N^2)
         // re-parse/re-highlight of the whole message on every token.
         // See streamingRenderer.js / streamingSegmenter.js.
+        if (_docFenceOpened && !dt.trim()) {
+          _showDocumentWritingStatus(contentEl);
+          uiModule.scrollHistory();
+          return;
+        }
         const renderer = contentEl._streamRenderer ||
           (contentEl._streamRenderer = createStreamRenderer(contentEl, {
             render: (t) => markdownModule.processWithThinking(markdownModule.squashOutsideCode(t)),
@@ -1264,6 +1691,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       let _nextIsError = false;
       let _streamSawDone = false;
+      let _firstVisibleOutputSeen = false;
+      const markFirstVisibleOutput = () => {
+        if (_firstVisibleOutputSeen) return;
+        _firstVisibleOutputSeen = true;
+        clearFirstTokenWaitTimers();
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1283,6 +1716,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           }
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
+            if (data && data !== '[DONE]') markFirstVisibleOutput();
 
             // (thinking spinner removal is handled in agent_step / tool_start / content handlers)
 
@@ -1309,7 +1743,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               _streamSawDone = true;
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
-              if (bgDone) {
+              if (bgDone && !_isBg) {
+                _backgroundStreams.delete(streamSessionId);
+              } else if (bgDone) {
                 bgDone.status = 'completed';
                 bgDone.accumulated = accumulated;
                 if (_isBg) {
@@ -1344,7 +1780,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
                 if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                 if (_liveThinkTimerEl && _elapsedDone) {
-                  _liveThinkTimerEl.textContent = _elapsedDone + 's';
+                  _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedDone, _liveThinkTokenCount);
                   _liveThinkTimerEl.style.marginLeft = 'auto';
                   _liveThinkTimerEl.style.marginRight = '5px';
                   var _hdrDone = _liveThinkTimerEl.closest('.thinking-header');
@@ -1386,9 +1822,17 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
+                clearFirstTokenWaitTimers();
+              }
+              if (json.type === 'agent_prep') {
+                if (!_isBg) {
+                  _cancelThinkingTimer();
+                  _replaceThinkingSpinner('Preparing agent');
+                }
+                continue;
               }
               if (json.delta) {
                 _cancelThinkingTimer();
@@ -1407,27 +1851,29 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
                 } else if (_thinkOpen) {
                   _delta = '</think>' + _delta; _thinkOpen = false;
-                }
-                const wasEmpty = !accumulated;
-                accumulated += _delta;
-                roundText += _delta;
-                currentAccumulated = accumulated; // Update global tracker
-                // First token arrived — switch stop button from processing to streaming
-                if (wasEmpty && submitBtn && !_isBg) {
-                  submitBtn.dataset.phase = 'receiving';
+	                }
+	                const wasEmpty = !accumulated;
+	                accumulated += _delta;
+	                currentAccumulated = accumulated; // Update global tracker
+	                // First token arrived — switch stop button from processing to streaming
+	                if (wasEmpty && submitBtn && !_isBg) {
+	                  submitBtn.dataset.phase = 'receiving';
                 }
 
                 // Update background map if running in background
                 if (_isBg) {
                   var bgEntry = _backgroundStreams.get(streamSessionId);
-                  if (bgEntry) bgEntry.accumulated = accumulated;
-                  continue; // Skip all DOM writes
-                }
+	                  if (bgEntry) bgEntry.accumulated = accumulated;
+	                  continue; // Skip all DOM writes
+	                }
+	                _ensureVisibleRoundForDelta();
+	                roundText += _delta;
 
-                // --- Text-fence doc streaming (for models that don't use native tool calls) ---
-                if (!_docFenceOpened && documentModule && roundText.includes('```create_document\n')) {
-                  const fenceIdx = roundText.indexOf('```create_document\n');
-                  const afterFence = roundText.slice(fenceIdx + '```create_document\n'.length);
+	                // --- Text-fence doc streaming (for models that don't use native tool calls) ---
+                if (!_docFenceOpened && documentModule && (roundText.includes('```create_document\n') || roundText.includes('```document\n') || roundText.includes('```documen\n'))) {
+                  const fenceMarker = roundText.includes('```document\n') ? '```document\n' : (roundText.includes('```documen\n') ? '```documen\n' : '```create_document\n');
+                  const fenceIdx = roundText.indexOf(fenceMarker);
+                  const afterFence = roundText.slice(fenceIdx + fenceMarker.length);
                   const fenceLines = afterFence.split('\n');
                   if (fenceLines.length >= 1 && fenceLines[0].trim()) {
                     _docFenceOpened = true;
@@ -1436,7 +1882,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     const knownLangs = ['python','py','javascript','js','typescript','ts','html','css','json','yaml','bash','sql','rust','go','java','c','cpp','markdown','text','plain','ruby','swift','kotlin','php','email','csv','xml','toml','ini'];
                     const isLang = fenceLines.length >= 2 && knownLangs.includes(fenceLines[1].trim().toLowerCase());
                     const lang = isLang ? fenceLines[1].trim() : '';
-                    _docFenceContentStart = fenceIdx + '```create_document\n'.length + title.length + 1 + (isLang ? fenceLines[1].length + 1 : 0);
+                    _docFenceContentStart = fenceIdx + fenceMarker.length + title.length + 1 + (isLang ? fenceLines[1].length + 1 : 0);
                     documentModule.streamDocOpen(title, lang);
                   }
                 }
@@ -1451,12 +1897,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // 1. Normal: <think>...no closing tag yet
                 // 2. Malformed: <think></think>\n...text but no second </think> yet
                 // 3. Qwen3.5: "Thinking Process:" without <think> tags
-                let hasUnclosedThink = markdownModule.hasUnclosedThinkTag(roundText);
+                const normalizedRoundText = markdownModule.normalizeThinkingMarkup(roundText);
+                let hasUnclosedThink = markdownModule.hasUnclosedThinkTag(normalizedRoundText);
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(roundText)) {
-                  const _trimmedRT = roundText.trimStart();
+                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(normalizedRoundText)) {
+                  const _trimmedRT = normalizedRoundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);
                   if (_isReasoning) {
                     // Check if we can see a reply boundary yet (newline then reply pattern)
@@ -1481,9 +1928,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     }
                   }
                 }
-                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(roundText)) {
+                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(normalizedRoundText)) {
                   // Empty <think></think> — the model likely put thinking outside the tags
-                  const afterEmpty = roundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                  const afterEmpty = normalizedRoundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
                   const closeTags = (afterEmpty.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length;
                   if (closeTags === 0 && afterEmpty.length > 0) {
                     hasUnclosedThink = true; // still waiting for real closing tag
@@ -1493,10 +1940,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // Only applies when there's a second </think> later (model leaked thinking outside tags)
                 // Do NOT trigger if the text after </think> contains tool calls (that's real content)
                 if (!hasUnclosedThink && isThinking) {
-                  const _thinkMatch = roundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
+                  const _thinkMatch = normalizedRoundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
                   const _thinkLen = _thinkMatch ? _thinkMatch[1].trim().length : 0;
                   if (_thinkLen < 20) {
-                    const _afterClose = roundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                    const _afterClose = normalizedRoundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
                     const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
                     const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
@@ -1522,9 +1969,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                         <div class="thinking-header-left"><span class="live-think-header-text">Thinking\u2026</span></div>
                         <span class="live-think-spinner-slot" style="flex-shrink:0;margin-left:auto;"></span>
                         <span class="live-think-timer" style="font-size:11px;opacity:0.4;font-variant-numeric:tabular-nums;margin-left:6px;margin-right:5px;"></span>
-                        <span class="thinking-toggle live-think-toggle" id="${_liveThinkDomId}-toggle"></span>
+                        <span class="thinking-toggle live-think-toggle expanded" id="${_liveThinkDomId}-toggle"></span>
                       </div>
-                      <div class="thinking-content" id="${_liveThinkDomId}">
+                      <div class="thinking-content expanded" id="${_liveThinkDomId}">
                         <div class="thinking-content-inner live-think-inner"></div>
                       </div>
                     </div>`;
@@ -1541,7 +1988,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   function _tickThinkTimer() {
                     if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) return;
                     var s = ((Date.now() - _thinkTimerStart) / 1000).toFixed(1);
-                    _liveThinkTimerEl.textContent = s + 's';
+                    _liveThinkTimerEl.textContent = _formatThinkStats(s, _liveThinkTokenCount);
                     _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
                   }
                   _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
@@ -1557,18 +2004,28 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 } else if (hasUnclosedThink && isThinking) {
                   if (_liveThinkInner) {
                     // Extract raw thinking text (strip known thinking wrappers and prefixes)
-                    var thinkText = roundText
+                    var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText))
                       .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
                       .replace(/<\|channel>thought\s*\n?/gi, '')
                       .replace(/<\|channel>response\s*\n?/gi, '')
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+                    _liveThinkTokenCount = _estimateThinkingTokens(thinkText);
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    // Keep thinking box scrolled to bottom
+                    if (_liveThinkTimerEl) {
+                      var _elapsedLive = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : '';
+                      _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedLive, _liveThinkTokenCount);
+                    }
+                    // Keep thinking box scrolled to bottom, but let user scroll up
+                    var _followThinking = true;
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) thinkBox.scrollTop = thinkBox.scrollHeight;
+                    if (thinkBox) {
+                      var nearBottom = thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
+                      if (nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
+                      _followThinking = nearBottom;
+                    }
                   }
-                  uiModule.scrollHistory();
+                  if (_followThinking) uiModule.scrollHistory();
                   continue;
                 } else if (!hasUnclosedThink && isThinking) {
                   isThinking = false;
@@ -1584,6 +2041,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     _liveThinkHeader = null;
                     _liveThinkSpinnerSlot = null;
                     _liveThinkTimerEl = null;
+                    _liveThinkTokenCount = 0;
                     _liveThinkToggle = null;
                     _liveThinkDomId = null;
                     // Fall through to normal streaming
@@ -1606,7 +2064,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                   // Move timer to right side of header
                   if (_liveThinkTimerEl && elapsed) {
-                    _liveThinkTimerEl.textContent = elapsed + 's';
+                    _liveThinkTimerEl.textContent = _formatThinkStats(elapsed, _liveThinkTokenCount);
                     _liveThinkTimerEl.style.marginLeft = 'auto';
                     _liveThinkTimerEl.style.marginRight = '5px';
                     var _hdrRow = _liveThinkTimerEl.closest('.thinking-header');
@@ -1979,6 +2437,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (!_isBg) {
                   uiModule.showToast('Context compacted — older messages summarized');
                 }
+              } else if (json.type === 'context_trimmed') {
+                if (!_isBg) {
+                  const d = json.data || {};
+                  const before = Number(d.messages_before || 0);
+                  const after = Number(d.messages_after || 0);
+                  const detail = before && after && before > after ? ` (${after}/${before} messages sent)` : '';
+                  uiModule.showToast(`Context trimmed for this model${detail}`);
+                }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
                 if (!_isBg && holder && metrics) {
@@ -1989,6 +2455,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
                   continue;
+                }
+                if (metrics) {
+                  const metricsTarget = _metricsTargetForTurn();
+                  if (metricsTarget) displayMetrics(metricsTarget, metrics);
                 }
 
               } else if (json.type === 'message_saved') {
@@ -2007,7 +2477,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   cancelAnimationFrame(_thinkTimerRAF);
                   var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _elapsed2 + 's' : '';
+                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
                   if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                   // Assign stable IDs
                   var _thinkId2 = 'think-' + Date.now();
@@ -2021,7 +2491,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (!roundFinalized) {
                   roundFinalized = true;
                   if (spinner && spinner.element) spinner.destroy();
-                  const dt = stripToolBlocks(roundText);
+                  const dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText));
                   if (dt.trim()) {
                     var _body3 = roundHolder.querySelector('.body');
                     var _contentEl3 = _ensureStreamLayout(_body3);
@@ -2070,6 +2540,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   chatBox.appendChild(threadWrap);
                 }
                 threadWrap.classList.add('streaming');
+                lastToolThread = threadWrap;
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
                 const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
                 const node = document.createElement('div')
@@ -2244,6 +2715,25 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (json.ui_event) {
                   chatStream.handleUIControl(json);
                 }
+                // Native document tool calls can arrive as a completed
+                // tool_output without the text-fence streaming path. Open the
+                // document editor from the real doc metadata carried on the
+                // tool result so "create a document" never leaves only a chat
+                // link behind if the later doc_update event is missed.
+                if (
+                  documentModule
+                  && json.doc_id
+                  && ['create_document', 'update_document', 'edit_document'].includes(json.tool)
+                ) {
+                  documentModule.handleDocUpdate({
+                    type: 'doc_update',
+                    doc_id: json.doc_id,
+                    title: json.document_title || '',
+                    language: json.document_language || '',
+                    version: json.document_version || 1,
+                    content: json.document_content || '',
+                  });
+                }
 
                 // Schedule a thinking spinner between tool rounds (short delay so
                 // agent_step in the same SSE chunk can cancel it before it shows)
@@ -2295,148 +2785,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               } else if (json.type === 'ask_user') {
                 if (_isBg) continue;
                 // The agent posed a multiple-choice question; the turn has ended.
-                // Render clickable options at the bottom of the history. The
-                // user's pick is sent as the next message and the agent resumes.
+                // Use the shared history renderer so the live and restored
+                // versions have identical behavior.
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
-                const _aq = json.data || {};
-                const _opts = Array.isArray(_aq.options) ? _aq.options : [];
-                if (_aq.question && _opts.length) {
-                  const chatBox = document.getElementById('chat-history');
-                  // Drop any prior unanswered card so only the latest shows.
-                  chatBox.querySelectorAll('.ask-user-card').forEach(n => n.remove());
-                  const card = document.createElement('div');
-                  card.className = 'ask-user-card';
-                  const multi = !!_aq.multi;
-                  // Group the choices for assistive tech and label the group with
-                  // the question (set below); make the card focusable so it can be
-                  // moved to when it appears.
-                  card.setAttribute('role', 'group');
-                  card.tabIndex = -1;
-                  // Render any emoji in agent-supplied text through the app's
-                  // pipeline: escape, then svgify to monochrome theme-tinted
-                  // glyphs (project rule: never colorful emoji; respects the
-                  // "Text-only Emojis" setting like the rest of the chat).
-                  const _emo = (s) => svgifyEmoji(uiModule.esc(String(s)));
-
-                  // Header row holds the close (×) to dismiss the affordances and
-                  // just type a reply instead.
-                  const head = document.createElement('div');
-                  head.className = 'ask-user-head';
-                  const closeBtn = document.createElement('button');
-                  closeBtn.type = 'button';
-                  closeBtn.className = 'modal-close ask-user-close';
-                  closeBtn.setAttribute('aria-label', 'Dismiss question');
-                  closeBtn.textContent = '×';
-                  closeBtn.addEventListener('click', () => {
-                    card.remove();
-                    const mi = uiModule.el('message');
-                    if (mi) mi.focus();
-                  });
-                  head.appendChild(closeBtn);
-                  card.appendChild(head);
-
-                  // Render the question inside the card so it's self-contained:
-                  // some models call ask_user without first narrating the question
-                  // as assistant text, in which case the card would otherwise show
-                  // bare options with no prompt.
-                  if (_aq.question) {
-                    const q = document.createElement('div');
-                    q.className = 'ask-user-question';
-                    q.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-                    q.innerHTML = _emo(_aq.question);
-                    card.appendChild(q);
-                    // Label the choice group with the question for screen readers.
-                    card.setAttribute('aria-labelledby', q.id);
-                  } else {
-                    card.setAttribute('aria-label', 'Question from the assistant');
-                  }
-
-                  const list = document.createElement('div');
-                  list.className = 'ask-user-options';
-                  card.appendChild(list);
-
-                  const _send = (text) => {
-                    if (!text) return;
-                    // Remove the card once answered — the choice is sent as a
-                    // normal user message (and the question persists as the
-                    // assistant text above), so the affordances are spent.
-                    card.remove();
-                    const mi = uiModule.el('message');
-                    if (mi) mi.value = text;
-                    const sb = document.querySelector('.send-btn');
-                    if (sb) sb.click();
-                  };
-
-                  _opts.forEach((opt, i) => {
-                    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
-                    if (!label) return;
-                    const descr = (opt && opt.description) ? String(opt.description) : '';
-                    const row = document.createElement(multi ? 'label' : 'button');
-                    row.className = 'ask-user-option';
-                    if (multi) {
-                      const cb = document.createElement('input');
-                      cb.type = 'checkbox';
-                      cb.value = label;
-                      row.appendChild(cb);
-                    }
-                    const txt = document.createElement('span');
-                    txt.className = 'ask-user-option-label';
-                    txt.innerHTML = _emo(label);
-                    row.appendChild(txt);
-                    if (descr) {
-                      const d = document.createElement('span');
-                      d.className = 'ask-user-option-desc';
-                      d.innerHTML = _emo(descr);
-                      row.appendChild(d);
-                    }
-                    if (!multi) {
-                      row.type = 'button';
-                      row.addEventListener('click', () => _send(label));
-                    }
-                    list.appendChild(row);
-                  });
-
-                  // Free-text "Other" — type a custom answer + send (Enter or →).
-                  const other = document.createElement('div');
-                  other.className = 'ask-user-other';
-                  const otherInput = document.createElement('input');
-                  otherInput.type = 'text';
-                  otherInput.className = 'styled-prompt-input ask-user-other-input';
-                  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
-                  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
-                  const otherSend = document.createElement('button');
-                  otherSend.type = 'button';
-                  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
-                  otherSend.setAttribute('aria-label', 'Send answer');
-                  otherSend.textContent = multi ? 'Send selection' : 'Send';
-                  const _submit = () => {
-                    const free = otherInput.value.trim();
-                    if (multi) {
-                      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map(c => c.value);
-                      if (free) picked.push(free);
-                      if (picked.length) _send(picked.join(', '));
-                    } else if (free) {
-                      _send(free);
-                    }
-                  };
-                  otherSend.addEventListener('click', _submit);
-                  otherInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-                      e.preventDefault();
-                      _submit();
-                    }
-                  });
-                  other.appendChild(otherInput);
-                  other.appendChild(otherSend);
-                  card.appendChild(other);
-
-                  chatBox.appendChild(card);
-                  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                  // Move focus to the card so keyboard/screen-reader users land on
-                  // the question + choices when it appears.
-                  try { card.focus(); } catch (_) {}
-                }
+                chatRenderer.renderAskUserCard(json.data || {});
 
               } else if (json.type === 'plan_update') {
                 if (_isBg) continue;
@@ -2498,6 +2851,22 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 budgetDiv.textContent = `Tool budget reached (${json.used}/${json.limit} calls). Agent stopped.`;
                 const chatBox = document.getElementById('chat-history');
                 chatBox.appendChild(budgetDiv);
+
+              } else if (json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted') {
+                if (_isBg) continue;
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const guardDiv = document.createElement('div');
+                guardDiv.className = 'stopped-indicator';
+                const guardLabel = document.createElement('span');
+                guardLabel.textContent = `[Agent guard: ${json.message || json.reason || 'internal stop'}]`;
+                guardDiv.appendChild(guardLabel);
+                const targetBody = roundHolder && roundHolder.querySelector('.body');
+                if (targetBody) targetBody.appendChild(guardDiv);
+                else {
+                  const chatBox = document.getElementById('chat-history');
+                  if (chatBox) chatBox.appendChild(guardDiv);
+                }
 
               } else if (json.type === 'teacher_takeover') {
                 if (_isBg) continue;
@@ -2565,6 +2934,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
 
       _renderStream();
+      if (spinner && spinner.element) { try { spinner.destroy(); } catch (_) {} spinner = null; }
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       // Stop any thread pulse animations
@@ -2626,9 +2996,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Clear streaming minHeight lock
         const _streamContent = roundHolder.querySelector('.stream-content');
         if (_streamContent) _streamContent.style.minHeight = '';
+        if (_docFenceOpened) {
+          _finishDocumentWritingStatus(roundHolder, true);
+          roundHolder.style.display = '';
+        }
 
         // Finalize the last round's bubble — flatten stream-content wrapper for clean DOM
-        const finalDisplay = stripToolBlocks(roundText);
+        const finalDisplay = _streamDisplayText(roundText, { final: _docFenceOpened });
         if (finalDisplay.trim()) {
           var _body4 = roundHolder.querySelector('.body');
           // Preserve sources expanded state before final render
@@ -2694,11 +3068,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           _body4b.innerHTML = _sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded2) : _sourcesHtml;
         } else if (roundHolder !== holder) {
           // Check if there's thinking content worth showing
-          const _thinkingOnly = markdownModule.extractThinkingBlocks(roundText);
+          const _thinkingOnly = markdownModule.extractThinkingBlocks(_streamDisplayText(roundText));
           if (_thinkingOnly.thinkingBlocks?.length && !_thinkingOnly.content) {
             // Show thinking in a collapsed section even if no visible reply text
             const _body4c = roundHolder.querySelector('.body');
-            if (_body4c) _body4c.innerHTML = markdownModule.processWithThinking(roundText);
+            if (_body4c) _body4c.innerHTML = markdownModule.processWithThinking(_streamDisplayText(roundText));
           } else {
             roundHolder.style.display = 'none';
             // Thread above expected a bubble below — remove has-bottom since bubble is hidden
@@ -2744,7 +3118,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
-        footerTarget.appendChild(createMsgFooter(footerTarget));
+        if (!footerTarget.querySelector('.msg-footer')) {
+          footerTarget.appendChild(createMsgFooter(footerTarget));
+        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);
@@ -2784,7 +3160,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           }
         }
         if (metrics) {
-          displayMetrics(footerTarget, metrics);
+          displayMetrics(_metricsTargetForTurn() || footerTarget, metrics);
         }
         // Attach variant navigation if this was a regeneration
         _attachVariantNav(footerTarget);
@@ -2911,6 +3287,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             return;
           }
 
+          if (abortReason === 'stale-local') {
+            const staleMsg = 'Stream connection ended. Composer unlocked; send again if needed.';
+            if (holder && !accumulated) {
+              holder.querySelector('.body').innerHTML =
+                `<div style="opacity:0.7;font-style:italic;padding:4px 0;">[${staleMsg}]</div>`;
+            } else if (holder && accumulated) {
+              const staleNote = document.createElement('div');
+              staleNote.className = 'stopped-indicator';
+              staleNote.innerHTML = `<span style="opacity:0.7;">[${staleMsg}]</span>`;
+              holder.querySelector('.body').appendChild(staleNote);
+            }
+            currentAbort = null;
+            return;
+          }
+
           // User-initiated stop (or browser navigation abort).
           // Stopped before any text arrived — keep the bubble as a
           // "Cancelled by user" record (so it survives a refresh).
@@ -3002,6 +3393,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     } finally {
       clearResponseTimeout();
       clearProcessingProbe();
+      clearFirstTokenWaitTimers();
       // Streaming done — let screen readers announce the settled response.
       const _chatLogDone = document.getElementById('chat-history');
       if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
@@ -3097,6 +3489,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           sessionModule.loadSessions();
         }
       }, 3000);
+      _drainQueuedAgentRequests();
     }
   }
 
@@ -3215,12 +3608,51 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     box.appendChild(bar);
     if (uiModule.scrollHistory) uiModule.scrollHistory();
   }
+  async function _probeStaleLocalStream() {
+    if (!isStreaming || _staleStreamProbeInFlight) return;
+    if (Date.now() - _lastReaderActivity < STALE_LOCAL_STREAM_MS) return;
+    const sid = _streamSessionId || (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId());
+    if (!sid) return;
+    if (_backgroundStreams.has(sid) || (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() !== sid)) return;
+    _staleStreamProbeInFlight = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/stream_status/${encodeURIComponent(sid)}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!isStreaming || _backgroundStreams.has(sid)) return;
+      if (res.status !== 404) return;
+
+      console.warn('[stream-watchdog] Local stream was stale and server has no active stream. Unlocking composer.');
+      if (currentAbort && !currentAbort.signal.aborted) {
+        currentAbort._reason = 'stale-local';
+        currentAbort.abort();
+      }
+      isStreaming = false;
+      _setForegroundChatBusy(false);
+      _sendInFlight = false;
+      if (_webLockRelease) {
+        _webLockRelease();
+        _webLockRelease = null;
+      }
+      const submitBtn = document.querySelector('.send-btn');
+      if (submitBtn) updateSubmitButton('idle', submitBtn);
+      const messageInput = uiModule.el('message');
+      if (messageInput) messageInput.disabled = false;
+      _drainQueuedAgentRequests();
+    } catch (err) {
+      console.warn('[stream-watchdog] Stream status probe failed:', err);
+    } finally {
+      _staleStreamProbeInFlight = false;
+    }
+  }
+
   function _startStallWatchdog() {
-    // Disabled: the server-side stall detector / auto-continue (agent
-    // loop-breaker) handles quiet/stalled streams now, so the manual
-    // "Quiet for Nm — still working?" banner is redundant (and annoying).
+    // Keep the old noisy stall banner disabled. This watchdog only unlocks
+    // a dead local stream after the backend confirms no active stream exists.
     if (_stallWatchdog) { clearInterval(_stallWatchdog); _stallWatchdog = null; }
     _removeStallBanner();
+    _stallWatchdog = setInterval(_probeStaleLocalStream, 5000);
   }
   function _stopStallWatchdog() {
     if (_stallWatchdog) { clearInterval(_stallWatchdog); _stallWatchdog = null; }
@@ -3304,6 +3736,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // Clear local state WITHOUT aborting the fetch
     currentAbort = null;
     isStreaming = false;
+    _setForegroundChatBusy(false);
     currentHolder = null;
     currentAccumulated = '';
     // Reset submit button so the new chat is ready to send
@@ -3366,6 +3799,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const decoder = new TextDecoder();
     let buffer = '';
     let roundText = '';
+    let docFenceOpened = false;
     let gotDelta = false;
     let leftSession = false;
     let metricsData = null;
@@ -3380,8 +3814,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     };
 
     const renderDelta = () => {
-      const dt = stripToolBlocks(roundText);
-      contentDiv.innerHTML = markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
+      const dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText, { final: docFenceOpened }));
+      if (docFenceOpened && !dt.trim()) {
+        _showDocumentWritingStatus(contentDiv);
+      } else {
+        contentDiv.innerHTML = markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
+      }
       uiModule.scrollHistory();
     };
 
@@ -3412,6 +3850,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           try { json = JSON.parse(payload); } catch (_) { continue; }
           if (json.delta) {
             roundText += json.delta;
+            if (!docFenceOpened && (roundText.includes('```create_document\n') || roundText.includes('```document\n') || roundText.includes('```documen\n'))) {
+              docFenceOpened = true;
+              rich = true;
+            }
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
             renderDelta();
           } else if (json.type === 'doc_stream_open') {
@@ -3419,7 +3861,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             if (documentModule) documentModule.streamDocOpen(json.title || '', json.lang || '');
           } else if (json.type === 'doc_stream_delta') {
             rich = true;
-            if (documentModule && json.delta) documentModule.streamDocDelta(json.delta);
+            if (documentModule) documentModule.streamDocDelta(json.content || json.delta || '');
           } else if (json.type === 'metrics') {
             metricsData = json.data || metricsData;
           } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
@@ -3436,6 +3878,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
 
     cleanup();
+    if (docFenceOpened) _finishDocumentWritingStatus(holder, true);
     if (leftSession) { if (holder.parentNode) holder.remove(); return true; }
 
     const onThisSession = sessionModule.getCurrentSessionId &&
@@ -3455,6 +3898,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Rich response (tools, sources, docs, multi-round) or user moved on:
     // reload from the DB for the full canonical render.
+    if (holder._docWritingThread && holder._docWritingThread.parentNode) holder._docWritingThread.remove();
     if (holder.parentNode) holder.remove();
     if (onThisSession) sessionModule.selectSession(sessionId);
     else sessionModule.loadSessions();
@@ -3865,7 +4309,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Also submit on Enter (without shift)
     editor.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         e.preventDefault();
         saveBtn.click();
       }
@@ -3873,9 +4319,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   }
 
   /**
-   * Resend a user message — truncates history to that point and resubmits.
+   * Resend a user message. Normal resend appends a fresh copy at the end of
+   * the current thread; regenerate flows can opt into replacing from here.
    */
-  export async function resendUserMessage(userMsgElement) {
+  export async function resendUserMessage(userMsgElement, opts = {}) {
+    const replaceFromHere = Boolean(opts && opts.replaceFromHere);
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const msgIndex = allMsgs.indexOf(userMsgElement);
@@ -3921,25 +4369,28 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
-    // Truncate backend to keep everything before this user message
-    const keepCount = msgIndex;
     try {
-      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount })
-      });
+      if (replaceFromHere) {
+        // Regenerate flows intentionally trim history to this point before
+        // resubmitting. The plain "Resend message" action must not do this.
+        const keepCount = msgIndex;
+        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keep_count: keepCount })
+        });
 
-      // Drop the AI replies after the user message but KEEP the user bubble
-      // itself (so its photo stays visible). Then suppress the new user
-      // bubble that send would otherwise add — same pattern as regenerate.
-      let sibling = userMsgElement.nextSibling;
-      while (sibling) {
-        const next = sibling.nextSibling;
-        sibling.remove();
-        sibling = next;
+        // Drop the AI replies after the user message but KEEP the user bubble
+        // itself (so its photo stays visible). Then suppress the new user
+        // bubble that send would otherwise add — same pattern as regenerate.
+        let sibling = userMsgElement.nextSibling;
+        while (sibling) {
+          const next = sibling.nextSibling;
+          sibling.remove();
+          sibling = next;
+        }
+        _hideUserBubble = true;
       }
-      _hideUserBubble = true;
       _pendingRegenAttachments = _ids;
 
       // Resubmit
@@ -4241,7 +4692,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (!sessionId) return;
     try {
       const res = await fetch(`${API_BASE}/api/research/status/${sessionId}`);
-      if (!res.ok) return; // 404 = no research for this session
+      if (!res.ok) {
+        if (sessionModule && sessionModule.clearResearching) sessionModule.clearResearching(sessionId);
+        return; // 404 = no research for this session
+      }
       const data = await res.json();
 
       if (data.status === 'done') {
@@ -4473,6 +4927,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    * Delete an AI message and its preceding user message from the conversation.
    */
   export async function deleteMessage(msgElement) {
+    if (uiModule && uiModule.styledConfirm) {
+      const ok = await uiModule.styledConfirm('Delete this message?', {
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const clickedIndex = allMsgs.indexOf(msgElement);
@@ -4976,7 +5439,16 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!header) return;
       const node = header.closest('.agent-thread-node');
       if (!node) return;
-      node.classList.toggle('open');
+      const opened = node.classList.toggle('open');
+      if (opened) {
+        // Expanding the final tool trace can push a pending ask_user card below
+        // the viewport.  Keep that immediately-adjacent prompt visible.
+        const thread = node.closest('.agent-thread');
+        const pendingCard = thread?.nextElementSibling;
+        if (pendingCard?.classList.contains('ask-user-card')) {
+          requestAnimationFrame(() => pendingCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+        }
+      }
     });
     window.__odysseus_thread_click_bound = true;
   }

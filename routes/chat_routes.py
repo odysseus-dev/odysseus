@@ -3,10 +3,11 @@
 import asyncio
 import json
 import os
+import re
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from typing import Dict, Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
@@ -23,12 +24,13 @@ from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
+from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
 from routes.model_routes import _visible_models
 from routes.chat_helpers import (
@@ -39,8 +41,13 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
-from src.action_intents import classify_tool_intent as _classify_tool_intent
-from src.tool_policy import build_effective_tool_policy
+from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
+from src.tool_policy import (
+    WEB_TOOL_NAMES,
+    build_effective_tool_policy,
+    is_web_search_explicitly_denied,
+    web_search_enabled_for_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +67,78 @@ def _stream_set(session_id: str, **fields) -> None:
     if rec is None:
         return
     rec.update(fields)
+
+
+def _message_plain_text(content: Any) -> str:
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(block, str):
+                parts.append(block)
+        return " ".join(parts)
+    return str(content or "")
+
+
+def _last_user_plain_text(messages: List[Dict[str, Any]]) -> str:
+    for msg in reversed(messages or []):
+        if msg.get("role") == "user":
+            return _message_plain_text(msg.get("content"))
+    return ""
+
+
+def _ensure_current_request_is_latest_user(messages: List[Dict[str, Any]], current_message: str) -> List[Dict[str, Any]]:
+    """Defensively keep detached streams grounded on the request that created them."""
+    current = str(current_message or "").strip()
+    if not current:
+        return messages
+    latest = _last_user_plain_text(messages).strip()
+    if latest == current or current in latest or latest in current:
+        return messages
+    logger.warning(
+        "[chat_stream] latest user context mismatch; appending current request for model call. latest=%r current=%r",
+        latest[:120],
+        current[:120],
+    )
+    repaired = list(messages or [])
+    repaired.append({"role": "user", "content": current})
+    return repaired
+
+
+_WEB_FOLLOWUP_RE = re.compile(
+    r"^\s*(?:(?:can|could|would|will)\s+you\s+)?"
+    r"(?:check|try\s+again|look(?:\s+now|\s+it\s+up)?|search(?:\s+now|\s+online|\s+it)?|"
+    r"do\s+it|again)\??\s*$",
+    re.I,
+)
+_RECENT_WEB_CONTEXT_RE = re.compile(
+    r"\b(?:weather|forecast|rain|raining|hourly|news|headlines|rate|exchange|currency|"
+    r"price|current|latest|search|look\s+up|online)\b",
+    re.I,
+)
+
+
+def _recent_session_text(sess, limit: int = 8, max_chars: int = 2000) -> str:
+    history = getattr(sess, "history", None) or getattr(sess, "_history", None) or []
+    chunks: List[str] = []
+    for msg in history[-limit:]:
+        content = getattr(msg, "content", None)
+        if content is None and isinstance(msg, dict):
+            content = msg.get("content")
+        text = _message_plain_text(content).strip()
+        if text:
+            chunks.append(text)
+    return " ".join(chunks)[-max_chars:]
+
+
+def _is_contextual_web_followup(message: str, sess) -> bool:
+    """Treat short retry/check replies as web lookups when recent context was web."""
+    if not message or not _WEB_FOLLOWUP_RE.search(message):
+        return False
+    return bool(_RECENT_WEB_CONTEXT_RE.search(_recent_session_text(sess)))
 
 
 def _resolve_request_workspace(request, raw_value) -> tuple:
@@ -126,7 +205,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.model = ""
         sess.headers = {}
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to clear orphaned session endpoint", exc_info=e)
         db.rollback()
         return False
     finally:
@@ -144,7 +224,8 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
         return True
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse cached models list, treating as containing model", exc_info=e)
         return True
     if not isinstance(models, list) or not models:
         return True
@@ -236,7 +317,8 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 is_chatgpt_subscription = False
         try:
             cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse cached_models for endpoint %r", getattr(ep, "id", "?"), exc_info=e)
             cached = []
         if not cached:
             visible = []
@@ -360,7 +442,7 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
-        owner = get_current_user(request)
+        owner = effective_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
@@ -506,6 +588,7 @@ def setup_chat_routes(
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
         user_requested_agent = (chat_mode == "agent")
+        _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
         # Intent auto-escalation: if the user is clearly asking the assistant
         # to create a todo, reminder, or calendar event, promote chat → agent
         # for this turn so the LLM has access to manage_notes / manage_calendar.
@@ -523,8 +606,72 @@ def setup_chat_routes(
                 _tool_intent.category,
                 _tool_intent.reason,
             )
+        elif chat_mode == "chat" and _search_enabled:
+            chat_mode = "agent"
+            auto_escalated = True
+            logger.info("chat→agent auto-escalation: search enabled")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
+
+        # Active email reader — when the user has an email open in the UI, the
+        # frontend passes its uid/folder/account so "reply", "summarize this",
+        # etc. resolve to the real email instead of the agent inventing a
+        # fake markdown draft.
+        active_email_uid = form_data.get("active_email_uid", "").strip()
+        active_email_folder = form_data.get("active_email_folder", "INBOX").strip() or "INBOX"
+        active_email_account = form_data.get("active_email_account", "").strip()
+        active_email_ctx: Optional[Dict[str, str]] = None
+        # Always reset between requests so a stale active-email pointer from
+        # a previous turn (different reader closed, different account, etc.)
+        # can't leak in when the user has no email open this turn.
+        try:
+            from src.tool_implementations import clear_active_email
+            clear_active_email()
+        except Exception:
+            pass
+        if active_email_uid:
+            active_email_ctx = {
+                "uid": active_email_uid,
+                "folder": active_email_folder,
+                "account": active_email_account,
+            }
+            # Try to enrich with subject + from so the agent's system prompt
+            # block can quote them. Best-effort: a stale cache is fine, a
+            # missing email just means we pass uid/folder/account only.
+            try:
+                from routes.email_routes import _read_cache_get, _read_cache_key
+                _ck = _read_cache_key(active_email_account or None, active_email_folder, active_email_uid, owner=get_current_user(request))
+                _cached_email = _read_cache_get(_ck)
+                if _cached_email and isinstance(_cached_email, dict):
+                    active_email_ctx["subject"] = str(_cached_email.get("subject") or "")
+                    active_email_ctx["from"] = str(
+                        _cached_email.get("from_address")
+                        or _cached_email.get("from")
+                        or _cached_email.get("from_name")
+                        or ""
+                    )
+                    _body_preview = (_cached_email.get("body") or "")[:2000]
+                    if _body_preview:
+                        active_email_ctx["body_preview"] = _body_preview
+            except Exception as _e:
+                logger.debug(f"[email-inject] cache enrich skipped: {_e}")
+            # Stash so email tools can resolve "this email" without UID guessing.
+            try:
+                from src.tool_implementations import set_active_email
+                set_active_email(
+                    uid=active_email_uid,
+                    folder=active_email_folder,
+                    account=active_email_account or None,
+                    subject=active_email_ctx.get("subject"),
+                    sender=active_email_ctx.get("from"),
+                )
+            except Exception as _e:
+                logger.debug(f"[email-inject] set_active_email failed: {_e}")
+            logger.info(
+                "[email-inject] active_email uid=%s folder=%s account=%s subject=%r",
+                active_email_uid, active_email_folder, active_email_account or "(default)",
+                active_email_ctx.get("subject", ""),
+            )
 
         try:
             # Attachment-only sends: skip the message-required check when the
@@ -540,7 +687,7 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
-            owner = get_current_user(request)
+            owner = effective_user(request)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but
@@ -554,6 +701,20 @@ def setup_chat_routes(
                 raise HTTPException(
                     400,
                     "No model selected for this chat. Open the model picker and choose one before sending.",
+                )
+            if (
+                chat_mode == "chat"
+                and isinstance(message, str)
+                and (not _tool_intent or not _tool_intent.needs_tools)
+                and _is_contextual_web_followup(message, sess)
+            ):
+                _tool_intent = ToolIntent(True, "web", "contextual web lookup follow-up")
+                chat_mode = "agent"
+                auto_escalated = True
+                logger.info(
+                    "chat→agent auto-escalation: category=%s reason=%s",
+                    _tool_intent.category,
+                    _tool_intent.reason,
                 )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
@@ -571,7 +732,7 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         # Ensure session has auth headers
-        resolve_session_auth(sess, session, owner=get_current_user(request))
+        resolve_session_auth(sess, session, owner=effective_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -586,8 +747,8 @@ def setup_chat_routes(
         elif attachments:
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse attachments JSON, ignoring attachments", exc_info=e)
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         pre_context_tool_policy = build_effective_tool_policy(
@@ -641,18 +802,39 @@ def setup_chat_routes(
                             active_doc_id,
                         )
                         active_doc = None
-                    elif doc_session and doc_session != session:
-                        logger.warning(
-                            "[doc-inject] ignoring stale active_doc_id %s from session %s while in session %s",
-                            active_doc_id,
-                            doc_session,
-                            session,
-                        )
-                        active_doc = None
                     else:
+                        # NOTE: previously dropped the doc when doc.session_id
+                        # != current chat session — but that broke the common
+                        # case of "open an email draft from one chat, ask a
+                        # different chat to write into it". The frontend only
+                        # sends active_doc_id for docs currently visible in
+                        # the UI, and we already owner-checked above, so trust
+                        # the explicit signal. We just log the mismatch and
+                        # re-bind the doc to the current session so future
+                        # turns find it via the session-fallback path too.
+                        if doc_session and doc_session != session:
+                            logger.info(
+                                "[doc-inject] cross-session active_doc_id %s (was session %s, now %s) — accepting and rebinding",
+                                active_doc_id, doc_session, session,
+                            )
+                            try:
+                                active_doc.session_id = session
+                                _doc_db.commit()
+                            except Exception as _e:
+                                _doc_db.rollback()
+                                logger.warning(f"[doc-inject] session rebind failed: {_e}")
                         logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
+            if not active_doc:
+                _email_doc_q = _doc_db.query(DBDocument).filter(
+                    DBDocument.session_id == session,
+                    DBDocument.is_active == True,
+                    DBDocument.language == "email",
+                )
+                active_doc = _owner_session_filter(_email_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
+                if active_doc:
+                    logger.info(f"[doc-inject] found email draft by session fallback: title={active_doc.title!r}")
             if not active_doc:
                 _session_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
@@ -690,15 +872,35 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
-        # Only disable bash/web_search when the caller *explicitly* set them
-        # to a falsy value.  When unset (None), defer to per-user privilege
-        # checks below — this lets admins with can_use_bash=True use bash
-        # by default without having to send allow_bash in every request.
+        # Only disable bash when the caller *explicitly* set it to a falsy
+        # value. When unset (None), defer to per-user privilege checks below.
+        # Web search is per-turn opt-in: either the chat pre-search setting
+        # (`use_web=true`) or agent web toggle (`allow_web_search=true`) must
+        # explicitly enable it.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
-        if allow_web_search is not None and str(allow_web_search).lower() != "true":
-            disabled_tools.add("web_search")
-            disabled_tools.add("web_fetch")
+        _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
+        if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
+            disabled_tools.update(WEB_TOOL_NAMES)
+        if _explicit_web_intent:
+            # A direct lookup/search request should not drift into personal
+            # tools or shell fallbacks. It can only use web_search/web_fetch
+            # when the request's explicit web setting enabled them.
+            disabled_tools.update({
+                "bash", "python",
+                "search_chats", "manage_skills", "manage_memory",
+                "read_file", "write_file", "edit_file",
+                "create_document", "edit_document", "update_document",
+                "send_email", "reply_to_email",
+                "manage_notes", "manage_calendar", "manage_tasks",
+                "api_call", "builtin_browser",
+            })
+            if _search_enabled:
+                disabled_tools.difference_update(WEB_TOOL_NAMES)
+            else:
+                disabled_tools.update(WEB_TOOL_NAMES)
+        elif _search_enabled:
+            disabled_tools.difference_update(WEB_TOOL_NAMES)
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
@@ -707,6 +909,21 @@ def setup_chat_routes(
                 "manage_memory",      # persistent memory store
                 "search_chats",       # past chat history
                 "manage_skills",      # skill presets tied to user
+            })
+
+        # Active email reader open → strip the tools that let the agent drift
+        # away from the visible email or skip review. The only allowed compose
+        # path is ui_control open_email_reply, which opens the same draft editor
+        # as the Reply button with the generated body pre-filled. This prevents
+        # the model from falling back to direct SMTP when it botches a draft
+        # call, and prevents fake email-shaped documents.
+        if active_email_ctx and active_email_ctx.get("uid"):
+            disabled_tools.update({
+                "create_document",
+                "send_email",
+                "reply_to_email",
+                "mcp__email__send_email",
+                "mcp__email__reply_to_email",
             })
 
         # Enforce per-user privileges
@@ -831,7 +1048,7 @@ def setup_chat_routes(
             if effective_do_research:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 _auth_keys = list(_r_headers.keys()) if _r_headers else []
-                logger.info(f"Research endpoint resolved: model={_r_model}, endpoint={_r_ep}, auth_keys={_auth_keys}, sess_headers_keys={list(sess.headers.keys()) if isinstance(sess.headers, dict) else type(sess.headers)}")
+                logger.info(f"Research endpoint resolved: model={_r_model}, endpoint={redact_url(_r_ep)}, auth_keys={_auth_keys}, sess_headers_keys={list(sess.headers.keys()) if isinstance(sess.headers, dict) else type(sess.headers)}")
 
                 # Clarification round: only for very short/vague queries on first research message.
                 # Skip in compare mode — each pane is a fresh session, so every one would
@@ -948,13 +1165,16 @@ def setup_chat_routes(
                     _active_streams.pop(session, None)
                     return
 
-            messages = ctx.messages
+            messages = _ensure_current_request_is_latest_user(ctx.messages, message)
 
             # Auto-compact notification
             if ctx.was_compacted:
                 yield f"data: {json.dumps({'type': 'compacted', 'context_length': ctx.context_length})}\n\n"
+            if ctx.context_trimmed and not ctx.was_compacted:
+                yield f"data: {json.dumps({'type': 'context_trimmed', 'data': {'context_length': ctx.context_length, 'messages_before': ctx.context_messages_before_trim, 'messages_after': ctx.context_messages_after_trim, 'tokens_before': ctx.context_tokens_before_trim, 'tokens_after': ctx.context_tokens_after_trim}})}\n\n"
 
             full_response = ""
+            thinking_response = ""
             last_metrics = None
 
             # Configured fallback chain for the default chat model. Tried in
@@ -1044,7 +1264,9 @@ def setup_chat_routes(
                                     # Forward them so the client can show a thinking
                                     # indicator, but don't fold them into the saved
                                     # reply (mirrors the rewrite path below).
-                                    if not data.get("thinking"):
+                                    if data.get("thinking"):
+                                        thinking_response += data["delta"]
+                                    else:
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
@@ -1064,6 +1286,12 @@ def setup_chat_routes(
                                     _reported_model = last_metrics.get("model")
                                     last_metrics["requested_model"] = _requested_model
                                     last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
+                                    if ctx.context_trimmed:
+                                        last_metrics["context_trimmed"] = True
+                                        last_metrics["context_messages_before_trim"] = ctx.context_messages_before_trim
+                                        last_metrics["context_messages_after_trim"] = ctx.context_messages_after_trim
+                                        last_metrics["context_tokens_before_trim"] = ctx.context_tokens_before_trim
+                                        last_metrics["context_tokens_after_trim"] = ctx.context_tokens_after_trim
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -1106,8 +1334,11 @@ def setup_chat_routes(
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             if full_response:
+                                _metrics_to_save = dict(last_metrics or {})
+                                if thinking_response.strip() and not _metrics_to_save.get("thinking"):
+                                    _metrics_to_save["thinking"] = thinking_response.strip()
                                 _saved_id = save_assistant_response(
-                                    sess, session_manager, session, full_response, last_metrics,
+                                    sess, session_manager, session, full_response, _metrics_to_save,
                                     character_name=ctx.preset.character_name,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
@@ -1120,7 +1351,7 @@ def setup_chat_routes(
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
-                                    last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                                    _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
@@ -1155,7 +1386,14 @@ def setup_chat_routes(
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
-                    _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    # Per-message tool budget from settings; guard defensively in
+                    # case settings.json was hand-edited to a non-numeric value
+                    # (the HTTP admin endpoint validates, but direct edits bypass
+                    # it). 0 = unlimited, matching auth_routes set_settings().
+                    try:
+                        _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    except (TypeError, ValueError):
+                        _tool_budget = 0
                     # Per-message round cap from settings; clamp defensively in
                     # case settings.json was hand-edited to a bad value.
                     try:
@@ -1163,6 +1401,10 @@ def setup_chat_routes(
                     except (TypeError, ValueError):
                         _max_rounds = _DEFAULT_ROUNDS
                     _max_rounds = max(1, min(_max_rounds, 200))
+
+                    _forced_tools = None
+                    if _search_enabled:
+                        _forced_tools = set(WEB_TOOL_NAMES)
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -1176,6 +1418,7 @@ def setup_chat_routes(
                         max_rounds=_max_rounds,
                         context_length=ctx.context_length,
                         active_document=active_doc,
+                        active_email=active_email_ctx,
                         session_id=session,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         tool_policy=tool_policy,
@@ -1184,6 +1427,8 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        forced_tools=_forced_tools,
+                        uploaded_files=ctx.uploaded_files,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1192,7 +1437,9 @@ def setup_chat_routes(
                                     # Reasoning tokens arrive flagged thinking:true.
                                     # Forward them for the live indicator, but keep
                                     # them out of the saved reply (same as chat mode).
-                                    if not data.get("thinking"):
+                                    if data.get("thinking"):
+                                        thinking_response += data["delta"]
+                                    else:
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
@@ -1203,7 +1450,9 @@ def setup_chat_routes(
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
-                                    "rounds_exhausted",
+                                    "rounds_exhausted", "budget_exceeded",
+                                    "loop_breaker_triggered",
+                                    "intent_nudge_exhausted",
                                     "ask_user",
                                     "plan_update",
                                 ):
@@ -1230,15 +1479,26 @@ def setup_chat_routes(
                                     _reported_model = last_metrics.get("model")
                                     last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
                                     last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
+                                    if ctx.context_trimmed:
+                                        last_metrics["context_trimmed"] = True
+                                        last_metrics["context_messages_before_trim"] = ctx.context_messages_before_trim
+                                        last_metrics["context_messages_after_trim"] = ctx.context_messages_after_trim
+                                        last_metrics["context_tokens_before_trim"] = ctx.context_tokens_before_trim
+                                        last_metrics["context_tokens_after_trim"] = ctx.context_tokens_after_trim
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
-                            if full_response:
+                            _has_tool_events = bool((last_metrics or {}).get("tool_events"))
+                            if full_response or _has_tool_events:
+                                _response_to_save = full_response or "Done."
+                                _metrics_to_save = dict(last_metrics or {})
+                                if thinking_response.strip() and not _metrics_to_save.get("thinking"):
+                                    _metrics_to_save["thinking"] = thinking_response.strip()
                                 _saved_id = save_assistant_response(
-                                    sess, session_manager, session, full_response, last_metrics,
+                                    sess, session_manager, session, _response_to_save, _metrics_to_save,
                                     character_name=ctx.preset.character_name,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
@@ -1248,8 +1508,8 @@ def setup_chat_routes(
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
-                                    sess, session_manager, session, message, full_response,
-                                    last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                                    sess, session_manager, session, message, _response_to_save,
+                                    _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                                             agent_rounds=_agent_rounds,
@@ -1389,7 +1649,7 @@ def setup_chat_routes(
         if not q or not q.strip():
             return []
 
-        _user = get_current_user(request)
+        _user = effective_user(request)
         return [
             result.to_dict()
             for result in search_session_messages(

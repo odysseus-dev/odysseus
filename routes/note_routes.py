@@ -10,8 +10,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
-from src.auth_helpers import get_current_user
+from core.middleware import INTERNAL_TOOL_USER
+from src.auth_helpers import require_user
 from src.constants import DATA_DIR
+from src.upload_handler import reserve_upload_references
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -208,14 +210,17 @@ async def dispatch_reminder(
         try:
             from src.endpoint_resolver import resolve_endpoint
             from src.llm_core import llm_call_async
+            from src.reminder_personas import synthesis_system_prompt
             url, model, headers = resolve_endpoint("utility", owner=owner or None)
             if not url:
                 url, model, headers = resolve_endpoint("default", owner=owner or None)
             if url and model:
+                persona_id = (settings.get("reminder_llm_persona") or "").strip()
+                sys_prompt = synthesis_system_prompt(persona_id)
                 raw = await llm_call_async(
                     url=url, model=model,
                     messages=[
-                        {"role": "system", "content": "You are a reminder assistant. Write a single short, warm, motivating sentence (max 25 words) reminding the user about the note below. Do not add greetings, preamble, or hashtags. Output only the sentence."},
+                        {"role": "system", "content": sys_prompt},
                         {"role": "user", "content": f"Title: {title}\n\n{note_body}".strip()},
                     ],
                     temperature=0.7, max_tokens=200, headers=headers, timeout=30,
@@ -331,10 +336,11 @@ async def dispatch_reminder(
             # Loud diagnostic so we can see WHY a reminder didn't send (the
             # previous "silently no-op when cfg has no smtp_host" was invisible).
             logger.info(
-                f"dispatch_reminder[email] note_id={note_id} owner={owner!r} "
-                f"smtp_host={cfg.get('smtp_host')!r} smtp_user={cfg.get('smtp_user')!r} "
-                f"from={from_addr!r} recipient={recipient!r} "
-                f"account_name={cfg.get('account_name')!r}"
+                "dispatch_reminder[email] note_id=%s owner=%r "
+                "has_smtp_host=%s has_smtp_user=%s has_from=%s has_recipient=%s",
+                note_id, owner,
+                bool(cfg.get("smtp_host")), bool(cfg.get("smtp_user")),
+                bool(from_addr), bool(recipient),
             )
             missing = []
             if not cfg.get("smtp_host"):
@@ -474,15 +480,28 @@ async def dispatch_reminder(
                 base = intg["base_url"].rstrip("/")
                 topic = settings.get("reminder_ntfy_topic") or "reminders"
                 ntfy_body = synthesis or note_body or title
-                hdrs = {"Title": title or "Reminder", "Priority": "high", "Tags": "bell"}
+                # ntfy Title is an ASCII HTTP header; sanitize Unicode and cap its length.
+                _clean_title = (title or "Reminder").encode("ascii", "replace").decode("ascii")[:200]
+                hdrs = {"Title": _clean_title, "Priority": "high", "Tags": "bell"}
                 api_key = intg.get("api_key", "")
                 if api_key:
                     hdrs["Authorization"] = f"Bearer {api_key}"
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(f"{base}/{topic}", content=ntfy_body, headers=hdrs)
-                    ntfy_sent = resp.is_success
-                    if not ntfy_sent:
-                        ntfy_error = f"ntfy returned HTTP {resp.status_code}"
+                # SSRF guard — same check (and env knob) as the webhook branch
+                # above: link-local / metadata addresses are always rejected;
+                # REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS=true also blocks RFC-1918
+                # so a ntfy base_url can't be pointed at internal services.
+                import os as _os
+                from src.url_safety import check_outbound_url as _chk
+                _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+                _ok, _reason = _chk(f"{base}/{topic}", block_private=_block)
+                if not _ok:
+                    ntfy_error = f"ntfy URL rejected: {_reason}"
+                else:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.post(f"{base}/{topic}", content=ntfy_body, headers=hdrs)
+                        ntfy_sent = resp.is_success
+                        if not ntfy_sent:
+                            ntfy_error = f"ntfy returned HTTP {resp.status_code}"
             else:
                 ntfy_error = "No enabled ntfy integration"
         except Exception as e:
@@ -556,7 +575,7 @@ async def dispatch_reminder(
 # Router factory
 # ---------------------------------------------------------------------------
 
-def setup_note_routes(task_scheduler=None):
+def setup_note_routes(task_scheduler=None, upload_handler=None):
     # Expose the scheduler to module-level `dispatch_reminder` so reminders
     # can also push to the in-app notification queue (the polling system
     # turns each entry into a real browser Notification + the existing
@@ -567,10 +586,24 @@ def setup_note_routes(task_scheduler=None):
     router = APIRouter(prefix="/api/notes", tags=["notes"])
 
     def _owner(request: Request) -> Optional[str]:
-        return get_current_user(request)
+        # require_user, not bare get_current_user: a request that reaches
+        # these owner-scoped routes with NO identity (auth-middleware
+        # regression, SSRF from a sibling service) must fail closed (401)
+        # when auth is configured — not be treated as the single-user mode
+        # and handed blanket access to every account's notes. The documented
+        # anonymous modes (AUTH_ENABLED=false, LOCALHOST_BYPASS on loopback,
+        # unconfigured first-run) still resolve to None, the single-user
+        # path. fire_reminder below already gated this way; the CRUD routes
+        # did not.
+        return require_user(request) or None
+
+    def _reserve_note_uploads(owner: Optional[str], *values) -> None:
+        missing_id = reserve_upload_references(upload_handler, owner, *values)
+        if missing_id:
+            raise HTTPException(409, f"Referenced upload is no longer available: {missing_id}")
 
     def _is_admin_or_single_user(request: Request, user: str | None) -> bool:
-        if user == "internal-tool":
+        if user == INTERNAL_TOOL_USER:
             return True
         if not user:
             # require_user() already admitted this request, which only happens
@@ -618,6 +651,13 @@ def setup_note_routes(task_scheduler=None):
     @router.post("")
     def create_note(request: Request, body: NoteCreate):
         user = _owner(request)
+        _reserve_note_uploads(
+            user,
+            body.image_url,
+            body.color,
+            body.content,
+            json.dumps(body.items) if body.items is not None else None,
+        )
         db = SessionLocal()
         try:
             note = Note(
@@ -675,6 +715,13 @@ def setup_note_routes(task_scheduler=None):
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
 
+            _reserve_note_uploads(
+                user,
+                body.image_url,
+                body.color,
+                body.content,
+                json.dumps(body.items) if body.items is not None else None,
+            )
             if body.title is not None:
                 note.title = body.title
             if body.content is not None:
@@ -802,8 +849,7 @@ def setup_note_routes(task_scheduler=None):
         Returns {synthesis, email_sent}.
         """
         # Gate against anonymous callers — LLM synthesis can burn tokens.
-        from src.auth_helpers import require_user as _ru
-        user = _ru(request)
+        user = require_user(request)
         body = await request.json()
         note_id = str(body.get("note_id") or "").strip()
         if not note_id:
@@ -826,6 +872,12 @@ def setup_note_routes(task_scheduler=None):
                 _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
             if body.get("webhook_payload_template"):
                 _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+            # Mirror the in-UI AI Synthesis toggle + persona so the test
+            # actually exercises the synthesis path before/without a Save.
+            if "llm_synthesis" in body:
+                _override["reminder_llm_synthesis"] = bool(body["llm_synthesis"])
+            if "llm_persona" in body:
+                _override["reminder_llm_persona"] = str(body["llm_persona"] or "")
         else:
             db = SessionLocal()
             try:

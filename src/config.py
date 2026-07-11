@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 
 from src.constants import DATA_DIR as _DATA_DIR_CONST
+from src.runtime_paths import get_app_root
 
 # Cross-platform OS flag, exposed here so callers can `from src.config import
 # IS_WINDOWS`. Defined locally (a trivial `os.name == "nt"`) rather than imported
@@ -19,14 +20,13 @@ IS_WINDOWS = os.name == "nt"
 class DataConfig(BaseSettings):
     """Configuration for data storage and file handling."""
     # Base directory
-    base_dir: Path = Field(default=Path(__file__).parent.parent, description="Base directory for the application")
+    base_dir: Path = Field(default=Path(get_app_root()), description="Base directory for the application")
     
     # Data paths
     data_dir: Path = Field(default=Path(_DATA_DIR_CONST), description="Main data directory")
     uploads_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "uploads", description="Directory for uploaded files")
     sessions_file: Path = Field(default=Path(_DATA_DIR_CONST) / "sessions.json", description="Sessions storage file")
     memory_file: Path = Field(default=Path(_DATA_DIR_CONST) / "memory.json", description="Memory storage file")
-    memory_doc: Path = Field(default=Path(_DATA_DIR_CONST) / "memory_doc.md", description="Memory document file")
     personal_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs", description="Personal documents directory")
     runbook_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs" / "runbook", description="Runbook directory")
     
@@ -138,7 +138,7 @@ class AppConfig(BaseSettings):
         if isinstance(v, dict) and "base_dir" in v:
             base_dir = v["base_dir"]
         else:
-            base_dir = Path(__file__).parent.parent
+            base_dir = Path(get_app_root())
         
         # Convert string paths to Path objects relative to base_dir
         data_dir = Path(_DATA_DIR_CONST)
@@ -161,7 +161,6 @@ class AppConfig(BaseSettings):
             "uploads_dir": data_dir / "uploads",
             "sessions_file": data_dir / "sessions.json",
             "memory_file": data_dir / "memory.json",
-            "memory_doc": data_dir / "memory_doc.md",
             "personal_dir": data_dir / "personal_docs",
             "runbook_dir": data_dir / "personal_docs" / "runbook",
             "max_upload_size": max_upload_size,

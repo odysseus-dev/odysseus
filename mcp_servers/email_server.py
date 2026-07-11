@@ -23,6 +23,7 @@ import os.path
 from pathlib import Path
 from datetime import datetime, timedelta
 import uuid
+from contextvars import ContextVar
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -55,6 +56,13 @@ def _uid_fetch_rows(data) -> list:
 # flat keys when no DB row matches (legacy single-account behaviour).
 
 _ACCOUNT_CACHE: dict = {}  # key = normalized account selector -> config dict
+_MCP_OWNER_ARG = "_odysseus_owner"
+_CURRENT_OWNER: ContextVar[str | None] = ContextVar("email_mcp_owner", default=None)
+_OWNER_ENV_KEYS = ("ODYSSEUS_MCP_EMAIL_OWNER", "ODYSSEUS_EMAIL_OWNER")
+_OWNER_SCOPE_ERROR = (
+    "Error: email MCP requires an authenticated owner or ODYSSEUS_MCP_EMAIL_OWNER "
+    "when owner-scoped email accounts are configured."
+)
 
 
 def _clean_header_value(value) -> str:
@@ -66,6 +74,59 @@ def _clean_header_value(value) -> str:
 
 def _db_path() -> Path:
     return Path(APP_DB)
+
+
+def _configured_owner() -> str | None:
+    for key in _OWNER_ENV_KEYS:
+        owner = os.environ.get(key, "").strip()
+        if owner:
+            return owner
+    return None
+
+
+def _current_owner() -> str:
+    owner = _CURRENT_OWNER.get()
+    return str(owner or _configured_owner() or "").strip()
+
+
+def _account_owner(row: dict) -> str:
+    return str(row.get("owner") or "").strip()
+
+
+def _has_owner_scoped_accounts(rows: list[dict]) -> bool:
+    return any(_account_owner(r) for r in rows)
+
+
+def _account_visible_to_owner(row: dict, owner: str) -> bool:
+    row_owner = _account_owner(row)
+    if row_owner == owner:
+        return True
+    if row_owner:
+        return False
+    # Legacy ownerless accounts are only visible to a scoped caller when the
+    # mailbox itself matches the owner, mirroring the HTTP email route fallback.
+    owner_l = owner.lower()
+    return owner_l in {
+        str(row.get("imap_user") or "").strip().lower(),
+        str(row.get("from_address") or "").strip().lower(),
+    }
+
+
+def _filter_accounts_for_owner(rows: list[dict]) -> list[dict]:
+    owner = _current_owner()
+    if owner:
+        return [r for r in rows if _account_visible_to_owner(r, owner)]
+
+    if _has_owner_scoped_accounts(rows):
+        return []
+    return rows
+
+
+def _mcp_owner_required(rows: list[dict] | None = None) -> bool:
+    if _current_owner():
+        return False
+    rows = rows if rows is not None else _read_accounts_from_db()
+    return _has_owner_scoped_accounts(rows)
 
 
 def _load_email_writing_style() -> str:
@@ -121,9 +182,8 @@ def _default_document_owner() -> str | None:
         return None
 
 
-def _list_accounts_raw() -> list:
-    """Return list of dicts from the email_accounts table. Empty list if table
-    missing or empty. Never raises."""
+def _read_accounts_from_db() -> list:
+    """Return all enabled email account rows. Empty list if missing. Never raises."""
     path = _db_path()
     if not path.exists():
         return []
@@ -131,9 +191,10 @@ def _list_accounts_raw() -> list:
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
         columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
+        owner_select = "owner" if "owner" in columns else "NULL AS owner"
         smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
         rows = conn.execute(f"""
-            SELECT id, name, is_default, enabled,
+            SELECT id, {owner_select}, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
                    smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
             FROM email_accounts WHERE enabled = 1
@@ -147,11 +208,15 @@ def _list_accounts_raw() -> list:
         return []
 
 
-def _resolve_account(selector: str | None) -> dict | None:
+def _list_accounts_raw() -> list:
+    """Return owner-visible email account rows for the active MCP call."""
+    return _filter_accounts_for_owner(_read_accounts_from_db())
+
+
+def _resolve_account_from_rows(rows: list[dict], selector: str | None) -> dict | None:
     """Given a selector (None = default, or a name/user/id string), return the
     matching row or None. Matching is case-insensitive substring on name +
     imap_user + from_address, plus exact id match."""
-    rows = _list_accounts_raw()
     if not rows:
         return None
     if not selector:
@@ -186,6 +251,10 @@ def _resolve_account(selector: str | None) -> dict | None:
     return None
 
 
+def _resolve_account(selector: str | None) -> dict | None:
+    return _resolve_account_from_rows(_list_accounts_raw(), selector)
+
+
 def _load_config(account: str | None = None) -> dict:
     """Return the full config dict for the requested account (or default).
 
@@ -194,7 +263,7 @@ def _load_config(account: str | None = None) -> dict:
       2. env vars + settings.json flat keys (legacy)
       3. hardcoded fallbacks (localhost:31143 etc.)
     """
-    cache_key = (account or "").strip().lower() or "__default__"
+    cache_key = (_current_owner(), (account or "").strip().lower() or "__default__")
     if cache_key in _ACCOUNT_CACHE:
         return _ACCOUNT_CACHE[cache_key]
 
@@ -223,8 +292,13 @@ def _load_config(account: str | None = None) -> dict:
         "account_name": None,
     }
 
-    rows = _list_accounts_raw()
-    row = _resolve_account(account)
+    raw_rows = _read_accounts_from_db()
+    if _mcp_owner_required(raw_rows):
+        raise ValueError(_OWNER_SCOPE_ERROR)
+    rows = _filter_accounts_for_owner(raw_rows)
+    row = _resolve_account_from_rows(rows, account)
+    if _current_owner() and raw_rows and not rows:
+        raise ValueError("No email account is configured for the authenticated owner")
     if account and rows and not row:
         available = ", ".join(
             f"{r.get('name') or r.get('imap_user')} <{r.get('imap_user') or r.get('from_address') or '?'}>"
@@ -485,6 +559,148 @@ def _get_cached_summaries():
         return {}
 
 
+def _fixture_email_file() -> Path:
+    return DATA_DIR / "fixture_email_messages.json"
+
+
+def _fixture_email_enabled() -> bool:
+    return _fixture_email_file().exists()
+
+
+def _parse_fixture_date(raw_date: str) -> tuple[str, float]:
+    if not raw_date:
+        return "", 0.0
+    parsed = None
+    try:
+        parsed = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+    except Exception:
+        try:
+            parsed = email.utils.parsedate_to_datetime(str(raw_date))
+        except Exception:
+            parsed = None
+    if parsed:
+        return parsed.isoformat(), parsed.timestamp()
+    return str(raw_date), 0.0
+
+
+def _fixture_email_record(row: dict, uid_num: int, owner: str) -> dict:
+    sender = str(row.get("from") or "Fixture Sender <fixture@example.invalid>")
+    sender_name, sender_addr = email.utils.parseaddr(sender)
+    date_str, date_epoch = _parse_fixture_date(str(row.get("date") or ""))
+    subject = str(row.get("subject") or "(no subject)")
+    body = str(row.get("body") or "")
+    owner_key = re.sub(r"[^A-Za-z0-9_.-]", "-", owner or "default")
+    uid = str(uid_num)
+    return {
+        "uid": uid,
+        "message_id": f"<fixture-email-{uid}-{owner_key}@fixtures.odysseus.local>",
+        "subject": subject,
+        "from": sender_name or sender_addr or sender,
+        "from_address": sender_addr,
+        "date": date_str,
+        "date_epoch": date_epoch,
+        "summary": body[:240],
+        "body": body,
+        "account": "Fixture Inbox",
+        "account_email": owner or str(row.get("owner") or ""),
+        "account_id": "fixture-email",
+        "attachments": [],
+    }
+
+
+def _fixture_email_rows(owner: str | None = None) -> list[dict]:
+    path = _fixture_email_file()
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    rows = raw.get("messages") if isinstance(raw, dict) else raw
+    out = []
+    owner = str(owner or "").strip()
+    for i, row in enumerate(rows if isinstance(rows, list) else [], start=1):
+        if not isinstance(row, dict):
+            continue
+        row_owner = str(row.get("owner") or "").strip()
+        if owner and row_owner and row_owner != owner:
+            continue
+        out.append(_fixture_email_record(row, i, owner or row_owner))
+    out.sort(key=lambda item: item.get("date_epoch") or 0, reverse=True)
+    return out
+
+
+def _fixture_account_rows() -> list[dict]:
+    if not _fixture_email_enabled():
+        return []
+    owner = _current_owner()
+    owners = []
+    for row in _fixture_email_rows(owner or None):
+        email_addr = row.get("account_email") or owner or "fixture@fixtures.odysseus.local"
+        if email_addr not in owners:
+            owners.append(email_addr)
+    if not owners:
+        owners = [owner or "fixture@fixtures.odysseus.local"]
+    return [
+        {
+            "id": "fixture-email",
+            "owner": owner or owners[0],
+            "name": "Fixture Inbox",
+            "is_default": True,
+            "imap_user": owners[0],
+            "from_address": owners[0],
+        }
+    ]
+
+
+def _fixture_email_matches(item: dict, query: str) -> bool:
+    if not query:
+        return True
+    terms = [term for term in re.split(r"\W+", str(query).lower()) if term]
+    haystack = "\n".join(
+        str(item.get(key) or "")
+        for key in ("subject", "from", "from_address", "body", "summary")
+    ).lower()
+    return all(term in haystack for term in terms)
+
+
+def _fixture_list_emails(folder="INBOX", max_results=20, unresponded_only=False,
+                         unread_only=False, account=None) -> list[dict] | None:
+    if not _fixture_email_enabled():
+        return None
+    if account and str(account).strip().lower() not in {
+        "fixture-email",
+        "fixture inbox",
+        "fixture",
+        str(_current_owner()).lower(),
+    }:
+        return []
+    if (folder or "INBOX").upper() not in {"INBOX", "ALL", "ALL MAIL"}:
+        return []
+    return _fixture_email_rows(_current_owner())[: int(max_results or 20)]
+
+
+def _fixture_search_emails(query, folders=None, max_results=20, account=None) -> list[dict] | None:
+    if not _fixture_email_enabled():
+        return None
+    rows = _fixture_list_emails("INBOX", max_results=1000, account=account) or []
+    out = [dict(row, _folder="INBOX") for row in rows if _fixture_email_matches(row, str(query or ""))]
+    return out[: int(max_results or 20)]
+
+
+def _fixture_read_email(uid=None, message_id=None, folder="INBOX", account=None) -> dict | None:
+    if not _fixture_email_enabled():
+        return None
+    if (folder or "INBOX").upper() not in {"INBOX", "ALL", "ALL MAIL"}:
+        return {"error": f"Email UID {uid or message_id} not found"}
+    for item in _fixture_email_rows(_current_owner()):
+        if uid and str(item.get("uid")) == str(uid):
+            return item
+        if message_id and str(item.get("message_id")) == str(message_id):
+            return item
+    return {"error": f"Email not found with UID/Message-ID: {uid or message_id}"}
+
+
 # ── Tool implementations ──
 
 
@@ -495,6 +711,9 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     Pass unread_only=True and/or unresponded_only=True for attention scans.
     account selects mailbox (None = default).
     """
+    fixture = _fixture_list_emails(folder, max_results, unresponded_only, unread_only, account)
+    if fixture is not None:
+        return fixture
     conn = None
     try:
         conn = _imap_connect(account)
@@ -576,6 +795,9 @@ def _result_sort_time(result: dict) -> datetime:
 
 def _list_emails_across_accounts(folder="INBOX", max_results=20,
                                  unresponded_only=False, unread_only=False):
+    fixture = _fixture_list_emails(folder, max_results, unresponded_only, unread_only, None)
+    if fixture is not None:
+        return fixture, []
     rows = _list_accounts_raw()
     combined = []
     errors = []
@@ -609,6 +831,9 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     _list_emails plus an `_folder` tag."""
     if not query or not str(query).strip():
         return []
+    fixture = _fixture_search_emails(query, folders=folders, max_results=max_results, account=account)
+    if fixture is not None:
+        return fixture
     q = str(query).replace("\\", "\\\\").replace('"', '\\"')
     # Mail clients commonly use OR FROM/SUBJECT/TEXT to match either field.
     # IMAP SEARCH OR is binary, so we nest it.
@@ -731,6 +956,9 @@ def _extract_attachment_to_disk(msg, index, target_dir):
 
 def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
     """Read full email content by UID or message-ID. account = mailbox selector."""
+    fixture = _fixture_read_email(uid=uid, message_id=message_id, folder=folder, account=account)
+    if fixture is not None:
+        return fixture
     cfg = _load_config(account)
     conn = None
     try:
@@ -784,6 +1012,9 @@ def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
 
 
 def _read_email_across_accounts(uid=None, message_id=None, folder="INBOX"):
+    fixture = _fixture_read_email(uid=uid, message_id=message_id, folder=folder, account=None)
+    if fixture is not None:
+        return fixture
     rows = _list_accounts_raw()
     matches = []
     errors = []
@@ -885,8 +1116,113 @@ def _smtp_connect(account=None, cfg=None):
     return conn
 
 
+def _read_agent_email_confirm_setting() -> bool:
+    """True if the user wants agent send_email/reply_to_email calls to be
+    queued for manual approval instead of SMTPed immediately. Defaults to
+    True so a fresh install is safe — agents have been observed inventing
+    signatures and sending to real recipients without the user's review."""
+    try:
+        from src.settings import get_setting
+        return bool(get_setting("agent_email_confirm", True))
+    except Exception:
+        return True
+
+
+def _stash_agent_draft(*, to, subject, body, in_reply_to=None, references=None,
+                      cc=None, bcc=None, account=None) -> dict:
+    """Insert the composed email into scheduled_emails with status
+    'agent_draft' and a far-future send_at so the scheduled-send poller
+    never picks it up. Returns the pending payload the model surfaces to
+    the user (and that the chat UI can render as an approval card)."""
+    try:
+        from src.constants import SCHEDULED_EMAILS_DB
+    except Exception:
+        return {"success": False, "error": "Pending-email storage unavailable"}
+    pending_id = uuid.uuid4().hex[:16]
+    far_future = "9999-12-31T00:00:00"
+    now = datetime.utcnow().isoformat()
+    try:
+        conn = sqlite3.connect(SCHEDULED_EMAILS_DB)
+        # Touch the schema in case the email-routes init hasn't run yet
+        # (MCP server can boot independently).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_emails (
+                id TEXT PRIMARY KEY,
+                to_addr TEXT NOT NULL,
+                cc TEXT,
+                bcc TEXT,
+                subject TEXT,
+                body TEXT NOT NULL,
+                in_reply_to TEXT,
+                references_hdr TEXT,
+                attachments TEXT,
+                send_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                owner TEXT DEFAULT '',
+                account_id TEXT,
+                odysseus_kind TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO scheduled_emails
+            (id, to_addr, cc, bcc, subject, body, in_reply_to, references_hdr,
+             attachments, send_at, created_at, status, account_id, odysseus_kind, owner)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'agent_draft', ?, ?, ?)
+        """, (
+            pending_id,
+            to if isinstance(to, str) else ", ".join(to),
+            cc if isinstance(cc, str) else (", ".join(cc) if cc else None),
+            bcc if isinstance(bcc, str) else (", ".join(bcc) if bcc else None),
+            subject or "",
+            body or "",
+            in_reply_to or None,
+            references if isinstance(references, str) else (" ".join(references) if references else None),
+            "[]",
+            far_future,
+            now,
+            account or None,
+            "agent_draft",
+            _current_owner(),
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        return {"success": False, "error": f"Failed to stash draft: {e}"}
+    return {
+        "success": True,
+        "pending": True,
+        "pending_id": pending_id,
+        "to": to if isinstance(to, str) else ", ".join(to),
+        "subject": subject or "",
+        "body": body or "",
+        "message": (
+            "✋ Draft staged for your approval — nothing has been sent yet.\n"
+            "Review the To/Subject/Body above. Reply 'send' to deliver, or "
+            "'cancel' to discard."
+        ),
+    }
+
+
 def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, bcc=None, account=None):
-    """Send an email via SMTP. Returns dict with status."""
+    """Send an email via SMTP. Returns dict with status.
+
+    When the `agent_email_confirm` setting is on (the default), the email
+    is NOT SMTPed — instead it lands in scheduled_emails as an
+    `agent_draft` row and the user reviews + approves it from the chat
+    UI. This closes the auto-send hole that let earlier models invent
+    signatures and ship them to real recipients without confirmation."""
+    if _read_agent_email_confirm_setting():
+        # Even confirmation-first sends must resolve the selected account now.
+        # Otherwise a caller could stage a pending draft against another
+        # owner's account selector before browser approval handles it.
+        cfg = _load_config(account)
+        return _stash_agent_draft(
+            to=to, subject=subject, body=body,
+            in_reply_to=in_reply_to, references=references,
+            cc=cc, bcc=bcc, account=cfg.get("account_id") or account,
+        )
     send_account, cfg = _resolve_send_config(account)
     msg = EmailMessage()
     msg["From"] = _clean_header_value(cfg["from_address"])
@@ -1038,7 +1374,7 @@ def _create_email_draft_document(
     doc_id = str(uuid.uuid4())
     ver_id = str(uuid.uuid4())
     doc_title = (title or subject or "Email draft").strip() or "Email draft"
-    doc_owner = _default_document_owner()
+    doc_owner = _current_owner() or _default_document_owner()
 
     db = SessionLocal()
     try:
@@ -1621,9 +1957,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="reply_to_email",
             description=(
-                "Reply to an existing email by UID. This sends immediately; for normal "
-                "assistant-written replies, prefer draft_email_reply so the user can "
-                "review and send from Odysseus. Automatically threads the reply with "
+                "Reply to an existing email by UID. This sends immediately. Do NOT use "
+                "for normal 'write/draft a reply saying X' requests; use "
+                "draft_email_reply so the user can review and send from Odysseus. "
+                "Only use this when the user explicitly says to send now. Automatically threads the reply with "
                 "In-Reply-To and References headers, prefixes 'Re:' on the subject, and "
                 "uses the original sender as the recipient. Set reply_all=true to also CC "
                 "the original To/Cc recipients. For follow-up 'reply ...' requests, use "
@@ -1824,10 +2161,21 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    arguments = dict(arguments) if isinstance(arguments, dict) else {}
+    owner = str(arguments.pop(_MCP_OWNER_ARG, "") or "").strip()
+    owner_token = _CURRENT_OWNER.set(owner or None)
     try:
+        all_db_accounts = _read_accounts_from_db()
+        if _mcp_owner_required(all_db_accounts):
+            return [TextContent(type="text", text=_OWNER_SCOPE_ERROR)]
+
         if name == "list_email_accounts":
-            rows = _list_accounts_raw()
+            rows = _filter_accounts_for_owner(all_db_accounts)
             if not rows:
+                rows = _fixture_account_rows()
+            if not rows:
+                if all_db_accounts and owner:
+                    return [TextContent(type="text", text="No email accounts configured for this owner.")]
                 return [TextContent(type="text", text="No email accounts configured. Legacy single-account mode active.")]
             lines = [f"Found {len(rows)} email account(s):\n"]
             for r in rows:
@@ -2007,6 +2355,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 bcc=arguments.get("bcc"),
                 account=acct,
             )
+            if "error" in result:
+                return [TextContent(type="text", text=f"Error: {result['error']}")]
+            if result.get("pending"):
+                return [TextContent(
+                    type="text",
+                    text=(
+                        f"Draft staged for approval (pending id: {result.get('pending_id')}). "
+                        "Nothing has been sent yet. Review and approve it in Odysseus before delivery."
+                    ),
+                )]
             acct_note = f" (from {result['account']})" if result.get("account") else ""
             return [TextContent(type="text", text=f"Sent email to {result['to']} with subject '{result['subject']}'{acct_note}.")]
 
@@ -2182,6 +2540,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {e}")]
+    finally:
+        _CURRENT_OWNER.reset(owner_token)
 
 
 # ── Main ──

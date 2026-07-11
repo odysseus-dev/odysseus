@@ -4,8 +4,10 @@ import uuid
 import logging
 import re
 from typing import Dict, List, Optional, Any
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+from fastapi import HTTPException
 
 from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
@@ -201,6 +203,29 @@ def mask_integration_secret(integration: Dict[str, Any]) -> Dict[str, Any]:
     return safe
 
 
+def _normalize_integration_base_url(base_url: Any) -> str:
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ValueError("Integration base URL is required")
+    cleaned = base_url.strip().rstrip("/")
+    if "?" in cleaned or "#" in cleaned:
+        raise ValueError("Integration base URL must not include query or fragment")
+    parsed = urlparse(cleaned)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Integration base URL must be an HTTP(S) URL")
+    return urlunparse(parsed._replace(scheme=parsed.scheme.lower(), query="", fragment="")).rstrip("/")
+
+
+def _join_integration_url(base_url: str, path: str) -> str:
+    base = base_url.rstrip("/")
+    rel = path.lstrip("/")
+    if not rel:
+        # A bare "/" must resolve to the base URL itself, not base + "/".
+        # POST-to-base integrations (e.g. Discord webhooks) 404 on the
+        # trailing-slash variant of their URL.
+        return base
+    return urljoin(base + "/", rel)
+
+
 def load_integrations() -> List[Dict[str, Any]]:
     """Load all integrations from disk with secrets decrypted for runtime use."""
     if not os.path.exists(DATA_FILE):
@@ -258,6 +283,13 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
     integration.setdefault("name", "")
     integration.setdefault("base_url", "")
 
+    if not isinstance(integration.get("name"), str) or not integration["name"].strip():
+        raise HTTPException(400, "Integration name is required")
+    try:
+        integration["base_url"] = _normalize_integration_base_url(integration.get("base_url"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
     integrations = load_integrations()
     integrations.append(integration)
     save_integrations(integrations)
@@ -266,6 +298,15 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def update_integration(integration_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update fields on an existing integration. Returns updated integration or None."""
+    data = dict(data)
+    if "name" in data and (not isinstance(data["name"], str) or not data["name"].strip()):
+        raise HTTPException(400, "Integration name is required")
+    if "base_url" in data:
+        try:
+            data["base_url"] = _normalize_integration_base_url(data["base_url"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     integrations = load_integrations()
     for item in integrations:
         if item.get("id") == integration_id:
@@ -330,9 +371,10 @@ async def execute_api_call(
     if not integration.get("enabled", True):
         return {"error": f"Integration '{integration.get('name')}' is disabled", "exit_code": 1}
 
-    base_url = integration.get("base_url", "").rstrip("/")
-    if not base_url:
-        return {"error": "Integration has no base_url configured", "exit_code": 1}
+    try:
+        base_url = _normalize_integration_base_url(integration.get("base_url", ""))
+    except ValueError as exc:
+        return {"error": str(exc), "exit_code": 1}
 
     # Strip common API path suffixes users might accidentally include
     # (e.g. "http://host/v1/" → "http://host"). The integration's preset
@@ -355,7 +397,26 @@ async def execute_api_call(
     if re.search(r"^https?://", path) or "://" in path:
         return {"error": "Path must not contain a protocol scheme", "exit_code": 1}
 
-    url = base_url + path
+    if "#" in path:
+        return {"error": "Path must not contain a fragment", "exit_code": 1}
+
+    url = _join_integration_url(base_url, path)
+
+    # SSRF guard — same check used by the gallery endpoint, embeddings,
+    # CardDAV, and the reminder webhook sender. Link-local / metadata
+    # addresses (169.254.x.x — the cloud credential-exfil vector) are always
+    # rejected; INTEGRATION_API_BLOCK_PRIVATE_IPS=true also blocks RFC-1918 /
+    # loopback for locked-down deployments. Private stays allowed by default
+    # because LAN integrations (Home Assistant, Miniflux, ntfy) are the
+    # primary use case.
+    from src.url_safety import check_outbound_url
+    block_private = os.getenv(
+        "INTEGRATION_API_BLOCK_PRIVATE_IPS", "false"
+    ).lower() == "true"
+    ok, reason = check_outbound_url(url, block_private=block_private)
+    if not ok:
+        return {"error": f"URL rejected: {reason}", "exit_code": 1}
+
     method = method.upper()
 
     # Build headers

@@ -603,7 +603,6 @@ class SkillsManager:
         escalation) — those are work-in-progress and pollute the
         prompt with half-finished procedures.
         """
-        active_toolsets = active_toolsets or []
         out = []
         for s in self.load(owner=owner):
             status = s.get("status")
@@ -617,13 +616,16 @@ class SkillsManager:
             # Platform gating
             if platform and s.get("platforms") and platform not in s["platforms"]:
                 continue
-            # requires_toolsets: hide unless every required toolset is active
+            # requires_toolsets: hide unless every required toolset is active.
+            # active_toolsets=None means the caller doesn't know the active
+            # set (API listings, chat preface) — don't gate in that case;
+            # only an explicit list filters.
             req = s.get("requires_toolsets") or []
-            if req and not all(t in active_toolsets for t in req):
+            if req and active_toolsets is not None and not all(t in active_toolsets for t in req):
                 continue
             # fallback_for_toolsets: hide when any of those toolsets is active
             fb = s.get("fallback_for_toolsets") or []
-            if fb and any(t in active_toolsets for t in fb):
+            if fb and active_toolsets and any(t in active_toolsets for t in fb):
                 continue
             out.append({
                 "name": s["name"],

@@ -13,6 +13,8 @@ and `email_pollers.py` (the background loops):
 """
 
 import os
+import base64
+import time
 import imaplib
 import smtplib
 import email as email_mod
@@ -38,6 +40,116 @@ from src.secret_storage import decrypt as _decrypt
 logger = logging.getLogger(__name__)
 
 
+class EmailNotConfiguredError(RuntimeError):
+    """Raised when an IMAP operation is attempted on an account that has no
+    inbox configured (e.g. a send-only / SMTP-only account).
+
+    Subclasses RuntimeError so existing broad ``except Exception`` handlers
+    keep working; callers that want to treat "no inbox" as an empty result
+    rather than a failure can catch this type specifically.
+    """
+
+
+def _xoauth2_raw(user: str, access_token: str) -> str:
+    """The SASL XOAUTH2 initial-response string (unencoded).
+
+    Both smtplib.SMTP.auth() and imaplib.IMAP4.authenticate() base64-encode
+    the value their callback returns, so callers pass this raw form — never
+    pre-encoded — to avoid double base64.
+    """
+    return f"user={user}\x01auth=Bearer {access_token}\x01\x01"
+
+
+def _xoauth2_bytes(user: str, access_token: str) -> bytes:
+    """Raw XOAUTH2 bytes for imaplib's authenticate() callback."""
+    return _xoauth2_raw(user, access_token).encode()
+
+
+def make_oauth_state(account_id: str, owner: str) -> str:
+    """Return an HMAC-signed, base64-encoded OAuth state token.
+
+    Encodes account_id + owner + a random nonce, signed with the app secret
+    so the callback can validate that the flow was initiated by an
+    authenticated, owning user (CSRF / state-forgery protection).
+    """
+    import hmac as _hmac, hashlib as _hl, secrets as _sec
+    from src.secret_storage import _load_or_create_key
+    nonce = _sec.token_hex(16)
+    payload = json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
+    sig = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
+
+
+def verify_oauth_state(state: str) -> dict | None:
+    """Verify an OAuth state token's HMAC signature.
+
+    Returns the decoded payload dict ({"a", "o", "n"}) on success, or None if
+    the token is malformed, tampered, or signed with a different key.
+    """
+    import hmac as _hmac, hashlib as _hl
+    from src.secret_storage import _load_or_create_key
+    try:
+        decoded = base64.urlsafe_b64decode(state.encode()).decode()
+        payload, sig = decoded.rsplit("|", 1)
+        expected = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            return None
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _refresh_google_token(account_id: str) -> str | None:
+    """Exchange the stored refresh token for a new access token and persist it."""
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        resp = httpx.post("https://oauth2.googleapis.com/token", data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        db.commit()
+        return access_token
+    except Exception:
+        logger.warning(f"Google token refresh failed for account {account_id}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Google access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_google_token(account_id)
+
+
 def _smtp_security_mode(cfg: dict) -> str:
     raw = str(cfg.get("smtp_security") or "").strip().lower()
     if raw in {"ssl", "starttls", "none"}:
@@ -54,20 +166,29 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
+
+    def _auth_smtp(smtp):
+        if cfg.get("oauth_provider") == "google":
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+            smtp.ehlo()
+            smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
+        elif user and password:
+            smtp.login(user, password)
+
     security = _smtp_security_mode(cfg)
 
     if security == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-            if user and password:
-                smtp.login(user, password)
+            _auth_smtp(smtp)
             smtp.sendmail(from_addr, recipients, message)
         return
 
     with smtplib.SMTP(host, port, timeout=timeout) as smtp:
         if security == "starttls":
             smtp.starttls()
-        if user and password:
-            smtp.login(user, password)
+        _auth_smtp(smtp)
         smtp.sendmail(from_addr, recipients, message)
 
 
@@ -114,8 +235,9 @@ def _strip_think(text: str) -> str:
     """
     if not text:
         return ""
-    from src.text_helpers import strip_think as _central, _THINK_CLOSED_RE, _THINK_OPEN_RE, _THINK_TAG_RE
-    had_think = bool(_THINK_CLOSED_RE.search(text) or _THINK_OPEN_RE.search(text) or _THINK_TAG_RE.search(text))
+    from src.text_helpers import strip_think as _central, _THINK_TAG_RE
+    # Single linear tag check; the old closed/open `.search()` calls could ReDoS.
+    had_think = bool(_THINK_TAG_RE.search(text))
     return _central(text, prose=had_think, prompt_echo=True)
 
 
@@ -227,7 +349,7 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
             row = db.query(_EA).filter(_EA.id == account_id).first()
             if row is None:
                 raise HTTPException(404, "Account not found")
-            if row.owner and row.owner != owner:
+            if not _account_visible_to_owner(row, owner):
                 # Treat as 404 (not 403) so we don't leak existence.
                 raise HTTPException(404, "Account not found")
         finally:
@@ -239,6 +361,26 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
         # through. 503 tells the caller to retry; logs preserve detail.
         logger.error(f"Account-owner check failed: {e}")
         raise HTTPException(503, "Account check failed")
+
+
+def _account_visible_to_owner(row, owner: str) -> bool:
+    """Whether an authenticated `owner` may act on this EmailAccount row.
+
+    Mirrors the SQL predicate in `_get_email_config`'s
+    `_owner_or_matching_legacy_account`: a caller sees an account they own, or a
+    legacy owner-less account (owner NULL/"") only when its own mailbox
+    (`imap_user` / `from_address`) is the caller's. `email_accounts` is the one
+    owner-scoped table deliberately left out of the legacy-owner migration
+    backfill, so ownerless rows persist on multi-user deploys — making this the
+    gate that keeps one tenant off another's imported mailbox and its decrypted
+    IMAP/SMTP credentials."""
+    row_owner = getattr(row, "owner", None) or ""
+    if row_owner:
+        return row_owner == owner
+    return owner in {
+        getattr(row, "imap_user", None) or "",
+        getattr(row, "from_address", None) or "",
+    }
 
 def _q(name: str) -> str:
     """Quote an IMAP mailbox name. Defensive: escapes `\\` and `"` and wraps
@@ -302,10 +444,17 @@ SCHEDULED_DB = Path(SCHEDULED_EMAILS_DB)
 OWNER_SCOPED_EMAIL_CACHE_TABLES = {
     "email_summaries",
     "email_ai_replies",
+    "email_translations",
     "email_calendar_extractions",
     "email_urgency_alerts",
     "sender_signatures",
 }
+
+
+def email_translation_body_hash(body: str) -> str:
+    import hashlib as _hashlib
+    normalized = (body or "").strip()
+    return _hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _email_cache_owner_clause(owner: str = "") -> tuple[str, tuple[str, ...]]:
@@ -315,14 +464,34 @@ def _email_cache_owner_clause(owner: str = "") -> tuple[str, tuple[str, ...]]:
     return "(owner = '' OR owner IS NULL)", ()
 
 
-def _ensure_owner_scoped_email_cache_table(conn, table: str, create_sql: str, columns: list[str]):
+def _ensure_owner_scoped_email_cache_table(
+    conn,
+    table: str,
+    create_sql: str,
+    columns: list[str],
+    pk_columns: list[str] | None = None,
+):
     """Rebuild legacy Message-ID-only cache tables with owner in the PK."""
+    desired_pk_cols = pk_columns or ["message_id", "owner"]
     conn.execute(create_sql)
     try:
         info = conn.execute(f"PRAGMA table_info({table})").fetchall()
         cols = [r[1] for r in info]
         pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
-        if "owner" in cols and pk_cols == ["message_id", "owner"]:
+        for col in columns:
+            if col not in cols:
+                if col == "owner":
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN owner TEXT DEFAULT ''")
+                elif col in {"event_uids"}:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT '[]'")
+                elif col.startswith("has_") or col.endswith("_created") or col.endswith("_count"):
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER DEFAULT 0")
+                elif col == "created_at":
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT ''")
+                else:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                cols.append(col)
+        if "owner" in cols and pk_cols == desired_pk_cols:
             return
 
         conn.execute(f"ALTER TABLE {table} RENAME TO {table}__old")
@@ -455,6 +624,25 @@ def _init_scheduled_db():
             PRIMARY KEY (message_id, owner)
         )
     """, ["message_id", "owner", "uid", "folder", "reply", "model_used", "created_at"])
+    _ensure_owner_scoped_email_cache_table(conn, "email_translations", """
+        CREATE TABLE IF NOT EXISTS email_translations (
+            body_hash TEXT,
+            owner TEXT DEFAULT '',
+            target_language TEXT DEFAULT 'English',
+            uid TEXT,
+            folder TEXT,
+            subject TEXT,
+            sender TEXT,
+            translation TEXT,
+            same_language INTEGER DEFAULT 0,
+            model_used TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (body_hash, owner, target_language)
+        )
+    """, [
+        "body_hash", "owner", "target_language", "uid", "folder", "subject", "sender",
+        "translation", "same_language", "model_used", "created_at",
+    ], ["body_hash", "owner", "target_language"])
     # Email tags / spam classification cache. SECURITY: keyed by
     # (message_id, owner) because Message-IDs are GLOBAL (a newsletter goes
     # to many users with the same Message-ID). Without owner-scoping, a
@@ -464,6 +652,7 @@ def _init_scheduled_db():
         CREATE TABLE IF NOT EXISTS email_tags (
             message_id TEXT,
             owner TEXT DEFAULT '',
+            account_id TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             subject TEXT,
@@ -474,7 +663,7 @@ def _init_scheduled_db():
             moved_to TEXT,
             model_used TEXT,
             created_at TEXT NOT NULL,
-            PRIMARY KEY (message_id, owner)
+            PRIMARY KEY (message_id, owner, account_id)
         )
     """)
     # Backfill migration: older installs created the table with
@@ -482,28 +671,35 @@ def _init_scheduled_db():
     # promote it into the PK by rebuild-copy-swap (SQLite can't ALTER PK).
     try:
         _cols = [r[1] for r in conn.execute("PRAGMA table_info(email_tags)")]
+        _pk_cols = [r[1] for r in sorted(conn.execute("PRAGMA table_info(email_tags)").fetchall(), key=lambda row: row[5] or 99) if r[5]]
         if "owner" not in _cols:
-            # Add the column first so reads/writes don't break mid-migration.
             conn.execute("ALTER TABLE email_tags ADD COLUMN owner TEXT DEFAULT ''")
-            # Rebuild with composite PK. Existing rows get owner='' (legacy
-            # single-user); the urgency scanner will overwrite as it
-            # re-classifies. No data loss.
+            _cols.append("owner")
+        if "account_id" not in _cols:
+            conn.execute("ALTER TABLE email_tags ADD COLUMN account_id TEXT DEFAULT ''")
+            _cols.append("account_id")
+        if _pk_cols != ["message_id", "owner", "account_id"]:
+            # Rebuild with account-aware composite PK. Existing rows get
+            # account_id='' and are still readable as legacy fallback rows;
+            # fresh task runs write exact account ids and no longer block each
+            # other when two accounts share a Message-ID.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS email_tags__new (
                     message_id TEXT,
                     owner TEXT DEFAULT '',
+                    account_id TEXT DEFAULT '',
                     uid TEXT, folder TEXT, subject TEXT, sender TEXT,
                     tags TEXT, spam_verdict INTEGER DEFAULT 0,
                     spam_reason TEXT, moved_to TEXT, model_used TEXT,
                     created_at TEXT NOT NULL,
-                    PRIMARY KEY (message_id, owner)
+                    PRIMARY KEY (message_id, owner, account_id)
                 )
             """)
             conn.execute("""
                 INSERT OR IGNORE INTO email_tags__new
-                  (message_id, owner, uid, folder, subject, sender, tags,
+                  (message_id, owner, account_id, uid, folder, subject, sender, tags,
                    spam_verdict, spam_reason, moved_to, model_used, created_at)
-                SELECT message_id, COALESCE(owner, ''), uid, folder, subject,
+                SELECT message_id, COALESCE(owner, ''), COALESCE(account_id, ''), uid, folder, subject,
                        sender, tags, spam_verdict, spam_reason, moved_to,
                        model_used, created_at
                 FROM email_tags
@@ -519,11 +715,12 @@ def _init_scheduled_db():
             message_id TEXT,
             owner TEXT DEFAULT '',
             uid TEXT,
+            event_uids TEXT DEFAULT '[]',
             events_created INTEGER DEFAULT 0,
             created_at TEXT NOT NULL,
             PRIMARY KEY (message_id, owner)
         )
-    """, ["message_id", "owner", "uid", "events_created", "created_at"])
+    """, ["message_id", "owner", "uid", "event_uids", "events_created", "created_at"])
     _ensure_owner_scoped_email_cache_table(conn, "email_urgency_alerts", """
         CREATE TABLE IF NOT EXISTS email_urgency_alerts (
             message_id TEXT,
@@ -547,6 +744,64 @@ def _init_scheduled_db():
             message_key TEXT NOT NULL,
             first_seen_at TEXT NOT NULL,
             PRIMARY KEY (owner, account_key, folder, message_key)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_message_index (
+            owner TEXT NOT NULL DEFAULT '',
+            account_key TEXT NOT NULL DEFAULT '',
+            folder TEXT NOT NULL,
+            uid TEXT NOT NULL,
+            message_id TEXT,
+            subject TEXT,
+            from_name TEXT,
+            from_address TEXT,
+            to_text TEXT,
+            cc_text TEXT,
+            date_iso TEXT,
+            date_display TEXT,
+            date_epoch REAL DEFAULT 0,
+            size INTEGER DEFAULT 0,
+            flags TEXT DEFAULT '',
+            has_attachments INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner, account_key, folder, uid)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS ix_email_message_index_folder_date
+        ON email_message_index(owner, account_key, folder, date_epoch DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS ix_email_message_index_message_id
+        ON email_message_index(owner, account_key, message_id)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_body_preview_cache (
+            owner TEXT NOT NULL DEFAULT '',
+            account_key TEXT NOT NULL DEFAULT '',
+            folder TEXT NOT NULL,
+            uid TEXT NOT NULL,
+            message_id TEXT,
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner, account_key, folder, uid)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS ix_email_body_preview_message_id
+        ON email_body_preview_cache(owner, account_key, message_id)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_attachment_metadata_cache (
+            owner TEXT NOT NULL DEFAULT '',
+            account_key TEXT NOT NULL DEFAULT '',
+            folder TEXT NOT NULL,
+            uid TEXT NOT NULL,
+            message_id TEXT,
+            attachments_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner, account_key, folder, uid)
         )
     """)
     # Boundary cache — LLM-detected sig/quote start positions in the body.
@@ -668,12 +923,13 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         try:
             if account_id:
                 row = db.query(_EA).filter(_EA.id == account_id, _EA.enabled == True).first()  # noqa: E712
-                # If the resolved row belongs to a different owner, treat as
+                # If the resolved row isn't visible to this owner, treat as
                 # not-found rather than silently serving it. This is a defense
                 # in depth — `require_owner` already calls `_assert_owns_account`
                 # for query-param account_ids, but other callers (cookbook
-                # rules, scheduled poller) may not.
-                if row is not None and owner and row.owner and row.owner != owner:
+                # rules, scheduled poller) may not. Ownerless legacy rows are
+                # only visible on a mailbox match, same as the fallback below.
+                if row is not None and owner and not _account_visible_to_owner(row, owner):
                     row = None
             # Fallback path — restrict to this owner's accounts so we don't
             # leak another user's default mailbox to an unconfigured user.
@@ -701,10 +957,16 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "imap_password": _decrypt(row.imap_password or ""),
                     "imap_starttls": bool(row.imap_starttls),
                     "from_address": row.from_address or row.imap_user or "",
+                    "oauth_provider": row.oauth_provider or "",
+                    "oauth_access_token": row.oauth_access_token or "",
+                    "oauth_refresh_token": row.oauth_refresh_token or "",
+                    "oauth_token_expiry": row.oauth_token_expiry or "",
+                    "display_name": row.display_name or "",
                 }
-                if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
+                is_oauth = bool(cfg.get("oauth_provider"))
+                if not is_oauth and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
                     logger.warning(f"SMTP not configured for account {row.name!r}")
-                if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
+                if not is_oauth and not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
                     logger.warning(f"IMAP not configured for account {row.name!r}")
                 return cfg
         finally:
@@ -811,6 +1073,14 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
     # `timeout` is overridable so short-lived callers (e.g. the service-health
     # probe) can impose a tighter budget than the default IMAP timeout.
     cfg = _get_email_config(account_id, owner=owner)
+    # Send-only (SMTP-only) account: no IMAP host means there is no inbox to
+    # read. Bail out with a clear, typed error instead of handing an empty
+    # host to imaplib — IMAP4("", 993) silently dials localhost:993 and fails
+    # with a confusing "[Errno 111] Connection refused" on every inbox poll.
+    if not cfg.get("imap_host"):
+        raise EmailNotConfiguredError(
+            f"IMAP is not configured for account {cfg.get('account_name') or 'default'!r}"
+        )
     # Connection mode:
     #   STARTTLS on → plain + upgrade
     #   STARTTLS off + port 993 → implicit SSL (IMAPS)
@@ -825,12 +1095,19 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
         timeout=timeout,
     )
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        if cfg.get("oauth_provider") == "google":
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        else:
+            conn.login(cfg["imap_user"], cfg["imap_password"])
     except Exception:
         # A failed AUTHENTICATE (e.g. an Office 365 app password on an
-        # MFA-enabled tenant, #3174) otherwise orphans the already-connected
-        # socket; close it before propagating so a misconfigured account
-        # can't leak one descriptor per retry / background poller pass.
+        # MFA-enabled tenant, #3174, or an expired/revoked OAuth token)
+        # otherwise orphans the already-connected socket; close it before
+        # propagating so a misconfigured account can't leak one descriptor
+        # per retry / background poller pass.
         try:
             conn.shutdown()
         except Exception:
@@ -1017,10 +1294,15 @@ def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str
     try:
         c = _imap_connect(account_id, owner=owner)
         c.select(_q(src))
-        status, _ = c.copy(uid, _q(dest))
+        # Callers pass a real IMAP UID (from conn.uid("SEARCH", ...)). copy()
+        # and store() operate on message SEQUENCE NUMBERS, so addressing them
+        # with a UID moved/deleted the wrong message (or silently no-oped when
+        # the UID exceeded the message count). Use the UID commands, matching
+        # the move/delete path in email_routes.py.
+        status, _ = c.uid("COPY", uid, _q(dest))
         if status != "OK":
             return False
-        c.store(uid, "+FLAGS", "\\Deleted")
+        c.uid("STORE", uid, "+FLAGS", "\\Deleted")
         c.expunge()
         return True
     except Exception as e:
@@ -1109,31 +1391,62 @@ def _list_attachments_from_msg(msg):
         return attachments
     idx = 0
     for part in msg.walk():
-        if part.is_multipart():
-            continue
         cd = str(part.get("Content-Disposition", ""))
         ct = part.get_content_type()
+        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        if part.is_multipart() and not is_attached_email:
+            continue
         # Skip text/html body parts (only consider real attachments)
         if ct in ("text/plain", "text/html") and "attachment" not in cd:
             continue
         filename = part.get_filename()
         if filename:
             filename = _decode_header(filename)
+            if ct == "message/rfc822" and not re.search(r"\.[A-Za-z0-9]{1,8}$", filename):
+                filename = f"{filename}.eml"
         else:
             # Inline images, etc. - generate a name
-            ext = ct.split("/")[-1] if "/" in ct else "bin"
+            ext = "eml" if ct == "message/rfc822" else (ct.split("/")[-1] if "/" in ct else "bin")
             filename = f"attachment_{idx}.{ext}"
         payload = part.get_payload(decode=True)
-        size = len(payload) if payload else 0
+        if payload is None and ct == "message/rfc822":
+            try:
+                payload = part.as_bytes()
+            except Exception:
+                payload = b""
+        size = len(payload) if payload is not None else 0
+        content_id = (part.get("Content-ID") or "").strip().strip("<>")
         attachments.append({
             "index": idx,
             "filename": filename,
             "content_type": ct,
             "size": size,
             "is_inline": "inline" in cd.lower(),
+            "content_id": content_id,
         })
         idx += 1
     return attachments
+
+
+def _is_likely_signature_image_attachment(att: dict) -> bool:
+    """Match the reader's inline signature/logo image filter."""
+    filename = str((att or {}).get("filename") or "").lower()
+    if not re.search(r"\.(png|jpe?g|gif|bmp|svg|webp)$", filename):
+        return False
+    size = int((att or {}).get("size") or 0)
+    if re.search(r"^image\d{3,}\.(png|jpe?g|gif)$", filename):
+        return True
+    if re.search(r"^(signature|logo|sig|footer|banner)[-_\d]*\.(png|jpe?g|gif|svg)$", filename):
+        return True
+    return 0 < size < 30 * 1024
+
+
+def _has_visible_attachments(msg) -> bool:
+    """Return True only for attachments the reader will render as chips."""
+    return any(
+        not _is_likely_signature_image_attachment(att)
+        for att in _list_attachments_from_msg(msg)
+    )
 
 
 def _extract_attachment_to_disk(msg, index, target_dir):
@@ -1142,23 +1455,31 @@ def _extract_attachment_to_disk(msg, index, target_dir):
         return None
     idx = 0
     for part in msg.walk():
-        if part.is_multipart():
-            continue
         cd = str(part.get("Content-Disposition", ""))
         ct = part.get_content_type()
+        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        if part.is_multipart() and not is_attached_email:
+            continue
         if ct in ("text/plain", "text/html") and "attachment" not in cd:
             continue
         if idx == index:
             filename = part.get_filename()
             if filename:
                 filename = _decode_header(filename)
+                if ct == "message/rfc822" and not re.search(r"\.[A-Za-z0-9]{1,8}$", filename):
+                    filename = f"{filename}.eml"
             else:
-                ext = ct.split("/")[-1] if "/" in ct else "bin"
+                ext = "eml" if ct == "message/rfc822" else (ct.split("/")[-1] if "/" in ct else "bin")
                 filename = f"attachment_{idx}.{ext}"
             # Sanitize
             safe_name = re.sub(r"[^\w\s\-.]", "_", filename).strip()
             payload = part.get_payload(decode=True)
-            if not payload:
+            if payload is None and ct == "message/rfc822":
+                try:
+                    payload = part.as_bytes()
+                except Exception:
+                    payload = b""
+            if payload is None:
                 return None
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = target_dir / safe_name
@@ -1540,6 +1861,10 @@ class SendEmailRequest(BaseModel):
     attachments: Optional[List[str]] = None
     # Which account to send from. None = default account.
     account_id: Optional[str] = None
+    # Source message for replies. When present, /send marks this exact message
+    # answered after successful delivery so it leaves undone/reply-soon views.
+    source_uid: Optional[str] = None
+    source_folder: Optional[str] = None
     # Internal marker for Odysseus-generated mail (e.g. reminder, scheduled).
     odysseus_kind: Optional[str] = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.

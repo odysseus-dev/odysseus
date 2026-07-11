@@ -11,6 +11,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from src.runtime_paths import get_app_root
+
 logger = logging.getLogger(__name__)
 
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
@@ -502,13 +504,13 @@ class McpManager:
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
         import sys
-        from src.builtin_mcp import _BUILTIN_SERVERS
+        from src.builtin_mcp import _BUILTIN_SERVERS, builtin_python_env
 
         if server_id not in _BUILTIN_SERVERS:
             return False
 
         script_rel, name = _BUILTIN_SERVERS[server_id]
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = get_app_root()
         script_path = os.path.join(base_dir, script_rel)
 
         # Clean up old connection
@@ -521,7 +523,7 @@ class McpManager:
                 transport="stdio",
                 command=sys.executable,
                 args=[script_path],
-                env={"PYTHONPATH": base_dir},
+                env=builtin_python_env(base_dir),
             )
             if ok:
                 logger.info(f"Reconnected builtin MCP server: {name}")

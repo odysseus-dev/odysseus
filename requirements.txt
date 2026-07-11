@@ -3,8 +3,9 @@ uvicorn
 python-multipart
 python-dotenv
 httpx
-pydantic>=2.0
-pydantic-settings>=2.0
+httpcore>=1.0,<2.0
+pydantic>=2.13.4
+pydantic-settings>=2.14.1
 SQLAlchemy
 pypdf
 beautifulsoup4

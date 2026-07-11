@@ -5,8 +5,9 @@ offers and pair to it, without duplicating any LLM logic.
 
 Auth is enforced globally by AuthMiddleware (app.py), so reaching a handler here
 means the caller is authenticated by either a cookie session or a Bearer `ody_`
-API token. The read endpoints (ping/info/models) accept either; the pairing
-endpoints are admin-cookie only.
+API token. Ping/info accept either credential type, models requires a chat-
+scoped API token for bearer callers, and the pairing endpoints are admin-cookie
+only.
 
 Pairing CSRF posture: minting happens ONLY on POST. The session cookie is
 SameSite=Lax (routes/auth_routes.py), which a browser does not send on a
@@ -18,7 +19,7 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 
 import html
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
@@ -50,6 +51,18 @@ def owner_can_see(row_owner, owner) -> bool:
     SQL filter.
     """
     return row_owner is None or row_owner == owner
+
+
+def require_models_scope(request: Request) -> None:
+    """Require the companion chat scope for bearer-token model inventory."""
+    if not getattr(request.state, "api_token", False):
+        return
+    scopes = getattr(request.state, "api_token_scopes", None) or []
+    if isinstance(scopes, str):
+        scopes = [scope.strip() for scope in scopes.split(",")]
+    scope_set = {str(scope).strip() for scope in scopes if str(scope).strip()}
+    if _pairing.COMPANION_SCOPE not in scope_set:
+        raise HTTPException(403, "API token requires chat scope")
 
 
 def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
@@ -103,6 +116,7 @@ def setup_companion_routes() -> APIRouter:
         rows -- the same rule as owner_filter. Read-only; never returns api_key
         material.
         """
+        require_models_scope(request)
         import json as _json
 
         from core.database import SessionLocal, ModelEndpoint

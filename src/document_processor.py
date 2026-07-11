@@ -199,11 +199,20 @@ def _fit_inline_attachment_text(
     return text[:remaining] + marker, 0
 
 
-def _process_office_document(path: str, display_name: str) -> str:
+def _process_office_document(
+    path: str,
+    display_name: str,
+    session_id: str | None = None,
+    auto_opened_docs: list[Dict[str, Any]] | None = None,
+    owner: str | None = None,
+) -> str:
     """Extract an Office/EPUB document to Markdown via the optional markitdown dep.
 
     Falls back to a friendly banner when markitdown is unavailable or finds no
-    text, so a missing optional dependency never breaks the chat path.
+    text, so a missing optional dependency never breaks the chat path. When a
+    session_id is provided AND the extraction succeeded, the FULL text is also
+    saved as a Document so the agent can page through it via
+    `manage_documents action=read offset=…` after the inline copy is capped.
     """
     from src.markitdown_runtime import (
         is_markitdown_format,
@@ -218,6 +227,46 @@ def _process_office_document(path: str, display_name: str) -> str:
     if markdown and markdown.strip():
         title = os.path.splitext(os.path.basename(path))[0]
         body, marker = _truncate_inline(markdown)
+
+        # Persist the full extracted text as a Document. The agent's existing
+        # manage_documents tool can then read past the inline cap with offset.
+        doc_id = None
+        if session_id:
+            try:
+                from src.office_doc import create_office_document
+                doc_id = create_office_document(
+                    session_id=session_id,
+                    upload_id=os.path.basename(path),
+                    title=title,
+                    body_text=markdown,
+                )
+                if doc_id and auto_opened_docs is not None:
+                    from src.database import SessionLocal, Document
+                    _db = SessionLocal()
+                    try:
+                        _d = _db.query(Document).filter(Document.id == doc_id).first()
+                        if _d:
+                            auto_opened_docs.append({
+                                "doc_id": _d.id,
+                                "title": _d.title,
+                                "language": _d.language,
+                                "content": _d.current_content,
+                                "version": _d.version_count,
+                            })
+                    finally:
+                        _db.close()
+            except Exception as e:
+                logger.warning("Office auto-doc creation failed for %s: %s", path, e)
+
+        # Upgrade the truncation marker with a hint pointing at the full doc so
+        # the agent knows it can read the rest.
+        if doc_id and marker:
+            marker = (
+                f"\n[…truncated for inline context — full {len(markdown):,} chars "
+                f"saved as document `{doc_id}`. Use `manage_documents` with "
+                f"action=read, document_id={doc_id}, offset=<N> to page through.]"
+            )
+
         return f"\n\n[Document content — {title}]:\n{body}{marker}"
 
     # No content: tell the user whether to install the optional dep or whether
@@ -391,7 +440,10 @@ def build_user_content(
             try:
                 with open(path, "rb") as image_file:
                     encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-                image_format = ext[1:]
+                # Extensionless uploads (e.g. a pasted screenshot) have no ext,
+                # so fall back to the resolved MIME subtype rather than emitting
+                # an invalid "data:image/;base64," with an empty subtype.
+                image_format = ext[1:] or (mime.split("/", 1)[1] if mime.startswith("image/") else "png")
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:image/{image_format};base64,{encoded_string}"},
@@ -407,7 +459,7 @@ def build_user_content(
             try:
                 with open(path, "rb") as audio_file:
                     encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
-                audio_format = ext[1:]
+                audio_format = ext[1:] or (mime.split("/", 1)[1] if mime.startswith("audio/") else "mpeg")
                 content.append({
                     "type": "audio",
                     "audio": {"url": f"data:audio/{audio_format};base64,{encoded_string}"},
@@ -521,7 +573,13 @@ def build_user_content(
             elif mime.startswith("text/") or _is_text_file(path):
                 extracted_text = _process_text_file(path)
             else:
-                extracted_text = _process_office_document(path, display_name)
+                extracted_text = _process_office_document(
+                    path,
+                    display_name,
+                    session_id=session_id,
+                    auto_opened_docs=auto_opened_docs,
+                    owner=owner,
+                )
 
             extracted_text, inline_attachment_remaining = _fit_inline_attachment_text(
                 extracted_text,

@@ -36,7 +36,38 @@ def test_npx_package_from_args_prefers_package_after_y_flag(monkeypatch):
     ) == "@playwright/mcp@latest"
 
 
-def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeypatch):
+def test_npx_cache_check_detects_scoped_package_in_npx_cache(monkeypatch, tmp_path):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    package_json = (
+        tmp_path
+        / ".npm"
+        / "_npx"
+        / "9833c18b2d85bc59"
+        / "node_modules"
+        / "@playwright"
+        / "mcp"
+        / "package.json"
+    )
+    package_json.parent.mkdir(parents=True)
+    package_json.write_text('{"name":"@playwright/mcp","version":"0.0.76"}', encoding="utf-8")
+
+    async def unexpected_exec(*args, **kwargs):
+        raise AssertionError("cache hit should not shell out to npx")
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("npm_config_cache", raising=False)
+    monkeypatch.setattr(builtin_mcp.asyncio, "create_subprocess_exec", unexpected_exec)
+
+    assert asyncio.run(
+        builtin_mcp._is_npx_package_cached(
+            "npx",
+            "@playwright/mcp@latest",
+            timeout_s=2,
+        )
+    ) is True
+
+
+def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeypatch, tmp_path):
     builtin_mcp = _load_builtin_mcp(monkeypatch)
 
     async def unsupported_exec(*args, **kwargs):
@@ -51,6 +82,8 @@ def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeyp
 
     monkeypatch.setattr(builtin_mcp.asyncio, "create_subprocess_exec", unsupported_exec)
     monkeypatch.setattr(builtin_mcp.subprocess, "run", fake_run)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("npm_config_cache", raising=False)
 
     assert asyncio.run(
         builtin_mcp._is_npx_package_cached(
@@ -69,7 +102,7 @@ def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeyp
     assert captured["kwargs"]["timeout"] == 2
 
 
-def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch):
+def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch, tmp_path):
     builtin_mcp = _load_builtin_mcp(monkeypatch)
 
     async def unsupported_exec(*args, **kwargs):
@@ -80,6 +113,8 @@ def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch):
 
     monkeypatch.setattr(builtin_mcp.asyncio, "create_subprocess_exec", unsupported_exec)
     monkeypatch.setattr(builtin_mcp.subprocess, "run", fake_run)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("npm_config_cache", raising=False)
 
     assert asyncio.run(
         builtin_mcp._is_npx_package_cached(

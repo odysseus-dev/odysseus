@@ -36,8 +36,10 @@ _IMPORTED_AGENT_LOOP = None
 try:
     from src.agent_loop import (
         _detect_admin_intent,
+        _classify_agent_request,
         _compute_final_metrics,
         _append_tool_results,
+        _insert_before_latest_user,
         _MCP_KEYWORDS,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
@@ -60,6 +62,46 @@ def test_import_stubs_do_not_leak_into_later_tests():
 
 def test_mcp_keyword_gate_matches_literal_mcp_requests():
     assert "mcp" in _MCP_KEYWORDS
+
+
+def test_polish_internet_search_request_classifies_as_web():
+    intent = _classify_agent_request(
+        [],
+        "Wyszukaj w internecie i podaj temperaturę w Lubartowie dzisiaj",
+    )
+
+    assert intent["low_signal"] is False
+    assert "web" in intent["domains"]
+
+
+def test_insert_before_latest_user_places_context_before_last_user_turn():
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "latest"},
+    ]
+    context = {"role": "system", "content": "context"}
+
+    out = _insert_before_latest_user(messages, context)
+
+    assert out == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        context,
+        {"role": "user", "content": "latest"},
+    ]
+    assert messages == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "latest"},
+    ]
+
+
+def test_insert_before_latest_user_appends_when_no_user_message_exists():
+    messages = [{"role": "assistant", "content": "reply"}]
+    context = {"role": "system", "content": "context"}
+
+    assert _insert_before_latest_user(messages, context) == [messages[0], context]
 
 
 # ---------------------------------------------------------------------------

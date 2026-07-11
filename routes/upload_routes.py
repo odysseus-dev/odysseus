@@ -3,17 +3,146 @@ import os
 import time
 import json
 import asyncio
-from fastapi import APIRouter, Request, File, UploadFile, HTTPException
-from typing import List
+import shutil
+import uuid
+from pathlib import Path
+from fastapi import APIRouter, Request, File, UploadFile, HTTPException, Form
+from typing import List, Optional
 import logging
 from core.middleware import require_admin
-from src.auth_helpers import get_current_user
-from src.upload_handler import count_recent_uploads
+from core.database import (
+    SessionLocal,
+    ChatMessage as DbChatMessage,
+    CalendarCal,
+    CalendarEvent,
+    Document,
+    DocumentVersion,
+    GalleryImage,
+    Note,
+    Session as DbSession,
+)
+from src.auth_helpers import effective_user
+from src.attachment_refs import attachment_refs_from_metadata
+from src.constants import GENERATED_IMAGES_DIR
+from src.upload_handler import (
+    UploadCleanupSafetyError,
+    count_recent_uploads,
+    extract_upload_ids,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
 UPLOAD_RESPONSE_HEADERS = {"X-Content-Type-Options": "nosniff"}
+
+def _upload_ids_from_persisted_text(value: object) -> set[str]:
+    """Return canonical upload IDs embedded in persisted text.
+
+    This covers attachment reference lines/URIs and the PDF source markers
+    stored by the document editor. False positives are intentionally
+    conservative: retaining an extra upload is safer than deleting referenced
+    bytes.
+    """
+    return extract_upload_ids(value)
+
+
+def _upload_ids_from_message_metadata(raw_metadata: object) -> set[str]:
+    """Extract attachment IDs from a persisted chat metadata JSON value.
+
+    Malformed metadata raises instead of being treated as an empty reference
+    set. The admin cleanup route catches that failure and aborts cleanup.
+    """
+    if raw_metadata in (None, ""):
+        return set()
+    if isinstance(raw_metadata, str):
+        metadata = json.loads(raw_metadata)
+    else:
+        metadata = raw_metadata
+    if not isinstance(metadata, dict):
+        raise ValueError("chat message metadata must be a JSON object")
+
+    attachments = metadata.get("attachments")
+    if attachments is not None:
+        if not isinstance(attachments, list) or any(
+            not isinstance(item, dict) for item in attachments
+        ):
+            raise ValueError("chat message attachments metadata is malformed")
+
+    ids = {
+        str(ref["attachment_id"])
+        for ref in attachment_refs_from_metadata(metadata)
+        if ref.get("attachment_id")
+    }
+    # Preserve canonical IDs even in older metadata shapes not normalized by
+    # attachment_refs_from_metadata().
+    ids.update(_upload_ids_from_persisted_text(json.dumps(metadata)))
+    return ids
+
+
+def _collect_persisted_upload_references() -> tuple[set[str], set[str]]:
+    """Collect upload IDs/hashes still referenced by durable application data.
+
+    The caller must treat any exception as an incomplete scan and fail closed.
+    There is no distinct artifact table in the current schema; artifact-like
+    attachment references persisted in chat/document text are covered by the
+    canonical-ID scan.
+    """
+    referenced_ids: set[str] = set()
+    referenced_hashes: set[str] = set()
+    db = SessionLocal()
+    try:
+        for content, raw_metadata in db.query(
+            DbChatMessage.content,
+            DbChatMessage.meta_data,
+        ).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(content))
+            referenced_ids.update(_upload_ids_from_message_metadata(raw_metadata))
+
+        for (content,) in db.query(Document.current_content).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(content))
+
+        for (content,) in db.query(DocumentVersion.content).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(content))
+
+        for filename, file_hash in db.query(
+            GalleryImage.filename,
+            GalleryImage.file_hash,
+        ).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(filename))
+            if file_hash:
+                referenced_hashes.add(str(file_hash))
+
+        for image_url, color, content, items in db.query(
+            Note.image_url,
+            Note.color,
+            Note.content,
+            Note.items,
+        ).yield_per(500):
+            for value in (image_url, color, content, items):
+                referenced_ids.update(_upload_ids_from_persisted_text(value))
+
+        for (color,) in db.query(CalendarCal.color).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(color))
+
+        for color, description, location in db.query(
+            CalendarEvent.color,
+            CalendarEvent.description,
+            CalendarEvent.location,
+        ).yield_per(500):
+            for value in (color, description, location):
+                referenced_ids.update(_upload_ids_from_persisted_text(value))
+
+        return referenced_ids, referenced_hashes
+    finally:
+        db.close()
+
+
+def _run_reference_safe_cleanup(upload_handler) -> int:
+    referenced_ids, referenced_hashes = _collect_persisted_upload_references()
+    return upload_handler.cleanup_old_uploads(
+        referenced_upload_ids=referenced_ids,
+        referenced_upload_hashes=referenced_hashes,
+    )
 
 def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
@@ -50,10 +179,90 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(404, "File not found")
 
         raise HTTPException(404, "File not found")
+
+    def _valid_session_id_for_owner(db, session_id: str | None, owner: str | None) -> str | None:
+        if not session_id:
+            return None
+        sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if not sess:
+            return None
+        if owner and sess.owner and sess.owner != owner:
+            return None
+        return session_id
+
+    def _promote_chat_image_to_gallery(meta: dict, owner: str | None, session_id: str | None = None) -> str | None:
+        """Make chat-uploaded images visible in Gallery without changing chat storage."""
+        is_image_file = getattr(upload_handler, "is_image_file", None)
+        if not callable(is_image_file):
+            return None
+        if not is_image_file(meta.get("name", ""), meta.get("mime", "")):
+            return None
+
+        source_path = meta.get("path")
+        if not source_path or not os.path.isfile(source_path):
+            return None
+
+        db = SessionLocal()
+        try:
+            file_hash = meta.get("hash")
+            if file_hash:
+                q = db.query(GalleryImage).filter(
+                    GalleryImage.file_hash == file_hash,
+                    GalleryImage.is_active == True,  # noqa: E712
+                )
+                if owner:
+                    q = q.filter(GalleryImage.owner == owner)
+                existing = q.first()
+                if existing:
+                    return existing.id
+
+            image_dir = Path(GENERATED_IMAGES_DIR)
+            image_dir.mkdir(parents=True, exist_ok=True)
+            ext = Path(meta.get("name") or source_path).suffix.lower()
+            if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+                mime_ext = {
+                    "image/png": ".png",
+                    "image/jpeg": ".jpg",
+                    "image/jpg": ".jpg",
+                    "image/webp": ".webp",
+                    "image/gif": ".gif",
+                }.get(meta.get("mime", ""))
+                ext = mime_ext or ".png"
+            filename = f"{uuid.uuid4().hex[:12]}{ext}"
+            dest_path = image_dir / filename
+            shutil.copy2(source_path, dest_path)
+
+            image_id = str(uuid.uuid4())
+            db.add(GalleryImage(
+                id=image_id,
+                filename=filename,
+                prompt=meta.get("name") or "Chat upload",
+                model="chat-upload",
+                owner=owner,
+                session_id=_valid_session_id_for_owner(db, session_id, owner),
+                file_hash=file_hash,
+                width=meta.get("width"),
+                height=meta.get("height"),
+                file_size=meta.get("size"),
+            ))
+            db.commit()
+            return image_id
+        except Exception as e:
+            db.rollback()
+            logger.warning("Failed to add chat image upload to gallery: %s", e)
+            return None
+        finally:
+            db.close()
     
     @router.post("")
-    async def api_upload(request: Request, files: List[UploadFile] = File(...)):
+    async def api_upload(
+        request: Request,
+        files: List[UploadFile] = File(...),
+        session_id: Optional[str] = Form(None),
+    ):
         """Upload files with enhanced security and organization."""
+        if not isinstance(session_id, str):
+            session_id = None
         if not files:
             raise HTTPException(400, "No files uploaded")
             
@@ -78,18 +287,25 @@ def setup_upload_routes(upload_handler):
         
         for u in files:
             try:
-                meta = upload_handler.save_upload(u, client_ip, owner=get_current_user(request))
-                out.append({
+                owner = effective_user(request)
+                meta = upload_handler.save_upload(u, client_ip, owner=owner)
+                gallery_id = _promote_chat_image_to_gallery(meta, owner, session_id)
+                item = {
                     "id": meta["id"],
                     "name": meta["name"],
                     "mime": meta["mime"],
                     "size": meta["size"],
                     "hash": meta["hash"],
+                    "checksum_sha256": meta.get("checksum_sha256") or meta["hash"],
                     "uploaded_at": meta["uploaded_at"],
+                    "created_at": meta.get("created_at") or meta["uploaded_at"],
                     "width": meta.get("width"),
                     "height": meta.get("height"),
                     "is_duplicate": meta.get("is_duplicate", False)
-                })
+                }
+                if gallery_id:
+                    item["gallery_id"] = gallery_id
+                out.append(item)
             except HTTPException:
                 raise
             except Exception as e:
@@ -105,7 +321,23 @@ def setup_upload_routes(upload_handler):
     async def manual_cleanup(request: Request):
         """Manually trigger cleanup of old uploads."""
         require_admin(request)
-        cleaned_count = upload_handler.cleanup_old_uploads()
+        try:
+            cleaned_count = await asyncio.to_thread(
+                _run_reference_safe_cleanup,
+                upload_handler,
+            )
+        except UploadCleanupSafetyError:
+            logger.exception("Upload cleanup aborted because index safety checks failed")
+            raise HTTPException(
+                503,
+                "Upload cleanup aborted because upload index integrity could not be verified",
+            )
+        except Exception:
+            logger.exception("Upload cleanup skipped because reference discovery failed")
+            raise HTTPException(
+                503,
+                "Upload cleanup skipped because persisted references could not be verified",
+            )
         return {"status": "success", "files_cleaned": cleaned_count}
 
     @router.get("/stats")
@@ -128,17 +360,16 @@ def setup_upload_routes(upload_handler):
         import mimetypes as _mt
         # Look up original filename and owner from uploads.json
         original_name = file_id
-        info = None
-        uploads_db = os.path.join(_upload_root(), "uploads.json")
-        if os.path.exists(uploads_db):
-            with open(uploads_db, encoding="utf-8") as f:
-                db = json.load(f)
-            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
-            if info:
-                original_name = info.get("name", file_id)
+        # _load_upload_index() tolerates a missing/corrupt uploads.json (it falls
+        # back to the .bak sibling, then to {}), so a truncated DB degrades to
+        # "no metadata" instead of a 500 from an unhandled JSONDecodeError.
+        db = upload_handler._load_upload_index()
+        info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
+        if info:
+            original_name = info.get("name", file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
@@ -181,18 +412,41 @@ def setup_upload_routes(upload_handler):
 
     def _load_upload_info(file_id: str):
         """Look up the uploads.json record for a file_id, with owner/auth checks."""
-        info = None
-        uploads_db = os.path.join(_upload_root(), "uploads.json")
-        if os.path.exists(uploads_db):
-            with open(uploads_db, encoding="utf-8") as f:
-                db = json.load(f)
-            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
-        return info
+        # Corruption-tolerant load (see download_file): a bad uploads.json yields
+        # {} rather than raising JSONDecodeError out of the vision path.
+        db = upload_handler._load_upload_index()
+        return next((fi for fi in db.values() if fi.get("id") == file_id), None)
 
     def _vision_cache_path(file_id: str) -> str:
         cache_dir = os.path.join(_upload_root(), ".vision")
         os.makedirs(cache_dir, exist_ok=True)
         return os.path.join(cache_dir, file_id + ".txt")
+
+    def _sync_gallery_caption_for_upload(info: dict | None, owner: str | None, text: str) -> None:
+        """Copy upload OCR/vision text onto the promoted gallery image row."""
+        if not info:
+            return
+        file_hash = info.get("hash")
+        if not file_hash:
+            return
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(
+                GalleryImage.file_hash == file_hash,
+                GalleryImage.is_active == True,  # noqa: E712
+            )
+            if owner:
+                q = q.filter(GalleryImage.owner == owner)
+            img = q.first()
+            if not img:
+                return
+            img.caption = (text or "").strip()
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("Failed to sync OCR caption to gallery image: %s", e)
+        finally:
+            db.close()
 
     @router.get("/{file_id}/vision")
     async def get_vision_text(request: Request, file_id: str, force: int = 0):
@@ -204,7 +458,7 @@ def setup_upload_routes(upload_handler):
         info = _load_upload_info(file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
@@ -220,7 +474,9 @@ def setup_upload_routes(upload_handler):
         if not force and os.path.exists(cache_path):
             try:
                 with open(cache_path, encoding="utf-8") as f:
-                    return {"text": f.read(), "cached": True}
+                    cached_text = f.read()
+                _sync_gallery_caption_for_upload(info, file_owner or current_user, cached_text)
+                return {"text": cached_text, "cached": True}
             except Exception as e:
                 logger.warning(f"Vision cache read failed for {file_id}: {e}")
         from src.document_processor import analyze_image_with_vl
@@ -234,6 +490,7 @@ def setup_upload_routes(upload_handler):
                 f.write(text)
         except Exception as e:
             logger.warning(f"Vision cache write failed for {file_id}: {e}")
+        _sync_gallery_caption_for_upload(info, file_owner or current_user, text)
         return {"text": text, "cached": False}
 
     @router.put("/{file_id}/vision")
@@ -247,7 +504,7 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(404, "File not found")
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner")
         if auth_configured:
             if not current_user:
@@ -255,12 +512,16 @@ def setup_upload_routes(upload_handler):
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
                 raise HTTPException(404, "File not found")
         _resolve_upload_path(file_id)
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Request body must be valid JSON")
         text = (body or {}).get("text", "")
         if not isinstance(text, str):
             raise HTTPException(400, "text must be a string")
         with open(_vision_cache_path(file_id), "w", encoding="utf-8") as f:
             f.write(text)
+        _sync_gallery_caption_for_upload(info, file_owner or current_user, text)
         return {"ok": True}
 
     async def periodic_rate_limit_cleanup():

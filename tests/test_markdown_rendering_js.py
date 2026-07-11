@@ -18,12 +18,24 @@ def node_available():
         pytest.skip("node binary not on PATH")
 
 
-def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
+def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", with_katex: bool = False):
     script = textwrap.dedent(
         r"""
         import fs from 'node:fs';
 
         globalThis.window = { location: { origin: 'http://localhost' }, katex: null };
+        if (__WITH_KATEX__) {
+          // Minimal stand-in for the CDN katex global: wraps the source so tests
+          // can assert what was (or wasn't) handed to KaTeX.
+          const katexStub = {
+            renderToString(src, opts) {
+              const display = !!(opts && opts.displayMode);
+              return `<span class="katex" data-display="${display}">${src}</span>`;
+            },
+          };
+          globalThis.window.katex = katexStub;
+          globalThis.katex = katexStub;
+        }
         globalThis.document = {
           readyState: 'loading',
           addEventListener() {},
@@ -77,7 +89,9 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
         const input = JSON.parse(process.argv[1]);
         console.log(JSON.stringify({ html: __RENDER_EXPR__ }));
         """
-    ).replace("__RENDER_EXPR__", render_expr)
+    ).replace("__RENDER_EXPR__", render_expr).replace(
+        "__WITH_KATEX__", "true" if with_katex else "false"
+    )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script, json.dumps(markdown)],
         cwd=_REPO,
@@ -168,6 +182,63 @@ def test_extract_thinking_blocks_handles_thought_tag(node_available):
 
     assert result["thinkingBlocks"] == ["internal reasoning"]
     assert result["content"] == "Final answer."
+
+
+def test_url_inside_inline_code_is_not_autolinked(node_available):
+    # A URL inside a backtick span is preceded by a space, so the bare-URL
+    # autolink used to wrap it in an <a> tag (then swap it for an
+    # ___ALLOWED_HTML_ placeholder), corrupting the command shown to the user.
+    html = _run_markdown_case("Run `$j = irm http://127.0.0.1:3000/x` to fetch.")
+
+    assert "<code>$j = irm http://127.0.0.1:3000/x</code>" in html
+    assert "___ALLOWED_HTML_" not in html
+    assert "<a " not in html
+    assert 'href="http://127.0.0.1:3000/x"' not in html
+
+
+def test_url_outside_inline_code_is_still_autolinked(node_available):
+    # Inline code must not disable autolinking for bare URLs elsewhere in the
+    # same line.
+    html = _run_markdown_case("Use `irm` then visit https://example.com/page now.")
+
+    assert "<code>irm</code>" in html
+    assert 'href="https://example.com/page"' in html
+
+
+def test_inline_code_content_is_html_escaped(node_available):
+    # Inline code is now extracted before the global escape pass, so it must be
+    # escaped at extraction time (matching the fenced-code-block handling).
+    html = _run_markdown_case("Render `<b>$1 & 'q'</b>` literally.")
+
+    assert "<code>&lt;b&gt;$1 &amp; &#39;q&#39;&lt;/b&gt;</code>" in html
+    assert "<b>" not in html
+
+
+def test_currency_dollar_amounts_are_not_rendered_as_math(node_available):
+    # "$5 to $10" used to pair the two dollar signs as inline-math delimiters
+    # and render "5 to" through KaTeX. Pandoc-style rules now reject it: the
+    # closing $ is preceded by a space and followed by a digit.
+    html = _run_markdown_case(
+        "The price rose from $5 to $10 overnight.", with_katex=True
+    )
+
+    assert 'class="katex"' not in html
+    assert "$5" in html
+    assert "$10" in html
+
+
+def test_inline_math_still_renders_through_katex(node_available):
+    html = _run_markdown_case("Pythagoras: $x^2 + y^2 = z^2$ holds.", with_katex=True)
+
+    assert '<span class="katex" data-display="false">x^2 + y^2 = z^2</span>' in html
+    assert "$" not in html
+
+
+def test_display_math_still_renders_through_katex(node_available):
+    html = _run_markdown_case("$$\\frac{a}{b}$$", with_katex=True)
+
+    assert 'data-display="true"' in html
+    assert "$$" not in html
 
 
 def test_dotted_python_import_paths_are_not_autolinked(node_available):

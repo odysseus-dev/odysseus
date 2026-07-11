@@ -1,6 +1,5 @@
 """Webhook, API Token, and sync chat routes."""
 
-import asyncio
 import uuid
 import logging
 from typing import Optional
@@ -198,6 +197,8 @@ def setup_webhook_routes(
         "opencode-go": "https://opencode.ai/zen/go/v1",
         "fireworks": "https://api.fireworks.ai/inference/v1",
         "venice": "https://api.venice.ai/api/v1",
+        "kimi-code": "https://api.kimi.com/coding/v1",
+        "kimicode": "https://api.kimi.com/coding/v1",
     }
 
     # Model prefix → provider mapping for auto-detection
@@ -210,6 +211,8 @@ def setup_webhook_routes(
         "mistral": "mistral",
         "llama": "groq",
         "mixtral": "groq",
+        "kimi-for-coding": "kimi-code",
+        "kimi": "kimi-code",
     }
 
     def _resolve_base_url(model: Optional[str], provider: Optional[str]) -> Optional[str]:
@@ -342,8 +345,9 @@ def setup_webhook_routes(
                             resp = await client.get(models_url, headers=hdrs)
                             resp.raise_for_status()
                             data = resp.json()
-                            ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                            if not ids:
+                            items = data if isinstance(data, list) else (data.get("data") or [])
+                            ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+                            if not ids and isinstance(data, dict):
                                 ids = [
                                     m.get("name") or m.get("model")
                                     for m in (data.get("models") or [])
@@ -381,10 +385,10 @@ def setup_webhook_routes(
         sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()
 
-        asyncio.create_task(webhook_manager.fire("chat.completed", {
+        webhook_manager.fire_and_forget("chat.completed", {
             "session_id": session_id, "model": sess.model,
             "user_message": message[:2000], "response": reply[:2000],
-        }))
+        })
 
         return {"response": reply, "session_id": session_id, "model": sess.model}
 
