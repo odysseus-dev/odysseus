@@ -49,3 +49,40 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Web scraping and browser automation.
+# Selenium + Playwright for headless browser control, web scraping, testing.
+selenium
+playwright
+
+# PDF table and text extraction.
+# pdfplumber extracts tables and text from PDFs with high accuracy.
+pdfplumber
+
+# OCR — optical character recognition for images.
+# Requires tesseract-ocr system package: apt-get install tesseract-ocr
+pytesseract
+
+# Microsoft Word document manipulation.
+python-docx
+
+# Excel file read/write.
+openpyxl
+
+# Data analysis, CSV, tables.
+pandas
+
+# SSH/SFTP/SCP connections via Python.
+paramiko
+
+# MongoDB client.
+pymongo
+
+# PostgreSQL adapter.
+psycopg2-binary
+
+# Redis client and cache.
+redis
+
+# AWS S3 and other AWS services.
+boto3
