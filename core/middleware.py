@@ -73,6 +73,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
+        # Factory task HTML preview — self-contained LLM-generated page served for iframe embedding
+        is_factory_preview = (
+            (path.startswith("/api/factory/nodes/") and path.endswith("/preview"))
+            or path.startswith("/api/factory/preview/")
+        )
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -102,6 +107,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
+                "frame-ancestors 'self'"
+            )
+        elif is_factory_preview:
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+                "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob: https:; "
+                "connect-src 'self'; "
+                "form-action 'self'; "
+                "base-uri 'self'; "
                 "frame-ancestors 'self'"
             )
         else:

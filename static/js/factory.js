@@ -744,7 +744,8 @@ function _renderTaskDetail(taskId) {
                 <button class="factory-preview-refresh-btn" title="Refresh preview">↻ Refresh</button>
                 <button class="factory-preview-resize-btn" title="Toggle split direction">⬌</button>
               </div>
-              <iframe class="factory-preview-iframe" sandbox="allow-scripts" src="about:blank"></iframe>
+              <!-- sandbox: allow-scripts ONLY (no allow-same-origin) — the framed LLM output is treated as untrusted; without allow-same-origin it runs in an opaque origin and cannot reach parent.document, cookies, localStorage, or authed /api/* calls -->
+              <iframe class="factory-preview-iframe" sandbox="allow-scripts" src="${_API}/nodes/${task.id}/preview"></iframe>
             </div>
           </div>
         ` : `
@@ -776,12 +777,12 @@ function _renderTaskDetail(taskId) {
 
   // ── Preview wiring ──────────────────────────────────────────
   if (showPreview) {
-    const iframe = body.querySelector('.factory-preview-iframe');
-    if (iframe) iframe.srcdoc = output;
-
     body.querySelector('.factory-preview-refresh-btn')?.addEventListener('click', () => {
       const ifr = body.querySelector('.factory-preview-iframe');
-      if (ifr) ifr.srcdoc = output;
+      if (ifr) {
+        // Cache-bust so clicking Refresh always reloads even if content is unchanged.
+        ifr.src = `${_API}/nodes/${task.id}/preview?t=${Date.now()}`;
+      }
     });
 
     body.querySelector('.factory-preview-resize-btn')?.addEventListener('click', () => {
@@ -809,6 +810,25 @@ function _startPolling(projectId) {
       if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
     }
   }, 3000);
+}
+
+/**
+ * POST assembled preview HTML to the server and return a preview token URL.
+ * The server serves the HTML via GET /api/factory/preview/{token} with a
+ * permissive CSP (inline scripts + external fonts allowed), avoiding the
+ * strict parent CSP that srcdoc/blob: URLs would inherit.
+ */
+async function _postPreviewUrl(html) {
+  try {
+    const res = await fetch(`${_API}/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html })
+    });
+    if (!res.ok) return null;
+    const { token } = await res.json();
+    return token ? `${_API}/preview/${token}` : null;
+  } catch (_) { return null; }
 }
 
 /**
@@ -919,8 +939,7 @@ function _showProjectPreview(pages, htmlFiles, activeFile) {
   if (!showTabs && htmlFiles.length === 1) {
     const html = pages[htmlFiles[0]];
     if (html) {
-      const blob = new Blob([html], { type: 'text/html' });
-      window.open(URL.createObjectURL(blob), '_blank');
+      _postPreviewUrl(html).then(url => { if (url) window.open(url, '_blank'); });
     }
     return;
   }
@@ -947,7 +966,7 @@ function _showProjectPreview(pages, htmlFiles, activeFile) {
       </div>
     </div>
     <div class="factory-project-preview-frame-wrap">
-      <iframe id="factory-project-preview-iframe" sandbox="allow-scripts allow-same-origin allow-forms" src="about:blank"></iframe>
+      <iframe id="factory-project-preview-iframe" sandbox="allow-scripts" src="about:blank"></iframe>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -957,7 +976,10 @@ function _showProjectPreview(pages, htmlFiles, activeFile) {
   // Load a specific page into the iframe
   function _loadPage(file) {
     if (iframe && pages[file]) {
-      iframe.srcdoc = pages[file];
+      // POST assembled HTML → get token URL → set as iframe src.
+      // The server response carries the permissive factory CSP, avoiding
+      // the srcdoc CSP-inheritance problem.
+      _postPreviewUrl(pages[file]).then(url => { if (url && iframe) iframe.src = url; });
     }
   }
 
@@ -990,8 +1012,7 @@ function _showProjectPreview(pages, htmlFiles, activeFile) {
     const file = activeTab ? activeTab.dataset.file : Object.keys(pages)[0];
     const html = pages[file];
     if (html) {
-      const blob = new Blob([html], { type: 'text/html' });
-      window.open(URL.createObjectURL(blob), '_blank');
+      _postPreviewUrl(html).then(url => { if (url) window.open(url, '_blank'); });
     }
   });
 
@@ -1049,7 +1070,9 @@ function _renderProjectActions(container, project) {
     catch (err) { alert('Resume failed: ' + err.message); }
   });
   _el('factory-restart-btn')?.addEventListener('click', async () => {
-    const mode = info.status === 'completed' ? 'full' : 'partial';
+    // Full restart for completed/failed/blocked projects — partial only for
+    // running/paused (where we just want to retry stuck tasks, not redo work).
+    const mode = ['completed', 'failed', 'blocked'].includes(info.status) ? 'full' : 'partial';
     try { await restartProject(project.id, mode); await _openProjectStatus(project.id); }
     catch (err) { alert('Restart failed: ' + err.message); }
   });

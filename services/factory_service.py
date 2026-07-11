@@ -569,6 +569,51 @@ class FactoryService:
                     count += 1
             return count
 
+    def _promote_eligible_tasks(self, db: Session, project_id: int) -> int:
+        """Promote pending tasks whose dependencies are ALL completed to ready.
+
+        Unlike mark_ready_tasks (which only handles root tasks), this checks
+        the full dependency graph — a non-root task whose parents all completed
+        is also promoted. Used by restart_project to ensure reset tasks become
+        executable. Returns the count of promoted tasks.
+        """
+        edges = db.query(FactoryEdge).filter(
+            FactoryEdge.project_id == project_id
+        ).all()
+        # Build: node_id -> set of from_node_ids (its dependencies)
+        deps_map: Dict[int, set] = {}
+        for e in edges:
+            deps_map.setdefault(e.to_node_id, set()).add(e.from_node_id)
+
+        nodes = db.query(FactoryNode).filter(
+            FactoryNode.project_id == project_id,
+            FactoryNode.status == "pending",
+        ).all()
+
+        # Build a status lookup for all dependency source nodes in one query
+        dep_ids = set()
+        for ids in deps_map.values():
+            dep_ids.update(ids)
+        dep_status = {}
+        if dep_ids:
+            for dn in db.query(FactoryNode).filter(FactoryNode.id.in_(dep_ids)).all():
+                dep_status[dn.id] = dn.status
+
+        count = 0
+        for n in nodes:
+            dep_ids_for_n = deps_map.get(n.id, set())
+            if not dep_ids_for_n:
+                # Root task (no dependencies) — always eligible
+                n.status = "ready"
+                n.updated_at = _now()
+                count += 1
+            elif all(dep_status.get(did) == "completed" for did in dep_ids_for_n):
+                # All dependencies completed — eligible
+                n.status = "ready"
+                n.updated_at = _now()
+                count += 1
+        return count
+
     def start_project(self, project_id: int) -> Dict[str, Any]:
         """Transition project to running and mark root tasks as ready."""
         with get_db_session() as db:
@@ -782,7 +827,9 @@ class FactoryService:
             else:
                 db.query(FactoryNode).filter(
                     FactoryNode.project_id == project_id,
-                    FactoryNode.status.in_(["failed", "human_intervention", "cancelled"]),
+                    # running tasks are stale — the orchestrator is being replaced
+                # by relaunch, so any task that was in-flight must be reset.
+                FactoryNode.status.in_(["failed", "human_intervention", "cancelled", "running"]),
                 ).update({
                     "status": "pending", "result": None, "error": None,
                     "retries": 0, "updated_at": _now(),
@@ -791,18 +838,11 @@ class FactoryService:
             p.status = "queued"
             p.updated_at = _now()
 
-            # Re-mark root tasks as ready
-            edges = db.query(FactoryEdge).filter(
-                FactoryEdge.project_id == project_id
-            ).all()
-            has_incoming = {e.to_node_id for e in edges}
-            nodes = db.query(FactoryNode).filter(
-                FactoryNode.project_id == project_id
-            ).all()
-            for n in nodes:
-                if n.id not in has_incoming and n.status == "pending":
-                    n.status = "ready"
-                    n.updated_at = _now()
+            # Promote ALL eligible pending tasks to ready — not just root tasks.
+            # A pending task is eligible if ALL its dependencies are completed.
+            # This fixes the case where a non-root failed task is reset to pending
+            # but its parent is already completed (complete_task won't re-fire).
+            self._promote_eligible_tasks(db, project_id)
 
             self._log_event(db, project_id, event_type="project_restarted",
                             message=f"Project restarted ({mode})")
