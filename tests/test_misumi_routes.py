@@ -62,6 +62,22 @@ def test_respond_accepts_interface_string_context(tmp_path, monkeypatch):
     assert "shopping-list.md" in body["sources"][0]["path"]
 
 
+def test_general_chat_ignores_weak_single_term_repository_hits(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/misumi/respond",
+        json={
+            "intent": "reply",
+            "context": "Explain runtime in plain language",
+            "persona": "aoteru",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == []
+
+
 def test_domain_request_reports_absent_data_without_model_fallback(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     body = client.post(
