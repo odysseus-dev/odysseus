@@ -41,6 +41,9 @@ from src.agent_tools import (
     MAX_AGENT_ROUNDS,
 )
 
+from src.agent.loop_detector import LoopDetector, RecoveryLevel, StableSignature
+from src.agent.recovery import IntentSupervisor, RecoveryPrompts
+
 logger = logging.getLogger(__name__)
 
 
@@ -3231,37 +3234,15 @@ async def stream_agent_loop(
     # stuck firing the same tool call over and over with no text — burns
     # all 20 rounds, looks like the chat "died". Track recent call
     # signatures + consecutive no-text tool rounds to bail early.
-    _recent_call_sigs = collections.deque(maxlen=6)
-    _stuck_rounds = 0
-    # Frequency of each exact call signature (tool + args), for the runaway
-    # backstop. Counting identical repeats — not distinct same-tool calls —
-    # lets a legit batch (e.g. 18 calendar events at once) through.
-    _call_freq: collections.Counter = collections.Counter()
-    _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
-    _force_answer = False  # set by loop-breaker → next round runs with NO tools
-    # Supervisor: how many times we've nudged the model after it announced
-    # an action without emitting the tool call. Capped to prevent a model
-    # that *can't* call the tool from looping forever.
-    _intent_nudge_count = 0
-    _MAX_INTENT_NUDGES = 2
-
-    # "I said I would, then didn't" detector. The pattern that breaks debug
-    # loops on weak models (deepseek-v4-flash mid-2026): the model writes
-    # "Let me tail the output to see the error" and then ends the turn with
-    # no tool_calls. The intent is sincere but the function call gets dropped.
-    # Match the common phrasings + an action verb that maps to an available
-    # tool, so we don't nudge on harmless transitional text like "let me
-    # know what you think".
-    _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
-        r"i should|we should|i must|we must|going to|let's)\s+"
-        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
-        r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
-        r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
-        r"\b[^.\n]{0,140}",
-        re.IGNORECASE,
+    # Loop detection — delegated to src.agent modules
+    _loop_detector = LoopDetector(
+        max_rounds=max_rounds,
+        stall_threshold=4,
+        runaway_threshold=15,
     )
+    _intent_supervisor = IntentSupervisor(max_nudges=2)
+    _force_answer = False  # kept for backward compat with other code paths
+    _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
@@ -3817,23 +3798,14 @@ async def stream_agent_loop(
             # actual tool now") and loop again. Capped at
             # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
             # tool doesn't pin us in a forever loop.
+            # Intent-without-action via IntentSupervisor
             _intent_text = _THINK_RE.sub("", cleaned_round).strip()
-            _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
-            # Only nudge when the round REALLY looks like an unfinished
-            # promise: short response (<400 chars), no fenced code/answer,
-            # and an action-intent phrase was matched. Long answers that
-            # happen to contain "let me know" are not stalls.
-            _looks_like_promise = (
-                not guide_only
-                and _intent_match is not None
-                and len(_intent_text) < 400
-                and "```" not in _intent_text
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-            )
-            if _looks_like_promise:
-                _intent_nudge_count += 1
-                _matched_phrase = _intent_match.group(0).strip()
-                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+            if not guide_only and _intent_supervisor.detect(_intent_text) and _intent_supervisor.should_nudge():
+                _intent_supervisor.nudge()
+                _INTENT_RE = _intent_supervisor._INTENT_RE
+                _intent_match = _INTENT_RE.search(_intent_text)
+                _matched_phrase = _intent_match.group(0).strip() if _intent_match else ""
+                logger.info(f"[agent] intent-without-action nudge #{_intent_supervisor._nudge_count} on round {round_num}: {_matched_phrase!r}")
                 _lower_phrase = _matched_phrase.lower()
                 _cookbook_log_hint = ""
                 if any(_word in _lower_phrase for _word in ("log", "logs", "output", "tail", "status")):
@@ -3845,16 +3817,7 @@ async def stream_agent_loop(
                     )
                 messages.append({
                     "role": "system",
-                    "content": (
-                        f"You just wrote: \"{_matched_phrase}\" — but ended the "
-                        "turn without making the actual tool call. The user can "
-                        "see you announced the action but didn't run it, which "
-                        "is the most frustrating thing you can do. "
-                        "DO IT NOW: emit the actual function call this turn. "
-                        f"{_cookbook_log_hint}"
-                        "If you decided not to do it after all, say so plainly in "
-                        "one sentence instead of restating the plan."
-                    ),
+                    "content": RecoveryPrompts.intent_without_action(_matched_phrase, _cookbook_log_hint),
                 })
                 # Visible signal in the stream so the user knows we caught it.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
@@ -3872,48 +3835,37 @@ async def stream_agent_loop(
         # runaway backstop). On bail we don't give up — we force one
         # tool-free round so the model declares done or declares blocked,
         # mirroring Terminus's explicit-completion handshake.
-        _sig = "|".join(sorted(f"{b.tool_type}:{(b.content or '').strip()[:120]}" for b in tool_blocks))
-        _is_repeat = _sig in _recent_call_sigs
-        _recent_call_sigs.append(_sig)
-        for _b in tool_blocks:
-            _call_freq[f"{_b.tool_type}:{(_b.content or '').strip()[:120]}"] += 1
-        # "Real" answer text = round text minus <think> blocks. Empty-think
-        # rounds (just "<think>\n\n</think>" + a tool call) must not read as
-        # progress, so strip think before checking.
-        _real_text = _THINK_RE.sub("", cleaned_round).strip()
-        # Circling = repeating a recent call with nothing written. Any
-        # progress (a NEW distinct call, or actual answer text) resets it.
-        if _is_repeat and not _real_text:
-            _stuck_rounds += 1
-        else:
-            _stuck_rounds = 0
-        # Runaway = the SAME exact call repeated an absurd number of times.
-        # Distinct calls to one tool (a real batch) are legitimate work, so we
-        # count identical call signatures, not raw per-tool-type totals.
-        _runaway = _detect_runaway_call(_call_freq)
-        if _stuck_rounds >= 4 or _runaway:
-            reason = (f"calling {_runaway} with identical arguments over and over" if _runaway
-                      else "repeating the same tool calls without new progress")
-            logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
-            # The model has been executing tools, so its results are already
-            # in context. Force ONE tool-free round to converge: write the
-            # answer from what it has, or state plainly what's blocking it.
-            # The force-answer handler above salvages (grace synthesis) or
-            # apologizes honestly if it still writes nothing.
-            _off = [t for t in ("web_search", "bash")
-                    if disabled_tools and t in disabled_tools]
-            _off_note = (f" ({', '.join(_off)} is currently disabled — say so if "
-                         f"you needed it.)" if _off else "")
+        # Record round in loop detector
+        _sigs = [
+            StableSignature.from_tool_call(b.tool_type, (b.content or '').strip()[:120])
+            for b in tool_blocks
+        ]
+        _loop_detector.record_round(text=cleaned_round, tool_calls=_sigs)
+
+        # Check runaway via detector
+        if _loop_detector.is_runaway():
+            _runaway_tool = next(
+                (sig.split(":", 1)[0] for sig, count in _loop_detector._call_freq.items()
+                 if count >= _loop_detector.runaway_threshold),
+                "unknown",
+            )
+            logger.warning(f"[agent] loop-breaker runaway on round {round_num}; tool={_runaway_tool}")
             _force_answer = True
             messages.append({
                 "role": "system",
-                "content": (
-                    "You're repeating tool calls without converging. STOP calling "
-                    "tools and end the turn one of two ways: (a) write your best "
-                    "final answer NOW from the information already gathered, or "
-                    "(b) if you're genuinely blocked, say plainly what's blocking "
-                    "you in a sentence or two." + _off_note
-                ),
+                "content": RecoveryPrompts.runaway(_runaway_tool),
+            })
+            full_response += "\n\n"
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
+
+        stall_level = _loop_detector.check_stall()
+        if stall_level != RecoveryLevel.NONE:
+            logger.warning(f"[agent] loop-breaker stall on round {round_num}; level={stall_level}")
+            _force_answer = True
+            messages.append({
+                "role": "system",
+                "content": RecoveryPrompts.stall(stall_level),
             })
             full_response += "\n\n"
             yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
