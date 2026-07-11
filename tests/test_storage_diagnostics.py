@@ -3,6 +3,7 @@ import os
 import sqlite3
 import sys
 import types
+from urllib.parse import quote
 
 import pytest
 
@@ -731,3 +732,293 @@ def test_live_pdf_form_field_sidecar_is_not_suspected_orphan(tmp_path):
     assert orphans["count"] == 0
     assert orphans["observed_count"] == 0
     assert orphans["sample"] == []
+
+
+# SQLite URI and document-history regressions
+
+@pytest.mark.parametrize(
+    "driver",
+    ("sqlite", "sqlite+pysqlite"),
+)
+def test_resolve_sqlite_path_handles_local_file_uri(
+    driver,
+    tmp_path,
+):
+    db_path = tmp_path / "file-uri.db"
+    encoded_path = quote(db_path.as_posix(), safe="/")
+    warnings = []
+
+    resolved = storage_diagnostics._resolve_sqlite_path(
+        f"{driver}:///file:{encoded_path}?mode=ro&uri=true",
+        None,
+        warnings,
+    )
+
+    assert resolved == db_path
+    assert warnings == []
+
+
+def test_resolve_sqlite_path_handles_localhost_file_uri(tmp_path):
+    db_path = tmp_path / "localhost-file-uri.db"
+    encoded_path = quote(db_path.as_posix(), safe="/")
+    warnings = []
+
+    resolved = storage_diagnostics._resolve_sqlite_path(
+        (
+            "sqlite:///file://localhost"
+            f"{encoded_path}?mode=ro&uri=true"
+        ),
+        None,
+        warnings,
+    )
+
+    assert resolved == db_path
+    assert warnings == []
+
+
+def test_configured_collector_reads_sqlite_file_uri(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "configured-file-uri.db"
+    conn = _init_db(db_path)
+    conn.close()
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+
+    encoded_path = quote(db_path.as_posix(), safe="/")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        (
+            "sqlite+pysqlite:///file:"
+            f"{encoded_path}?mode=ro&uri=true"
+        ),
+    )
+
+    report = collect_configured_storage_bloat_diagnostics(
+        default_db_path=tmp_path / "unused.db",
+        upload_dir=uploads,
+    )
+
+    assert report["database"]["path_present"] is True
+    assert (
+        report["database"]["tables"]["chat_messages"]["row_count"]
+        == 0
+    )
+    assert "database file missing" not in report["warnings"]
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "sqlite:///:memory:",
+        "sqlite://",
+        "sqlite:///file::memory:?cache=shared&uri=true",
+        (
+            "sqlite:///file:memdb1?"
+            "mode=memory&cache=shared&uri=true"
+        ),
+        "postgresql://user:password@localhost/database",
+    ),
+)
+def test_resolve_sqlite_path_skips_non_file_databases(
+    database_url,
+):
+    warnings = []
+
+    resolved = storage_diagnostics._resolve_sqlite_path(
+        database_url,
+        None,
+        warnings,
+    )
+
+    assert resolved is None
+    assert warnings
+
+
+def test_non_uri_mode_memory_query_remains_file_backed(
+    tmp_path,
+):
+    db_path = tmp_path / "mode-memory-filename.db"
+    warnings = []
+
+    resolved = storage_diagnostics._resolve_sqlite_path(
+        f"sqlite+pysqlite:///{db_path}?mode=memory",
+        None,
+        warnings,
+    )
+
+    assert resolved == db_path
+    assert warnings == []
+
+
+def _create_document_versions_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE document_versions (
+            id TEXT PRIMARY KEY,
+            content TEXT
+        )
+        """
+    )
+
+
+def test_document_version_pdf_source_keeps_upload_live(
+    tmp_path,
+):
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    _create_document_versions_table(conn)
+
+    upload_id = f"{'a' * 32}.pdf"
+    conn.execute(
+        """
+        INSERT INTO document_versions(id, content)
+        VALUES (?, ?)
+        """,
+        (
+            "v1",
+            f'<!-- pdf_source upload_id="{upload_id}" -->',
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / upload_id).write_bytes(b"live version upload")
+
+    report = collect_storage_bloat_diagnostics(
+        db_path=db_path,
+        upload_dir=uploads,
+    )
+
+    references = report["database"]["upload_references"]
+    orphans = report["uploads"]["suspected_orphans"]
+    source = "document_versions.content.pdf_source_marker"
+
+    assert source in references["sources"]
+    assert references["source_scan_rows"][source] == 1
+    assert references["complete"] is True
+    assert orphans["definitive"] is True
+    assert orphans["count"] == 0
+
+
+def test_document_version_row_bound_is_observed_only(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        storage_diagnostics,
+        "MAX_REFERENCE_SCAN_ROWS",
+        1,
+    )
+
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    _create_document_versions_table(conn)
+
+    upload_id = f"{'b' * 32}.pdf"
+    conn.execute(
+        """
+        INSERT INTO document_versions(id, content)
+        VALUES (?, ?)
+        """,
+        ("largest", "x" * 500),
+    )
+    conn.execute(
+        """
+        INSERT INTO document_versions(id, content)
+        VALUES (?, ?)
+        """,
+        (
+            "live",
+            (
+                '<!-- pdf_form_source '
+                f'upload_id="{upload_id}" -->'
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / upload_id).write_bytes(
+        b"live beyond reference row bound"
+    )
+
+    report = collect_storage_bloat_diagnostics(
+        db_path=db_path,
+        upload_dir=uploads,
+    )
+
+    references = report["database"]["upload_references"]
+    orphans = report["uploads"]["suspected_orphans"]
+    source = "document_versions.content.pdf_source_marker"
+
+    assert references["complete"] is False
+    assert references["source_scan_rows"][source] == 1
+    assert orphans["definitive"] is False
+    assert orphans["observed_only"] is True
+    assert orphans["count"] is None
+    assert (
+        "db_reference_scan_incomplete"
+        in orphans["reason_incomplete"]
+    )
+
+
+def test_document_version_value_bound_is_observed_only(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        storage_diagnostics,
+        "MAX_REFERENCE_CONTENT_CHARS",
+        32,
+    )
+
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    _create_document_versions_table(conn)
+
+    upload_id = f"{'c' * 32}.pdf"
+    conn.execute(
+        """
+        INSERT INTO document_versions(id, content)
+        VALUES (?, ?)
+        """,
+        (
+            "v1",
+            (
+                "prefix beyond bounded sample "
+                f'<!-- pdf_source upload_id="{upload_id}" -->'
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / upload_id).write_bytes(
+        b"live beyond reference value bound"
+    )
+
+    report = collect_storage_bloat_diagnostics(
+        db_path=db_path,
+        upload_dir=uploads,
+    )
+
+    references = report["database"]["upload_references"]
+    orphans = report["uploads"]["suspected_orphans"]
+
+    assert references["complete"] is False
+    assert orphans["definitive"] is False
+    assert orphans["observed_only"] is True
+    assert orphans["count"] is None
+    assert (
+        "db_reference_scan_incomplete"
+        in orphans["reason_incomplete"]
+    )

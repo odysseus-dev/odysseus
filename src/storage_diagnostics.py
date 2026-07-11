@@ -10,7 +10,9 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
+
+from sqlalchemy.engine import make_url
 
 from src.constants import UPLOAD_DIR
 from src.runtime_paths import get_app_root
@@ -139,14 +141,54 @@ def _resolve_sqlite_path(
         return Path(db_path)
     if not database_url:
         return None
-    if database_url == "sqlite:///:memory:":
+
+    try:
+        parsed = make_url(database_url)
+    except Exception:
+        warnings.append("invalid database URL")
+        return None
+
+    if parsed.get_backend_name() != "sqlite":
+        warnings.append(
+            "unsupported database URL; only SQLite file diagnostics are available"
+        )
+        return None
+
+    database = parsed.database
+    if not database or database == ":memory:":
         warnings.append("in-memory SQLite database has no file size")
         return None
-    if not database_url.startswith("sqlite:///"):
-        warnings.append("unsupported database URL; only SQLite file diagnostics are available")
-        return None
-    raw_path = database_url.removeprefix("sqlite:///").partition("?")[0]
-    path = Path(unquote(raw_path))
+
+    database = str(database)
+    query = {
+        str(key).lower(): str(value).strip().lower()
+        for key, value in dict(parsed.query or {}).items()
+    }
+    uri_enabled = query.get("uri") in {"1", "true", "yes", "on"}
+    is_file_uri = database.lower().startswith("file:")
+
+    if uri_enabled and is_file_uri:
+        if (
+            database.lower().startswith("file::memory:")
+            or query.get("mode") == "memory"
+        ):
+            warnings.append("in-memory SQLite database has no file size")
+            return None
+
+        uri = urlparse(database)
+        filesystem_path = uri.path or ""
+        if not filesystem_path or filesystem_path == ":memory:":
+            warnings.append("database file path unavailable")
+            return None
+
+        authority = uri.netloc
+        if authority and authority.lower() != "localhost":
+            filesystem_path = f"//{authority}{filesystem_path}"
+
+        path = Path(unquote(filesystem_path))
+    else:
+        path = Path(database)
+
     if path.is_absolute():
         return path
     return Path(get_app_root()) / path
@@ -209,7 +251,14 @@ def _collect_db_report(
                 report["content_rows"] = _content_rows_report(conn, warnings)
             else:
                 warnings.append("chat_messages table missing")
-            if "chat_messages" in tables or "documents" in tables:
+            if any(
+                table in tables
+                for table in (
+                    "chat_messages",
+                    "documents",
+                    "document_versions",
+                )
+            ):
                 references, live_upload_ids = _live_upload_reference_report(
                     conn,
                     tables,
@@ -484,30 +533,46 @@ def _live_upload_reference_report(
     if "documents" in tables:
         document_columns = _table_columns(conn, "documents", warnings)
         if "current_content" in document_columns:
-            source = "documents.current_content.pdf_source_marker"
-            rows = _bounded_reference_rows(
-                conn,
-                "documents",
-                "current_content",
-                warnings,
+            scans_complete.append(
+                _scan_document_source_markers(
+                    conn=conn,
+                    table="documents",
+                    field="current_content",
+                    source="documents.current_content.pdf_source_marker",
+                    total_rows=table_reports.get("documents", {}).get(
+                        "row_count"
+                    ),
+                    warnings=warnings,
+                    report=report,
+                    live_ids=live_ids,
+                )
             )
-            if rows is None:
-                scans_complete.append(False)
-            else:
-                live_ids.update(
-                    _document_source_upload_ids(
-                        str(row["value_sample"] or "") for row in rows
-                    )
+
+    if "document_versions" in tables:
+        version_columns = _table_columns(
+            conn,
+            "document_versions",
+            warnings,
+        )
+        if "content" in version_columns:
+            scans_complete.append(
+                _scan_document_source_markers(
+                    conn=conn,
+                    table="document_versions",
+                    field="content",
+                    source=(
+                        "document_versions.content."
+                        "pdf_source_marker"
+                    ),
+                    total_rows=table_reports.get(
+                        "document_versions",
+                        {},
+                    ).get("row_count"),
+                    warnings=warnings,
+                    report=report,
+                    live_ids=live_ids,
                 )
-                scans_complete.append(
-                    _reference_scan_complete(
-                        rows,
-                        table_reports.get("documents", {}).get("row_count"),
-                        source,
-                        warnings,
-                    )
-                )
-                _record_reference_scan(report, source, len(rows))
+            )
 
     report["live_reference_count"] = len(live_ids)
     report["complete"] = bool(scans_complete) and all(scans_complete)
@@ -577,6 +642,46 @@ def _record_reference_scan(
     report["sources"].append(source)
     report["source_scan_rows"][source] = row_count
     report["scan_rows"] += row_count
+
+
+def _scan_document_source_markers(
+    *,
+    conn: sqlite3.Connection,
+    table: str,
+    field: str,
+    source: str,
+    total_rows: Any,
+    warnings: list[str],
+    report: dict[str, Any],
+    live_ids: set[str],
+) -> bool:
+    rows = _bounded_reference_rows(
+        conn,
+        table,
+        field,
+        warnings,
+    )
+    if rows is None:
+        return False
+
+    live_ids.update(
+        _document_source_upload_ids(
+            str(row["value_sample"] or "")
+            for row in rows
+        )
+    )
+    complete = _reference_scan_complete(
+        rows,
+        total_rows,
+        source,
+        warnings,
+    )
+    _record_reference_scan(
+        report,
+        source,
+        len(rows),
+    )
+    return complete
 
 
 def _metadata_rows_upload_ids(
