@@ -165,8 +165,8 @@ class _ManifestUploadHandler:
         except ValueError:
             return False
 
-    def resolve_upload(self, upload_id, owner=None):
-        self.calls.append((upload_id, owner))
+    def resolve_upload(self, upload_id, owner=None, allow_admin=True):
+        self.calls.append((upload_id, owner, allow_admin))
         row = self.rows.get(upload_id)
         if isinstance(row, dict) and row.get("owner") and row.get("owner") != owner:
             return None
@@ -179,7 +179,7 @@ def _manifest_test_dir(name):
     return root
 
 
-def test_build_uploaded_file_manifest_filters_and_nulls_unreadable_paths(monkeypatch):
+def test_build_uploaded_file_manifest_filters_owner_and_omits_host_paths(monkeypatch):
     root = _manifest_test_dir("manifest")
     try:
         upload_dir = root / "uploads"
@@ -200,7 +200,7 @@ def test_build_uploaded_file_manifest_filters_and_nulls_unreadable_paths(monkeyp
         handler = _ManifestUploadHandler(upload_dir, {
             "good": {
                 "id": "good",
-                "name": "good.txt",
+                "name": "C:\\server-secret\\good.txt",
                 "mime": "text/plain",
                 "size": 5,
                 "path": str(good),
@@ -236,23 +236,24 @@ def test_build_uploaded_file_manifest_filters_and_nulls_unreadable_paths(monkeyp
         assert [item["id"] for item in manifest] == ["good", "outside", "missing"]
         assert manifest[0]["type"] == "attachment_ref"
         assert manifest[0]["attachment_id"] == "good"
+        assert manifest[0]["name"] == "good.txt"
         assert manifest[0]["uri"] == "odysseus://attachment/good"
         assert manifest[0]["read_policy"] == "owner_checked_upload"
         assert os.path.realpath(manifest[0]["path"]) == os.path.realpath(good)
         assert manifest[1]["path"] is None
         assert manifest[2]["path"] is None
         assert handler.calls == [
-            ("good", "alice"),
-            ("bob", "alice"),
-            ("outside", "alice"),
-            ("missing", "alice"),
-            ("bad", "alice"),
+            ("good", "alice", False),
+            ("bob", "alice", False),
+            ("outside", "alice", False),
+            ("missing", "alice", False),
+            ("bad", "alice", False),
         ]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypatch):
+def test_build_uploaded_file_manifest_never_consults_filesystem_tool_roots(monkeypatch):
     root = _manifest_test_dir("manifest-unreadable")
     try:
         upload_dir = root / "uploads"
@@ -270,9 +271,71 @@ def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypa
 
         manifest = build_uploaded_file_manifest(["upload"], handler, owner="alice")
 
+        assert manifest[0]["uri"] == "odysseus://attachment/upload"
         assert manifest[0]["path"] is None
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_build_uploaded_file_manifest_limit_counts_only_authorized_entries(
+    tmp_path,
+    monkeypatch,
+):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    readable = upload_dir / "readable.txt"
+    readable.write_text("hello", encoding="utf-8")
+    handler = _ManifestUploadHandler(upload_dir, {
+        "bob-first": {
+            "id": "bob-first",
+            "name": "bob.txt",
+            "path": str(readable),
+            "owner": "bob",
+        },
+        "alice-first": {
+            "id": "alice-first",
+            "name": "alice.txt",
+            "path": str(readable),
+            "owner": "alice",
+        },
+        "alice-second": {
+            "id": "alice-second",
+            "name": "alice-2.txt",
+            "path": str(readable),
+            "owner": "alice",
+        },
+    })
+
+    import src.settings as settings
+
+    monkeypatch.setattr(
+        settings,
+        "get_setting",
+        lambda key: [str(upload_dir)] if key == "tool_path_extra_roots" else None,
+    )
+    manifest = build_uploaded_file_manifest(
+        ["bob-first", "alice-first", "alice-second"],
+        handler,
+        owner="alice",
+        limit=1,
+    )
+
+    assert [item["id"] for item in manifest] == ["alice-first"]
+    assert handler.calls == [
+        ("bob-first", "alice", False),
+        ("alice-first", "alice", False),
+    ]
+
+    handler.calls.clear()
+    bounded = build_uploaded_file_manifest(
+        ["bob-first", "alice-first"],
+        handler,
+        owner="alice",
+        limit=1,
+        attempt_limit=1,
+    )
+    assert bounded == []
+    assert handler.calls == [("bob-first", "alice", False)]
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -475,7 +538,15 @@ def test_empty_or_missing_history():
     assert _session_is_research_spinoff(SimpleNamespace()) is False
 
 
-async def _build_context_owner_probe(monkeypatch, request_state):
+async def _build_context_owner_probe(
+    monkeypatch,
+    request_state,
+    *,
+    history=None,
+    upload_handler=None,
+    agent_mode=False,
+    att_ids=None,
+):
     captured = {
         "prefs_owner": None,
         "preface_owner": None,
@@ -536,8 +607,9 @@ async def _build_context_owner_probe(monkeypatch, request_state):
         endpoint_url="http://model.local/v1/chat/completions",
         model="test-model",
         headers={},
-        history=[],
+        history=list(history or []),
         messages=[],
+        owner=request_state.get("api_token_owner") or request_state.get("current_user"),
     )
     sess.get_context_messages = lambda: list(sess.messages)
 
@@ -545,11 +617,13 @@ async def _build_context_owner_probe(monkeypatch, request_state):
     ctx = await build_chat_context(
         sess=sess,
         request=request,
-        chat_handler=SimpleNamespace(),
+        chat_handler=SimpleNamespace(upload_handler=upload_handler),
         chat_processor=SimpleNamespace(build_context_preface=fake_build_context_preface),
         message="hello",
         session_id="session-1",
+        att_ids=att_ids,
         incognito=True,
+        agent_mode=agent_mode,
     )
 
     return ctx, captured
@@ -590,3 +664,103 @@ async def test_build_chat_context_keeps_cookie_user_owner_scope(monkeypatch):
         "preface_owner": "bob",
         "compact_owner": "bob",
     }
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_restores_owner_checked_historical_uploads(
+    tmp_path,
+    monkeypatch,
+):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    alice_path = upload_dir / "alice-history.txt"
+    alice_path.write_text("alice historical upload", encoding="utf-8")
+    handler = _ManifestUploadHandler(upload_dir, {
+        "current-only": {
+            "id": "current-only",
+            "name": "current.txt",
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "path": str(alice_path),
+            "owner": "alice",
+        },
+        "shared": {
+            "id": "shared",
+            "name": "shared.txt",
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "path": str(alice_path),
+            "owner": "alice",
+        },
+        "recent-history": {
+            "id": "recent-history",
+            "name": "recent-history.txt",
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "path": str(alice_path),
+            "owner": "alice",
+        },
+        "alice-history": {
+            "id": "alice-history",
+            "name": "alice-history.txt",
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "path": str(alice_path),
+            "owner": "alice",
+        },
+        "bob-history": {
+            "id": "bob-history",
+            "name": "bob-history.txt",
+            "mime": "text/plain",
+            "size": 3,
+            "path": str(alice_path),
+            "owner": "bob",
+        },
+    })
+    history = [
+        SimpleNamespace(metadata={
+            "attachments": [
+                {"id": "alice-history", "name": "alice-history.txt"},
+                {"id": "shared", "name": "shared.txt"},
+            ]
+        }),
+        SimpleNamespace(metadata={
+            "attachments": [
+                {"id": "recent-history", "name": "recent-history.txt"},
+                {"id": "bob-history", "name": "bob-history.txt"},
+            ]
+        }),
+    ]
+
+    import src.settings as settings
+
+    monkeypatch.setattr(
+        settings,
+        "get_setting",
+        lambda key: [str(upload_dir)] if key == "tool_path_extra_roots" else None,
+    )
+    ctx, _captured = await _build_context_owner_probe(
+        monkeypatch,
+        {"api_token": False, "current_user": "alice"},
+        history=history,
+        upload_handler=handler,
+        agent_mode=True,
+        att_ids=["current-only", "shared"],
+    )
+
+    assert [item["id"] for item in ctx.uploaded_files] == [
+        "current-only",
+        "shared",
+        "recent-history",
+        "alice-history",
+    ]
+    assert ctx.uploaded_files[0]["read_policy"] == "owner_checked_upload"
+    assert ctx.uploaded_files[0]["uri"] == "odysseus://attachment/current-only"
+    assert all(item["path"] is not None for item in ctx.uploaded_files)
+    assert handler.calls == [
+        ("current-only", "alice", False),
+        ("shared", "alice", False),
+        ("recent-history", "alice", False),
+        ("bob-history", "alice", False),
+        ("alice-history", "alice", False),
+    ]

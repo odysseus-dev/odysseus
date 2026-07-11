@@ -1,6 +1,8 @@
 import json
+from types import SimpleNamespace
 
 from src.attachment_refs import (
+    attachment_ids_from_messages,
     attachment_ref,
     persistable_message_content,
     search_index_text,
@@ -73,3 +75,26 @@ def test_attachment_ref_normalizes_hash_aliases():
         "checksum_sha256": "abc",
         "created_at": "2026-07-09T12:00:00",
     }
+def test_attachment_ids_from_messages_prefers_recent_and_deduplicates():
+    older = SimpleNamespace(metadata={
+        "attachments": [
+            {"id": "older.png"},
+            {"id": "shared.png"},
+        ]
+    })
+    malformed = {"metadata": {"attachments": "not-a-list"}}
+    newer = {
+        "metadata": {
+            "attachments": [
+                {"attachment_id": "newer.pdf"},
+                {"id": "shared.png"},
+            ]
+        }
+    }
+
+    assert attachment_ids_from_messages([older, malformed, newer]) == [
+        "newer.pdf",
+        "shared.png",
+        "older.png",
+    ]
+

@@ -40,6 +40,7 @@ try:
         _compute_final_metrics,
         _append_tool_results,
         _assemble_prompt,
+        _uploaded_files_context_message,
         _MCP_KEYWORDS,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
@@ -90,6 +91,24 @@ def test_native_tool_schemas_allow_shell_and_python_file_writes():
     assert "Python may read, write, or edit files" in descriptions["python"]
     assert "use shell/Python when a scripted edit is more practical" in descriptions["edit_file"]
     assert "Do NOT create or edit files via bash" not in descriptions["bash"]
+
+
+def test_uploaded_files_context_allows_current_and_historical_attachments():
+    context = _uploaded_files_context_message([{
+        "id": "upload-1",
+        "name": "C:\\server-secret\\earlier.pdf",
+        "mime": "application/pdf",
+        "size": 42,
+        "uri": "odysseus://attachment/upload-1",
+    }])
+
+    assert context is not None
+    assert "current or earlier user turns" in context["content"]
+    assert "latest user turn" not in context["content"]
+    assert "read_attachment" in context["content"]
+    assert "odysseus://attachment/upload-1" in context["content"]
+    assert "/tmp/" not in context["content"]
+    assert "server-secret" not in context["content"]
 
 
 # ---------------------------------------------------------------------------

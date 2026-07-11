@@ -490,6 +490,7 @@ async def stream_agent_loop(
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
     uploaded_files: Optional[List[Dict]] = None,
+    upload_handler=None,
     workload: str = "foreground",
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
@@ -806,14 +807,13 @@ async def stream_agent_loop(
                 _relevant_tools.difference_update(_email_fetch_tools)
                 logger.info("[agent-intent] active email draft pruned fetch tools=%s", removed)
 
-    # Current-turn chat uploads are real files under the upload/data root. Make
-    # the read-side file/document tools visible immediately so the agent can
-    # inspect files whose inline text was truncated or omitted.
+    # Current and historical chat uploads use the dedicated owner-checked
+    # reader rather than exposing their host paths to generic file tools.
     if not guide_only and uploaded_files:
         if _relevant_tools is None:
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
-        _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
+        _relevant_tools.add("read_attachment")
 
     # Per-request forced tools are stronger than retrieval. Search toggles and
     # explicit lookup turns must make web tools visible even when tool RAG
@@ -1982,6 +1982,7 @@ async def stream_agent_loop(
                             owner=owner,
                             progress_cb=_push_progress,
                             workspace=workspace,
+                            upload_handler=upload_handler,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.

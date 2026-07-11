@@ -12,6 +12,7 @@ from src.agent_loop._helpers import (
     _normalize_stream_document_fences,
     _recent_context_for_retrieval,
     _strip_think_blocks,
+    _uploaded_files_context_message,
 )
 from src.agent_loop._loop import (
     _append_tool_results,
@@ -65,6 +66,7 @@ __all__ = [
     "_recent_context_for_retrieval",
     "_resolve_tool_blocks",
     "_strip_think_blocks",
+    "_uploaded_files_context_message",
     "build_active_plan_note",
     "get_builtin_overrides",
     "stream_agent_loop",

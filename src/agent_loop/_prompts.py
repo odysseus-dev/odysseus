@@ -280,6 +280,7 @@ _DOMAIN_RULES = {
 - Preserve clickable session links from tool output in your final answer.""",
     "files": """\
 ## File rules
+- For files listed in the chat attachment manifest, use `read_attachment` with the listed id or URI; never treat their names as host paths.
 - Use file tools for real disk files, workspace files, project/repo/codebase files, and folders. Use document tools only for editor documents.
 - If the user says workspace/project/repo/codebase/source/files/folders, prefer `get_workspace`, `ls`, `glob`, `grep`, `read_file`, `edit_file`, or `write_file` over `manage_documents`.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
@@ -325,7 +326,7 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
+    "files": {"bash", "python", "read_file", "read_attachment", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
@@ -411,6 +412,12 @@ Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check ex
 <file path>
 ```
 Read a file and return its contents.""",
+
+    "read_attachment": """\
+```read_attachment
+<upload id or odysseus://attachment/<id>>
+```
+Read a current or historical attachment listed in this chat's attachment manifest. Pass only its id or internal attachment URI; filesystem paths are not accepted. Access is checked against the current chat owner each time.""",
 
     "write_file": """\
 ```write_file
