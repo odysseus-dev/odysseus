@@ -1,0 +1,16 @@
+# Development / test-only dependencies — not needed to run the app.
+# Install with:  pip install -r requirements-dev.txt
+# (this also installs requirements.txt first).
+-r requirements.txt
+
+# Test framework. asyncio_mode=auto is set in pyproject.toml so async tests
+# run without per-test decorators.
+pytest==9.0.3
+
+# Async test support for the pytest suite (routes, services, LLM core).
+pytest-asyncio==1.4.0
+
+# starlette.testclient prefers httpx2 since Starlette 1.2.0 and warns on every
+# TestClient import when only classic httpx is present. Runtime code keeps
+# using `httpx` in requirements.txt; this is test-client only.
+httpx2==2.4.0

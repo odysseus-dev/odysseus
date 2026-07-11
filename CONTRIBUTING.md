@@ -36,7 +36,8 @@ Manual development uses Python 3.11+:
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt          # runtime deps only
+pip install -r requirements-dev.txt     # adds pytest + test-client extras for contributors
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 

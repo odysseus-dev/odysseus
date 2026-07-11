@@ -356,14 +356,14 @@ uv pip install -r requirements.txt
 # then continue as usual: python setup.py, uvicorn, ...
 ```
 
-`requirements.txt` is intentionally unpinned, so two installs at different times can produce different package versions. If you want a reproducible environment (e.g. across your own machines, or to roll back after a bad upgrade), snapshot and restore exact versions with:
+`requirements.txt` is pinned to known-good releases (>=30 days old, see issue #485), so two installs at different times produce the same package versions. Test-only deps (`pytest`, `pytest-asyncio`, `httpx2`) live in `requirements-dev.txt`. If you want a reproducible environment snapshot (e.g. across your own machines, or to roll back after a bad upgrade), snapshot and restore exact versions with:
 
 ```bash
 uv pip compile requirements.txt -o requirements.lock   # snapshot current resolution
 uv pip sync requirements.lock                          # reproduce it exactly later
 ```
 
-`requirements.lock` is gitignored and platform-specific (compile it on the OS you deploy to). Regenerate it deliberately when you want to take upgrades. The plain `uv pip install -r requirements.txt` keeps following the unpinned requirements like pip does.
+`requirements.lock` is gitignored and platform-specific (compile it on the OS you deploy to). Regenerate it deliberately when you want to take upgrades. The plain `uv pip install -r requirements.txt` installs the pinned runtime deps; `uv pip install -r requirements-dev.txt` adds the test stack on top.
 
 ### Outlook / Office 365 email
 Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
