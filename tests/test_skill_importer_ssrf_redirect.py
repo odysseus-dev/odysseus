@@ -49,8 +49,17 @@ def _install_fake_client(monkeypatch, *, redirect_from, redirect_to):
 
     class _Client:
         def __init__(self, *args, **kwargs):
-            # Accept follow_redirects/timeout kwargs without using them.
-            pass
+            # Safety invariant: the importer follows redirects by hand and
+            # re-runs the SSRF guard per hop, so it MUST disable httpx's own
+            # redirect following. Asserting ``follow_redirects is False`` here
+            # (not merely accepting the kwarg) makes any regression to
+            # ``follow_redirects=True`` fail these tests instead of passing
+            # silently — httpx being faked would otherwise hide the change.
+            assert kwargs.get("follow_redirects") is False, (
+                "skill importer must construct httpx.Client with "
+                "follow_redirects=False; got "
+                f"{kwargs.get('follow_redirects')!r}"
+            )
 
         def __enter__(self):
             return self
