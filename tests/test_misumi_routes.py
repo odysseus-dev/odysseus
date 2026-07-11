@@ -41,6 +41,24 @@ def test_health_and_grounded_respond(tmp_path, monkeypatch):
     assert "shopping-list.md" in body["sources"][0]["path"]
 
 
+def test_respond_accepts_interface_string_context(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/misumi/respond",
+        json={
+            "intent": "status",
+            "state": "idle",
+            "mood": "steady",
+            "context": "interface readiness check",
+            "persona": "aoteru",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["persona"] == "aoteru"
+
+
 def test_domain_request_reports_absent_data_without_model_fallback(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     body = client.post(
