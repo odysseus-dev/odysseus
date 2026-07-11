@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from services.factory_service import FactoryService
-from services.factory_orchestrator import launch, stop as stop_orchestrator
+from services.factory_orchestrator import plan_project, launch, stop as stop_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def setup_factory_routes() -> APIRouter:
 
     @router.post("/projects")
     async def create_project(request: Request):
-        """Create a new Factory project and auto-plan tasks via LLM."""
+        """Create a new Factory project and plan tasks via LLM (synchronous)."""
         body = await request.json()
         description = body.get("description")
         if not description:
@@ -38,16 +38,18 @@ def setup_factory_routes() -> APIRouter:
             logger.exception("create_project failed")
             raise HTTPException(500, str(e))
 
-        # Launch planning + execution in the background.
-        # Hold a strong reference so the GC doesn't kill the task mid-flight
-        # (Python's asyncio docs: "Save a reference to avoid a task disappearing
-        # mid-execution").
-        import asyncio
-        from services.factory_orchestrator import launch_planning
+        # Run planning synchronously so tasks exist when the response returns.
+        # Typically takes 10-30s. The orchestrator (task execution) launches
+        # as a background task inside plan_project.
         pid = project["id"]
-        launch_planning(pid, owner=owner)
+        try:
+            await plan_project(pid, owner=owner)
+        except Exception as e:
+            logger.exception(f"Factory: planning failed for project {pid}: {e}")
 
-        return project
+        # Return the project with tasks populated
+        result = svc.get_project(pid)
+        return result or project
 
     @router.get("/projects")
     async def list_projects(owner: str = "default"):

@@ -222,17 +222,29 @@ def _extract_json(text: str) -> Optional[Any]:
     return None
 
 
-async def _llm(messages: List[Dict], owner: str, timeout: int = 120,
-               max_tokens: int = 4096) -> str:
-    """Call the configured task endpoint with fallback chain."""
-    from src.task_endpoint import task_llm_call_async
-    return await task_llm_call_async(
-        messages, owner=owner, timeout=timeout, max_tokens=max_tokens,
+async def _llm(messages: List[Dict], owner: str, timeout: int = 90,
+               max_tokens: int = 2048) -> str:
+    """Call the configured task endpoint with fallback chain.
+
+    Bypasses the interactive-quiet gate (task_llm_call_async) so factory
+    tasks run immediately even while the user has the browser open.
+    Uses max_retries=1 so a slow endpoint doesn't compound across retries.
+    """
+    from src.task_endpoint import resolve_task_candidates
+    from src.llm_core import llm_call_async_with_fallback
+    candidates = resolve_task_candidates(owner=owner)
+    if not candidates:
+        raise RuntimeError("No LLM endpoint configured for factory tasks")
+    return await llm_call_async_with_fallback(
+        candidates, messages=messages,
+        timeout=timeout, max_tokens=max_tokens,
+        max_retries=1,
+        workload="background",
     )
 
 
 async def _call_agent(agent_key: str, user_prompt: str, owner: str,
-                      timeout: int = 120, max_tokens: int = 4096) -> str:
+                      timeout: int = 90, max_tokens: int = 2048) -> str:
     """Call a named agent with its system prompt."""
     agent = AGENTS[agent_key]
     return await _llm(
@@ -365,6 +377,8 @@ async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     return {"approved": True, "feedback": ""}
 
 
+TASK_TIMEOUT = 180  # seconds per produce+review cycle
+
 async def _process_task(project_id: int, task: Dict, owner: str,
                         project_desc: str, arch: str) -> None:
     """Run the Produce → Review pipeline for a single task."""
@@ -382,14 +396,27 @@ async def _process_task(project_id: int, task: Dict, owner: str,
         logger.info(f"Factory: task {task_id} attempt {attempt}/{MAX_ATTEMPTS}")
 
         try:
-            output = await _produce(producer_key, task, feedback, owner, project_desc, arch)
+            output = await asyncio.wait_for(
+                _produce(producer_key, task, feedback, owner, project_desc, arch),
+                timeout=TASK_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Factory: produce timed out for task {task_id} on attempt {attempt}")
+            _service.fail_task(task_id, error=f"Produce timed out after {TASK_TIMEOUT}s")
+            return
         except Exception as e:
             logger.error(f"Factory: produce failed for task {task_id}: {e}")
             _service.fail_task(task_id, error=f"Produce error: {e}")
             return
 
         try:
-            review = await _review(reviewer_key, task, output, owner)
+            review = await asyncio.wait_for(
+                _review(reviewer_key, task, output, owner),
+                timeout=60,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Factory: review timed out for task {task_id}")
+            review = {"approved": True, "feedback": ""}
         except Exception as e:
             logger.error(f"Factory: review failed for task {task_id}: {e}")
             review = {"approved": True, "feedback": ""}
@@ -490,8 +517,19 @@ def launch(project_id: int, owner: str = "default", arch: str = "") -> None:
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+    def _log_crash(t):
+        _running.pop(project_id, None)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error(f"Factory: orchestrator crashed for project {project_id}: {exc}",
+                         exc_info=exc)
+
     task = loop.create_task(_orchestrator_loop(project_id, owner, arch))
     _running[project_id] = task
+    task.add_done_callback(_log_crash)
 
 
 def is_running(project_id: int) -> bool:
