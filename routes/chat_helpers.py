@@ -397,7 +397,10 @@ def build_uploaded_file_manifest(
     if (
         not att_ids
         or not upload_handler
-        or not hasattr(upload_handler, "resolve_upload")
+        or not (
+            hasattr(upload_handler, "resolve_uploads")
+            or hasattr(upload_handler, "resolve_upload")
+        )
         or (limit is not None and limit <= 0)
     ):
         return []
@@ -410,22 +413,49 @@ def build_uploaded_file_manifest(
         except Exception:
             return False
 
-    manifest: list[dict] = []
+    candidate_ids: list[str] = []
     for attempt, att_id in enumerate(att_ids):
         if attempt_limit is not None and attempt >= attempt_limit:
             break
+        candidate_ids.append(str(att_id))
+
+    if hasattr(upload_handler, "resolve_uploads"):
         try:
-            info = upload_handler.resolve_upload(
-                str(att_id),
+            resolved_infos = upload_handler.resolve_uploads(
+                candidate_ids,
                 owner=owner,
                 allow_admin=False,
+                limit=limit,
             )
         except Exception:
-            logger.debug("Failed to resolve upload %r for agent manifest", att_id, exc_info=True)
-            continue
+            logger.debug("Failed to resolve upload batch for agent manifest", exc_info=True)
+            resolved_infos = []
+    else:
+        resolved_infos = []
+        for att_id in candidate_ids:
+            try:
+                info = upload_handler.resolve_upload(
+                    att_id,
+                    owner=owner,
+                    allow_admin=False,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to resolve upload %r for agent manifest",
+                    att_id,
+                    exc_info=True,
+                )
+                continue
+            if not isinstance(info, dict):
+                continue
+            resolved_infos.append({**info, "id": info.get("id") or att_id})
+            if limit is not None and len(resolved_infos) >= limit:
+                break
+
+    manifest: list[dict] = []
+    for info in resolved_infos:
         if not isinstance(info, dict):
             continue
-
         path = info.get("path")
         if path:
             try:
@@ -439,7 +469,9 @@ def build_uploaded_file_manifest(
             except Exception:
                 path = None
 
-        ref = attachment_ref({**info, "id": info.get("id") or str(att_id)})
+        ref = attachment_ref(info)
+        if not ref.get("attachment_id"):
+            continue
         ref["name"] = os.path.basename(str(ref.get("name") or ref["attachment_id"]).replace("\\", "/"))
         ref.update({
             "id": ref["attachment_id"],
@@ -712,13 +744,18 @@ async def build_chat_context(
         # historical attachment against the session owner on each agent turn.
         manifest_ids.extend(attachment_ids_from_messages(getattr(sess, "history", [])))
     manifest_ids = list(dict.fromkeys(manifest_ids))
-    uploaded_files = build_uploaded_file_manifest(
-        manifest_ids,
-        getattr(chat_handler, "upload_handler", None),
-        getattr(sess, "owner", None),
-        limit=20 if agent_mode else None,
-        attempt_limit=100 if agent_mode else None,
-    )
+    manifest_upload_handler = getattr(chat_handler, "upload_handler", None)
+    if manifest_ids and manifest_upload_handler:
+        uploaded_files = await asyncio.to_thread(
+            build_uploaded_file_manifest,
+            manifest_ids,
+            manifest_upload_handler,
+            getattr(sess, "owner", None),
+            limit=20 if agent_mode else None,
+            attempt_limit=100 if agent_mode else None,
+        )
+    else:
+        uploaded_files = []
     casual_low_signal = _is_casual_low_signal(message)
 
     # Memory enabled?

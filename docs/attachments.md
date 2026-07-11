@@ -46,6 +46,12 @@ persisted message metadata, with current-turn IDs first and recent historical
 IDs following. Every ID is resolved again for the session owner; stored metadata
 never supplies a trusted filesystem path.
 
+Historical manifest resolution runs in a worker thread so upload-index locks,
+filesystem checks, and lifecycle persistence do not block the async chat loop.
+Candidates are resolved as one owner-checked batch: stale `last_accessed` values
+are updated in memory and committed to the live and backup indexes at most once
+per manifest reconstruction.
+
 The manifest does not expose a host filesystem path by default. Agents pass the ID or URI
 to the dedicated `read_attachment` tool, which:
 
