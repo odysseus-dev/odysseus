@@ -1244,6 +1244,23 @@ def _normalize_mistral_content(content):
     return "".join(text_parts), "".join(thinking_parts)
 
 
+def _parse_openai_chat_response(data: dict) -> str:
+    """Parse a non-streaming OpenAI-compatible chat completion into a plain
+    string. Handles Mistral structured content (list of typed blocks) and the
+    reasoning_content fallback. Shared by llm_call and llm_call_async so the
+    sync/async parsers cannot drift again (#5435).
+    """
+    msg = data["choices"][0]["message"]
+    content = msg.get("content")
+    if isinstance(content, list):
+        # Mistral structured content — extract thinking + text
+        text_part, thinking_part = _normalize_mistral_content(content)
+        if thinking_part:
+            return thinking_part + "\n\n" + (text_part or "")
+        return text_part or msg.get("reasoning_content") or ""
+    return content or msg.get("reasoning_content") or ""
+
+
 def _convert_openai_content_to_anthropic(content):
     """Convert OpenAI multimodal content blocks to Anthropic format.
 
@@ -1809,17 +1826,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         elif provider == "ollama":
             response = _parse_ollama_response(data)
         else:
-            msg = data["choices"][0]["message"]
-            content = msg.get("content")
-            if isinstance(content, list):
-                # Mistral structured content — extract thinking + text
-                text_part, thinking_part = _normalize_mistral_content(content)
-                if thinking_part:
-                    response = thinking_part + "\n\n" + (text_part or "")
-                else:
-                    response = text_part or msg.get("reasoning_content") or ""
-            else:
-                response = content or msg.get("reasoning_content") or ""
+            response = _parse_openai_chat_response(data)
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -2041,8 +2048,7 @@ async def llm_call_async(
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
                 else:
-                    msg = data["choices"][0]["message"]
-                    response = msg.get("content") or msg.get("reasoning_content") or ""
+                    response = _parse_openai_chat_response(data)
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
