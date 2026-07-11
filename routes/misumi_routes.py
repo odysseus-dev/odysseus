@@ -167,6 +167,8 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
         prompt = (body.prompt or interface_context or body.intent or "status").strip()
         domain = infer_household_domain(prompt)
         sources = adapter.search(prompt, domain=domain, limit=4) if adapter.reachable else []
+        if not domain:
+            sources = [item for item in sources if int(item.get("score", 0)) >= 2]
         backend = model = None
         if sources:
             lead = sources[0]
