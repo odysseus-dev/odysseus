@@ -224,6 +224,60 @@ def test_admin_cleanup_preserves_referenced_upload_and_reconciles_deleted_row(
     assert paths[referenced_id].parent.is_dir()
 
 
+def test_cleanup_retains_upload_and_all_rows_when_index_rows_disagree(tmp_path):
+    handler = _make_handler(tmp_path)
+    upload_id = "c" * 32 + ".txt"
+    path = _seed_old_uploads(handler, [{
+        "id": upload_id,
+        "hash": "1" * 64,
+        "mime": "text/plain",
+        "owner": "alice",
+    }])[upload_id]
+    index_path = Path(handler.upload_dir, "uploads.json")
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    alice_row = next(iter(index.values()))
+    index["bob:" + "2" * 64] = {
+        **alice_row,
+        "owner": "bob",
+        "hash": "2" * 64,
+        "checksum_sha256": "2" * 64,
+    }
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    handler._index_cache = None
+
+    assert handler.cleanup_old_uploads(set(), set()) == 0
+    assert path.is_file()
+    assert json.loads(index_path.read_text(encoding="utf-8")) == index
+
+
+def test_cleanup_retains_lone_row_without_authoritative_lifecycle_metadata(tmp_path):
+    handler = _make_handler(tmp_path)
+    upload_id = "6" * 32 + ".txt"
+    path = _seed_old_uploads(handler, [{
+        "id": upload_id,
+        "hash": "6" * 64,
+        "mime": "text/plain",
+    }])[upload_id]
+    index_path = Path(handler.upload_dir, "uploads.json")
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    row = next(iter(index.values()))
+    for field in (
+        "owner",
+        "hash",
+        "checksum_sha256",
+        "uploaded_at",
+        "created_at",
+        "last_accessed",
+    ):
+        row.pop(field)
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    handler._index_cache = None
+
+    assert handler.cleanup_old_uploads(set(), set()) == 0
+    assert path.is_file()
+    assert json.loads(index_path.read_text(encoding="utf-8")) == index
+
+
 def test_reservation_and_cleanup_are_serialized_without_dangling_references(
     tmp_path,
     monkeypatch,

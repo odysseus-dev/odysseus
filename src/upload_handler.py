@@ -399,20 +399,24 @@ class UploadHandler:
                 return True
         return False
 
-    @staticmethod
+    @classmethod
     def _upload_index_keys_for_file(
+        cls,
         upload_index: Dict[str, Any],
         upload_id: str,
         file_path: str,
     ) -> list[str]:
         """Find a coherent set of index rows for one physical upload.
 
-        An ID collision with a different/missing stored path, or a path row
-        naming a different ID, is ambiguous index state and therefore cannot
-        authorize destructive cleanup.
+        Every related row must agree on ID, canonical path, owner, and a
+        non-empty checksum. Each row must also contain the complete lifecycle
+        timestamps written for new uploads. Ambiguous or incomplete index
+        state cannot authorize destructive cleanup.
         """
         target_path = os.path.normcase(os.path.realpath(file_path))
         matches: list[str] = []
+        owners: set[str] = set()
+        checksums: set[str] = set()
         for key, info in upload_index.items():
             if not isinstance(info, dict):
                 continue
@@ -424,22 +428,64 @@ class UploadHandler:
             )
             same_id = info.get("id") == upload_id
             same_path = stored_real_path == target_path
-            if same_id and not same_path:
+            if not same_id and not same_path:
+                continue
+            if not same_id or not same_path:
                 logger.warning(
-                    "Skipping ambiguous cleanup candidate %s: upload ID also points at %r",
+                    "Skipping ambiguous cleanup candidate %s: related row has id=%r path=%r",
                     file_path,
+                    info.get("id"),
                     stored_path,
                 )
                 return []
-            if same_path and not same_id:
+
+            owner = info.get("owner")
+            if not isinstance(owner, str) or not owner.strip():
                 logger.warning(
-                    "Skipping ambiguous cleanup candidate %s: stored row names ID %r",
+                    "Skipping incomplete cleanup candidate %s: matching row has no owner",
                     file_path,
-                    info.get("id"),
                 )
                 return []
-            if same_id and same_path:
-                matches.append(key)
+
+            row_checksums = {
+                str(info.get(field)).strip().lower()
+                for field in ("hash", "checksum_sha256")
+                if info.get(field) is not None and str(info.get(field)).strip()
+            }
+            if not row_checksums:
+                logger.warning(
+                    "Skipping incomplete cleanup candidate %s: matching row has no checksum",
+                    file_path,
+                )
+                return []
+            if len(row_checksums) != 1:
+                logger.warning(
+                    "Skipping ambiguous cleanup candidate %s: matching row has conflicting checksums",
+                    file_path,
+                )
+                return []
+
+            lifecycle_fields = ("uploaded_at", "created_at", "last_accessed")
+            if any(
+                cls._parse_upload_timestamp(info.get(field)) is None
+                for field in lifecycle_fields
+            ):
+                logger.warning(
+                    "Skipping incomplete cleanup candidate %s: matching row lacks lifecycle timestamps",
+                    file_path,
+                )
+                return []
+
+            matches.append(key)
+            owners.add(owner)
+            checksums.update(row_checksums)
+
+        if len(owners) > 1 or len(checksums) > 1:
+            logger.warning(
+                "Skipping ambiguous cleanup candidate %s: matching rows disagree on owner or checksum",
+                file_path,
+            )
+            return []
         return matches
 
     def cleanup_old_uploads(
