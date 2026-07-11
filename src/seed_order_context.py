@@ -22,6 +22,8 @@ ENV_KEYS = (
 _LOAD_ORDER = (
     "docs/core/misumi-seed-order-v0.1.md",
     "docs/core/agent-personality-registry-v0.1.md",
+    "docs/core/agent-personality-registry-v0.2.md",
+    "docs/core/aoteru-routing-contract-v0.1.md",
     "protocols/register.md",
     "templates/change-log-entry.md",
     "agents/core/emperor-aoteru-misumi.md",

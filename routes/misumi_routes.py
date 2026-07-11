@@ -100,6 +100,7 @@ async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], O
     try:
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
+        from src.persona_capabilities import capability_summary
         from src.seed_order_context import build_seed_order_context
 
         url, model, headers = resolve_endpoint(
@@ -115,6 +116,10 @@ async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], O
             f"You are {persona}, the Misumi {record.get('role')}. Answer concisely and never claim an action "
             "unless a structured tool result proves it. Phase A household access is read-only."
         )
+        capabilities = capability_summary(persona)
+        if capabilities:
+            system += f"\n\n{capabilities}"
+        system += "\nHousehold changes go through proposals that the user ratifies."
         seed = build_seed_order_context()
         messages = []
         if seed:
