@@ -158,7 +158,7 @@ class HouseholdReadOnlyAdapter:
         terms = [term.lower() for term in re.findall(r"[A-Za-z0-9_]{2,}", query or "")]
         stop = {
             "and", "answer", "are", "current", "currently", "data", "does", "exists", "explain",
-            "fewer", "from", "have", "in", "is", "language", "on", "only", "plain", "reply", "that",
+            "fewer", "from", "have", "in", "is", "language", "of", "on", "only", "or", "plain", "reply", "that",
             "the", "there", "this", "to", "what", "when", "where", "which", "with", "words",
         }
         terms = [term for term in terms if term not in stop]

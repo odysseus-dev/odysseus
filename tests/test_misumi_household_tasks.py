@@ -40,7 +40,9 @@ def test_household_adapter_reads_and_cites_without_mutation(tmp_path):
 def test_household_adapter_does_not_rank_substring_matches(tmp_path):
     root = _repo(tmp_path)
     (root / "agent-tasks" / "inbox" / "unrelated.md").write_text(
-        "Francesca keeps the runtime spinning online.\n", encoding="utf-8"
+        "Recommended: A or C keeps the auto-pulled clone free of local commits. "
+        "Francesca keeps the runtime spinning online.\n",
+        encoding="utf-8",
     )
     adapter = HouseholdReadOnlyAdapter(root)
 
