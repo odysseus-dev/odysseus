@@ -1038,7 +1038,11 @@ _IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IM
 def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
     """Open an IMAP connection using the configured security mode."""
     port = int(port or 993)
-    if starttls:
+    # Port 993 is implicit TLS (IMAPS) — STARTTLS on 993 is redundant and
+    # fails with EOF on providers like Gmail because the server expects a TLS
+    # handshake, not a plain IMAP greeting. When STARTTLS is checked on 993,
+    # use IMAP4_SSL instead of plain IMAP4 + starttls(). (#4175)
+    if starttls and port != 993:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
         try:
             conn.starttls()
@@ -1050,10 +1054,8 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
             except Exception:
                 pass
             raise
-    elif port == 993:
-        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     else:
-        conn = imaplib.IMAP4(host, port, timeout=timeout)
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     try:
         conn.sock.settimeout(timeout)
     except Exception:

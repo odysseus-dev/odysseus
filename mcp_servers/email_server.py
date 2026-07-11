@@ -323,7 +323,9 @@ def _load_config(account: str | None = None) -> dict:
         cfg["imap_starttls"] = bool(row["imap_starttls"])
         # The email_accounts table stores STARTTLS but not an explicit IMAP SSL
         # flag. Port 993 is implicit TLS for IMAP providers like Gmail.
-        cfg["imap_ssl"] = int(cfg["imap_port"]) == 993 and not cfg["imap_starttls"]
+        # When STARTTLS is checked on port 993, use implicit SSL anyway —
+        # STARTTLS on 993 is redundant and fails with EOF on Gmail. (#4175)
+        cfg["imap_ssl"] = int(cfg["imap_port"]) == 993
         cfg["smtp_host"] = row["smtp_host"] or cfg["smtp_host"]
         cfg["smtp_port"] = int(row["smtp_port"] or cfg["smtp_port"])
         cfg["smtp_security"] = row["smtp_security"] or cfg["smtp_security"] or ("starttls" if int(cfg["smtp_port"]) == 587 else "ssl")

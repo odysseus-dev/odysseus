@@ -86,6 +86,28 @@ def test_open_imap_connection_supports_starttls(monkeypatch):
     ]
 
 
+def test_open_imap_connection_starttls_on_port_993_uses_implicit_ssl(monkeypatch):
+    """STARTTLS on port 993 should use IMAP4_SSL, not plain IMAP4 + starttls().
+
+    Port 993 is always implicit TLS (IMAPS). A plain IMAP4 connection on 993
+    gets EOF because the server expects a TLS handshake, not a plain IMAP
+    greeting. This is the Gmail IMAP STARTTLS failure from #4175.
+    """
+    import routes.email_helpers as helpers
+
+    _FakeIMAP.calls = []
+    monkeypatch.setattr(helpers.imaplib, "IMAP4", _FakeIMAP)
+    monkeypatch.setattr(helpers.imaplib, "IMAP4_SSL", _FakeIMAPSSL)
+
+    conn = _open_imap_connection("imap.gmail.com", 993, starttls=True)
+
+    # Must connect via IMAP4_SSL, never plain IMAP4, and never call starttls().
+    assert _FakeIMAP.calls == [
+        ("connect", "_FakeIMAPSSL", "imap.gmail.com", 993, _IMAP_TIMEOUT_SECONDS)
+    ]
+    assert not getattr(conn, "starttls_called", False)
+
+
 @pytest.mark.asyncio
 async def test_account_config_uses_shared_imap_timeout(monkeypatch):
     import routes.email_routes as email_routes
