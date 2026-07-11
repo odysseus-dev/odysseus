@@ -256,8 +256,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         return "Nothing to do"
 
     # Owner of the account being processed. All calendar + mailbox reads/writes
-    # below are scoped to this user: the multi-account fan-out runs every user's
-    # mailbox, so an unscoped pass would disclose/mutate other tenants' data.
+    # below are scoped to this user. Owner-filtered fan-out must never process
+    # another tenant's mailbox, or it could disclose/mutate that tenant's data.
     # One resolution feeds both the mailbox path (account_owner) and upstream's
     # calendar path (_acct_owner, which expects None rather than "").
     account_owner = _owner_for_email_account(account_id)

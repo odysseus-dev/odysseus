@@ -100,6 +100,11 @@ def _request_from_loopback(request: Request) -> bool:
     A reverse proxy on the same host also connects from loopback, so the TCP
     peer alone is not sufficient. Require both the peer and requested host to
     be localhost and reject requests carrying proxy forwarding headers.
+
+    A misconfigured same-host proxy that rewrites Host to loopback and strips
+    every forwarding header is indistinguishable from a direct request. The
+    deployment contract therefore also requires completing setup before the
+    proxy is enabled, as documented in docs/setup.md.
     """
     client_host = (
         str(request.client.host if request.client else "")
