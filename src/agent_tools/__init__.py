@@ -27,6 +27,7 @@ from .interaction_tools import AskUserTool, UpdatePlanTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .subagent_tools import SpawnSubagentTool, WaitActorTool, ListActorsTool
 from .admin_tools import (
     ADMIN_TOOL_HANDLERS,
     do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
@@ -60,6 +61,9 @@ TOOL_HANDLERS = {
     "list_sessions": ListSessionsTool().execute,
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
+    "spawn_subagent": SpawnSubagentTool().execute,
+    "wait_actor": WaitActorTool().execute,
+    "list_actors": ListActorsTool().execute,
 }
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
@@ -103,8 +107,10 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "list_serve_presets", "serve_preset", "adopt_served_model",
              "list_cookbook_servers",
              # Other tools the agent reaches for that were also missing.
-             "edit_image", "trigger_research", "manage_research",
-             # Generic loopback to any UI-button endpoint (cookbook,
+              "edit_image", "trigger_research", "manage_research",
+              # Subagent/actor tools
+              "spawn_subagent", "wait_actor", "list_actors",
+              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
              "app_api"} | BUILTIN_EMAIL_TOOLS

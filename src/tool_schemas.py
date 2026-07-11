@@ -1243,6 +1243,50 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    # Subagent/actor tools
+    {
+        "type": "function",
+        "function": {
+            "name": "spawn_subagent",
+            "description": "Spawn a child agent to perform a task independently. Returns an actor_id for tracking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "The task for the subagent to perform"},
+                    "agent_type": {"type": "string", "description": "Agent type: explore (read-only), general, build (full access), plan (no writes)", "default": "general"},
+                    "background": {"type": "boolean", "description": "Run in background (fire-and-forget)", "default": False},
+                    "tool_allowlist": {"type": "array", "items": {"type": "string"}, "description": "Optional list of allowed tools for the subagent"},
+                },
+                "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_actor",
+            "description": "Wait for a spawned actor/subagent to complete and return its result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "actor_id": {"type": "string", "description": "The actor ID to wait for"},
+                    "timeout": {"type": "number", "description": "Timeout in seconds (default 600)", "default": 600},
+                },
+                "required": ["actor_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_actors",
+            "description": "List all active actors/subagents and their status.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            }
+        }
+    },
 ]
 
 
@@ -1535,6 +1579,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         # them once; pre-escaping here caused literal ``\u00f1`` sequences to
         # remain visible in the debug panel.
         content = json.dumps(args, ensure_ascii=False)
+    elif tool_type in ("spawn_subagent", "wait_actor", "list_actors"):
+        content = json.dumps(args)
     else:
         content = json.dumps(args)
 
