@@ -2112,6 +2112,39 @@ export function removeAskUserCards(root) {
   scope.querySelectorAll('.ask-user-card').forEach((node) => node.remove());
 }
 
+function normalizeAskUserQuestions(payload) {
+  const rawQuestions = Array.isArray(payload?.questions) ? payload.questions : [];
+  if (rawQuestions.length < 1 || rawQuestions.length > 4) return [];
+  return rawQuestions.map((item, index) => {
+    const question = String(item?.question || '').trim();
+    const header = String(item?.header || `Q${index + 1}`).trim() || `Q${index + 1}`;
+    const options = Array.isArray(item?.options) ? item.options.map((opt) => {
+      const label = (opt && opt.label) ? String(opt.label).trim() : String(opt || '').trim();
+      const description = (opt && opt.description) ? String(opt.description).trim() : '';
+      return label ? { label, description } : null;
+    }).filter(Boolean) : [];
+    return {
+      question,
+      header: header.slice(0, 12),
+      options,
+      multiSelect: !!item?.multiSelect,
+    };
+  }).filter((item) => item.question && item.options.length >= 2 && item.options.length <= 4);
+}
+
+export function buildAskUserAnswersPayload(questions, answerState) {
+  const answers = {};
+  questions.forEach((question, index) => {
+    const value = answerState[index];
+    if (Array.isArray(value)) {
+      if (value.length) answers[question.question] = value.join(', ');
+    } else if (value) {
+      answers[question.question] = String(value);
+    }
+  });
+  return { answers };
+}
+
 /**
  * Render an ask_user payload as a durable choice card.
  *
@@ -2121,9 +2154,10 @@ export function removeAskUserCards(root) {
  */
 export function renderAskUserCard(payload, options) {
   const aq = payload || {};
+  const batchQuestions = normalizeAskUserQuestions(aq);
   const opts = Array.isArray(aq.options) ? aq.options : [];
   const chatBox = document.getElementById('chat-history');
-  if (!chatBox || !aq.question || opts.length < 2) return null;
+  if (!chatBox || (!batchQuestions.length && (!aq.question || opts.length < 2))) return null;
 
   const renderOptions = options || {};
   removeAskUserCards(chatBox);
@@ -2150,6 +2184,204 @@ export function renderAskUserCard(payload, options) {
   head.appendChild(closeBtn);
   card.appendChild(head);
 
+  const send = (text) => {
+    if (!text) return;
+    card.remove();
+    const input = uiModule.el('message');
+    if (input) input.value = text;
+    const sendButton = document.querySelector('.send-btn');
+    if (sendButton) sendButton.click();
+  };
+
+  if (batchQuestions.length) {
+    const answerState = new Array(batchQuestions.length).fill(null);
+    let activeIndex = 0;
+    const nav = document.createElement('div');
+    nav.className = 'ask-user-nav';
+    const body = document.createElement('div');
+    body.className = 'ask-user-batch-body';
+    card.appendChild(nav);
+    card.appendChild(body);
+
+    const isAnswered = (value) => Array.isArray(value) ? value.length > 0 : !!value;
+    const allAnswered = () => answerState.every(isAnswered);
+    const firstUnanswered = () => answerState.findIndex((value) => !isAnswered(value));
+    const setActive = (index) => {
+      activeIndex = index;
+      renderBatch();
+    };
+    const setAnswer = (index, value) => {
+      answerState[index] = value;
+      const next = firstUnanswered();
+      setActive(next === -1 ? batchQuestions.length : next);
+    };
+
+    const renderNav = () => {
+      nav.replaceChildren();
+      batchQuestions.forEach((item, index) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'ask-user-chip';
+        if (index === activeIndex) chip.classList.add('is-active');
+        if (isAnswered(answerState[index])) chip.classList.add('is-answered');
+        chip.textContent = item.header;
+        chip.addEventListener('click', () => setActive(index));
+        nav.appendChild(chip);
+      });
+      const submitChip = document.createElement('button');
+      submitChip.type = 'button';
+      submitChip.className = 'ask-user-chip ask-user-submit-chip';
+      if (activeIndex === batchQuestions.length) submitChip.classList.add('is-active');
+      submitChip.disabled = !allAnswered();
+      submitChip.textContent = 'Submit';
+      submitChip.addEventListener('click', () => {
+        if (allAnswered()) setActive(batchQuestions.length);
+      });
+      nav.appendChild(submitChip);
+    };
+
+    const renderQuestion = (item, index) => {
+      const question = document.createElement('div');
+      question.className = 'ask-user-question';
+      question.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+      question.innerHTML = emojiText(item.question);
+      body.appendChild(question);
+      card.setAttribute('aria-labelledby', question.id);
+
+      const list = document.createElement('div');
+      list.className = 'ask-user-options';
+      body.appendChild(list);
+
+      const current = Array.isArray(answerState[index]) ? answerState[index] : [];
+      item.options.forEach((opt) => {
+        const row = document.createElement(item.multiSelect ? 'label' : 'button');
+        row.className = 'ask-user-option';
+        const labelText = document.createElement('span');
+        labelText.className = 'ask-user-option-label';
+        labelText.innerHTML = emojiText(opt.label);
+        if (item.multiSelect) {
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.value = opt.label;
+          checkbox.checked = current.includes(opt.label);
+          checkbox.addEventListener('change', () => {
+            const selected = new Set(Array.isArray(answerState[index]) ? answerState[index] : []);
+            if (checkbox.checked) selected.add(opt.label);
+            else selected.delete(opt.label);
+            answerState[index] = Array.from(selected);
+            renderBatch();
+          });
+          row.appendChild(checkbox);
+        } else {
+          row.type = 'button';
+          row.addEventListener('click', () => setAnswer(index, opt.label));
+        }
+        row.appendChild(labelText);
+        if (opt.description) {
+          const descriptionText = document.createElement('span');
+          descriptionText.className = 'ask-user-option-desc';
+          descriptionText.innerHTML = emojiText(opt.description);
+          row.appendChild(descriptionText);
+        }
+        list.appendChild(row);
+      });
+
+      const other = document.createElement('div');
+      other.className = 'ask-user-other';
+      const otherInput = document.createElement('input');
+      otherInput.type = 'text';
+      otherInput.className = 'styled-prompt-input ask-user-other-input';
+      otherInput.placeholder = item.multiSelect ? 'Other (added to selection)...' : 'Other... (type your own answer)';
+      otherInput.setAttribute('aria-label', item.multiSelect ? 'Add a custom option' : 'Type a custom answer');
+      const otherSend = document.createElement('button');
+      otherSend.type = 'button';
+      otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+      otherSend.textContent = item.multiSelect ? 'Add' : 'Send';
+      const commitOther = () => {
+        const freeText = otherInput.value.trim();
+        if (!freeText) return;
+        if (item.multiSelect) {
+          const selected = new Set(Array.isArray(answerState[index]) ? answerState[index] : []);
+          selected.add(freeText);
+          answerState[index] = Array.from(selected);
+          otherInput.value = '';
+          renderBatch();
+        } else {
+          setAnswer(index, freeText);
+        }
+      };
+      otherSend.addEventListener('click', commitOther);
+      otherInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+          event.preventDefault();
+          commitOther();
+        }
+      });
+      other.appendChild(otherInput);
+      other.appendChild(otherSend);
+      body.appendChild(other);
+
+      if (item.multiSelect) {
+        const advance = document.createElement('button');
+        advance.type = 'button';
+        advance.className = 'confirm-btn confirm-btn-primary ask-user-next';
+        advance.textContent = 'Next';
+        advance.disabled = !Array.isArray(answerState[index]) || answerState[index].length === 0;
+        advance.addEventListener('click', () => {
+          const next = firstUnanswered();
+          setActive(next === -1 ? batchQuestions.length : next);
+        });
+        body.appendChild(advance);
+      }
+    };
+
+    const renderReview = () => {
+      const review = document.createElement('div');
+      review.className = 'ask-user-review';
+      batchQuestions.forEach((item, index) => {
+        const line = document.createElement('div');
+        line.className = 'ask-user-review-line';
+        const answer = buildAskUserAnswersPayload(batchQuestions, answerState).answers[item.question] || '';
+        line.textContent = `${item.question}: ${answer}`;
+        review.appendChild(line);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'ask-user-review-actions';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'confirm-btn ask-user-cancel';
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => closeBtn.click());
+      const submit = document.createElement('button');
+      submit.type = 'button';
+      submit.className = 'confirm-btn confirm-btn-primary ask-user-submit';
+      submit.textContent = 'Submit';
+      submit.disabled = !allAnswered();
+      submit.addEventListener('click', () => {
+        if (allAnswered()) send(JSON.stringify(buildAskUserAnswersPayload(batchQuestions, answerState)));
+      });
+      actions.appendChild(cancel);
+      actions.appendChild(submit);
+      body.appendChild(review);
+      body.appendChild(actions);
+    };
+
+    function renderBatch() {
+      renderNav();
+      body.replaceChildren();
+      if (activeIndex >= batchQuestions.length) renderReview();
+      else renderQuestion(batchQuestions[activeIndex], activeIndex);
+    }
+
+    renderBatch();
+    chatBox.appendChild(card);
+    if (renderOptions.scroll !== false) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (renderOptions.focus !== false) {
+      try { card.focus(); } catch (_) {}
+    }
+    return card;
+  }
+
   const question = document.createElement('div');
   question.className = 'ask-user-question';
   question.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
@@ -2160,15 +2392,6 @@ export function renderAskUserCard(payload, options) {
   const list = document.createElement('div');
   list.className = 'ask-user-options';
   card.appendChild(list);
-
-  const send = (text) => {
-    if (!text) return;
-    card.remove();
-    const input = uiModule.el('message');
-    if (input) input.value = text;
-    const sendButton = document.querySelector('.send-btn');
-    if (sendButton) sendButton.click();
-  };
 
   opts.forEach((opt) => {
     const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
@@ -2748,6 +2971,7 @@ const chatRenderer = {
   safeDisplayImageSrc,
   removeAskUserCards,
   renderAskUserCard,
+  buildAskUserAnswersPayload,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

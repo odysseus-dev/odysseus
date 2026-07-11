@@ -40253,6 +40253,9 @@ body.theme-frosted .modal {
   font-weight: 500;
   line-height: 1.4;
   color: var(--fg);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .ask-user-options {
   display: flex;
@@ -40267,6 +40270,7 @@ body.theme-frosted .modal {
   width: 100%;
   /* Match the height of the free-text input below (.styled-prompt-input). */
   min-height: 39px;
+  height: auto;
   text-align: left;
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -40282,8 +40286,89 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
 }
 .ask-user-option:disabled { cursor: default; }
-.ask-user-option-label { font-weight: 500; }
-.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+.ask-user-option-label {
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.ask-user-option-desc {
+  opacity: 0.65;
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.ask-user-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.ask-user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  height: auto;
+  max-width: 140px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.ask-user-chip.is-active {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--panel));
+}
+.ask-user-chip.is-answered::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent, var(--red));
+}
+.ask-user-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ask-user-batch-body {
+  min-width: 0;
+}
+.ask-user-next {
+  margin-top: 10px;
+  min-height: 39px;
+}
+.ask-user-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask-user-review-line {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.ask-user-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
 /* Free-text "Other" row: input + send, on one line. */
 .ask-user-other {
   display: flex;

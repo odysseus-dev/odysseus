@@ -488,9 +488,41 @@ FUNCTION_TOOL_SCHEMAS = [
                             "required": ["label"]
                         }
                     },
-                    "multi": {"type": "boolean", "description": "Set true ONLY when the question explicitly allows choosing more than one option. Otherwise omit it or set false. Default false."}
+                    "multi": {"type": "boolean", "description": "Set true ONLY when the question explicitly allows choosing more than one option. Otherwise omit it or set false. Default false."},
+                    "questions": {
+                        "type": "array",
+                        "description": "Optional batched form. When present, legacy `question`, `options`, and `multi` are ignored. Ask 1-4 questions.",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string", "description": "The question to ask. Be specific and self-contained."},
+                                "header": {"type": "string", "maxLength": 12, "description": "Short navigation label, at most 12 characters."},
+                                "options": {
+                                    "type": "array",
+                                    "description": "2-4 choices. Each is an object with a short `label` and optional `description`.",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string", "description": "Concise choice text the user clicks (1-5 words)."},
+                                            "description": {"type": "string", "description": "Optional one-line explanation of this choice."}
+                                        },
+                                        "required": ["label"]
+                                    }
+                                },
+                                "multiSelect": {"type": "boolean", "default": False, "description": "Set true when this question allows choosing more than one option. Default false."}
+                            },
+                            "required": ["question", "options"]
+                        }
+                    }
                 },
-                "required": ["question", "options"]
+                "anyOf": [
+                    {"required": ["question", "options"]},
+                    {"required": ["questions"]}
+                ]
             }
         }
     },

@@ -3,6 +3,57 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _option_from(value):
+    if isinstance(value, dict):
+        label = str(value.get("label", "")).strip()
+        descr = str(value.get("description", "")).strip()
+    elif isinstance(value, str):
+        label, descr = value.strip(), ""
+    else:
+        return None
+    if not label:
+        return None
+    return {"label": label, "description": descr}
+
+
+def _normalize_batched_questions(value):
+    if not isinstance(value, list) or not (1 <= len(value) <= 4):
+        raise ValueError("`questions` must contain 1-4 items.")
+
+    questions = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("Each question must be an object.")
+
+        question = str(item.get("question", "")).strip()
+        if not question:
+            raise ValueError("Each question needs a non-empty `question`.")
+
+        header = str(item.get("header", "")).strip() or f"Q{index}"
+        if len(header) > 12:
+            raise ValueError("Each question `header` must be 12 characters or fewer.")
+
+        raw_options = item.get("options") or []
+        if not isinstance(raw_options, list) or not (2 <= len(raw_options) <= 4):
+            raise ValueError("Each question needs 2-4 `options`.")
+
+        options = []
+        for opt in raw_options:
+            normalized = _option_from(opt)
+            if normalized is not None:
+                options.append(normalized)
+        if len(options) != len(raw_options):
+            raise ValueError("Each option needs a non-empty `label`.")
+
+        questions.append({
+            "question": question,
+            "header": header,
+            "options": options,
+            "multiSelect": bool(item.get("multiSelect", False)),
+        })
+    return questions
+
+
 class AskUserTool:
     async def execute(self, content, ctx):
         """
@@ -19,19 +70,30 @@ class AskUserTool:
         except (ValueError, TypeError):
             parsed = {}
 
+        if isinstance(parsed, dict) and "questions" in parsed:
+            try:
+                questions = _normalize_batched_questions(parsed.get("questions"))
+            except ValueError as exc:
+                return "ask_user: invalid", {
+                    "error": f"ask_user invalid questions: {exc}",
+                    "exit_code": 1,
+                }
+            desc = f"ask_user: {len(questions)} questions"
+            result = {
+                "ask_user": {"questions": questions},
+                "output": f"Asked the user {len(questions)} questions. Awaiting their selection.",
+                "exit_code": 0,
+            }
+            logger.info("Tool executed: %s", desc)
+            return desc, result
+
         if isinstance(parsed, dict):
             question = str(parsed.get("question", "")).strip()
             multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
             for opt in (parsed.get("options") or []):
-                if isinstance(opt, dict):
-                    label = str(opt.get("label", "")).strip()
-                    descr = str(opt.get("description", "")).strip()
-                elif isinstance(opt, str):
-                    label, descr = opt.strip(), ""
-                else:
-                    continue
-                if label:
-                    options.append({"label": label, "description": descr})
+                normalized = _option_from(opt)
+                if normalized is not None:
+                    options.append(normalized)
         else:
             question = raw
 
