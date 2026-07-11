@@ -37,6 +37,16 @@ def test_household_adapter_reads_and_cites_without_mutation(tmp_path):
     assert adapter.content_fingerprint() == before
 
 
+def test_household_adapter_does_not_rank_substring_matches(tmp_path):
+    root = _repo(tmp_path)
+    (root / "agent-tasks" / "inbox" / "unrelated.md").write_text(
+        "Francesca keeps the runtime spinning online.\n", encoding="utf-8"
+    )
+    adapter = HouseholdReadOnlyAdapter(root)
+
+    assert adapter.search("What is the capital of France? Answer in three words or fewer.") == []
+
+
 def test_domain_inference_keeps_food_search_out_of_task_notes(tmp_path):
     root = _repo(tmp_path)
     (root / "household" / "food" / "stock.yaml").write_text("rice: present\n", encoding="utf-8")

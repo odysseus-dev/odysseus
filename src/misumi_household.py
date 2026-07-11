@@ -155,10 +155,11 @@ class HouseholdReadOnlyAdapter:
         }
 
     def search(self, query: str, domain: Optional[str] = None, limit: int = 10) -> List[Dict[str, object]]:
-        terms = [term.lower() for term in re.findall(r"[A-Za-z0-9_-]{2,}", query or "")]
+        terms = [term.lower() for term in re.findall(r"[A-Za-z0-9_]{2,}", query or "")]
         stop = {
-            "and", "are", "current", "currently", "data", "does", "exists", "from", "have", "is",
-            "on", "that", "the", "there", "this", "to", "what", "when", "where", "which", "with",
+            "and", "answer", "are", "current", "currently", "data", "does", "exists", "explain",
+            "fewer", "from", "have", "in", "is", "language", "on", "only", "plain", "reply", "that",
+            "the", "there", "this", "to", "what", "when", "where", "which", "with", "words",
         }
         terms = [term for term in terms if term not in stop]
         if not terms:
@@ -171,8 +172,8 @@ class HouseholdReadOnlyAdapter:
             except OSError:
                 continue
             for number, line in enumerate(lines, 1):
-                lower = line.lower()
-                score = sum(1 for term in terms if term in lower)
+                line_terms = set(term.lower() for term in re.findall(r"[A-Za-z0-9_]{2,}", line))
+                score = sum(1 for term in terms if term in line_terms)
                 if not score:
                     continue
                 hits.append({"path": rel, "line": number, "snippet": line.strip()[:500], "score": score})
