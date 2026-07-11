@@ -47,16 +47,19 @@ def test_respond_accepts_interface_string_context(tmp_path, monkeypatch):
     response = client.post(
         "/misumi/respond",
         json={
-            "intent": "status",
+            "intent": "reply",
             "state": "idle",
             "mood": "steady",
-            "context": "interface readiness check",
-            "persona": "aoteru",
+            "context": "what is on the shopping list?",
+            "persona": "sanji",
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["persona"] == "aoteru"
+    body = response.json()
+    assert body["persona"] == "sanji"
+    assert body["sources"]
+    assert "shopping-list.md" in body["sources"][0]["path"]
 
 
 def test_domain_request_reports_absent_data_without_model_fallback(tmp_path, monkeypatch):
