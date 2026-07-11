@@ -1,51 +1,79 @@
-# Дорожная карта / Помощь приветствуется
+# Roadmap / Help Wanted
 
-Odysseus в пути, но ещё не дома. Он отлично работает для меня (лол), но этот корабль быстро движется, и обратная связь/помощь будут полезны! (Я не знаю, что делаю, помогите).
+Odysseus is on a voyage, but not home yet. It works great for me (lol), but this ship is moving fast and feedback/help would be appreciated! (I don't know what I'm doing, help).
 
-Если вы видите странный CSS, необычное поведение макета или подозрительно туманный угол кодовой базы, вы, вероятно, правы, держась от него.
+If you see weird CSS, strange layout behavior, or a suspiciously murky corner of
+the codebase, you are probably right to stay away.
 
-## Высокий приоритет
+## High Priority
 
-- ИСПРАВЛЯЕМ БАГИ
-- Дымовые тесты свежей установки на Linux, macOS и Windows. Docker, нативный Python и WSL должны иметь покрытие.
+- SQUASH BUGS
+- Fresh install smoke tests on Linux, macOS, and Windows. Docker, native Python,
+  and WSL all need coverage.
 
-- Аудит интеграций: работают ли интеграции вообще? Установите, что работает, что требует документации по настройке, а что следует удалить или скрыть.
-- Книга рецептов по устранению проблем с самостоятельным развёртыванием. Документируйте странные 30-секундные исправления, которые иначе становятся 30-минутными поисками: Dovecot cleartext auth для локальных стеков, ntfy Android Instant Delivery для серверов не-ntfy.sh, ограничения буфера обмена для plain-HTTP URL Tailscale, URL коллекций Radicale и аналогичные ловушки.
-- Надёжность Cookbook на других компьютерах. Вероятно, это область, наиболее нуждающаяся в работе на разных машинах, GPU, драйверах, оболочках и средах Python.
-- Поддержка SGLang в Cookbook на разных платформах. Убедитесь, что настройка/обслуживание SGLang работает предсказуемо на Linux, Windows/WSL, macOS где возможно, Docker и типичных аппаратных путях NVIDIA/AMD.
-- Профили моделей для Deep Research по аппаратному обеспечению. Рекомендуйте утверждённые профили моделей/параметров для малых, средних и крупных локальных установок, чтобы люди с разным оборудованием могли использовать Deep Research без угадывания. Представьте это либо в настройках Deep Research, либо как предложение сканирования/выпадающего списка в Cookbook.
-- Ранжирование сканирования/загрузки моделей в Cookbook. Приоритизируйте более новые архитектуры и лучше подходящие модели вместо присвоения одинакового рейтинга всему. Ранжирование должно учитывать возраст архитектуры, формат квантизации, соответствие VRAM/RAM, поддержку бэкенда, требования vision/mmproj и вероятную надёжность обслуживания.
-- Обратная связь по ошибкам и логирование в Cookbook. Неудачные загрузки, установки зависимостей, проверки и задачи обслуживания должны показывать фактическую команду/вывод/ошибку в интерфейсе, с копируемыми логами и чёткими следующими шагами вместо просто «crashed».
-- Раздутие контекста промптов агента. Режим агента слишком тяжёл для небольших локальных моделей: схемы инструментов, навыки, память, документы и инструкции могут съесть контекст до реального начала запроса пользователя. Нам нужны более стройные промпты, лучший выбор инструментов, более компактные наборы инструментов по умолчанию и более чёткие рекомендации для моделей с окнами контекста 4k/8k/16k.
-- Аудит инъекций промптов в навыках/инструментах. Редактируемые пользователем навыки, заметки, документы, загруженные страницы и воспоминания должны обрабатываться как недоверенные данные. Продолжайте тестирование того, следуют ли модели вредоинструкциям из этих поверхностей.
-- Улучшение отчётов о деградированном состоянии для ChromaDB, SearXNG, почты, ntfy и зондов провайдеров.
-- Аудит производительности почты. Загрузка, поиск, открытие, удаление и отправка почты могут быть медленными, особенно через IMAP/SMTP-провайдеры с высокой задержкой. Нужен кто-то, разбирающийся в почтовой производительности, чтобы профилировать текущий процесс, определить, является ли узким местом выбор/выборка папки IMAP, инвалидация кэша, загрузка вложений/текста, SMTP-хэндшейки или поведение обновления фронтенда, а затем предложить более безопасные стратегии кэширования/предзагрузки/пакетной обработки без нарушения состояния множественных аккаунтов.
-- Аудит настройки/зондирования провайдеров для Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI и DeepSeek.
+- Integration audit: do integrations even work? Confirm what works, what needs setup docs, and what should be removed or hidden. 
+- Cookbook reliability on other computers. This is probably the area most likely to need work across different machines, GPUs, drivers, shells, and Python environments.
+- Cookbook SGLang support across platforms. Make sure SGLang setup/serve works
+  predictably on Linux, Windows/WSL, macOS where possible, Docker, and common
+  NVIDIA/AMD hardware paths.
+- Deep Research model presets by hardware. Recommend approved model/parameter
+  profiles for small, medium, and large local setups so people with different
+  hardware can use Deep Research without guessing. Surface this either in Deep
+  Research settings or as a Cookbook scan/dropdown suggestion.
+- Cookbook model scan/download ranking. Prioritize newer architectures and
+  better hardware-fit models instead of scoring everything almost the same.
+  Ranking should account for architecture age, quant format, VRAM/RAM fit,
+  backend support, vision/mmproj requirements, and likely serve reliability.
+- Cookbook error feedback and logging. Failed downloads, dependency installs,
+  preflights, and serve jobs should show the actual command/output/error in the
+  UI, with copyable logs and clear next steps instead of just "crashed".
+- Agent prompt/context bloat. Agent mode is too heavy for smaller local models:
+  tool schemas, skills, memory, documents, and instructions can eat the context
+  before the user request really starts. We need slimmer prompts, better tool
+  selection, smaller default tool sets, and clearer guidance for models with
+  4k/8k/16k context windows.
+- Skill/tool prompt-injection audit. User-editable skills, notes, documents,
+  fetched pages, and memories should be treated as untrusted data. Keep testing
+  whether models follow malicious instructions from those surfaces.
+- Better degraded-state reporting for ChromaDB, SearXNG, email, ntfy, and provider probes.
+- Email performance audit. Fetching, searching, opening, deleting, and sending
+  email can feel slow, especially over IMAP/SMTP providers with high latency.
+  Need someone who knows mail performance to profile the current flow, identify
+  whether the bottleneck is IMAP folder select/fetch, cache invalidation,
+  attachment/body loading, SMTP handshakes, or frontend refresh behavior, then
+  propose safer caching/prefetch/batching without breaking multi-account state.
+- Provider setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
 
-## Цели рефакторинга
-- Уборка CSS. `static/style.css` по сути остров Калипсо.
-- Вспомогательный тур-ядро. Вводные туры содержат слишком много копипасты; вынесите общий хелпер `tour-core.js`, прежде чем добавлять новые туры.
-- Уборка позиционирования модальных окон. Некоторые элементы управления окнами улучшились, но поведение всплывающих окон/выпадающих списков/фиксированных позиций всё ещё слишком хрупкое.
-- Обнаруживаемость мобильных медиа-override. Много багов «CSS не двигается» — это мобильные `@media` override для того же селектора; комментарии или линтинг для парных правил desktop/mobile помогут.
-- Удаление мёртвого кода: старые маршруты, устаревшие feature flags и неиспользуемые состояния интерфейса.
+## Refactor Targets
+- CSS cleanup. `static/style.css` basically Calypso's island atm.
+- Tour core helper. The onboarding tours have too much copy-pasted scaffolding; promote a shared `tour-core.js` helper before adding more tours.
+- Modal/window positioning cleanup. Some window controls have improved, but the
+  underlying popup/dropdown/fixed-position behavior is still too fragile.
+- Mobile media override discoverability. A lot of "CSS did not move" bugs are mobile `@media` overrides of the same selector; comments or linting around desktop/mobile paired rules would help.
+- Dead code pass for old routes, stale feature flags, and unused UI states.
 
-## Фронтенд
+## Frontend
 
-- Расширение редактора для более быстрого и надёжного повседневного использования. Лучшая обработка файлов/документов, более плавное поведение окон, более чёткие потоки сохранения/экспорта, более надёжные инструменты редактирования изображений и меньше хрупких крайних случаев.
-- Лучшая интеграция ИИ для заметок и задач. Заметки должны быть удобнее для агента для чтения, обновления, резюмирования и превращения в действия. Задачи должны назначаться агенту из интерфейса, возможно, через кнопку, действие задачи или специальный поток навыков/инструментов.
-- Доработка мобильной галереи/редактора. Более простой запуск/загрузка модели inpaint или любых недостающих компонентов.
-- Доступность: навигация клавиатурой, состояния фокуса, контрастность, уменьшение анимаций.
-- Улучшение пустых состояний и сообщений об ошибках при свежих установках.
-- Ужесточение настройки первого запуска, подсказок и туров, чтобы они не повторялись и не конфликтовали друг с другом.
-- Вендоринг CDN-ресурсов в будущем для более полноценного самостоятельного/оффлайн-режима.
+- Expand the Editor for quicker, more robust everyday use. Better file/document
+  handling, smoother window behavior, clearer save/export flows, stronger image
+  editing affordances, and fewer brittle edge cases.
+- Better AI integration for Notes and Todos. Notes should be easier for the
+  agent to read, update, summarize, and turn into actions. Todos should be
+  assignable to an agent from the UI, possibly through a button, task action,
+  or dedicated skill/tool flow.
+- Mobile gallery/editor polish. Easier to launch/download inpaint model or any missing pieces.
+- Accessibility pass: keyboard navigation, focus states, contrast, reduced motion.
+- Improve empty states and error messages on fresh installs.
+- Tighten first-run setup, hints, and tours so they do not repeat or fight each other.
+- Vendor CDN assets eventually for a more fully self-hosted/offline mode.
 
-## Бэкенд
+## Backend
 
-- Больше тестов вокруг зондирования эндпоинтов и настройки провайдеров.
-- Лучшие настройки планировщика задач и видимость.
-- Руководство по резервному копированию/восстановлению и хелпер для `data/`.
-- Укрепление безопасности вокруг инструментов только для администраторов и чёткая документация по их рискам.
+- More tests around endpoint probing and provider setup.
+- Better task scheduler defaults and visibility.
+- Backup/restore guide and helper flow for `data/`.
+- Security hardening around admin-only tools and clear docs for their risk.
 
-## Не в фокусе сейчас
+## Not The Focus Right Now
 
-Мне, наверное, не стоит добавлять ещё темы.
+I prob shouldnt add more themes.

@@ -76,7 +76,7 @@ class TTSService:
         if provider == "silero":
             silero = self._get_silero()
             return silero is not None and silero.available
-        if provider.startswith("endpoint:"):
+        if isinstance(provider, str) and provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
 
