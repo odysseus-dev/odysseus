@@ -6,7 +6,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ class MisumiRespondRequest(BaseModel):
     intent: str = "reply"
     state: str = "idle"
     mood: str = "focused"
-    context: Dict[str, object] = Field(default_factory=dict)
+    context: Union[Dict[str, object], str] = Field(default_factory=dict)
     persona: str = "aoteru"
 
 
