@@ -6,13 +6,14 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core.middleware import require_admin
 from src.misumi_household import HouseholdReadOnlyAdapter, infer_household_domain
+from src.misumi_memory import MisumiMemory
 from src.misumi_observability import MisumiEventLog
 from src.misumi_policy import load_persona_policy, normalize_persona, persona_record, policy_summary
 from src.misumi_skills import installed_skill_files, security_review_files, skills_for_persona
@@ -40,6 +41,33 @@ class MisumiSkillImportRequest(BaseModel):
     url: str
     persona: str = "aoteru"
     category: Optional[str] = None
+
+
+class MisumiMemoryCaptureRequest(BaseModel):
+    text: str
+    source: str = "chat"
+    type: Optional[str] = None
+    persona: Optional[str] = None
+    entities: List[str] = Field(default_factory=list)
+    next_action: Optional[str] = None
+    meta: Dict[str, object] = Field(default_factory=dict)
+
+
+class MisumiMemoryRouteRequest(BaseModel):
+    persona_primary: str
+    persona_secondary: Optional[str] = None
+
+
+class MisumiMemoryCloseRequest(BaseModel):
+    resolution: Optional[str] = None
+
+
+class MisumiHandoffRequest(BaseModel):
+    from_persona: str
+    to_persona: str
+    action: str
+    capsule_id: Optional[str] = None
+    note: Optional[str] = None
 
 
 def _owner(request: Request) -> Optional[str]:
@@ -101,11 +129,22 @@ async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], O
         return "Odysseus is available, but no working model backend is configured for this request.", None, None
 
 
-def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None) -> APIRouter:
+def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None, memory_root=None) -> APIRouter:
     router = APIRouter(prefix="/misumi", tags=["misumi"])
     adapter = HouseholdReadOnlyAdapter()
     task_router = MisumiTaskRouter(adapter)
     events = MisumiEventLog()
+    memory = MisumiMemory(memory_root)
+
+    def memory_call(operation, *args, **kwargs):
+        try:
+            return operation(*args, **kwargs)
+        except KeyError as exc:
+            raise HTTPException(404, "Memory record not found") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(503, "Misumi memory store is unavailable") from exc
 
     @router.get("/health")
     async def health():
@@ -277,6 +316,7 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None)
         )
         candidates = task_router.discover()
         installed = skills_manager.load(owner=_owner(request))
+        memory_state = memory_call(memory.glance)
         return {
             "status": "ready" if readiness.get("ready") else "degraded",
             "source": "odysseus-misumi-status",
@@ -292,7 +332,94 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None)
                 "by_persona": {name: len(skills_for_persona(name, installed)) for name in load_persona_policy()},
             },
             "events": {"recent_count": len(events.recent(100))},
+            "memory": {
+                "capsules": len(memory_call(memory.capsules)[0]),
+                "inbox": memory_state["inbox_count"],
+                "open_loops": memory_state["open_loop_count"],
+                "stale_loops": memory_state["stale_loop_count"],
+                "pending_handoffs": memory_state["pending_handoff_count"],
+                "newest_capture": memory_state["newest_capture"],
+                "top_open_loop": memory_state["top_open_loop"],
+                "next_recommended_action": memory_state["next_recommended_action"],
+                "responsible_persona": memory_state["responsible_persona"],
+                "writes_allowed": False,
+            },
             "writes_allowed": False,
         }
+
+    @router.post("/memory/capture")
+    async def capture_memory(request: Request, body: MisumiMemoryCaptureRequest):
+        _require_api_scope(request, "misumi:execute")
+        return memory_call(
+            memory.capture, body.text, source=body.source, capsule_type=body.type,
+            persona=body.persona, entities=body.entities, next_action=body.next_action,
+            meta=body.meta,
+        )
+
+    @router.get("/memory/inbox")
+    async def memory_inbox(request: Request, limit: int = 20):
+        _require_api_scope(request, "misumi:read")
+        capsules, corrupt = memory_call(memory.capsules)
+        selected = [item for item in capsules if item.get("status") == "open" and not item.get("human_confirmed")]
+        selected.sort(key=lambda item: str(item.get("created", "")), reverse=True)
+        return {"capsules": selected[:max(1, min(limit, 100))], "corrupt_lines": corrupt}
+
+    @router.get("/memory/recent")
+    async def memory_recent(request: Request, limit: int = 20):
+        _require_api_scope(request, "misumi:read")
+        capsules, corrupt = memory_call(memory.capsules)
+        capsules.sort(key=lambda item: str(item.get("created", "")), reverse=True)
+        return {"capsules": capsules[:max(1, min(limit, 100))], "corrupt_lines": corrupt}
+
+    @router.get("/memory/open-loops")
+    async def memory_open_loops(request: Request):
+        _require_api_scope(request, "misumi:read")
+        loops, corrupt = memory_call(memory.loops)
+        selected = [item for item in loops if item.get("status") == "open"]
+        selected.sort(key=lambda item: str(item.get("created", "")))
+        return {"open_loops": selected, "corrupt_lines": corrupt}
+
+    @router.post("/memory/{capsule_id}/confirm")
+    async def confirm_memory(request: Request, capsule_id: str):
+        _require_api_scope(request, "misumi:execute")
+        return memory_call(memory.confirm, capsule_id)
+
+    @router.post("/memory/{capsule_id}/route")
+    async def route_memory(request: Request, capsule_id: str, body: MisumiMemoryRouteRequest):
+        _require_api_scope(request, "misumi:execute")
+        return memory_call(memory.reroute, capsule_id, body.persona_primary, body.persona_secondary)
+
+    @router.post("/memory/{capsule_id}/close")
+    async def close_memory(request: Request, capsule_id: str, body: Optional[MisumiMemoryCloseRequest] = None):
+        _require_api_scope(request, "misumi:execute")
+        return memory_call(memory.close, capsule_id, body.resolution if body else None)
+
+    @router.post("/handoff")
+    async def create_handoff(request: Request, body: MisumiHandoffRequest):
+        _require_api_scope(request, "misumi:execute")
+        return memory_call(
+            memory.create_handoff, body.from_persona, body.to_persona, body.action,
+            body.capsule_id, body.note,
+        )
+
+    @router.get("/handoffs")
+    async def list_handoffs(request: Request, status: Optional[str] = None):
+        _require_api_scope(request, "misumi:read")
+        if status is not None and status not in {"pending", "resolved"}:
+            raise HTTPException(422, "Unknown handoff status")
+        handoffs, corrupt = memory_call(memory.handoffs)
+        selected = [item for item in handoffs if status is None or item.get("status") == status]
+        selected.sort(key=lambda item: str(item.get("created", "")), reverse=True)
+        return {"handoffs": selected, "corrupt_lines": corrupt}
+
+    @router.post("/handoffs/{handoff_id}/resolve")
+    async def resolve_handoff(request: Request, handoff_id: str):
+        _require_api_scope(request, "misumi:execute")
+        return memory_call(memory.resolve_handoff, handoff_id)
+
+    @router.get("/glance")
+    async def glance(request: Request):
+        _require_api_scope(request, "misumi:read")
+        return memory_call(memory.glance)
 
     return router
