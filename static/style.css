@@ -41386,3 +41386,173 @@ body.factory-panel-view .factory-divider { display:none; }
     min-height: 250px;
   }
 }
+
+/* ── Preview strip (kanban top) ─────────────────────────────── */
+
+.factory-preview-strip {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+
+.factory-preview-strip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.factory-preview-strip-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-dim, #888);
+}
+
+.factory-preview-strip-count {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--green, #2d6a4f) 15%, transparent);
+  color: var(--green, #2d6a4f);
+}
+
+.factory-preview-strip-items {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 15%, transparent) transparent;
+}
+
+.factory-preview-item {
+  flex: 0 0 300px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  background: var(--bg);
+}
+.factory-preview-item:hover {
+  border-color: var(--accent, var(--red));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+}
+
+.factory-preview-item-name {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  color: var(--accent, var(--red));
+  padding: 3px 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.factory-preview-item-body {
+  height: 250px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.factory-preview-item-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  pointer-events: none;
+}
+
+.factory-preview-item-code {
+  margin: 0;
+  padding: 4px 6px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  white-space: pre-wrap;
+  word-break: break-all;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Project preview overlay ─────────────────────────────────── */
+
+.factory-project-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+}
+
+.factory-project-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--bg, #111);
+  border-bottom: 1px solid var(--border, #333);
+  flex-shrink: 0;
+}
+
+.factory-project-preview-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg, #eee);
+}
+
+.factory-project-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.factory-project-preview-frame-wrap {
+  flex: 1;
+  background: #fff;
+}
+
+.factory-project-preview-frame-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* ── Preview tabs ──────────────────────────────────────────── */
+
+.factory-project-preview-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  justify-content: center;
+}
+
+.factory-preview-tab {
+  padding: 4px 14px;
+  border: 1px solid var(--border, #333);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  color: var(--fg-dim, #888);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.factory-preview-tab:hover {
+  background: color-mix(in srgb, var(--fg) 10%, var(--bg));
+  color: var(--fg);
+}
+
+.factory-preview-tab.active {
+  background: var(--bg);
+  color: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+}

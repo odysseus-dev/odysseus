@@ -625,7 +625,7 @@ class FactoryService:
             n = db.query(FactoryNode).filter(FactoryNode.id == node_id).first()
             if not n:
                 return None
-            if n.status not in ("running", "ready"):
+            if n.status not in ("running", "ready", "human_intervention", "failed"):
                 raise ValueError(
                     f"Cannot complete task in '{n.status}' status"
                 )

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 _service = FactoryService()
 
 MAX_ATTEMPTS = 3
+MAX_AUTO_ITERATIONS = 5
 
 _running: Dict[int, asyncio.Task] = {}
 _planning_tasks: set = set()  # strong refs so GC doesn't kill them
@@ -871,7 +872,7 @@ async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     prompt = (
         f"Task: {task.get('title', '')}\n"
         f"Description: {task.get('description', '')}\n\n"
-        f"Output to review:\n{output[:4000]}"
+        f"THE FULL OUTPUT TO REVIEW (complete, not truncated):\n{output[:16000]}"
     )
     raw = await _llm(
         [
@@ -892,8 +893,8 @@ async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     return {"approved": True, "feedback": ""}
 
 
-TASK_TIMEOUT = 300  # total budget per produce call (incl. continuation rounds)
-_PRODUCE_CALL_TIMEOUT = 120  # per-LLM-call read timeout inside _produce
+TASK_TIMEOUT = 600  # total budget per produce call (incl. continuation rounds)
+_PRODUCE_CALL_TIMEOUT = 90  # per-LLM-call read timeout inside _produce
 def _get_produce_max_tokens() -> int:
     """Per-call token cap for producer agent calls.
     
@@ -1097,9 +1098,10 @@ def compile_delivery(project_id: int) -> Optional[str]:
 # ═══════════════════════════════════════════════════════════════
 
 async def _orchestrator_loop(project_id: int, owner: str,
-                             arch: str = "") -> None:
+                             arch: str = "", autonomous: bool = False) -> None:
     """Main loop: find ready tasks, process them, repeat until done or stuck."""
     logger.info(f"Factory: orchestrator started for project {project_id}")
+    _auto_iteration = 0
 
     while True:
         try:
@@ -1127,8 +1129,64 @@ async def _orchestrator_loop(project_id: int, owner: str,
         if not ready:
             dag = _service.get_dag(project_id)
             if dag.get("pending_tasks", 0) == 0 and dag.get("running_tasks", 0) == 0:
-                logger.info(f"Factory: project {project_id} — all tasks done")
-                break
+                # Autonomous mode: review and iterate
+                if autonomous and _auto_iteration < MAX_AUTO_ITERATIONS:
+                    _auto_iteration += 1
+                    logger.info(f"Factory: project {project_id} — auto-iteration {_auto_iteration}/{MAX_AUTO_ITERATIONS}")
+                    _service._log_event_safe(project_id, None,
+                                             f"Auto-iteration {_auto_iteration}: reviewing project output")
+                    try:
+                        ctx = _build_project_context(project_id)
+                        review_prompt = (
+                            f"Original project: {project.get('description', '')}\n\n"
+                            f"Files already built:\n{ctx}\n\n"
+                            f"You are reviewing a completed project. "
+                            f"Look at what was built and decide if more work is needed.\n\n"
+                            f"If the project is complete and working — respond with:\n"
+                            f'{{"complete": true}}\n\n'
+                            f"If features are missing, bugs exist, or improvements are needed — "
+                            f"plan new tasks using the standard format:\n"
+                            f'{{"tasks": [...], "architecture": "..."}}'
+                        )
+                        raw = await _call_agent("fredrix", review_prompt, owner, timeout=90)
+                        plan = _extract_json(raw)
+                        if plan and plan.get("complete"):
+                            logger.info(f"Factory: project {project_id} — reviewer says complete")
+                            _service._log_event_safe(project_id, None, "Auto-review: project is complete")
+                            break
+                        if plan and isinstance(plan.get("tasks"), list) and plan["tasks"]:
+                            # Add new tasks (reuse iterate_project's task creation logic)
+                            existing_ids = [n["id"] for n in _service.get_nodes(project_id)]
+                            for t in plan["tasks"]:
+                                if not isinstance(t, dict):
+                                    continue
+                                try:
+                                    _service.add_node(
+                                        project_id=project_id,
+                                        task_type=t.get("task_type", "backend"),
+                                        title=t.get("title", "New task"),
+                                        description=t.get("description", ""),
+                                        dependencies=[],  # new tasks don't depend on old ones
+                                        assigned_agent=_route(t.get("task_type", ""))[0].capitalize(),
+                                        filename=t.get("filename", ""),
+                                    )
+                                except Exception:
+                                    pass
+                            _service.set_project_status(project_id, "running")
+                            _service.mark_ready_tasks(project_id)
+                            arch = plan.get("architecture", "") or arch
+                            _service._log_event_safe(project_id, None,
+                                                     f"Auto-iteration {_auto_iteration}: planned {len(plan['tasks'])} new tasks")
+                            continue  # restart the loop with new tasks
+                        else:
+                            logger.info(f"Factory: project {project_id} — no more tasks from reviewer, stopping")
+                            break
+                    except Exception as e:
+                        logger.error(f"Factory: auto-iteration failed for project {project_id}: {e}")
+                        break
+                else:
+                    logger.info(f"Factory: project {project_id} — all tasks done")
+                    break
             # No ready tasks but work remains. DON'T exit — keep polling so
             # that when a blocked task is retried from the UI (human_intervention
             # -> ready), the orchestrator picks it up and its dependents advance.
@@ -1192,30 +1250,35 @@ def launch_planning(project_id: int, owner: str = "default") -> None:
     logger.info(f"Factory: launched planning for project {project_id}")
 
 
-def launch(project_id: int, owner: str = "default", arch: str = "") -> None:
+def launch(project_id: int, owner: str = "default", arch: str = "",
+           autonomous: bool = False) -> None:
     """Launch (or re-launch) the orchestrator for a project.
 
     If an orchestrator task already exists and is still alive, it is left
     running UNLESS force=True — in which case it is cancelled and replaced
     (used by restart/retry to recover a stuck loop).
+
+    Set autonomous=True to enable self-iteration after all tasks complete.
     """
     existing = _running.get(project_id)
     if existing and not existing.done():
         return
-    _start_orchestrator_task(project_id, owner, arch)
+    _start_orchestrator_task(project_id, owner, arch, autonomous)
 
 
-def relaunch(project_id: int, owner: str = "default", arch: str = "") -> None:
+def relaunch(project_id: int, owner: str = "default", arch: str = "",
+             autonomous: bool = False) -> None:
     """Cancel any existing orchestrator for this project and start a fresh one.
 
     Use this from restart/retry paths so a stuck (e.g. hung-inside-wait_for)
     orchestrator is replaced instead of silently no-oping.
     """
     stop(project_id)
-    _start_orchestrator_task(project_id, owner, arch)
+    _start_orchestrator_task(project_id, owner, arch, autonomous)
 
 
-def _start_orchestrator_task(project_id: int, owner: str, arch: str) -> None:
+def _start_orchestrator_task(project_id: int, owner: str, arch: str,
+                              autonomous: bool = False) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -1231,7 +1294,7 @@ def _start_orchestrator_task(project_id: int, owner: str, arch: str) -> None:
             logger.error(f"Factory: orchestrator crashed for project {project_id}: {exc}",
                          exc_info=exc)
 
-    task = loop.create_task(_orchestrator_loop(project_id, owner, arch))
+    task = loop.create_task(_orchestrator_loop(project_id, owner, arch, autonomous))
     _running[project_id] = task
     task.add_done_callback(_log_crash)
 

@@ -225,6 +225,29 @@ def setup_factory_routes() -> APIRouter:
             logger.exception("start_project failed")
             raise HTTPException(500, str(e))
 
+    @router.post("/projects/{project_id}/start-autonomous")
+    async def start_project_autonomous(project_id: int, request: Request):
+        """Start a project in autonomous mode — self-iterates until complete."""
+        try:
+            body = {}
+            try:
+                body = await request.json()
+            except Exception:
+                pass
+            owner = body.get("owner", "default")
+            result = svc.start_project(project_id)
+            if not result:
+                raise HTTPException(404, f"Project {project_id} not found")
+            from services.factory_orchestrator import launch
+            autonomous = bool(body.get("autonomous", True))
+            launch(project_id, owner=owner, autonomous=autonomous)
+            return result
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            logger.exception("start_project_autonomous failed")
+            raise HTTPException(500, str(e))
+
     @router.post("/projects/{project_id}/iterate")
     async def iterate_project_route(project_id: int, request: Request):
         """Add new tasks to a completed/in-progress project via LLM planning."""
@@ -299,10 +322,11 @@ def setup_factory_routes() -> APIRouter:
             except Exception:
                 pass
             owner = body.get("owner", "default")
+            autonomous = body.get("autonomous", False)
             result = svc.resume_project(project_id)
             if not result:
                 raise HTTPException(404, f"Project {project_id} not found")
-            launch(project_id, owner=owner)
+            launch(project_id, owner=owner, autonomous=autonomous)
             return result
         except ValueError as e:
             raise HTTPException(400, str(e))

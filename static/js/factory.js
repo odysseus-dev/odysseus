@@ -64,6 +64,8 @@ async function saveFactorySettings(agentModels, agentPrompts, agentMaxTokens) {
 let _projects = [];
 let _activeProjectId = null;
 let _activeStatus = null;
+let _lastFingerprint = '';
+let _autoMode = false;
 
 // ── SVG icons (compact) ───────────────────────────────────────
 
@@ -77,7 +79,7 @@ const ICONS = {
   back: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>',
   close: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
   spinner: '<svg class="factory-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg>',
-  eye: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eye: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
 
 // ── Status helpers ─────────────────────────────────────────────
@@ -234,6 +236,15 @@ function _renderSettings(container, data) {
         Assign models and customize agent instructions. "Default" model uses the task endpoint.
         Custom prompts override how each agent behaves.
       </p>
+      <div class="factory-settings-bulk" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border,#333);border-radius:6px;">
+        <label for="factory-bulk-model" style="font-size:12px;font-weight:600;white-space:nowrap;">Set all agents to:</label>
+        <select id="factory-bulk-model" style="padding:5px 8px;border:1px solid var(--border,#333);border-radius:4px;background:transparent;color:inherit;font-size:12px;max-width:220px;">
+          <option value="">Default (task endpoint)</option>
+          ${modelOptions}
+        </select>
+        <button class="factory-btn factory-btn-sm factory-btn-primary" id="factory-bulk-model-apply" type="button" style="flex-shrink:0;">Apply All</button>
+        <span style="font-size:11px;opacity:0.6;margin-left:4px;">Sets every agent to the same model</span>
+      </div>
       <div class="factory-settings-bulk" style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border,#333);border-radius:6px;">
         <label for="factory-bulk-tokens" style="font-size:12px;font-weight:600;white-space:nowrap;">Set all token limits:</label>
         <input type="number" id="factory-bulk-tokens" value="4096" min="1024" max="131072" step="1024"
@@ -287,6 +298,17 @@ function _renderSettings(container, data) {
     const val = parseInt(container.querySelector('#factory-bulk-tokens')?.value);
     if (val && val >= 1024) {
       container.querySelectorAll('.factory-settings-max-tokens').forEach(inp => { inp.value = val; });
+    }
+  });
+
+  // Bulk "Apply All" model
+  container.querySelector('#factory-bulk-model-apply')?.addEventListener('click', () => {
+    const bulkSelect = container.querySelector('#factory-bulk-model');
+    const targetVal = bulkSelect?.value;
+    if (targetVal !== undefined && targetVal !== null) {
+      container.querySelectorAll('.factory-settings-select').forEach(sel => {
+        sel.value = targetVal;
+      });
     }
   });
 
@@ -429,6 +451,8 @@ let _pollTimer = null;
 
 async function _openProjectStatus(projectId) {
   _activeProjectId = projectId;
+  _lastFingerprint = '';
+  _autoMode = false;
   if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
 
   const body = document.getElementById('factory-body');
@@ -482,6 +506,14 @@ function _renderKanban(container) {
   const info = _projectStatusInfo(p);
   const tasks = p.tasks || [];
 
+  // ── Smart rebuild: skip if nothing changed ──
+  const fingerprint = tasks.map(t =>
+    `${t.id}:${t.status}:${t.error || ''}:${t.result ? '1' : '0'}`
+  ).join('|') + `:${p.status}:${info.pct}`;
+
+  if (fingerprint === _lastFingerprint) return;
+  _lastFingerprint = fingerprint;
+
   const columns = [
     { key: 'pending', label: 'Pending' },
     { key: 'ready', label: 'Ready' },
@@ -490,6 +522,8 @@ function _renderKanban(container) {
     { key: 'failed', label: 'Failed' },
     { key: 'human_intervention', label: 'Blocked' },
   ];
+
+  const completedTasks = tasks.filter(t => t.status === 'completed');
 
   container.innerHTML = `
     <div class="factory-project-info">
@@ -539,10 +573,6 @@ function _renderKanban(container) {
       const resultText = (typeof task.result === 'object' && task.result)
         ? (task.result.output || JSON.stringify(task.result))
         : (task.result || '');
-      const previewOutput = (typeof task.result === 'object' && task.result)
-        ? (task.result.output || '')
-        : (typeof task.result === 'string' ? task.result : '');
-      const isPreviewable = _isPreviewable(task);
       const fname = task.filename ? `<div class="factory-task-card-file">${_esc(task.filename)}</div>` : '';
       const deps = (task.dependencies || []).map(depId => {
         const dep = tasks.find(t => t.id === depId);
@@ -555,7 +585,6 @@ function _renderKanban(container) {
         <div class="factory-task-card-top">
           <span class="factory-task-card-id">T${task.id}</span>
           <span class="factory-task-card-agent">${_esc(task.agent || task.assigned_agent || '')}${task.task_type ? ` · ${_esc(task.task_type)}` : ''}</span>
-          ${isPreviewable ? `<button class="factory-preview-eye-btn" data-task-id="${task.id}" title="Preview output">${ICONS.eye}</button>` : ''}
         </div>
         <div class="factory-task-card-title">${_esc(task.title || task.description || '')}</div>
         ${fname}
@@ -571,40 +600,17 @@ function _renderKanban(container) {
             ${ICONS.spinner} <span>Working...</span>
           </div>
         ` : ''}
-        ${task.status === 'completed' ? `<div class="factory-task-card-view">Click to view output →</div>` : ''}
+        ${task.status === 'completed' ? `
+  <div class="factory-task-card-view">
+    ${ICONS.eye} <span>View output</span>
+  </div>
+` : ''}
       `;
       card.addEventListener('click', (e) => {
         if (e.target.closest('.factory-task-retry-btn')) return;
-        if (e.target.closest('.factory-preview-eye-btn')) return;
         _openTaskDetail(task.id);
       });
       body.appendChild(card);
-
-      // ── Eye button preview toggle ─────────────────────────
-      if (isPreviewable) {
-        const eyeBtn = card.querySelector('.factory-preview-eye-btn');
-        if (eyeBtn) {
-          eyeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            let expander = card.nextElementSibling;
-            if (expander && expander.classList.contains('factory-task-card-preview')) {
-              const hidden = expander.style.display === 'none';
-              expander.style.display = hidden ? '' : 'none';
-              eyeBtn.classList.toggle('active', hidden);
-            } else {
-              expander = document.createElement('div');
-              expander.className = 'factory-task-card-preview';
-              const iframe = document.createElement('iframe');
-              iframe.className = 'factory-task-card-preview-iframe';
-              iframe.sandbox = 'allow-scripts';
-              iframe.srcdoc = previewOutput;
-              expander.appendChild(iframe);
-              card.parentNode.insertBefore(expander, card.nextSibling);
-              eyeBtn.classList.add('active');
-            }
-          });
-        }
-      }
     });
   });
 
@@ -645,6 +651,7 @@ function _renderKanban(container) {
       }
     });
   }
+
 }
 
 function _openTaskDetail(taskId) {
@@ -685,7 +692,7 @@ function _renderTaskDetail(taskId) {
   if (!body) return;
 
   const resultObj = (typeof task.result === 'object' && task.result) ? task.result : null;
-  const output = resultObj?.output || (typeof task.result === 'string' ? task.result : '');
+  const output = _getOutput(task.result);
   const producer = resultObj?.producer || task.assigned_agent || '';
   const reviewer = resultObj?.reviewer || '';
   const attempts = resultObj?.attempts || 0;
@@ -724,9 +731,9 @@ function _renderTaskDetail(taskId) {
       ${(task.status === 'human_intervention' || task.status === 'failed') ? `
         <button class="factory-btn factory-btn-warn" id="factory-detail-retry-btn">${ICONS.retry} Retry task</button>
       ` : ''}
-      ${output ? `
+      ${task.status === 'completed' ? `
         <div class="factory-task-detail-output-label">Output</div>
-        ${showPreview ? `
+        ${output ? (showPreview ? `
           <div class="factory-preview-split">
             <div class="factory-preview-code-pane">
               <pre class="factory-task-detail-output"><code>${_esc(output)}</code></pre>
@@ -742,6 +749,8 @@ function _renderTaskDetail(taskId) {
           </div>
         ` : `
           <pre class="factory-task-detail-output"><code>${_esc(output)}</code></pre>
+        `) : `
+          <div class="factory-task-detail-output" style="color:var(--fg-dim,#888);font-style:italic;display:flex;align-items:center;justify-content:center;min-height:60px;">No output available yet — the task may still be producing content.</div>
         `}
       ` : ''}
     </div>
@@ -802,6 +811,210 @@ function _startPolling(projectId) {
   }, 3000);
 }
 
+/**
+ * Assemble all completed task files into a full project preview.
+ * Inlines CSS/JS dependencies for ALL HTML files, shows tabs for switching.
+ */
+function _previewProject(project) {
+  const tasks = project.tasks || [];
+  const completed = tasks.filter(t => t.status === 'completed');
+  if (!completed.length) return;
+
+  // Build file map: filename → content (with basename aliases)
+  const files = {};
+  completed.forEach(task => {
+    const fname = (task.filename || '').trim();
+    const output = _getOutput(task.result);
+    if (!fname || !output) return;
+    files[fname] = output;
+    const basename = fname.split('/').pop();
+    if (basename && basename !== fname) files[basename] = output;
+  });
+
+  // Find ALL HTML files
+  const htmlFiles = Object.keys(files).filter(f => f.toLowerCase().endsWith('.html'));
+  if (!htmlFiles.length) {
+    alert('No HTML file found to preview. Add a frontend task first.');
+    return;
+  }
+
+  // Build assembled pages: {filename: assembledHTML}
+  const pages = {};
+  const _inlineHTML = (html) => {
+    // Inline CSS: <link rel="stylesheet" href="..."> → <style>...</style>
+    html = html.replace(/<link[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*\/?>/gi, (match, href) => {
+      const resolved = _resolveFile(href, files);
+      if (resolved) return `<style>/* ${href} */\n${resolved}\n</style>`;
+      return match;
+    });
+    // Inline JS: <script src="..."></script> → <script>...</script>
+    html = html.replace(/<script[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (match, src) => {
+      const resolved = _resolveFile(src, files);
+      if (resolved) return `<script>/* ${src} */\n${resolved}\n</script>`;
+      return match;
+    });
+    // Inline CSS @import
+    html = html.replace(/<style>([\s\S]*?)<\/style>/gi, (match, css) => {
+      const resolved = css.replace(/@import\s+["']([^"']+)["']\s*;/gi, (im, imp) => {
+        const impContent = _resolveFile(imp, files);
+        if (impContent) return `/* @import ${imp} */\n${impContent}`;
+        return im;
+      });
+      return `<style>${resolved}</style>`;
+    });
+    return html;
+  };
+
+  htmlFiles.forEach(fname => {
+    const raw = files[fname];
+    if (raw) pages[fname] = _inlineHTML(raw);
+  });
+
+  // Default to index.html, else first file
+  const defaultFile = htmlFiles.find(f => f.toLowerCase() === 'index.html') || htmlFiles[0];
+
+  // Show preview overlay with tabs
+  _showProjectPreview(pages, htmlFiles, defaultFile);
+}
+
+/**
+ * Resolve a file reference against the virtual file map.
+ * Tries: exact match, basename match, match without leading ./
+ */
+function _resolveFile(ref, files) {
+  if (!ref) return null;
+  // Remove query strings and hashes
+  ref = ref.replace(/[?#].*$/, '');
+  // Direct match
+  if (files[ref]) return files[ref];
+  // Basename match
+  const bn = ref.split('/').pop();
+  if (bn && files[bn]) return files[bn];
+  // Without leading ./
+  const clean = ref.replace(/^\.\//, '');
+  if (clean !== ref && files[clean]) return files[clean];
+  // Partial match (contains)
+  for (const key of Object.keys(files)) {
+    if (key.endsWith('/' + ref) || key.endsWith('\\' + ref) || key === ref) {
+      return files[key];
+    }
+  }
+  return null;
+}
+
+/**
+ * Show full-screen preview overlay with tabbed HTML pages
+ * @param {Object} pages - {filename: assembledHTML}
+ * @param {string[]} htmlFiles - ordered list of HTML filenames
+ * @param {string} activeFile - the initially selected filename
+ */
+function _showProjectPreview(pages, htmlFiles, activeFile) {
+  // Remove any existing preview overlay
+  const existing = document.getElementById('factory-project-preview');
+  if (existing) existing.remove();
+
+  const showTabs = htmlFiles.length > 1;
+
+  // If only one page, open directly in a new tab (no overlay needed)
+  if (!showTabs && htmlFiles.length === 1) {
+    const html = pages[htmlFiles[0]];
+    if (html) {
+      const blob = new Blob([html], { type: 'text/html' });
+      window.open(URL.createObjectURL(blob), '_blank');
+    }
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'factory-project-preview';
+  overlay.className = 'factory-project-preview-overlay';
+  overlay.innerHTML = `
+    <div class="factory-project-preview-toolbar">
+      <span class="factory-project-preview-title">Project Preview</span>
+      ${showTabs ? `
+      <div class="factory-project-preview-tabs" id="factory-preview-tabs">
+        ${htmlFiles.map(f => {
+          const short = f.split('/').pop().replace(/\.html?$/i, '');
+          const active = f === activeFile ? ' active' : '';
+          return `<button class="factory-preview-tab${active}" data-file="${_esc(f)}">${_esc(short)}</button>`;
+        }).join('')}
+      </div>
+      ` : ''}
+      <div class="factory-project-preview-actions">
+        <button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-preview-reload-btn" title="Reload current page">↻ Reload</button>
+        <button class="factory-btn factory-btn-sm factory-btn-primary" id="factory-preview-open-tab-btn" title="Open in new browser tab">↗ Open in Tab</button>
+        <button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-preview-close-btn" title="Close">✕ Close</button>
+      </div>
+    </div>
+    <div class="factory-project-preview-frame-wrap">
+      <iframe id="factory-project-preview-iframe" sandbox="allow-scripts allow-same-origin allow-forms" src="about:blank"></iframe>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const iframe = overlay.querySelector('#factory-project-preview-iframe');
+  
+  // Load a specific page into the iframe
+  function _loadPage(file) {
+    if (iframe && pages[file]) {
+      iframe.srcdoc = pages[file];
+    }
+  }
+
+  // Load initial page
+  _loadPage(activeFile);
+
+  // Tab switching
+  if (showTabs) {
+    overlay.querySelectorAll('.factory-preview-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const file = tab.dataset.file;
+        // Update active tab styling
+        overlay.querySelectorAll('.factory-preview-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        _loadPage(file);
+      });
+    });
+  }
+
+  // Reload button
+  overlay.querySelector('#factory-preview-reload-btn')?.addEventListener('click', () => {
+    const activeTab = overlay.querySelector('.factory-preview-tab.active');
+    const file = activeTab ? activeTab.dataset.file : activeFile;
+    _loadPage(file);
+  });
+
+  // Open in new tab
+  overlay.querySelector('#factory-preview-open-tab-btn')?.addEventListener('click', () => {
+    const activeTab = overlay.querySelector('.factory-preview-tab.active');
+    const file = activeTab ? activeTab.dataset.file : Object.keys(pages)[0];
+    const html = pages[file];
+    if (html) {
+      const blob = new Blob([html], { type: 'text/html' });
+      window.open(URL.createObjectURL(blob), '_blank');
+    }
+  });
+
+  // Close button
+  overlay.querySelector('#factory-preview-close-btn')?.addEventListener('click', () => {
+    overlay.remove();
+  });
+
+  // Close on Escape
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      overlay.remove();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+
+  // Close on background click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+}
+
 function _renderProjectActions(container, project) {
   if (!container) return;
   const info = _projectStatusInfo(project);
@@ -817,6 +1030,13 @@ function _renderProjectActions(container, project) {
     buttons += `<button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-resume-btn">${ICONS.play} Resume</button>`;
   }
   buttons += `<button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-restart-btn">${ICONS.refresh} Restart</button>`;
+  const hasHTMLTasks = (project.tasks || []).some(t => t.status === 'completed' && ((t.filename || '').toLowerCase().endsWith('.html') || (t.task_type || '').toLowerCase() === 'frontend'));
+  if (hasHTMLTasks) {
+    buttons += `<button class="factory-btn factory-btn-sm factory-btn-primary" id="factory-preview-project-btn" title="Preview the assembled project">▶ Preview</button>`;
+  }
+  if (project.status === 'running') {
+    buttons += `<button class="factory-btn factory-btn-sm ${_autoMode ? 'factory-btn-primary' : 'factory-btn-ghost'}" id="factory-auto-btn" title="Toggle autonomous mode">🤖 Auto</button>`;
+  }
 
   container.innerHTML = buttons;
 
@@ -833,6 +1053,31 @@ function _renderProjectActions(container, project) {
     try { await restartProject(project.id, mode); await _openProjectStatus(project.id); }
     catch (err) { alert('Restart failed: ' + err.message); }
   });
+  _el('factory-preview-project-btn')?.addEventListener('click', () => {
+    _previewProject(project);
+  });
+  _el('factory-auto-btn')?.addEventListener('click', async () => {
+    const btn = _el('factory-auto-btn');
+    if (!btn) return;
+    const newState = !_autoMode;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      await _fetchJSON(`${_API}/projects/${project.id}/start-autonomous`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autonomous: newState }),
+      });
+      _autoMode = newState;
+      btn.classList.toggle('factory-btn-primary', newState);
+      btn.classList.toggle('factory-btn-ghost', !newState);
+    } catch (err) {
+      alert('Auto mode toggle failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🤖 Auto';
+    }
+  });
 }
 
 // ── Refresh projects list ─────────────────────────────────────
@@ -847,6 +1092,46 @@ async function _refreshProjects() {
 
 // ── Utility ───────────────────────────────────────────────────
 
+/**
+ * Extract the output text from a task's result, which may be either an
+ * object ({output: "...", ...}) or a JSON string that needs parsing.
+ * Returns the actual content string (HTML, code, etc.) or empty string.
+ */
+function _getOutput(result) {
+  // Null/undefined → empty
+  if (!result) return '';
+
+  // String — could be JSON or plain text
+  if (typeof result === 'string') {
+    try {
+      const parsed = JSON.parse(result);
+      if (parsed && typeof parsed === 'object') {
+        const val = parsed.output;
+        if (val !== undefined && val !== null) {
+          if (typeof val === 'string') return val;
+          if (typeof val === 'object') return JSON.stringify(val);
+          return String(val);
+        }
+      }
+    } catch (_) { /* not JSON — use the string as-is */ }
+    return result;
+  }
+
+  // Object — extract .output field
+  if (typeof result === 'object') {
+    const val = result.output;
+    if (val !== undefined && val !== null) {
+      if (typeof val === 'string') return val;
+      if (typeof val === 'object') return JSON.stringify(val);
+      return String(val);
+    }
+    return '';
+  }
+
+  // Unexpected type — empty
+  return '';
+}
+
 function _esc(str) {
   if (!str) return '';
   const d = document.createElement('div');
@@ -856,8 +1141,7 @@ function _esc(str) {
 
 function _isPreviewable(task) {
   if (!task || task.status !== 'completed') return false;
-  const resultObj = (typeof task.result === 'object' && task.result) ? task.result : null;
-  const output = resultObj?.output || (typeof task.result === 'string' ? task.result : '');
+  const output = _getOutput(task.result);
   if (!output) return false;
   const tt = (task.task_type || '').toLowerCase();
   const fname = (task.filename || '').toLowerCase();

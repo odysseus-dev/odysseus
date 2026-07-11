@@ -54,6 +54,32 @@ _REFUSAL_RE = re.compile(
 # A trailing unclosed tag, e.g. ...<a href="#contact" class="btn btn-prima
 _TRAILING_OPEN_TAG_RE = re.compile(r"<[a-zA-Z0-9!/][^\n>]*$")
 
+# Output that ends mid-word (a-zA-Z0-9_) without a newline — strong truncation signal.
+# Covers cases where the model was cut off mid-token, e.g. "export function init(" or
+# "const state = getSta" that wouldn't be caught by brace/count imbalance alone.
+_END_MID_WORD_RE = re.compile(r'[a-zA-Z0-9_]$')
+
+
+def _ends_mid_construct(s: str) -> bool:
+    """True if output ends with an alphanumeric character (likely cut mid-word)
+    AND there's no trailing newline. Conservative — only triggers when the
+    trailing content looks like it was interrupted, not when output naturally
+    ends with an identifier."""
+    if not s:
+        return False
+    clean = s.rstrip()
+    if not clean:
+        return False
+    # Must end with an identifier character
+    if not _END_MID_WORD_RE.search(clean):
+        return False
+    # Must NOT end with } ) ] ; " ' ` — these are natural line endings
+    if clean[-1] in '})];"\'`':
+        return False
+    # Must NOT end with a common terminal pattern (comment close, etc.)
+    # If it ends with alphanumeric AND has no trailing newline, it was likely cut
+    return not s.endswith('\n')
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Language families + noise strippers
@@ -251,6 +277,8 @@ def looks_truncated(text: str, fname: str = "") -> bool:
         return True
     tail_low = s[-200:].lower()
     if s.endswith(("...", "\u2026")) or "[truncat" in tail_low:
+        return True
+    if _ends_mid_construct(s):           # cut off mid-word
         return True
     # ── Language-specific structural checks ──
     return _looks_truncated_lang(s, fl)
