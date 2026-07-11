@@ -163,7 +163,8 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
         started = time.monotonic()
         request_id = events.request_id()
         persona = normalize_persona(body.persona)
-        prompt = (body.prompt or body.intent or "status").strip()
+        interface_context = body.context if isinstance(body.context, str) else ""
+        prompt = (body.prompt or interface_context or body.intent or "status").strip()
         domain = infer_household_domain(prompt)
         sources = adapter.search(prompt, domain=domain, limit=4) if adapter.reachable else []
         backend = model = None
