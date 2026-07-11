@@ -41251,3 +41251,138 @@ body.factory-panel-view .factory-divider { display:none; }
     max-height: 200px;
   }
 }
+
+/* ── Preview split pane ─────────────────────────────────────── */
+
+.factory-preview-split {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  min-height: 300px;
+  max-height: 60vh;
+  overflow: hidden;
+}
+
+.factory-preview-split-stacked {
+  flex-direction: column;
+}
+
+.factory-preview-code-pane {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.factory-preview-code-pane .factory-task-detail-output {
+  margin: 0;
+  max-height: 100%;
+  flex: 1;
+}
+
+.factory-preview-render-pane {
+  flex: 1.2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* Dark bg for non-HTML previews, light for HTML renders */
+.factory-preview-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+.factory-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--fg) 6%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.factory-preview-toolbar-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim, #888);
+}
+
+.factory-preview-refresh-btn,
+.factory-preview-resize-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim, #888);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.factory-preview-refresh-btn:hover,
+.factory-preview-resize-btn:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+/* ── Task card inline preview ───────────────────────────────── */
+
+.factory-task-card-preview {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.factory-task-card-preview-iframe {
+  width: 100%;
+  height: 200px;
+  border: none;
+  background: #fff;
+}
+
+.factory-preview-eye-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim, #888);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.factory-preview-eye-btn:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.factory-preview-eye-btn.active {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+
+/* ── Responsive: stack on narrow widths ─────────────────────── */
+
+@media (max-width: 768px) {
+  .factory-preview-split {
+    flex-direction: column;
+    max-height: none;
+  }
+  .factory-preview-render-pane {
+    min-height: 250px;
+  }
+}
