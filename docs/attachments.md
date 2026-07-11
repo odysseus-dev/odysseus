@@ -60,12 +60,26 @@ Current retention behavior is conservative:
 
 - uploads are indexed in `uploads.json` with owner, checksum, MIME type, size,
   and creation time;
-- the existing upload cleanup removes files older than the configured cleanup
-  window;
+- admin cleanup first scans persisted chat metadata/content, document versions,
+  PDF source markers, gallery hashes, notes, and calendar records for live
+  references;
+- cleanup fails closed if that reference scan cannot complete, and the lower-level
+  cleanup API removes nothing unless it receives a complete reference snapshot;
+- expired, unreferenced uploads are removed during the completed scan, while
+  attachment-bearing writers must first take an owner-checked reservation that
+  serializes with deletion and refreshes the upload's access timestamp;
+- deliberate removal atomically drops matching `uploads.json` rows before deleting
+  the bytes and restores those rows if filesystem removal fails;
 - deleting a chat removes the chat rows but does not immediately delete shared
   upload bytes, because the same upload may also be referenced by gallery items,
   documents, duplicate-upload rows, or future artifact records.
 
-Safe follow-up work can add an admin repair command that walks upload references
-from chat metadata, gallery rows, documents, and artifacts before deleting any
-unreferenced files.
+There is no distinct artifact table in the current schema. Artifact-like upload
+references persisted in chat or document text are covered by the canonical
+attachment-ID scan; any future artifact store must be added to reference discovery
+before cleanup is allowed to consider its uploads unreferenced.
+
+Cleanup and write reservations share the upload-index lock. This closes the
+scan/write/delete race in the documented single-worker deployment; a future
+multi-process deployment must add an inter-process lock or move lifecycle state
+into the database before enabling destructive cleanup in more than one worker.
