@@ -53,6 +53,13 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 
 A full hover-to-play tour lives on the landing page: [`docs/index.html`](docs/index.html).
 
+## Community clients
+
+Community-built native mobile clients that talk to a self-hosted Odysseus server over its HTTP API. They are maintained in their own repositories, not by this project — review the code and pair only with tokens you can revoke (Settings → API tokens).
+
+- [odysseus-mobile](https://github.com/mahdi-salmanzade/odysseus-mobile) — free, open-source (Expo / React Native) client for iOS and Android; LAN pairing via a revocable chat-scoped token.
+- [odysseus-ios](https://github.com/JoaoZaokk/odysseus-ios) — open-source native iOS client, also available prebuilt on the App Store (paid).
+
 ## Contributing
 
 Help is welcome. The best entry points are fresh-install testing, provider setup bugs, mobile/editor polish, docs, and small focused refactors. See [CONTRIBUTING.md](CONTRIBUTING.md) and [ROADMAP.md](ROADMAP.md).
