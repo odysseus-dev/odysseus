@@ -799,7 +799,7 @@ def httpx_post_kimi_aware(url: str, headers: Optional[Dict], **kwargs):
 
 
 async def httpx_post_kimi_aware_async(client, url: str, headers: Optional[Dict], **kwargs):
-    h = apply_kimi_code_headers(headers, url)
+    h = await asyncio.to_thread(apply_kimi_code_headers, headers, url)
     if not _is_kimi_code_url(url):
         return await client.post(url, headers=h, **kwargs)
     last = None
@@ -2466,7 +2466,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             events.append(_stream_delta_event(part))
         return events
 
-    h = apply_kimi_code_headers(h, target_url)
+    h = await asyncio.to_thread(apply_kimi_code_headers, h, target_url)
     try:
         client = _get_http_client()
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
