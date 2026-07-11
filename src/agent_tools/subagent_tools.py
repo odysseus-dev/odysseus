@@ -85,6 +85,18 @@ async def _run_subagent_loop(
         registry.update_status(actor_id, ActorStatus.IDLE, outcome=ActorOutcome.SUCCESS)
         logger.info(f"Subagent {actor_id} completed: {len(full)} chars, {len(tool_events)} tools")
 
+        # Write task progress to file
+        try:
+            import os
+            _data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            _progress_base = os.path.join(_data_dir, "memory", session_id)
+            from src.agent.memory_persist import TaskProgressStore
+            _progress_store = TaskProgressStore(_progress_base)
+            _progress_content = f"Status: completed\nTask: {task[:200]}\nResult: {full[:1000]}\nTools used: {len(tool_events)}"
+            _progress_store.write_progress(actor_id, _progress_content)
+        except Exception as _e:
+            logger.debug(f"Task progress write skipped: {_e}")
+
     except Exception as e:
         actor.error = str(e)
         registry.update_status(actor_id, ActorStatus.IDLE, outcome=ActorOutcome.FAILURE, error=str(e))

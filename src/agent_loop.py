@@ -4502,6 +4502,36 @@ async def stream_agent_loop(
     metrics["requested_model"] = requested_model
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
+    # ── Memory persistence hook ──────────────────────────────────────────
+    # After each turn, persist a summary of the agent's work to notes.md.
+    # This gives the checkpoint writer and future sessions access to what
+    # happened in this turn.
+    _mp_t = time.time()
+    try:
+        if session_id and full_response.strip():
+            import os
+            _mp_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            _mp_base = os.path.join(_mp_dir, "memory", session_id)
+            from src.agent.memory_persist import NotesStore
+            _mp_notes = NotesStore(_mp_base)
+
+            # Build a concise summary of what happened this turn
+            _mp_summary_parts = []
+            if tool_events:
+                _tools_used = [e.get("tool", "?") for e in tool_events[:5]]
+                _mp_summary_parts.append(f"Tools used: {', '.join(_tools_used)}")
+            _mp_response_preview = full_response[:300].replace("\n", " ").strip()
+            if _mp_response_preview:
+                _mp_summary_parts.append(f"Response: {_mp_response_preview}")
+
+            if _mp_summary_parts:
+                _mp_note = "\n".join(_mp_summary_parts)
+                _mp_notes.append(_mp_note)
+                logger.debug("[agent] Memory persistence: appended note (%d chars)", len(_mp_note))
+    except Exception as _mp_err:
+        logger.debug("[agent] Memory persistence skipped: %s", _mp_err)
+    prep_timings["memory_persist"] = time.time() - _mp_t
+
     # Teacher-escalation: inline takeover visible in the chat stream.
     # The student just finished; if Tier 1 flags failure, the teacher
     # gets a turn (with its own tool calls forwarded to the user) and
