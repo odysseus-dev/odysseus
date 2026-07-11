@@ -619,51 +619,94 @@ def _compact_tool_line(name: str, section: str) -> str:
 
 
 def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
-    """Build the system prompt with only the specified tools included."""
+    """Build the system prompt with only the specified tools included.
+    
+    Uses PromptBuilder for modular prompt assembly.
+    """
+    from src.agent.prompt_builder import PromptBuilder, PromptSection
+    
     disabled = disabled_tools or set()
     included = tool_names - disabled
-
+    
+    builder = PromptBuilder()
+    builder.set_compact(compact)
+    builder.disable_tools(disabled)
+    
     if compact:
+        # Compact mode: one-liner tool list for API models
         tool_lines = []
         for name, _default_section in TOOL_SECTIONS.items():
             if name in included:
                 tool_lines.append(f"- `{name}`")
-        parts = [
-            "You are an AI assistant with native tool/function calling. "
-            "Only the tool schemas provided by the API are available for this turn. "
-            "Use native tool calls when action is needed; do not write tool syntax or tool instructions in chat.",
-            "## Available tools\n" + ("\n".join(tool_lines) if tool_lines else "none"),
-            _API_AGENT_RULES,
-        ]
-        parts.extend(_domain_rules_for_tools(included))
-        return "\n\n".join(parts)
-
-    parts = [_AGENT_PREAMBLE]
-
-    # Collect full-block tool sections (with examples)
-    full_blocks = []
-    # Collect one-liner tool sections
-    one_liners = []
-
-    for name, _default_section in TOOL_SECTIONS.items():
-        if name not in included:
-            continue
-        section = _section_text(name, _default_section)
-        if section.startswith("```") or section.startswith("-"):
-            if section.startswith("- "):
-                one_liners.append(section)
-            else:
-                full_blocks.append(section)
-
-    if full_blocks:
-        parts.append("\n\n".join(full_blocks))
-
-    if one_liners:
-        parts.append("## Additional tools\n" + "\n".join(one_liners))
-
-    parts.append(_AGENT_RULES)
-    parts.extend(_domain_rules_for_tools(included))
-    return "\n\n".join(parts)
+        builder.add_section(PromptSection(
+            id="preamble",
+            content="You are an AI assistant with native tool/function calling. "
+                    "Only the tool schemas provided by the API are available for this turn. "
+                    "Use native tool calls when action is needed; do not write tool syntax or tool instructions in chat.",
+            priority=100,
+            trusted=True,
+        ))
+        builder.add_section(PromptSection(
+            id="tools",
+            content="## Available tools\n" + ("\n".join(tool_lines) if tool_lines else "none"),
+            priority=90,
+            trusted=True,
+        ))
+        builder.add_section(PromptSection(
+            id="rules",
+            content=_API_AGENT_RULES,
+            priority=80,
+            trusted=True,
+        ))
+    else:
+        # Full mode: preamble + tool sections + rules
+        builder.add_section(PromptSection(
+            id="preamble",
+            content=_AGENT_PREAMBLE,
+            priority=100,
+            trusted=True,
+        ))
+        
+        # Add tool sections
+        full_blocks = []
+        one_liners = []
+        for name, _default_section in TOOL_SECTIONS.items():
+            if name not in included:
+                continue
+            section = _section_text(name, _default_section)
+            if section.startswith("```") or section.startswith("-"):
+                if section.startswith("- "):
+                    one_liners.append(section)
+                else:
+                    full_blocks.append(section)
+        
+        if full_blocks:
+            builder.add_section(PromptSection(
+                id="tool_sections",
+                content="\n\n".join(full_blocks),
+                priority=90,
+                trusted=True,
+            ))
+        if one_liners:
+            builder.add_section(PromptSection(
+                id="additional_tools",
+                content="## Additional tools\n" + "\n".join(one_liners),
+                priority=85,
+                trusted=True,
+            ))
+        
+        builder.add_section(PromptSection(
+            id="rules",
+            content=_AGENT_RULES,
+            priority=80,
+            trusted=True,
+        ))
+    
+    # Add domain rules
+    for domain_rule in _domain_rules_for_tools(included):
+        builder.add_domain_rule(domain_rule[:20], domain_rule)
+    
+    return builder.build()
 
 
 # Legacy: full prompt with all tools (fallback when RAG unavailable)
