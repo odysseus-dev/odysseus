@@ -150,7 +150,11 @@ def _change_password_endpoint(auth_manager):
 def test_setup_rejects_short_password(tmp_path):
     mgr = _make_manager(tmp_path)
     endpoint, SetupRequest = _setup_endpoint(mgr)
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={},
+        url=SimpleNamespace(hostname="localhost"),
+    )
     body = SetupRequest(username="admin", password="short")
 
     with pytest.raises(HTTPException) as exc:
@@ -197,7 +201,11 @@ def test_change_password_rejects_short_password(tmp_path):
 def test_setup_accepts_exactly_min_length_password(tmp_path):
     mgr = _make_manager(tmp_path)
     endpoint, SetupRequest = _setup_endpoint(mgr)
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={},
+        url=SimpleNamespace(hostname="localhost"),
+    )
     body = SetupRequest(username="admin", password="12345678")
 
     result = asyncio.run(endpoint(body=body, request=request))
@@ -208,7 +216,11 @@ def test_setup_accepts_exactly_min_length_password(tmp_path):
 def test_setup_rejects_seven_char_password(tmp_path):
     mgr = _make_manager(tmp_path)
     endpoint, SetupRequest = _setup_endpoint(mgr)
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={},
+        url=SimpleNamespace(hostname="localhost"),
+    )
     body = SetupRequest(username="admin", password="1234567")
 
     with pytest.raises(HTTPException) as exc:
