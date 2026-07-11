@@ -156,13 +156,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "delegate_to_swarm",
-            "description": "Delegate a complex sub-task to a specialised Swarm Intelligence team. Use this when a request requires multi-step planning, parallel execution, or deep domain expertise (e.g., 'se_swarm', 'research_swarm', 'medical_swarm').",
+            "description": "Delegate a complex sub-task to a specialised Swarm Intelligence team. Use this when a request requires multi-step planning, parallel execution, or deep domain expertise. Built-in IDs include 'openrouter_software_engineering' and 'openrouter_research'; saved custom swarms use generated IDs.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "swarm_id": {
                         "type": "string",
-                        "description": "ID of the swarm to delegate to (e.g. 'se_swarm', 'research_swarm', 'medical_swarm')."
+                        "description": "ID of the swarm to delegate to (for example 'openrouter_software_engineering' or 'openrouter_research'; custom swarms use generated IDs)."
                     },
                     "query": {
                         "type": "string",

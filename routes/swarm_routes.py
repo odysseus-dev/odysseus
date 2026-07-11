@@ -30,7 +30,7 @@ class SwarmRoleModel(BaseModel):
     description: str = ""
     system_prompt: str = ""
     tools_allowed: List[str] = Field(default_factory=lambda: ["all"])
-    tools_denied: List[str] = []
+    tools_denied: List[str] = Field(default_factory=list)
     model: Optional[str] = None
     endpoint_url: Optional[str] = None
     priority: int = 0

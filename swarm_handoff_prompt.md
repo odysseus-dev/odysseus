@@ -9,14 +9,14 @@ This handoff covers two primary initiatives completed/in-progress for Odysseus o
 ## Part 1: Setup, Launcher, & Windows Deployment
 
 ### Project Locations
-- **Repo/Workspace**: `C:\Users\shiva\OneDrive\Documents\PlaceReady\odysseus`
-- **Installed App Bundle**: `C:\Users\shiva\AppData\Local\Programs\Odysseus`
-- **Desktop Shortcut**: `C:\Users\shiva\OneDrive\Desktop\Odysseus.lnk`
-- **Start Menu Shortcut**: `C:\Users\shiva\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Odysseus\Odysseus.lnk`
+- **Repo/Workspace**: `<workspace>\odysseus`
+- **Installed App Bundle**: `%LOCALAPPDATA%\Programs\Odysseus`
+- **Desktop Shortcut**: `%USERPROFILE%\Desktop\Odysseus.lnk`
+- **Start Menu Shortcut**: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Odysseus\Odysseus.lnk`
 
 ### What Was Changed / Implemented
 - **Standalone Windows Launcher**: Starts Docker, waits for Odysseus backend readiness, and opens a dedicated Edge app window.
-- **Custom Application Icon**: Built from a source image (`C:\Users\shiva\Downloads\odysseus.png`) and generated as `static/icon.ico` in the workspace.
+- **Custom Application Icon**: Built from a local source image and generated as `static/icon.ico` in the workspace.
 - **Installer & Build Scripts**: Added one-click app installer and builder scripts.
 - **Local Ollama Optimization**: Configured to run locally via Docker (`odysseus-ollama`) on port `11434` with model warmup pings.
 - **Memory & Admin Setup**: Enabled user memories/prefs in SQLite and established custom credentials.
@@ -25,8 +25,9 @@ This handoff covers two primary initiatives completed/in-progress for Odysseus o
 ### Config Files & Environment
 - **`.env` (Installed App)**:
   ```env
-  ODYSSEUS_ADMIN_USER=shivasomesh-cpu
-  ODYSSEUS_ADMIN_PASSWORD=Poda@123@#$#
+  # Set these locally. Never commit real credentials.
+  ODYSSEUS_ADMIN_USER=<your-admin-user>
+  ODYSSEUS_ADMIN_PASSWORD=<generate-a-strong-local-password>
   OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
   LLM_HOSTS=host.docker.internal
   EMBEDDING_URL=http://host.docker.internal:11434/v1/embeddings

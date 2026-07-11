@@ -1211,7 +1211,11 @@ def setup_chat_routes(
                     if not swarm_def:
                         _swarm_db = SessionLocal()
                         try:
-                            config = _swarm_db.query(SwarmConfig).filter(SwarmConfig.id == sess.swarm_id).first()
+                            config = _swarm_db.query(SwarmConfig).filter(
+                                SwarmConfig.id == sess.swarm_id,
+                                SwarmConfig.owner == _user,
+                                SwarmConfig.is_active == True,
+                            ).first()
                             if config:
                                 from src.swarm.swarm_types import SwarmDefinition
                                 swarm_def = SwarmDefinition.from_dict(json.loads(config.definition))

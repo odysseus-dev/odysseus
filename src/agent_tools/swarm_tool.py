@@ -42,6 +42,7 @@ class DelegateToSwarmTool:
             try:
                 config = db.query(SwarmConfig).filter(
                     SwarmConfig.id == swarm_id,
+                    SwarmConfig.owner == ctx.get("owner"),
                     SwarmConfig.is_active == True
                 ).first()
                 if config:

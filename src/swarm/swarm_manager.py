@@ -500,8 +500,12 @@ class SwarmManager:
                 ):
                     retry_events.append(event)
                 events.extend(retry_events)
-            except Exception:
+            except Exception as exc:
                 logger.warning("Retry also failed for worker %s", role.slug)
+                task.status = TaskStatus.FAILED
+                task.result = f"Retry failed: {exc}"
+                task.completed_at = time.time()
+                task.metrics = {"error": str(exc)}
 
         return events
 

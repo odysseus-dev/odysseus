@@ -71,9 +71,21 @@ async def run_worker(
     messages = _build_worker_messages(role, task, user_query, shared_memory)
 
     # Compute the effective disabled-tools set.  If the role declares an
-    # explicit allowlist (not ``["all"]``), disable everything else.
+    # explicit allowlist (not ``["all"]``), disable every other built-in tool
+    # before the agent loop builds its prompt, schemas, and execution policy.
     worker_disabled = set(disabled_tools or [])
     worker_disabled.update(role.tools_denied)
+    if "all" not in role.tools_allowed:
+        from src.agent_tools import TOOL_TAGS
+        from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+
+        available_tools = set(TOOL_TAGS)
+        available_tools.update(
+            schema.get("function", {}).get("name")
+            for schema in FUNCTION_TOOL_SCHEMAS
+            if schema.get("function", {}).get("name")
+        )
+        worker_disabled.update(available_tools - set(role.tools_allowed))
 
     # Emit worker_start
     yield _sse({
