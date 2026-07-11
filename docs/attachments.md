@@ -46,7 +46,7 @@ persisted message metadata, with current-turn IDs first and recent historical
 IDs following. Every ID is resolved again for the session owner; stored metadata
 never supplies a trusted filesystem path.
 
-The manifest does not expose a host filesystem path. Agents pass the ID or URI
+The manifest does not expose a host filesystem path by default. Agents pass the ID or URI
 to the dedicated `read_attachment` tool, which:
 
 - resolves the upload ID through `UploadHandler.resolve_upload`;
@@ -54,6 +54,15 @@ to the dedicated `read_attachment` tool, which:
 - disables the admin override even when the caller is an administrator;
 - verifies the file remains inside the configured upload directory;
 - caps extracted content before returning it to the model.
+
+For compatibility with existing built-in tools, a local `path` may be included
+only after all of these checks pass:
+
+- the upload ID resolves through `UploadHandler.resolve_upload`;
+- the requested owner is allowed to read the upload;
+- the file remains inside the configured upload directory;
+- the file path is inside the tool-readable roots.
+
 
 External MCP/custom tools should treat the URI and attachment ID as the stable
 contract and request bytes through an owner-checked server path, not by assuming

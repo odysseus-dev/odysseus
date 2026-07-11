@@ -238,7 +238,9 @@ def test_build_uploaded_file_manifest_filters_owner_and_omits_host_paths(monkeyp
         assert manifest[0]["name"] == "good.txt"
         assert manifest[0]["uri"] == "odysseus://attachment/good"
         assert manifest[0]["read_policy"] == "owner_checked_upload"
-        assert all("path" not in item for item in manifest)
+        assert os.path.realpath(manifest[0]["path"]) == os.path.realpath(good)
+        assert manifest[1]["path"] is None
+        assert manifest[2]["path"] is None
         assert handler.calls == [
             ("good", "alice", False),
             ("bob", "alice", False),
@@ -269,7 +271,7 @@ def test_build_uploaded_file_manifest_never_consults_filesystem_tool_roots(monke
         manifest = build_uploaded_file_manifest(["upload"], handler, owner="alice")
 
         assert manifest[0]["uri"] == "odysseus://attachment/upload"
-        assert "path" not in manifest[0]
+        assert manifest[0]["path"] is None
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -728,7 +730,7 @@ async def test_build_chat_context_restores_owner_checked_historical_uploads(
     ]
     assert ctx.uploaded_files[0]["read_policy"] == "owner_checked_upload"
     assert ctx.uploaded_files[0]["uri"] == "odysseus://attachment/current-only"
-    assert all("path" not in item for item in ctx.uploaded_files)
+    assert all(item["path"] is not None for item in ctx.uploaded_files)
     assert handler.calls == [
         ("current-only", "alice", False),
         ("shared", "alice", False),

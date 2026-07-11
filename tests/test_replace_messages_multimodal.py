@@ -1,8 +1,9 @@
-"""replace_messages must preserve attachment references without inline bytes.
+"""replace_messages must persist readable, path-free multimodal history.
 
-Compaction must store readable text and stable structured attachment references
-without copying raw base64 payloads into ChatMessage.content. That structured
-metadata must also survive reload so an owner-checked manifest can be rebuilt.
+Live model input may contain provider-specific media blocks and inline data
+URLs. Compaction uses replace_messages for the retained transcript, which must
+store readable text plus stable structured attachment references without
+copying raw base64 payloads into ChatMessage.content.
 """
 import io
 import uuid
@@ -160,6 +161,7 @@ def test_multimodal_content_reloads_and_rebuilds_owner_checked_manifest(
     assert reloaded.history[0].metadata["attachments"] == attachment_metadata
 
     import src.settings as settings
+    import os
 
     monkeypatch.setattr(
         settings,
@@ -178,7 +180,7 @@ def test_multimodal_content_reloads_and_rebuilds_owner_checked_manifest(
     assert [item["id"] for item in manifest] == [alice_upload["id"]]
     assert manifest[0]["read_policy"] == "owner_checked_upload"
     assert manifest[0]["uri"] == f"odysseus://attachment/{alice_upload['id']}"
-    assert "path" not in manifest[0]
+    assert os.path.realpath(manifest[0]["path"]) == os.path.realpath(alice_upload["path"])
     assert restarted_handler.resolve_upload(bob_upload["id"], owner="alice") is None
 
 

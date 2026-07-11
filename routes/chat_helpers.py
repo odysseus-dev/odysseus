@@ -402,6 +402,14 @@ def build_uploaded_file_manifest(
     ):
         return []
 
+    def _read_file_can_open(path: str) -> bool:
+        try:
+            from src.tool_execution import _resolve_tool_path
+
+            return _resolve_tool_path(path) == os.path.realpath(path)
+        except Exception:
+            return False
+
     manifest: list[dict] = []
     for attempt, att_id in enumerate(att_ids):
         if attempt_limit is not None and attempt >= attempt_limit:
@@ -418,12 +426,28 @@ def build_uploaded_file_manifest(
         if not isinstance(info, dict):
             continue
 
+        path = info.get("path")
+        if path:
+            try:
+                inside = True
+                if hasattr(upload_handler, "_inside_upload_dir"):
+                    inside = bool(upload_handler._inside_upload_dir(path))
+                elif hasattr(upload_handler, "inside_base_dir"):
+                    inside = bool(upload_handler.inside_base_dir(path))
+                if not inside or not os.path.exists(path) or not _read_file_can_open(path):
+                    path = None
+            except Exception:
+                path = None
+
         ref = attachment_ref({**info, "id": info.get("id") or str(att_id)})
         ref["name"] = os.path.basename(str(ref.get("name") or ref["attachment_id"]).replace("\\", "/"))
         ref.update({
             "id": ref["attachment_id"],
             "uri": f"odysseus://attachment/{ref['attachment_id']}",
             "read_policy": "owner_checked_upload",
+            # Transitional compatibility: existing built-in tools can still use
+            # this path, but only after owner, upload-root, and tool-root checks.
+            "path": path,
         })
         manifest.append(ref)
         if limit is not None and len(manifest) >= limit:

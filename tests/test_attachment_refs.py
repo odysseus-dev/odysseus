@@ -75,8 +75,6 @@ def test_attachment_ref_normalizes_hash_aliases():
         "checksum_sha256": "abc",
         "created_at": "2026-07-09T12:00:00",
     }
-
-
 def test_attachment_ids_from_messages_prefers_recent_and_deduplicates():
     older = SimpleNamespace(metadata={
         "attachments": [
@@ -99,3 +97,4 @@ def test_attachment_ids_from_messages_prefers_recent_and_deduplicates():
         "shared.png",
         "older.png",
     ]
+

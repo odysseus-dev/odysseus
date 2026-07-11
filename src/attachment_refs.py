@@ -99,7 +99,6 @@ def attachment_ids_from_messages(messages: Iterable[Any] | None) -> list[str]:
             ordered_ids.append(attachment_id)
     return ordered_ids
 
-
 def _ref_line(ref: dict[str, Any]) -> str:
     parts = [f"Attachment: {ref.get('name') or ref.get('attachment_id') or 'upload'}"]
     if ref.get("attachment_id"):
