@@ -120,26 +120,56 @@ def test_route_passes_ssl_context_with_correct_flags(client):
 
 
 def test_route_ssl_cert_file_takes_precedence(client, tmp_path):
-    """SSL_CERT_FILE wins over REQUESTS_CA_BUNDLE when both are set."""
-    import subprocess
+    """SSL_CERT_FILE is the exact bundle loaded when both variables are set."""
+    bundle_a = tmp_path / "ssl-cert-file.pem"
+    bundle_b = tmp_path / "requests-ca-bundle.pem"
+    bundle_a.write_text("ssl-cert-file", encoding="utf-8")
+    bundle_b.write_text("requests-ca-bundle", encoding="utf-8")
 
-    bundle_a = tmp_path / "a.pem"
-    bundle_b = tmp_path / "b.pem"
-    for b in (bundle_a, bundle_b):
-        result = subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "rsa:1024", "-keyout", "/dev/null",
-             "-out", str(b), "-days", "1", "-nodes", "-subj", "/CN=test"],
-            capture_output=True, timeout=10,
-        )
-        if result.returncode != 0:
-            pytest.skip("openssl not available")
+    loaded = []
 
+    class FakeSSLContext:
+        def __init__(self):
+            self.verify_flags = ssl.VERIFY_X509_STRICT
+
+        def load_verify_locations(self, cafile=None, capath=None, cadata=None):
+            loaded.append(
+                {
+                    "cafile": cafile,
+                    "capath": capath,
+                    "cadata": cadata,
+                }
+            )
+
+    ssl_context = FakeSSLContext()
     captured = {}
-    env = {"SSL_CERT_FILE": str(bundle_a), "REQUESTS_CA_BUNDLE": str(bundle_b)}
-    resp = _post_test(client, captured, env=env)
+    env = {
+        "SSL_CERT_FILE": str(bundle_a),
+        "REQUESTS_CA_BUNDLE": str(bundle_b),
+    }
+
+    with patch.object(
+        ssl,
+        "create_default_context",
+        return_value=ssl_context,
+    ):
+        resp = _post_test(client, captured, env=env)
 
     assert resp.status_code == 200
-    assert isinstance(captured.get("verify"), ssl.SSLContext)
+    assert resp.json() == {"ok": True}
+    assert loaded == [
+        {
+            "cafile": str(bundle_a),
+            "capath": None,
+            "cadata": None,
+        }
+    ]
+    assert captured.get("verify") is ssl_context
+    assert captured.get("trust_env") is False
+    assert captured.get("follow_redirects") is False
+    assert not (
+        ssl_context.verify_flags & ssl.VERIFY_X509_STRICT
+    )
 
 
 def test_route_missing_bundle_does_not_crash(client):
