@@ -27,7 +27,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
     # Action aliases — match what models actually emit. `create` is the most
     # common alternative to `add`. Hyphenated forms also accepted.
-    action = (args.get("action") or "").replace("-", "_").strip().lower()
+    raw_action = (args.get("action") or "").replace("-", "_").strip().lower()
+    action = raw_action
     _NOTE_ACTION_ALIASES = {
         "create": "add",
         "new": "add",
@@ -60,37 +61,68 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             q = q.filter(Note.owner == owner)
         return q.first()
 
+    def _format_note_list(notes) -> str:
+        lines = []
+        for n in notes:
+            pin = " [PINNED]" if n.pinned else ""
+            typ = " [checklist]" if n.note_type == "checklist" else ""
+            lbl = f" #{n.label}" if n.label else ""
+            title = n.title or "(untitled)"
+            lines.append(f"- [{n.id[:8]}] **{title}**{pin}{typ}{lbl}")
+            if n.note_type == "checklist" and n.items:
+                try:
+                    items = json.loads(n.items)
+                    for i, item in enumerate(items):
+                        mark = "x" if item.get("done") else " "
+                        lines.append(f"  [{mark}] {i}: {item.get('text', '')}")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            elif n.content:
+                snippet = n.content[:80].replace("\n", " ")
+                lines.append(f"  {snippet}")
+        return "\n".join(lines)
+
     try:
-        if action == "list":
+        if action in ("list", "search", "find"):
             q = db.query(Note)
             if owner is not None:
                 q = q.filter(Note.owner == owner)
-            if args.get("label"):
-                q = q.filter(Note.label == args["label"])
+            label_filter = str(args.get("label") or "").strip()
+            if label_filter and label_filter.lower() != "default":
+                q = q.filter(Note.label == label_filter)
             show_archived = args.get("archived", False)
             q = q.filter(Note.archived == show_archived)
             notes = q.order_by(Note.pinned.desc(), Note.updated_at.desc()).all()
+            if action in ("search", "find"):
+                query = str(
+                    args.get("query")
+                    or args.get("text")
+                    or args.get("title")
+                    or args.get("content")
+                    or ""
+                ).strip().lower()
+                if query:
+                    filtered = []
+                    for n in notes:
+                        haystack = " ".join(
+                            str(part or "")
+                            for part in (n.title, n.content, n.label, n.items)
+                        ).lower()
+                        if query in haystack:
+                            filtered.append(n)
+                    notes = filtered
             if not notes:
                 return {"response": "No notes found.", "exit_code": 0}
-            lines = []
-            for n in notes:
-                pin = " [PINNED]" if n.pinned else ""
-                typ = " [checklist]" if n.note_type == "checklist" else ""
-                lbl = f" #{n.label}" if n.label else ""
-                title = n.title or "(untitled)"
-                lines.append(f"- [{n.id[:8]}] **{title}**{pin}{typ}{lbl}")
-                if n.note_type == "checklist" and n.items:
-                    try:
-                        items = json.loads(n.items)
-                        for i, item in enumerate(items):
-                            mark = "x" if item.get("done") else " "
-                            lines.append(f"  [{mark}] {i}: {item.get('text', '')}")
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                elif n.content:
-                    snippet = n.content[:80].replace("\n", " ")
-                    lines.append(f"  {snippet}")
-            return {"results": "\n".join(lines)}
+            return {"results": _format_note_list(notes), "exit_code": 0}
+
+        elif action == "view":
+            note_id = args.get("id", "")
+            note = _note_by_prefix(note_id)
+            if not note:
+                return {"error": f"Note '{note_id}' not found", "exit_code": 1}
+            if not _note_visible_to_owner(note, owner):
+                return {"error": "Note not found", "exit_code": 1}
+            return {"results": _format_note_list([note]), "exit_code": 0}
 
         elif action == "add":
             # Accept the various field names models emit: `text` is the most
@@ -120,6 +152,25 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             # `new Date()` resolves the right absolute moment regardless of
             # where the user is.
             due_raw = args.get("due_date")
+            if not due_raw:
+                combined_text = " ".join(
+                    str(v or "")
+                    for v in (title, content_raw, text_raw)
+                ).strip()
+                lower_combined = combined_text.lower()
+                looks_like_reminder = (
+                    raw_action in {"remind", "reminder"}
+                    or re.search(r"\bremind(?:er)?\b", lower_combined)
+                )
+                if looks_like_reminder:
+                    temporal = re.search(
+                        r"\b(?:today|tonight|tomorrow|tmrw|yesterday)\b(?:\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?"
+                        r"|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:today|tonight|tomorrow|tmrw|yesterday)\b"
+                        r"|\bin\s+\d+\s*(?:hour|hr|minute|min|day)s?\b",
+                        lower_combined,
+                    )
+                    if temporal:
+                        due_raw = temporal.group(0)
             due_iso = None
             if due_raw:
                 try:
@@ -170,7 +221,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             # link with no target, leaving the user with a click that
             # did nothing and uncertainty about whether the note was made.
             return {
-                "response": f"Note created: \"{title or '(untitled)'}\" (id: {note.id[:8]})",
+                "response": f"{'Reminder' if due_iso else 'Note'} created: \"{title or '(untitled)'}\" (id: {note.id[:8]})",
                 "note_id": note.id,
                 "note_title": title or "",
                 "open_url": f"/#open=notes&note={note.id}",
@@ -246,7 +297,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             return {"response": f"Item '{items[index].get('text', '')}' marked {mark}", "exit_code": 0}
 
         else:
-            return {"error": f"Unknown action: {action}. Use list/add/update/delete/toggle_item", "exit_code": 1}
+            return {"error": f"Unknown action: {action}. Use list/search/view/add/update/delete/toggle_item", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_notes error: {e}")
         return {"error": str(e), "exit_code": 1}

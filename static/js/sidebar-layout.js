@@ -92,10 +92,11 @@ export function initSidebarLayout(Storage, opts) {
     });
   }
 
-  // New chat buttons — same as clicking brand
+  // Header-only new-chat aliases. #sidebar-new-chat-btn is wired in app.js
+  // because it needs the full default-model/pending-chat flow; wiring it here
+  // as well caused duplicate click handling and occasional no-op/race behavior.
   const chatNewBtn = document.getElementById('chat-new-btn');
-  const sidebarNewChat = document.getElementById('sidebar-new-chat-btn');
-  [chatNewBtn, sidebarNewChat].forEach(btn => {
+  [chatNewBtn].forEach(btn => {
     if (btn) btn.addEventListener('click', () => {
       const brandBtn = document.getElementById('sidebar-brand-btn');
       if (brandBtn) brandBtn.click();

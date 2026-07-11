@@ -913,7 +913,24 @@ def setup_calendar_routes() -> APIRouter:
             '</d:prop></d:propfind>'
         )
         try:
-            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False) as cx:
+            # Build an SSL context that trusts the operator's custom CA bundle
+            # (SSL_CERT_FILE / REQUESTS_CA_BUNDLE) so self-signed CalDAV servers
+            # pass the pre-flight the same way they pass the real sync.
+            # trust_env=False is kept to block proxy/auth env leakage; the CA
+            # bundle is loaded explicitly instead.
+            import ssl as _ssl
+            _ssl_ctx = _ssl.create_default_context()
+            # Disable VERIFY_X509_STRICT so certs without a keyUsage extension
+            # (common in self-signed setups) are accepted, matching the
+            # requests/urllib3 behavior used by the CalDAV sync path.
+            _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+            _ca_bundle = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE")
+            if _ca_bundle:
+                if _os.path.isfile(_ca_bundle):
+                    _ssl_ctx.load_verify_locations(_ca_bundle)
+                else:
+                    logger.warning("CalDAV test: CA bundle %s not found, using system CAs", _ca_bundle)
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
                     auth=(user, pw),

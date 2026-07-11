@@ -25,6 +25,46 @@ def _verify_args(path: Path):
     return SimpleNamespace(path=str(path), pretty=False)
 
 
+def test_backup_entry_skips_files_that_disappear():
+    backup = _load_backup_cli()
+
+    class Vanished:
+        name = "gone.tar.gz"
+
+        def is_file(self):
+            return True
+
+        def stat(self):
+            raise FileNotFoundError("gone")
+
+        def __str__(self):
+            return "backups/gone.tar.gz"
+
+    assert backup._backup_entry(Vanished()) is None
+
+
+def test_backup_list_sorts_by_captured_mtime(monkeypatch):
+    backup = _load_backup_cli()
+    first = SimpleNamespace(name="older.tar.gz")
+    second = SimpleNamespace(name="newer.tar.gz")
+    monkeypatch.setattr(backup, "_BACKUP_DIR", SimpleNamespace(
+        is_dir=lambda: True,
+        iterdir=lambda: [first, second],
+    ))
+    monkeypatch.setattr(backup, "_backup_entry", lambda p: {
+        "name": p.name,
+        "modified": "2026-10-25T01:45:00" if p is first else "2026-10-25T01:15:00",
+        "_mtime": 100 if p is first else 200,
+    })
+    seen = []
+    monkeypatch.setattr(backup, "emit", lambda payload, args: seen.append(payload))
+
+    backup.cmd_list(SimpleNamespace(pretty=False))
+
+    assert [entry["name"] for entry in seen[0]] == ["newer.tar.gz", "older.tar.gz"]
+    assert all("_mtime" not in entry for entry in seen[0])
+
+
 def test_snapshot_rejects_output_inside_data_dir(tmp_path, monkeypatch):
     backup = _load_backup_cli()
     repo = tmp_path / "repo"

@@ -3579,6 +3579,10 @@ body.bg-pattern-sparkles {
       display: inline-flex; align-items: center; justify-content: center;
     }
     .footer-copy-btn:hover { color:var(--accent); }
+    .footer-open-gallery-btn {
+      gap: 4px;
+      font-size: 11px;
+    }
     /* Delete action — same chrome as copy/download/edit but hover reveals
        the destructive red tint so the user can tell it's not a benign op. */
     .footer-delete-btn:hover { color: var(--red); }
@@ -4135,7 +4139,7 @@ body.bg-pattern-sparkles {
       to { stroke-dashoffset: 0; }
     }
     .toast-close-btn {
-      margin-left: 8px;
+      margin-left: auto;
       padding: 0;
       width: 22px;
       height: 22px;
@@ -8168,6 +8172,11 @@ button.hamburger {
 .msg a:hover {
   border-bottom-color: var(--hl-function, #5b8def);
 }
+.msg a.is-loading {
+  opacity: 0.65;
+  border-bottom-color: var(--accent, #bd93f9);
+  cursor: progress;
+}
 
 /* Tables */
 .msg table {
@@ -8674,6 +8683,98 @@ button.hamburger {
 }
 .thumb.thumb-image button:active {
   transform: scale(0.96);
+}
+
+.attach-crop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--attach-crop-z, 100001);
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  box-sizing: border-box;
+}
+.attach-crop-panel {
+  width: min(94vw, 520px);
+  max-height: min(86vh, 720px);
+  background: var(--panel, #111);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.attach-crop-stage {
+  position: relative;
+  min-height: 280px;
+  height: min(66vh, 560px);
+  background: #050505;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+.attach-crop-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+.attach-crop-box {
+  position: absolute;
+  border: 2px solid var(--accent, var(--red));
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.42);
+  cursor: move;
+  touch-action: none;
+  box-sizing: border-box;
+}
+.attach-crop-box::before,
+.attach-crop-box::after {
+  content: '';
+  position: absolute;
+  inset: 33.333% 0 auto;
+  border-top: 1px solid rgba(255,255,255,0.38);
+}
+.attach-crop-box::after {
+  inset: 66.666% 0 auto;
+}
+.attach-crop-handle {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: 2px solid var(--bg);
+  box-sizing: border-box;
+  cursor: nwse-resize;
+}
+.attach-crop-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.attach-crop-btn {
+  flex: 1;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.attach-crop-primary {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border-color: var(--accent, var(--red));
 }
 @media (max-width: 768px) {
   /* Collapsed "N files" badge: use the same corner-X accent badge as image thumbs. */
@@ -18075,6 +18176,10 @@ body.gallery-selecting .gallery-dl-btn,
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
+.gallery-card.gallery-card-focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
 /* Upload-affordance tile pinned to the top-left of the Photos grid. Matches
    the Upload album tile in the Albums tab — dashed border, centered icon. */
 .gallery-card-upload {
@@ -19067,6 +19172,14 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-field-input:focus { border-color: var(--red); }
 #hwfit-dl-server, #hwfit-usecase, #hwfit-server-select, #hwfit-cache-server, #serve-sort { height: 28px; width: 88px; }
+#hwfit-dl-server.cookbook-server-select-colored,
+#hwfit-server-select.cookbook-server-select-colored,
+#hwfit-cache-server.cookbook-server-select-colored,
+#hwfit-deps-server.cookbook-server-select-colored {
+  color: var(--cookbook-server-color, var(--fg));
+  border-color: color-mix(in srgb, var(--cookbook-server-color) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--cookbook-server-color) 12%, var(--bg));
+}
 /* Serve tab — match Documents sizing, but leave room for the active "Cancel"
    label and center it vertically so the descenders don't clip. */
 #hwfit-cache-select {
@@ -19722,6 +19835,25 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-section-header:hover {
   background: color-mix(in srgb, var(--fg) 9%, transparent);
   border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.cookbook-section-header.has-server-color {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 45%, var(--border));
+  background: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 4%, var(--bg));
+  box-shadow: inset 6px 0 0 var(--cookbook-server-accent, var(--cookbook-server-color));
+}
+.cookbook-section-header.has-server-color:hover {
+  background: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 7%, var(--bg));
+  border-color: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 60%, var(--border));
+}
+.cookbook-section-header.has-server-color .cookbook-section-title,
+.cookbook-section-header.has-server-color .cookbook-section-chevron {
+  color: var(--cookbook-server-accent, var(--cookbook-server-color));
+}
+.cookbook-section-header.has-server-color .cookbook-srv-status.ok {
+  background: var(--cookbook-server-accent, var(--cookbook-server-color));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 18%, transparent),
+    0 0 8px color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 55%, transparent);
 }
 .cookbook-section-header .cookbook-section-title {
   flex: 1;
@@ -20792,6 +20924,12 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-task-menu-btn:hover {
   opacity: 1 !important;
   background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+}
+.cookbook-task-menu-btn.cookbook-menu-active {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
   border-color: var(--border);
   color: var(--fg);
 }
@@ -22146,7 +22284,7 @@ body.gallery-selecting .gallery-dl-btn,
   margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid color-mix(in srgb, var(--fg) 30%, transparent);
+  border-left: 3px solid var(--cookbook-server-color, color-mix(in srgb, var(--fg) 30%, transparent));
   border-radius: 8px;
   background: color-mix(in srgb, var(--fg) 3%, var(--bg));
   box-sizing: border-box;
@@ -22159,6 +22297,113 @@ body.gallery-selecting .gallery-dl-btn,
   .cookbook-server-row .cookbook-srv-path { flex: 1 1 100% !important; width: auto !important; min-width: 0 !important; }
 }
 .cookbook-server-row .cookbook-srv-name { width: 60px; flex-shrink: 0; flex-grow: 0; }
+.cookbook-server-row .cookbook-srv-color-wrap {
+  width: 86px;
+  flex-shrink: 0;
+  flex-grow: 0;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  color: var(--cookbook-server-color, var(--fg-muted));
+}
+.cookbook-server-row select.cookbook-srv-color {
+  display: none !important;
+}
+.cookbook-server-row .cookbook-srv-color-dot {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  z-index: 1;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-dot {
+  opacity: 0.8;
+}
+.cookbook-server-row .cookbook-srv-color-btn {
+  width: 100%;
+  padding-left: 22px !important;
+  padding-right: 18px !important;
+  position: relative;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cookbook-server-row .cookbook-srv-color-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cookbook-server-row .cookbook-srv-color-caret {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.65;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-btn {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--cookbook-server-color, var(--border)) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--cookbook-server-color, var(--fg)) 14%, var(--bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cookbook-server-color, var(--border)) 18%, transparent);
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-dot {
+  background: var(--cookbook-server-color, currentColor);
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-caret {
+  color: var(--fg-muted);
+}
+.cookbook-srv-color-menu {
+  position: absolute;
+  z-index: 5000;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 138px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 35%, transparent);
+}
+.cookbook-srv-color-menu.hidden {
+  display: none;
+}
+.cookbook-srv-color-item {
+  width: 100%;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--swatch-color, var(--fg)) 10%, transparent);
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.cookbook-srv-color-item:hover,
+.cookbook-srv-color-item.active {
+  border-color: color-mix(in srgb, var(--swatch-color, var(--accent, var(--red))) 55%, var(--border));
+  background: color-mix(in srgb, var(--swatch-color, var(--accent, var(--red))) 18%, var(--bg));
+}
+.cookbook-srv-color-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--swatch-color, var(--fg-muted));
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  flex-shrink: 0;
+}
 .cookbook-server-row .cookbook-srv-host { flex: 1; min-width: 100px; }
 .cookbook-server-row .cookbook-srv-host[readonly] { opacity: 0.4; cursor: default; }
 .cookbook-server-row .cookbook-srv-port { width: 40px; flex-shrink: 0; flex-grow: 0; }
@@ -24197,6 +24442,36 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   border-color: var(--red);
 }
 
+@media (max-width: 768px) {
+  /* Deep Research settings contain desktop-sized inline widths. On mobile,
+     let each control claim the card width instead of escaping the admin block. */
+  .settings-row:has(#set-researchSearch),
+  .settings-row:has(#set-researchMaxTokens),
+  .settings-row:has(#set-researchExtractTimeout),
+  .settings-row:has(#set-researchExtractConcurrency),
+  .settings-row:has(#set-researchRunTimeout) {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .settings-row:has(#set-researchSearch) .settings-label,
+  .settings-row:has(#set-researchMaxTokens) .settings-label,
+  .settings-row:has(#set-researchExtractTimeout) .settings-label,
+  .settings-row:has(#set-researchExtractConcurrency) .settings-label,
+  .settings-row:has(#set-researchRunTimeout) .settings-label {
+    flex: 1 1 auto;
+  }
+  #set-researchSearch,
+  #set-researchMaxTokens,
+  #set-researchRunTimeout,
+  .settings-row div:has(> #set-researchExtractTimeout),
+  .settings-row div:has(> #set-researchExtractConcurrency) {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+    margin-left: 0 !important;
+  }
+}
+
 /* Default-chat fallback chain editor. Each row mirrors the primary
    endpoint/model selectors, indented under them to read as a chain. */
 .settings-fallbacks {
@@ -24735,8 +25010,17 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 #hwfit-cache-scan {
   position: relative;
-  top: 1px;
-  width: 51px;
+  top: -1px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+#hwfit-cache-scan.spinning svg {
+  animation: modelPickerRefreshSpin 0.75s linear infinite;
 }
 #serve-search {
   height: 28px;
@@ -25995,6 +26279,126 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   justify-content: center;
   background: color-mix(in srgb, var(--bg) 30%, transparent);
   pointer-events: none;
+}
+.ge-ai-command {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 18;
+  width: min(430px, calc(100% - 28px));
+  transform: translateX(-50%);
+  padding: 7px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 94%, transparent);
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 26%, transparent);
+  backdrop-filter: blur(8px);
+}
+.ge-ai-command-toggle {
+  width: 100%;
+  height: 28px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent, var(--red));
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ge-ai-command-collapsed {
+  width: auto;
+  min-width: 112px;
+  padding: 2px 8px;
+}
+.ge-ai-command-collapsed .ge-ai-command-toggle {
+  display: inline-flex;
+}
+.ge-ai-command-collapsed .ge-ai-command-form,
+.ge-ai-command-collapsed .ge-ai-command-status {
+  display: none;
+}
+.ge-ai-command-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ge-ai-command-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 76%, #000 24%);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.ge-ai-command-input:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+.ge-ai-command-run {
+  background: var(--send-btn-bg, var(--red));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  min-width: 32px;
+  width: 32px;
+  height: 32px !important;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  transition: background 0.25s, opacity 0.12s;
+  overflow: hidden;
+}
+.ge-ai-command-run:hover {
+  background: var(--send-btn-hover, color-mix(in srgb, var(--red) 80%, white));
+}
+.ge-ai-command-close {
+  width: 28px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.52;
+  cursor: pointer;
+  padding: 0;
+}
+.ge-ai-command-close:hover {
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-ai-command-status {
+  min-height: 13px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--fg-muted);
+}
+.ge-ai-command-status[data-kind="running"] {
+  color: var(--accent, var(--red));
+}
+.ge-ai-command-status[data-kind="done"] {
+  color: var(--green, #4caf50);
+}
+.ge-ai-command-status[data-kind="error"] {
+  color: var(--red, #e5484d);
 }
 /* Loading overlay shown while a large image is decoding — centered
    whirlpool + "Loading" caption over a translucent dim. */
@@ -30891,6 +31295,39 @@ button .spinner-whirlpool {
   cursor: pointer; user-select: none;
   letter-spacing: 0.4px;
 }
+.email-attachments-download-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
+  color: var(--accent-primary, var(--red));
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.email-attachments-download-all:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, transparent);
+}
+.email-attachments-download-all.is-loading {
+  opacity: 0.82;
+  pointer-events: none;
+}
+.email-attachments-download-all .spinner-whirlpool,
+.email-attachments-download-all .ai-spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+  margin: 0 !important;
+}
 .email-reader-atts-wrap > .email-reader-atts {
   border-bottom: none !important;
 }
@@ -31503,6 +31940,34 @@ body.doc-find-active mark.doc-find-mark.current {
 .email-filter-chip-clear:hover { opacity: 1; }
 .email-date { font-size: 10px; opacity: 0.5; white-space: nowrap; flex-shrink: 0; }
 .email-subject { font-size: 11px; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.email-sent-chip,
+.email-folder-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 5px;
+  margin-right: 5px;
+  border-radius: 999px;
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
+  vertical-align: 1px;
+}
+.email-folder-chip {
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  background: rgba(127, 127, 127, 0.13);
+  border-color: rgba(127, 127, 127, 0.24);
+}
+@media (max-width: 768px) {
+  .email-search-row {
+    flex-wrap: wrap;
+  }
+}
 .email-tags { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; position: relative; top: -2px; }
 .email-card-expanded .email-tags,
 .email-card-reader .email-tags { top: -4px; }
@@ -32259,22 +32724,268 @@ body.doc-find-active mark.doc-find-mark.current {
 
 /* Compose attachment chips (when sending new email) */
 .email-compose-atts {
-  display: flex; flex-wrap: wrap; gap: 6px;
-  padding: 6px 0 0 58px;
+  display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px 0 0 0;
 }
 .email-compose-chip {
   display: inline-flex; align-items: center; gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(240px, 100%);
   padding: 4px 4px 4px 8px; font-size: 11px;
   background: var(--hover-bg, rgba(255,255,255,0.05));
   border: 1px solid var(--border); border-radius: 12px; color: var(--fg);
 }
-.email-compose-chip .compose-chip-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.email-compose-chip .att-size { opacity: 0.5; font-size: 10px; }
+.email-compose-chip .compose-chip-name { max-width: 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-compose-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
 .email-compose-chip .compose-chip-remove {
   background: none; border: none; color: var(--fg); opacity: 0.5;
   font-size: 16px; line-height: 1; padding: 0 4px; cursor: pointer;
+  flex-shrink: 0;
 }
 .email-compose-chip .compose-chip-remove:hover { opacity: 1; color: var(--red, #e55); }
+
+.email-odysseus-attach-menu {
+  position: fixed;
+  z-index: 10050;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100vh - 16px));
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.28);
+  overflow: hidden;
+}
+.email-odysseus-attach-local {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 35%, var(--border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.email-odysseus-attach-local:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+}
+.email-odysseus-attach-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin: 7px 0;
+}
+.email-odysseus-attach-tabs button {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.72;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.email-odysseus-attach-tabs button.active {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 8%, transparent);
+}
+.email-odysseus-attach-tabs button svg {
+  flex-shrink: 0;
+}
+.email-odysseus-attach-search-wrap {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -1px 0 7px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+}
+.email-odysseus-attach-search-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 6%, transparent);
+}
+.email-odysseus-attach-search {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+}
+.email-odysseus-attach-search::placeholder {
+  color: color-mix(in srgb, var(--fg) 38%, transparent);
+}
+.email-odysseus-attach-list {
+  max-height: 320px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.email-odysseus-attach-row {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.email-odysseus-attach-row:hover {
+  background: var(--hover-bg, rgba(255,255,255,0.06));
+  border-color: var(--border);
+}
+.email-odysseus-attach-row.is-selected {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+}
+.email-odysseus-attach-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.email-odysseus-attach-row.is-selected .email-odysseus-attach-dot {
+  border-color: var(--accent-primary, var(--red));
+  background: var(--accent-primary, var(--red));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+}
+.email-odysseus-attach-icon,
+.email-odysseus-attach-thumb {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  overflow: hidden;
+}
+.email-odysseus-attach-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.email-odysseus-attach-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.email-odysseus-attach-title,
+.email-odysseus-attach-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-odysseus-attach-title {
+  font-size: 11px;
+  line-height: 1.2;
+}
+.email-odysseus-attach-meta {
+  font-size: 10px;
+  line-height: 1.15;
+  opacity: 0.52;
+}
+.email-odysseus-attach-empty {
+  padding: 14px 8px;
+  color: var(--muted, #888);
+  font-size: 11px;
+  text-align: center;
+}
+.email-odysseus-attach-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: var(--bg);
+  position: sticky;
+  bottom: 0;
+}
+.email-odysseus-attach-count {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted, #888);
+  font-size: 11px;
+}
+.email-odysseus-attach-selected {
+  height: 28px;
+  min-width: 72px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  background: var(--accent-primary, var(--red));
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.email-odysseus-attach-selected svg {
+  flex-shrink: 0;
+}
+.email-odysseus-attach-selected:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.email-odysseus-attach-selected.is-loading {
+  opacity: 0.72;
+  pointer-events: none;
+}
+@media (max-width: 768px) {
+  .email-odysseus-attach-menu {
+    left: 8px !important;
+    right: 8px;
+    bottom: 8px;
+    top: auto !important;
+    width: auto;
+    max-height: 58vh;
+  }
+  .email-odysseus-attach-list {
+    max-height: calc(58vh - 88px);
+  }
+}
 
 .email-cc-toggle {
   background: none; border: none; color: var(--fg);
@@ -32313,8 +33024,12 @@ body.doc-find-active mark.doc-find-mark.current {
   border-bottom: 1px solid var(--border);
 }
 .contact-suggestion:last-child { border-bottom: none; }
-.contact-suggestion:hover, .contact-suggestion.active {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+.contact-suggestion:hover,
+.contact-suggestion.active,
+.contact-suggestion[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent-primary, var(--accent, var(--red))) 15%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent-primary, var(--accent, var(--red))) 40%, transparent);
+  outline-offset: -1px;
 }
 .contact-suggestion .contact-name { font-weight: 600; color: var(--fg); }
 .contact-suggestion .contact-email { opacity: 0.6; font-size: 11px; }
@@ -36135,7 +36850,15 @@ button.cal-add-btn.cal-add-btn-text {
   transition: background 0.15s, border-color 0.15s;
 }
 /* Settings "+ Add server" matches the model-dir "+ Add" path button (22px). */
-#cookbook-server-add.cal-add-btn-text { height: 21px; border-radius: 11px; position: relative; top: 3px; }
+#cookbook-server-add.cal-add-btn-text {
+  height: 28px;
+  min-width: 62px;
+  border-radius: 14px;
+  padding: 0 12px 0 8px;
+  position: relative;
+  top: 1px;
+  font-size: 12px;
+}
 button.cal-add-btn.cal-add-btn-text:hover {
   background: color-mix(in srgb, var(--fg) 14%, transparent);
   border-color: var(--accent);
@@ -39085,6 +39808,26 @@ body.theme-frosted .modal {
 
 /* Nudge the Delete button 4px left. */
 .research-job-action[data-action="delete"] { position: relative; right: 2px; }
+
+@media (max-width: 768px) {
+  /* Mobile: the "Delete" label is too wide in Deep Research job rows; keep the
+     familiar trash action but make it icon-only. */
+  .research-job-action[data-action="delete"] {
+    width: 28px;
+    min-width: 28px;
+    padding-left: 0;
+    padding-right: 0;
+    gap: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+  .research-job-action[data-action="delete"] svg {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    flex-shrink: 0;
+  }
+}
 
 /* "Standard" (uncategorized) research uses green everywhere — set its --cat-color
    to the success green so the Visual Report button matches the green badge. */
