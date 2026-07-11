@@ -2165,6 +2165,14 @@ export async function materializePendingSession() {
   if (pending.endpointId) {
     fd.append('endpoint_id', pending.endpointId);
   }
+  if (pending.swarmId) {
+    fd.append('swarm_id', pending.swarmId);
+  } else {
+    const toggleState = Storage.loadToggleState ? Storage.loadToggleState() : {};
+    if (toggleState.mode === 'swarm' && toggleState.swarm_id) {
+      fd.append('swarm_id', toggleState.swarm_id);
+    }
+  }
 
   let res;
   try {

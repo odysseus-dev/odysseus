@@ -23,6 +23,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import swarmModule from './swarm.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -1199,7 +1200,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // on; explicit web/current-info requests are handled by the backend
       // intent gate.
       const toggleState = Storage.loadToggleState();
-      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
+      const isSwarmMode = (toggleState.mode || 'chat') === 'swarm';
+      let isAgentMode = isSwarmMode || (toggleState.mode || 'chat') === 'agent';
       const incognitoChk = el('incognito-toggle');
       const isIncognito = !!(incognitoChk && incognitoChk.checked);
       // Auto-escalate to agent mode when a document is open — the user expects
@@ -1822,7 +1824,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              const isSwarmWorkerEvent = ['worker_start', 'worker_delta', 'worker_done', 'worker_failed'].includes(json.type) || !!json.worker_slug;
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress' || json.type?.startsWith('swarm_') || isSwarmWorkerEvent) {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
@@ -2218,15 +2221,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 _researchingStreamIds.delete(streamSessionId);
                 // Small delay then reload session history which includes the full report
                 setTimeout(async () => {
-                  // Don't yank the user back to this chat if they've navigated
-                  // away (e.g. started a new chat) while research finished —
-                  // just refresh the sidebar so the report shows when they return.
                   if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() === streamSessionId) {
                     await sessionModule.selectSession(streamSessionId);
                   } else {
                     await sessionModule.loadSessions();
                   }
                 }, 500);
+              } else if (json.type?.startsWith('swarm_')) {
+                if (!_isBg) {
+                  swarmModule.handleEvent(json, currentHolder);
+                }
+                continue;
+              } else if (isSwarmWorkerEvent) {
+                if (!_isBg) {
+                  swarmModule.handleEvent(json, currentHolder);
+                }
                 continue;
               } else if (json.type === 'web_sources') {
                 if (_isBg) {
@@ -3852,7 +3861,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                      json.type === 'tool_progress' || json.type === 'agent_step' ||
                      json.type === 'web_sources' || json.type === 'rag_sources' ||
                      json.type === 'research_progress' || json.type === 'research_sources' ||
-                     json.type === 'research_findings' || json.type === 'research_done') {
+                     json.type === 'research_findings' || json.type === 'research_done' ||
+                     json.type?.startsWith('swarm_') ||
+                     ['worker_start', 'worker_delta', 'worker_done', 'worker_failed'].includes(json.type) ||
+                     json.worker_slug) {
             rich = true;
           }
         }

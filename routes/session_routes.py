@@ -309,7 +309,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
+                     "message_count": msg_count_map.get(s.id, 0),
+                     "swarm_id": getattr(s, "swarm_id", None)}
                     for s in user_sessions.values()
                     if not s.archived
                     and (s.name or "").strip() not in ("Nobody", "Incognito")
@@ -327,6 +328,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         skip_validation: str = Form(None),
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
+        swarm_id: str = Form(None),
     ):
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
@@ -422,6 +424,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
+            swarm_id=swarm_id,
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
@@ -454,6 +457,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         name: str = Form(None), folder: str = Form(None),
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
+        swarm_id: str = Form(None),
     ):
         _verify_session_owner(request, sid)
         try:
@@ -474,6 +478,19 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db_session.updated_at = utcnow_naive()
                     db.commit()
                     result["folder"] = folder if folder else None
+            finally:
+                db.close()
+        # Update swarm_id
+        if swarm_id is not None:
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                if db_session:
+                    db_session.swarm_id = swarm_id if swarm_id else None
+                    db_session.updated_at = utcnow_naive()
+                    db.commit()
+                    session.swarm_id = swarm_id if swarm_id else None
+                    result["swarm_id"] = swarm_id if swarm_id else None
             finally:
                 db.close()
         # Switch model/endpoint mid-session

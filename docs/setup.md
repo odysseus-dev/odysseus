@@ -32,6 +32,14 @@ binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
+### One-click Windows launcher for Docker
+If you want a double-click style app on Windows, run:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch-windows-docker.ps1
+```
+It starts Docker Desktop if needed, brings the stack up, waits for
+`http://localhost:7000`, and opens your browser automatically.
+
 > **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so
 > Cookbook serves local models on CPU only. For GPU-accelerated model serving,
 > run natively instead — see [Apple Silicon](#apple-silicon) below.
@@ -300,6 +308,18 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
+
+**Packaged Windows app.** If you want a double-click app instead of a console
+launcher, build and install the Docker wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-windows-docker-exe.ps1
+powershell -ExecutionPolicy Bypass -File .\install-windows-app.ps1
+```
+
+That flow installs the app into `%LOCALAPPDATA%\Programs\Odysseus`, creates a
+desktop shortcut and Start Menu entry, starts Docker Desktop, waits for
+`http://127.0.0.1:7000`, and opens a standalone Edge app window when available.
 
 ## Troubleshooting & Advanced Setup
 

@@ -1195,6 +1195,79 @@ def setup_chat_routes(
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
 
+            # Swarm Execution Interception
+            if getattr(sess, "swarm_id", None):
+                try:
+                    from src.swarm.swarm_manager import SwarmManager
+                    from src.swarm.swarm_definitions import get_builtin_swarm
+                    from core.database import SessionLocal, SwarmConfig
+                    import json
+                    
+                    _chat_start = time.time()
+                    swarm_manager = SwarmManager()
+                    
+                    # Resolve swarm definition
+                    swarm_def = get_builtin_swarm(sess.swarm_id)
+                    if not swarm_def:
+                        _swarm_db = SessionLocal()
+                        try:
+                            config = _swarm_db.query(SwarmConfig).filter(SwarmConfig.id == sess.swarm_id).first()
+                            if config:
+                                from src.swarm.swarm_types import SwarmDefinition
+                                swarm_def = SwarmDefinition.from_dict(json.loads(config.definition))
+                        except Exception as e:
+                            logger.error(f"Failed to load swarm {sess.swarm_id} from DB: {e}")
+                        finally:
+                            _swarm_db.close()
+                    
+                    if not swarm_def:
+                        yield f'data: {json.dumps({"delta": f"Swarm {sess.swarm_id} not found."})}\n\n'
+                        yield "data: [DONE]\n\n"
+                        _active_streams.pop(session, None)
+                        return
+                    
+                    async for chunk in swarm_manager.execute(
+                        swarm=swarm_def,
+                        user_query=message,
+                        session_id=session,
+                        endpoint_url=sess.endpoint_url,
+                        model=sess.model,
+                        messages=messages,
+                        owner=_user,
+                        headers=sess.headers,
+                        temperature=ctx.preset.temperature,
+                        max_tokens=ctx.preset.max_tokens,
+                        context_length=ctx.context_length,
+                        disabled_tools=disabled_tools if disabled_tools else None,
+                    ):
+                        if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                            try:
+                                data = json.loads(chunk[6:])
+                                if "delta" in data:
+                                    full_response += data["delta"]
+                                    _stream_set(session, partial=full_response)
+                            except Exception:
+                                pass
+                        yield chunk
+
+                    if full_response:
+                        _saved_id = save_assistant_response(
+                            sess, session_manager, session, full_response, {},
+                            character_name=ctx.preset.character_name,
+                            incognito=incognito,
+                        )
+                        if _saved_id:
+                            yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                    _stream_set(session, status="done")
+
+                except Exception as e:
+                    logger.error(f"Swarm execution failed: {e}", exc_info=True)
+                    yield f'data: {json.dumps({"delta": f"Swarm execution failed: {e}"})}\n\n'
+                    yield "data: [DONE]\n\n"
+                finally:
+                    _active_streams.pop(session, None)
+                return
+
             if _is_image_generation_session(sess, owner=_user):
                 from src.settings import get_setting
                 if tool_policy.blocks("generate_image"):

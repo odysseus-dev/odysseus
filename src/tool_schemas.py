@@ -155,6 +155,27 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "delegate_to_swarm",
+            "description": "Delegate a complex sub-task to a specialised Swarm Intelligence team. Use this when a request requires multi-step planning, parallel execution, or deep domain expertise (e.g., 'se_swarm', 'research_swarm', 'medical_swarm').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "swarm_id": {
+                        "type": "string",
+                        "description": "ID of the swarm to delegate to (e.g. 'se_swarm', 'research_swarm', 'medical_swarm')."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "The detailed query or task description to send to the swarm."
+                    }
+                },
+                "required": ["swarm_id", "query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_workspace",
             "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
             "parameters": {"type": "object", "properties": {}, "required": []}

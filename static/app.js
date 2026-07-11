@@ -11,6 +11,7 @@ import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
+import swarmDesigner from './js/swarmDesigner.js';
 import compareModule from './js/compare/index.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
@@ -1012,6 +1013,15 @@ function initializeEventListeners() {
     });
   }
 
+  // Swarm Studio is deliberately available from Tools as well as the composer.
+  // A team can be designed before starting a chat, then selected in Swarm mode.
+  const toolSwarmBtn = el('tool-swarm-btn');
+  if (toolSwarmBtn) {
+    toolSwarmBtn.addEventListener('click', () => {
+      if (swarmDesigner?.openDesigner) swarmDesigner.openDesigner();
+    });
+  }
+
   // ── Cookbook modal toggle ──
   const toolCookbookBtn = el('tool-cookbook-btn');
   if (toolCookbookBtn) {
@@ -1726,7 +1736,7 @@ function initializeEventListeners() {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
-    return mode === 'agent'; // default: ON in agent, OFF in chat
+    return mode === 'agent' || mode === 'swarm'; // default: ON in agent/swarm, OFF in chat
   }
 
   function saveToolPref(stateKey, mode, value) {
@@ -1767,8 +1777,9 @@ function initializeEventListeners() {
   // ── Agent / Chat mode toggle ──
   (function initModeToggle() {
     const agentBtn = el('mode-agent-btn');
+    const swarmBtn = el('mode-swarm-btn');
     const chatBtn = el('mode-chat-btn');
-    if (!agentBtn || !chatBtn) return;
+    if (!agentBtn || !chatBtn || !swarmBtn) return;
     const state = loadToggleState();
     let currentMode = state.mode || 'chat';
 
@@ -1784,12 +1795,19 @@ function initializeEventListeners() {
       st.mode = mode;
       saveToggleState(st);
       agentBtn.classList.toggle('active', mode === 'agent');
+      swarmBtn.classList.toggle('active', mode === 'swarm');
       chatBtn.classList.toggle('active', mode === 'chat');
       agentBtn.setAttribute('aria-pressed', String(mode === 'agent'));
+      swarmBtn.setAttribute('aria-pressed', String(mode === 'swarm'));
       chatBtn.setAttribute('aria-pressed', String(mode === 'chat'));
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
-      if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      if (toggle) {
+        toggle.classList.toggle('mode-chat', mode === 'chat');
+        toggle.classList.toggle('mode-mid', mode === 'swarm');
+        toggle.classList.toggle('mode-third', mode === 'chat');
+        toggle.classList.toggle('mode-toggle-three', true);
+      }
       // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
       try { workspaceModule.applyMode(mode); } catch (_) {}
       // Delay tool glow-up for a staggered effect
@@ -1802,6 +1820,7 @@ function initializeEventListeners() {
       if (resChk && resChk.checked) _syncResearchIndicator(false);
       setMode('agent');
     });
+    swarmBtn.addEventListener('click', () => setMode('swarm'));
     chatBtn.addEventListener('click', () => setMode('chat'));
     setMode(currentMode);
   })();
@@ -2559,7 +2578,7 @@ function initializeEventListeners() {
         });
         Storage.setJSON(Storage.KEYS.TOGGLES, _ts);
         if (typeof window.__odysseusSetChatMode === 'function') {
-          window.__odysseusSetChatMode(_restoreMode === 'chat' ? 'chat' : 'agent');
+          window.__odysseusSetChatMode(_restoreMode === 'chat' ? 'chat' : (_restoreMode === 'swarm' ? 'swarm' : 'agent'));
         }
         // Reapply the current mode's real defaults to the visible toggles
         const _curMode = (Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {}).mode || 'chat';
@@ -2618,6 +2637,7 @@ function initializeEventListeners() {
     'tool-gallery':        '#tool-gallery-btn',
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
+    'tool-swarm':          '#tool-swarm-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
@@ -3622,6 +3642,7 @@ function startOdysseusApp() {
   searchModule.init(API_BASE);
   chatModule.init(API_BASE);
   chatModule.initListeners();
+  if (swarmDesigner) swarmDesigner.init().catch(err => console.warn('swarm designer init failed', err));
   groupModule.init(API_BASE);
   // Initialize compare module
   if (compareModule) {

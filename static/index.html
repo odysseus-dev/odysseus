@@ -222,6 +222,7 @@
   <link rel="stylesheet" href="/static/style.css?v=20260630mdfontsize">
   <link rel="modulepreload" href="/static/app.js?v=20260630mdfontsize">
   <link rel="modulepreload" href="/static/js/chat.js">
+  <link rel="modulepreload" href="/static/js/swarm.js">
   <link rel="modulepreload" href="/static/js/ui.js">
   <link rel="modulepreload" href="/static/js/sessions.js">
   <link rel="modulepreload" href="/static/js/markdown.js">
@@ -846,6 +847,19 @@
           </svg>
           <span class="grow">Brain</span>
         </div>
+        <div class="list-item" id="tool-swarm-btn" title="Open Swarm Studio">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <circle cx="12" cy="12" r="3"/>
+            <circle cx="5" cy="5" r="2"/>
+            <circle cx="19" cy="5" r="2"/>
+            <circle cx="5" cy="19" r="2"/>
+            <circle cx="19" cy="19" r="2"/>
+            <path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/>
+          </svg>
+          <span class="grow">Swarm Studio</span>
+        </div>
         <div class="list-item" id="tool-calendar-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -1142,9 +1156,19 @@
         </div>
         <div class="chat-input-right">
           <!-- Agent / Chat mode toggle -->
-          <div class="mode-toggle">
+          <div class="mode-toggle mode-toggle-three">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
+            <button type="button" class="mode-toggle-btn" id="mode-swarm-btn" aria-pressed="false">Swarm</button>
             <button type="button" class="mode-toggle-btn" id="mode-chat-btn" aria-pressed="false">Chat</button>
+          </div>
+          <div class="swarm-select-wrap hidden" id="swarm-select-wrap" style="display: inline-flex; align-items: center; gap: 4px; margin-right: 8px;">
+            <select id="swarm-select" title="Swarm team" style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; color: var(--fg); font-size: 13px; outline: none;"></select>
+            <button type="button" id="swarm-designer-open" class="swarm-designer-open tool-btn" title="Edit selected swarm" aria-label="Edit selected swarm" style="background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; cursor: pointer; color: var(--fg); display: inline-flex; align-items: center; justify-content: center; height: 28px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4z"/></svg>
+            </button>
+            <button type="button" id="swarm-new-btn" class="swarm-new-btn tool-btn" title="Create new swarm team" aria-label="Create new swarm team" style="background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; cursor: pointer; color: var(--fg); display: inline-flex; align-items: center; justify-content: center; height: 28px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
           </div>
           <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>
@@ -1240,6 +1264,31 @@
       </div>
     </div>
 
+
+    <!-- Swarm designer modal -->
+    <div id="swarm-designer-modal" class="modal hidden">
+      <div class="modal-content swarm-modal-content" role="dialog" aria-label="Swarm Designer" style="background:var(--bg); max-width: 800px; width: 90%;">
+        <div class="modal-header">
+          <h4>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px">
+              <path d="M12 3v18"/><path d="M3 12h18"/><circle cx="12" cy="12" r="3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
+            </svg>
+            Swarm Team Designer
+          </h4>
+          <button class="close-btn" id="close-swarm-designer" aria-label="Close Swarm Designer">✖</button>
+        </div>
+        <div class="modal-body swarm-modal-body" style="max-height: 70vh; overflow-y: auto; padding: 20px;">
+          <div id="swarm-designer-form"></div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-top: 1px solid var(--border);">
+          <button type="button" id="swarm-refresh-btn" class="swarm-secondary-btn" style="padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--fg); cursor: pointer;">Refresh</button>
+          <div>
+            <button type="button" id="swarm-cancel-btn" style="margin-right:8px; padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--fg); cursor: pointer;">Cancel</button>
+            <button type="button" id="swarm-save-btn" class="preset-save-btn" style="padding: 6px 16px; border-radius: 4px; border: none; background: var(--accent); color: var(--bg); cursor: pointer; font-weight: 600;">Save Swarm</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
   </main>
   <button id="scroll-bottom-btn" class="scroll-nav-btn" title="Scroll to bottom">▼</button>
@@ -2475,6 +2524,7 @@
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js"></script>
 <script type="module" src="/static/js/chat.js?v=20260630toolmetrics"></script>
+<script type="module" src="/static/js/swarm.js"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>

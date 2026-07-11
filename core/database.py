@@ -123,6 +123,9 @@ class Session(TimestampMixin, Base):
     # Organization
     folder = Column(String, nullable=True, default=None)
     
+    # Swarm Intelligence
+    swarm_id = Column(String, nullable=True)
+    
     # Headers stored as JSON
     headers = Column(JSON, default=dict)
     
@@ -1737,6 +1740,40 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
+class SwarmConfig(TimestampMixin, Base):
+    """User-created or imported swarm definition."""
+    __tablename__ = "swarm_configs"
+    
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    domain = Column(String, nullable=True)
+    definition = Column(Text, nullable=False)  # JSON blob of SwarmDefinition
+    is_builtin = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    version = Column(String, default="1.0.0")
+
+
+class SwarmRun(TimestampMixin, Base):
+    """Execution history for a swarm run."""
+    __tablename__ = "swarm_runs"
+    
+    id = Column(String, primary_key=True, index=True)
+    swarm_id = Column(String, nullable=False, index=True)
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    owner = Column(String, nullable=True, index=True)
+    user_query = Column(Text, nullable=True)
+    master_plan = Column(Text, nullable=True)       # JSON: task assignments
+    worker_results = Column(Text, nullable=True)     # JSON: per-worker outputs
+    final_response = Column(Text, nullable=True)
+    status = Column(String, default="pending")       # pending/running/done/failed
+    total_tokens = Column(Integer, default=0)
+    duration_ms = Column(Integer, nullable=True)
+    workers_activated = Column(Integer, default=0)
+    workers_skipped = Column(Integer, default=0)
+
+
 
 
 
@@ -1808,6 +1845,19 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+def _migrate_add_swarm_models():
+    """Add swarm_id to sessions and ensure swarm tables exist."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
+            if "swarm_id" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN swarm_id VARCHAR"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added swarm_id to sessions table")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"sessions.swarm_id migration: {e}")
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
@@ -1865,6 +1915,8 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_add_swarm_models()
+
 
 
 def _migrate_backfill_task_folders():

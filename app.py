@@ -857,6 +857,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# Swarm Intelligence
+from routes.swarm_routes import router as swarm_router
+app.include_router(swarm_router)
+
 # ========= ROUTES (kept in app.py) =========
 
 @app.get("/")
