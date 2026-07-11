@@ -77,6 +77,13 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("notes", "set reminder request", rf"{_PLEASE}set\s+(?:a\s+)?reminder\b"),
         ("notes", "assistant reminder request", rf"{_ACTION_QUESTION}set\s+(?:a\s+)?reminder\b"),
 
+        # Explicit requests to inspect an attachment from an earlier turn.
+        # Plain chat no longer persists inline media bytes, so these requests
+        # need the owner-checked attachment/tool path.
+        ("files", "historical attachment inspection request", r"\b(?:inspect|look\s+(?:at|over)|analy[sz]e|read|review|describe|summari[sz]e|check|open|use)\b.{0,120}\b(?:image|photo|picture|file|pdf|document|attachment)\b.{0,80}\b(?:uploaded|attached|sent|shared)\b.{0,40}\b(?:earlier|before|previously|last\s+turn)\b"),
+        ("files", "historical attachment inspection request", r"\b(?:inspect|look\s+(?:at|over)|analy[sz]e|read|review|describe|summari[sz]e|check|open|use)\b.{0,80}\b(?:earlier|previous|prior|last)\b.{0,40}\b(?:image|photo|picture|file|pdf|document|attachment)\b"),
+        ("files", "historical attachment lookup question", r"\b(?:what(?:'s|\s+is|\s+was)|tell\s+me\s+about)\b.{0,120}\b(?:image|photo|picture|file|pdf|document|attachment)\b.{0,80}\b(?:uploaded|attached|sent|shared)\b.{0,40}\b(?:earlier|before|previously|last\s+turn)\b"),
+
         # Email actions.
         ("email", "assistant email action request", rf"{_ACTION_QUESTION}(?:send|write|reply|email|message|archive|delete|mark)\b.{{0,120}}\b(?:emails?|mail|messages?|inbox|unread|read)\b"),
         ("email", "send/write/reply email request", rf"{_PLEASE}(?:send|write|reply)\b.{{0,120}}\b(?:emails?|mail|messages?)\b"),

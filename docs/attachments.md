@@ -41,14 +41,19 @@ the current turn. Persistence is different:
 
 Agent/tool context receives upload entries as `attachment_ref` manifests with an
 `odysseus://attachment/<id>` URI and `read_policy: "owner_checked_upload"`.
+On later turns and after session reload, attachment IDs are rebuilt from
+persisted message metadata, with current-turn IDs first and recent historical
+IDs following. Every ID is resolved again for the session owner; stored metadata
+never supplies a trusted filesystem path.
 
-For compatibility with existing built-in tools, a local `path` may be included
-only after all of these checks pass:
+The manifest does not expose a host filesystem path. Agents pass the ID or URI
+to the dedicated `read_attachment` tool, which:
 
-- the upload ID resolves through `UploadHandler.resolve_upload`;
-- the requested owner is allowed to read the upload;
-- the file remains inside the configured upload directory;
-- the file path is inside the tool-readable roots.
+- resolves the upload ID through `UploadHandler.resolve_upload`;
+- permits only the requested owner to read the upload;
+- disables the admin override even when the caller is an administrator;
+- verifies the file remains inside the configured upload directory;
+- caps extracted content before returning it to the model.
 
 External MCP/custom tools should treat the URI and attachment ID as the stable
 contract and request bytes through an owner-checked server path, not by assuming

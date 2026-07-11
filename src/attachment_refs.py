@@ -75,6 +75,31 @@ def attachment_refs_from_metadata(metadata: dict[str, Any] | None) -> list[dict[
     return refs
 
 
+def attachment_ids_from_messages(messages: Iterable[Any] | None) -> list[str]:
+    """Return deduplicated attachment IDs, newest message first.
+
+    Persisted message metadata is the authority for historical attachment IDs;
+    filesystem paths are deliberately not stored or trusted. Callers must pass
+    these IDs back through the owner-checked upload resolver before reading any
+    bytes.
+    """
+    ordered_ids: list[str] = []
+    seen: set[str] = set()
+    for message in reversed(list(messages or [])):
+        metadata = getattr(message, "metadata", None)
+        if metadata is None and isinstance(message, dict):
+            metadata = message.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        for ref in attachment_refs_from_metadata(metadata):
+            attachment_id = str(ref.get("attachment_id") or "").strip()
+            if not attachment_id or attachment_id in seen:
+                continue
+            seen.add(attachment_id)
+            ordered_ids.append(attachment_id)
+    return ordered_ids
+
+
 def _ref_line(ref: dict[str, Any]) -> str:
     parts = [f"Attachment: {ref.get('name') or ref.get('attachment_id') or 'upload'}"]
     if ref.get("attachment_id"):

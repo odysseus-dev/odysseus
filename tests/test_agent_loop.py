@@ -40,6 +40,7 @@ try:
         _compute_final_metrics,
         _append_tool_results,
         _insert_before_latest_user,
+        _uploaded_files_context_message,
         _MCP_KEYWORDS,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
@@ -102,6 +103,24 @@ def test_insert_before_latest_user_appends_when_no_user_message_exists():
     context = {"role": "system", "content": "context"}
 
     assert _insert_before_latest_user(messages, context) == [messages[0], context]
+
+
+def test_uploaded_files_context_allows_current_and_historical_attachments():
+    context = _uploaded_files_context_message([{
+        "id": "upload-1",
+        "name": "C:\\server-secret\\earlier.pdf",
+        "mime": "application/pdf",
+        "size": 42,
+        "uri": "odysseus://attachment/upload-1",
+    }])
+
+    assert context is not None
+    assert "current or earlier user turns" in context["content"]
+    assert "latest user turn" not in context["content"]
+    assert "read_attachment" in context["content"]
+    assert "odysseus://attachment/upload-1" in context["content"]
+    assert "/tmp/" not in context["content"]
+    assert "server-secret" not in context["content"]
 
 
 # ---------------------------------------------------------------------------

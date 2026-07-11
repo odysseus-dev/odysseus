@@ -9,6 +9,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 import asyncio
 import collections
 import json
+import os
 import re
 import time
 import logging
@@ -301,6 +302,7 @@ _DOMAIN_RULES = {
 - Preserve clickable session links from tool output in your final answer.""",
     "files": """\
 ## File rules
+- For files listed in the chat attachment manifest, use `read_attachment` with the listed id or URI; never treat their names as host paths.
 - Use file tools for real disk files. Use document tools only for editor documents.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
 - Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
@@ -328,7 +330,7 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
+    "files": {"bash", "python", "read_file", "read_attachment", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
@@ -393,6 +395,12 @@ Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check ex
 <file path>
 ```
 Read a file and return its contents.""",
+
+    "read_attachment": """\
+```read_attachment
+<upload id or odysseus://attachment/<id>>
+```
+Read a current or historical attachment listed in this chat's attachment manifest. Pass only its id or internal attachment URI; filesystem paths are not accepted. Access is checked against the current chat owner each time.""",
 
     "write_file": """\
 ```write_file
@@ -821,10 +829,12 @@ def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Opt
         return None
 
     lines = [
-        "Uploaded files attached to the latest user turn:",
+        "Files attached in this chat (from the current or earlier user turns):",
     ]
     for item in uploaded_files[:20]:
-        name = str(item.get("name") or item.get("id") or "upload")
+        name = os.path.basename(
+            str(item.get("name") or item.get("id") or "upload").replace("\\", "/")
+        ) or "upload"
         bits = [
             f"id={item.get('id', '')}",
             f"name={name}",
@@ -833,14 +843,14 @@ def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Opt
             bits.append(f"mime={item.get('mime')}")
         if item.get("size") is not None:
             bits.append(f"size={item.get('size')} bytes")
-        if item.get("path"):
-            bits.append(f"path={item.get('path')}")
+        if item.get("uri"):
+            bits.append(f"uri={item.get('uri')}")
         lines.append("- " + "; ".join(bits))
     if len(uploaded_files) > 20:
         lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
     lines.extend([
         "",
-        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
+        "Attachment contents may already appear in the relevant user message. If an attachment is marked truncated or omitted, pass its listed id or URI to `read_attachment`. Do not say uploaded files are undiscoverable when they are listed here.",
     ])
     return untrusted_context_message("current chat uploaded files", "\n".join(lines))
 
@@ -2562,6 +2572,7 @@ async def stream_agent_loop(
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
     uploaded_files: Optional[List[Dict]] = None,
+    upload_handler=None,
     workload: str = "foreground",
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
@@ -2884,7 +2895,7 @@ async def stream_agent_loop(
         if _relevant_tools is None:
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
-        _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
+        _relevant_tools.add("read_attachment")
 
     # Per-request forced tools are stronger than retrieval. Explicit search
     # settings make web tools visible even when tool RAG misses them;
@@ -4046,6 +4057,7 @@ async def stream_agent_loop(
                             owner=owner,
                             progress_cb=_push_progress,
                             workspace=workspace,
+                            upload_handler=upload_handler,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.

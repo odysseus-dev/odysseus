@@ -23,6 +23,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "web_fetch": ("url",),
     "read_file": ("path",),
+    "read_attachment": ("attachment",),
     "write_file": ("path",),
     "edit_file": ("path",),
 }
@@ -102,6 +103,20 @@ FUNCTION_TOOL_SCHEMAS = [
                     "limit": {"type": "integer", "description": "Max number of lines to read from offset (optional)"}
                 },
                 "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_attachment",
+            "description": "Read an attachment from this chat by its upload id or odysseus://attachment/<id> URI. This is owner-checked and does not accept filesystem paths.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "attachment": {"type": "string", "description": "Exact upload id or odysseus://attachment/<id> URI from the chat attachment manifest"}
+                },
+                "required": ["attachment"]
             }
         }
     },

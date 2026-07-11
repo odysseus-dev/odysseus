@@ -17,7 +17,7 @@ from src.context_compactor import maybe_compact, trim_for_context
 from src.model_context import estimate_tokens
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
-from src.attachment_refs import attachment_ref
+from src.attachment_refs import attachment_ids_from_messages, attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -111,7 +111,7 @@ class ChatContext:
     # The chat route emits a doc_update SSE event for each before streaming
     # begins, so the editor pane switches to the new doc immediately.
     auto_opened_docs: list = field(default_factory=list)
-    # Uploads attached to this user turn, resolved and owner-checked for the
+    # Uploads referenced in this chat, resolved and owner-checked for the
     # agent's private context. This is not emitted to the browser.
     uploaded_files: list = field(default_factory=list)
 
@@ -376,59 +376,58 @@ async def preprocess(
     )
 
 
-def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[str]) -> list[dict]:
-    """Resolve current-turn upload IDs into a small tool-facing manifest.
+def build_uploaded_file_manifest(
+    att_ids: list,
+    upload_handler,
+    owner: Optional[str],
+    limit: Optional[int] = None,
+    attempt_limit: Optional[int] = None,
+) -> list[dict]:
+    """Resolve chat upload IDs into a small tool-facing manifest.
 
     The chat UI already sends attachment ids, and preprocessing inlines as much
     text as fits. Agent mode still needs a discoverable bridge for files whose
     content was truncated/omitted or when the model chooses file tools. Only
-    owner-authorized uploads are included, and paths must remain inside the
-    configured upload directory.
+    owner-authorized uploads are included. Host paths are intentionally omitted;
+    agents read through the owner-checked ``read_attachment`` tool instead.
+    ``limit`` counts successfully authorized entries, so stale or cross-owner
+    IDs do not crowd out usable files. ``attempt_limit`` bounds work on corrupt
+    or hostile histories whose candidates can never be resolved.
     """
-    if not att_ids or not upload_handler or not hasattr(upload_handler, "resolve_upload"):
+    if (
+        not att_ids
+        or not upload_handler
+        or not hasattr(upload_handler, "resolve_upload")
+        or (limit is not None and limit <= 0)
+    ):
         return []
 
-    def _read_file_can_open(path: str) -> bool:
-        try:
-            from src.tool_execution import _resolve_tool_path
-
-            return _resolve_tool_path(path) == os.path.realpath(path)
-        except Exception:
-            return False
-
     manifest: list[dict] = []
-    for att_id in att_ids:
+    for attempt, att_id in enumerate(att_ids):
+        if attempt_limit is not None and attempt >= attempt_limit:
+            break
         try:
-            info = upload_handler.resolve_upload(str(att_id), owner=owner)
+            info = upload_handler.resolve_upload(
+                str(att_id),
+                owner=owner,
+                allow_admin=False,
+            )
         except Exception:
             logger.debug("Failed to resolve upload %r for agent manifest", att_id, exc_info=True)
             continue
         if not isinstance(info, dict):
             continue
 
-        path = info.get("path")
-        if path:
-            try:
-                inside = True
-                if hasattr(upload_handler, "_inside_upload_dir"):
-                    inside = bool(upload_handler._inside_upload_dir(path))
-                elif hasattr(upload_handler, "inside_base_dir"):
-                    inside = bool(upload_handler.inside_base_dir(path))
-                if not inside or not os.path.exists(path) or not _read_file_can_open(path):
-                    path = None
-            except Exception:
-                path = None
-
         ref = attachment_ref({**info, "id": info.get("id") or str(att_id)})
+        ref["name"] = os.path.basename(str(ref.get("name") or ref["attachment_id"]).replace("\\", "/"))
         ref.update({
             "id": ref["attachment_id"],
             "uri": f"odysseus://attachment/{ref['attachment_id']}",
             "read_policy": "owner_checked_upload",
-            # Transitional compatibility: existing built-in tools can still use
-            # this path, but only after owner, upload-root, and tool-root checks.
-            "path": path,
         })
         manifest.append(ref)
+        if limit is not None and len(manifest) >= limit:
+            break
     return manifest
 
 
@@ -679,10 +678,22 @@ async def build_chat_context(
     # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
+    manifest_ids = [
+        str(att_id).strip()
+        for att_id in (att_ids or [])
+        if att_id is not None and str(att_id).strip()
+    ]
+    if agent_mode:
+        # Persisted metadata contains IDs, never trusted paths. Re-resolve every
+        # historical attachment against the session owner on each agent turn.
+        manifest_ids.extend(attachment_ids_from_messages(getattr(sess, "history", [])))
+    manifest_ids = list(dict.fromkeys(manifest_ids))
     uploaded_files = build_uploaded_file_manifest(
-        att_ids or [],
+        manifest_ids,
         getattr(chat_handler, "upload_handler", None),
         getattr(sess, "owner", None),
+        limit=20 if agent_mode else None,
+        attempt_limit=100 if agent_mode else None,
     )
     casual_low_signal = _is_casual_low_signal(message)
 
