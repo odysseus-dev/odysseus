@@ -3237,6 +3237,60 @@ async def stream_agent_loop(
         logger.warning("[agent] Soft context trim skipped: %s", e)
     prep_timings["context_trim"] = time.time() - _t3
 
+    # ── Checkpoint trigger ──────────────────────────────────────────────
+    # When context is still large after soft trim (>80% of window), persist
+    # state to checkpoint files and do a harder trim. This prevents the
+    # agent from losing context in long sessions.
+    _t_cp = time.time()
+    try:
+        _cp_tokens = estimate_tokens(messages)
+        _cp_threshold = (context_length or 8192) * 0.8
+        if _cp_tokens > _cp_threshold and session_id:
+            import os
+            _data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            _cp_base = os.path.join(_data_dir, "memory", session_id)
+            from src.agent.checkpoint_writer import CheckpointWriter
+            _cp_writer = CheckpointWriter(_cp_base)
+
+            # Extract key state from recent messages for checkpoint
+            _recent_user = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    _content = msg.get("content", "")
+                    if isinstance(_content, list):
+                        _content = " ".join(b.get("text", "") for b in _content if isinstance(b, dict))
+                    _recent_user = (_content or "").strip()[:500]
+                    break
+
+            _cp_writer.write_checkpoint(
+                active_intent=_recent_user or "Agent conversation in progress",
+                next_action="Continue from last user message",
+                current_work=f"Context at {_cp_tokens} tokens ({round(_cp_tokens/max(context_length,1)*100)}% of {context_length})",
+            )
+
+            # Hard trim: keep system messages + last 4 non-system messages
+            _sys_msgs = [m for m in messages if m.get("role") == "system"]
+            _non_sys = [m for m in messages if m.get("role") != "system"]
+            if len(_non_sys) > 4:
+                _rebuild_msg = {
+                    "role": "system",
+                    "content": (
+                        "## Context checkpoint\n"
+                        "Your previous context was compacted. A checkpoint was saved to disk. "
+                        "Here is the restored state:\n\n"
+                        + _cp_writer.rebuild_context()
+                    ),
+                }
+                messages = _sys_msgs + [_rebuild_msg] + _non_sys[-4:]
+                _after_cp_tokens = estimate_tokens(messages)
+                logger.info(
+                    "[agent] Checkpoint triggered: %s -> %s tokens (threshold=%s, context_length=%s)",
+                    _cp_tokens, _after_cp_tokens, int(_cp_threshold), context_length,
+                )
+    except Exception as e:
+        logger.debug("[agent] Checkpoint trigger skipped: %s", e)
+    prep_timings["checkpoint"] = time.time() - _t_cp
+
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
