@@ -345,8 +345,9 @@ def setup_webhook_routes(
                             resp = await client.get(models_url, headers=hdrs)
                             resp.raise_for_status()
                             data = resp.json()
-                            ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                            if not ids:
+                            items = data if isinstance(data, list) else (data.get("data") or [])
+                            ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+                            if not ids and isinstance(data, dict):
                                 ids = [
                                     m.get("name") or m.get("model")
                                     for m in (data.get("models") or [])

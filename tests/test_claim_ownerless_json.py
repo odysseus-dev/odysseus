@@ -1,4 +1,4 @@
-from scripts.claim_ownerless import claim_json_entries
+from scripts.claim_ownerless import claim_json_entries, owner_arg
 
 
 def test_claim_json_entries_skips_invalid_rows():
@@ -16,3 +16,9 @@ def test_claim_json_entries_skips_invalid_rows():
         None,
         {"id": "b", "owner": "already"},
     ]
+
+
+def test_owner_arg_rejects_blank_owner():
+    assert owner_arg(["claim_ownerless.py"]) is None
+    assert owner_arg(["claim_ownerless.py", "   "]) is None
+    assert owner_arg(["claim_ownerless.py", " admin "]) == "admin"

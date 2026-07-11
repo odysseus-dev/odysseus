@@ -1,7 +1,7 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
-import * as jobs from './jobs.js';
+import * as jobs from './jobs.js?v=20260630researchthumb';
 import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
@@ -297,6 +297,7 @@ export function openPanel(focusJobId) {
   _loadEndpoints().then(_restoreSavedSettings);
   _clearBadge();
   _updateResearchCount();
+  jobs.refreshLibrary?.({ force: true });
 
   if ('Notification' in window && Notification.permission === 'default') {
     try { Notification.requestPermission(); } catch {}
@@ -370,7 +371,7 @@ function _buildPanelHTML() {
         </div>
         <p class="memory-desc doclib-desc" style="margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
-          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">— past runs in <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
+          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">All past research found in: <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
         </p>
         <textarea id="research-query" class="research-query" placeholder="${_pickResearchHint()}" rows="4"></textarea>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
@@ -669,7 +670,7 @@ function _renderJobs() {
   const allJobs = jobs.getJobs();
   if (!allJobs.length) {
     // No empty-state text in the body — the query box above is the call to
-    // action. But still surface the "All past research found in Library,
+    // action. But still surface the "All past research found in: Library,
     // Research" hint under the main title, since the Past section won't
     // render to host it (this is exactly the case the dynamic hint targets).
     container.innerHTML = '';
@@ -718,7 +719,7 @@ function _renderJobs() {
   }
 
   // Dynamic Past hint: when the Past section won't render (no past items),
-  // surface the "All past research found in Library, Research" line under
+  // surface the "All past research found in: Library, Research" line under
   // the main Research title instead, so the link is always discoverable.
   const noPastHint = document.getElementById('research-no-past-hint');
   if (noPastHint) {
@@ -783,7 +784,7 @@ function _renderJobs() {
     if (key === 'past') {
       const hint = document.createElement('span');
       hint.className = 'research-library-hint';
-      hint.innerHTML = '<span>Multi-step web research with an LLM-in-the-loop agent</span> <button type="button" class="research-library-link">Library, Research</button>';
+      hint.innerHTML = '<span>All past research found in:</span> <button type="button" class="research-library-link">Library, Research</button>';
       hint.querySelector('.research-library-link').addEventListener('click', (e) => {
         e.stopPropagation();
         // Close the research panel first so the Library opens ABOVE it on mobile
@@ -993,6 +994,11 @@ function _buildJobCard(job) {
     const failNote = failed
       ? `<div class="research-job-failnote">Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.</div>`
       : '';
+    const thumbSource = (job.sources || []).find(s => s && (s.image || s.og_image));
+    const thumbUrl = job.thumbnail || thumbSource?.image || thumbSource?.og_image || '';
+    const thumbnail = thumbUrl
+      ? `<img class="research-job-thumb" src="${_esc(thumbUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : '<span class="research-job-thumb research-job-thumb-empty" aria-hidden="true"></span>';
     card.innerHTML = `
       <div class="research-job-header">
         <span class="research-job-query">${_esc(job.query)}</span>${doneBadge}
@@ -1001,6 +1007,7 @@ function _buildJobCard(job) {
       </div>
       ${failNote}
       <div class="research-job-actions">
+        ${thumbnail}
         <button class="research-job-action research-job-action-report" data-action="report" title="Visual report">${_externalIcon} Visual Report</button>
         <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
         <button class="research-job-action research-job-action-dim" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>

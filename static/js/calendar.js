@@ -301,7 +301,7 @@ async function _updateEvent(uid, data) {
   return { ok: true };
 }
 
-async function _deleteEvent(uid) {
+async function _deleteEvent(uid, { scope = 'series' } = {}) {
   // Multiple "sibling" UIDs may need to vanish optimistically:
   //   1. The exact uid the user clicked.
   //   2. If the user clicked a RECURRING occurrence (uid contains "::"),
@@ -312,9 +312,12 @@ async function _deleteEvent(uid) {
   //      other days kept rendering until the next full refresh.
   //   3. If the user clicked the master, strip every "master::*"
   //      expansion (same prefix scan).
+  const deleteOccurrenceOnly = scope === 'occurrence' && uid.includes('::');
   const masterUid = uid.includes('::') ? uid.split('::')[0] : uid;
   const backups = {};
-  const _matches = (k) => k === uid || k === masterUid || k.startsWith(masterUid + '::');
+  const _matches = deleteOccurrenceOnly
+    ? (k) => k === uid
+    : (k) => k === uid || k === masterUid || k.startsWith(masterUid + '::');
 
   for (const k of Object.keys(_allEvents)) {
     if (_matches(k)) {
@@ -328,7 +331,8 @@ async function _deleteEvent(uid) {
   if (_open) _render();
   _updateBadge && _updateBadge();
   const isRecurring = uid.includes('::');
-  fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
+  const scopeParam = deleteOccurrenceOnly ? '?scope=occurrence' : '';
+  fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}${scopeParam}`, {
     method: 'DELETE', credentials: 'same-origin',
   }).then(r => {
     // 404 = the event was already deleted by another session/device. That's
@@ -430,14 +434,77 @@ function _todayCount() {
   }).length;
 }
 
-// Per-event ⋮ menu: Remind me / Delete
+function _findEventByUid(uid) {
+  return _allEvents[uid] || _events.find(e => e && e.uid === uid) || null;
+}
+
+function _isRecurringEvent(ev) {
+  return !!(ev && (ev.is_recurrence || ev.uid?.includes('::') || ev.rrule));
+}
+
+function _chooseRecurringDeleteScope(ev) {
+  return new Promise(resolve => {
+    const name = ev?.summary ? `"${ev.summary}"` : 'this event';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.style.display = '';
+    overlay.innerHTML = `
+      <div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="cal-delete-choice-title">
+        <div class="modal-header"><h4 id="cal-delete-choice-title">Delete recurring event</h4></div>
+        <div class="modal-body"><p>Delete ${_e(name)}?</p></div>
+        <div class="modal-footer" style="gap:8px;flex-wrap:wrap;">
+          <button class="confirm-btn confirm-btn-secondary" data-choice="cancel">Cancel</button>
+          <button class="confirm-btn confirm-btn-danger" data-choice="occurrence">This event only</button>
+          <button class="confirm-btn confirm-btn-danger" data-choice="series">All recurring events</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(value);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(null);
+      }
+    };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) return close(null);
+      const btn = e.target.closest('[data-choice]');
+      if (!btn) return;
+      const choice = btn.dataset.choice;
+      close(choice === 'cancel' ? null : choice);
+    });
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('[data-choice="occurrence"]')?.focus();
+  });
+}
+
+async function _confirmAndDeleteEvent(ev) {
+  if (!ev) return;
+  const name = ev.summary ? `"${ev.summary}"` : 'this event';
+  let scope = 'series';
+  if (_isRecurringEvent(ev)) {
+    scope = await _chooseRecurringDeleteScope(ev);
+    if (!scope) return;
+  } else {
+    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
+    if (!ok) return;
+  }
+  try { await _deleteEvent(ev.uid, { scope }); setTimeout(() => _render(), 100); }
+  catch (_) { uiModule.showToast('Failed to delete'); }
+}
+
+// Per-event ⋮ menu: Edit / Delete
 function _wireQuickDelete(body) {
   body.querySelectorAll('.cal-event-more').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const uid = btn.dataset.uid;
       if (!uid) return;
-      const ev = _allEvents[uid];
+      const ev = _findEventByUid(uid);
       if (!ev) return;
       _showEventMoreMenu(ev, btn);
     });
@@ -490,10 +557,7 @@ function _showEventMoreMenu(ev, anchor) {
 
   dropdown.appendChild(_item(_trashIcon, 'Delete', async () => {
     closeMenu();
-    const name = ev.summary ? `"${ev.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
-    if (!ok) return;
-    try { await _deleteEvent(ev.uid); setTimeout(() => _render(), 100); } catch (_) {}
+    await _confirmAndDeleteEvent(ev);
   }, true));
 
   document.body.appendChild(dropdown);
@@ -1814,7 +1878,7 @@ function _dayDetailHTML(dateStr) {
     </div>`;
   if (_searchQuery) {
     const q = _searchQuery.toLowerCase();
-    const results = _events
+    const results = Object.values(_allEvents || {})
       .filter(_eventVisible)
       .filter(e =>
         (e.summary || '').toLowerCase().includes(q) ||
@@ -3116,7 +3180,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       all_day: isAD,
       description: document.getElementById('cal-f-desc').value,
       location: document.getElementById('cal-f-loc').value,
-      rrule: document.getElementById('cal-f-rrule').value || undefined,
+      rrule: document.getElementById('cal-f-rrule').value || '',
       calendar_href: document.getElementById('cal-f-cal')?.value || (_calendars[0]?.href || ''),
       color: colorVal || undefined,
     };
@@ -3142,11 +3206,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     } catch (e) { uiModule.showToast('Failed to save'); }
   });
   document.getElementById('cal-f-del')?.addEventListener('click', async () => {
-    const name = existing && existing.summary ? `"${existing.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
-    if (!ok) return;
-    try { await _deleteEvent(existing.uid); _render(); }
-    catch (e) { uiModule.showToast('Failed to delete'); }
+    await _confirmAndDeleteEvent(existing);
   });
   // ── Bespoke-form behavior ──────────────────────────────────────────
   const formEl = body.querySelector('.cal-form');
@@ -3455,8 +3515,18 @@ function openCalendar() {
       // Layer Esc: close the topmost calendar surface first, only fall through
       // to closing the whole calendar when nothing else is on top.
       const settings = document.getElementById('cal-settings-panel');
-      if (settings) { settings.remove(); return; }
-      if (document.querySelector('.cal-form')) { _render(); return; }
+      if (settings) {
+        e.preventDefault();
+        e.stopPropagation();
+        settings.remove();
+        return;
+      }
+      if (document.querySelector('.cal-form')) {
+        e.preventDefault();
+        e.stopPropagation();
+        _render();
+        return;
+      }
       closeCalendar();
     }
     else if (e.key === 'ArrowLeft') document.getElementById('cal-prev')?.click();
@@ -3485,14 +3555,25 @@ async function openCalendarTo(target) {
   if (!target) return;
   try {
     await _fetchCalendars();
+    const targetStr = String(target || '').trim();
+    if (targetStr.startsWith('search:')) {
+      _searchQuery = targetStr.slice('search:'.length).trim();
+      const now = new Date();
+      await _fetchEvents(`${now.getFullYear()}-01-01`, `${now.getFullYear() + 2}-01-01`);
+      _currentDate = now;
+      _selectedDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      _view = 'month';
+      _render();
+      return;
+    }
     // If target looks like an ISO date (YYYY-MM-DD...), go straight there.
     let dt = null;
-    const isoMatch = /^\d{4}-\d{2}-\d{2}/.test(String(target));
+    const isoMatch = /^\d{4}-\d{2}-\d{2}/.test(targetStr);
     if (isoMatch) {
-      dt = new Date(target);
+      dt = new Date(targetStr);
     } else {
       // Treat as an event uid — find it among loaded events.
-      const ev = (_events || []).find(e => e.uid === target || (e.uid || '').startsWith(target));
+      const ev = Object.values(_allEvents || {}).find(e => e.uid === targetStr || (e.uid || '').startsWith(targetStr));
       if (ev && ev.dtstart) dt = new Date(ev.dtstart);
       if (ev) _highlightEventUid = ev.uid;
     }

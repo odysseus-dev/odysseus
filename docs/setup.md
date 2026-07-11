@@ -99,6 +99,33 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
+**Host Docker access (explicit opt-in).** Default Docker Compose intentionally
+does not mount `/var/run/docker.sock`. You can still connect Odysseus to
+existing Ollama, vLLM, and other OpenAI-compatible endpoints without Docker
+socket access.
+
+Cookbook/local Docker-daemon management requires the opt-in overlay below. Raw
+Docker socket access is high-trust because it can effectively grant broad
+control over the host Docker daemon. Remote server Docker workflows over SSH
+remain preferred.
+
+Place these values in `.env`, or export them in the shell before running
+`docker compose`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/host-docker.yml
+DOCKER_GID=<host docker group gid>
+```
+
+Combine host Docker access with a GPU overlay when both are intentionally
+required:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/host-docker.yml
+# or
+COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml:docker/host-docker.yml
+```
+
 **Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
 only detect GPUs that Docker exposes to the container — if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or
@@ -299,6 +326,16 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
    ```
 4. Install the `mkcert` CA on any other device you want to access Odysseus from (e.g., for iOS, email the `rootCA.pem` to yourself, install the profile, and trust it in Certificate Trust Settings).
 
+### Common self-host traps (30-second fixes)
+A grab-bag of small gotchas that otherwise turn into long debugging sessions.
+
+- **`AUTH_ENABLED=false` is ignored / you're still forced to log in (Windows).** If you edited `.env` in Notepad it may have saved a UTF-8 **BOM**, turning the first key into `﻿AUTH_ENABLED` so it is never matched. Odysseus loads `.env` with `encoding="utf-8-sig"` to tolerate a leading BOM, but the safe fix is to re-save `.env` as **UTF-8 without BOM** (VS Code: *Save with Encoding → UTF-8*).
+- **macOS: the app isn't at `http://localhost:7000`.** macOS AirPlay Receiver usually holds port `7000`, so the macOS start script serves on **`7860`** instead — open `http://localhost:7860`. To use `7000`, free it (System Settings → General → AirDrop & Handoff → turn off *AirPlay Receiver*) and set `APP_PORT=7000`.
+- **Copy buttons do nothing over a plain-HTTP Tailscale/LAN URL.** Browsers only expose the clipboard API (`navigator.clipboard`) on **secure origins** — HTTPS, or `localhost`. Over `http://100.x.y.z:7860` it is blocked. Serve over HTTPS (see *HTTPS + LAN/Tailscale exposure* above); `localhost` is exempt, so copy still works on the host itself.
+- **Self-hosted ntfy reminders don't reach your phone.** Two things: (1) the bundled ntfy binds to loopback by default — to reach it from your phone set `NTFY_BIND` to your host/Tailscale IP and `NTFY_BASE_URL` to the same server URL in `.env`, then recreate the ntfy container (see the `NTFY_*` block in `.env.example`); (2) in the ntfy **Android** app, subscribe to the topic with **Instant delivery** enabled — non-`ntfy.sh` servers don't get instant push otherwise.
+- **Local mail (Dovecot) login fails: "Plaintext authentication disallowed on non-encrypted connections."** Your IMAP/SMTP server is refusing cleartext auth over an unencrypted link. Prefer enabling TLS on the mail server; on a trusted LAN only, you can allow cleartext (Dovecot: `disable_plaintext_auth = no`).
+- **Calendar/contacts (Radicale) won't sync.** Point Odysseus at the **full collection URL** with its trailing slash — e.g. `http://host:5232/<user>/<collection-id>/` — not just the server root. Radicale shows this address for each calendar/address book in its web UI.
+
 ### Optional Dependencies
 `requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
 
@@ -435,4 +472,4 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
 To back up or restore everything in `data/`, see the
-[Backup & Restore guide](docs/backup-restore.md).
+[Backup & Restore guide](backup-restore.md).

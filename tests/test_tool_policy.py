@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import src.agent_loop as al
 from src.agent_tools import ToolBlock
 from src.tool_execution import execute_tool_block
-from src.tool_policy import build_effective_tool_policy, detect_guide_only_turn
+from src.tool_policy import (
+    WEB_TOOL_NAMES,
+    build_effective_tool_policy,
+    detect_guide_only_turn,
+    web_search_enabled_for_turn,
+)
 
 
 def _collect(gen):
@@ -74,6 +79,116 @@ def test_normal_policy_preserves_existing_disabled_tools():
     assert policy.mode == "normal"
     assert policy.blocks("web_search")
     assert not policy.blocks("bash")
+
+
+def test_web_search_enabled_for_turn_requires_explicit_enable():
+    assert web_search_enabled_for_turn(None, None) is False
+    assert web_search_enabled_for_turn("true", None) is True
+    assert web_search_enabled_for_turn(None, "true") is True
+    assert web_search_enabled_for_turn(True, None) is True
+    assert web_search_enabled_for_turn("false", "true") is False
+    assert web_search_enabled_for_turn(False, "true") is False
+
+
+def _schema_names(tools):
+    return {
+        tool.get("function", {}).get("name") or tool.get("name")
+        for tool in (tools or [])
+    }
+
+
+def test_agent_loop_web_intent_preserves_disabled_web_tools(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_tools = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_tools.append(kwargs.get("tools"))
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [{"role": "user", "content": "please look up the latest CVEs"}],
+            max_rounds=1,
+            relevant_tools=set(),
+            disabled_tools=set(WEB_TOOL_NAMES),
+        )
+    )
+
+    assert sent_tools
+    assert WEB_TOOL_NAMES.isdisjoint(_schema_names(sent_tools[0]))
+
+
+def test_agent_loop_forced_web_tools_filtered_by_disabled_tools(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_tools = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_tools.append(kwargs.get("tools"))
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [{"role": "user", "content": "latest Kubernetes release"}],
+            max_rounds=1,
+            relevant_tools=set(),
+            forced_tools=set(WEB_TOOL_NAMES),
+            disabled_tools=set(WEB_TOOL_NAMES),
+        )
+    )
+
+    assert sent_tools
+    assert WEB_TOOL_NAMES.isdisjoint(_schema_names(sent_tools[0]))
+
+
+def test_agent_loop_policy_blocks_disabled_web_tool_call_before_execution(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    called = False
+
+    async def _fake_exec(*args, **kwargs):
+        nonlocal called
+        called = True
+        return ("web_search", {"output": "ran", "exit_code": 0})
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        yield _delta_chunk('```web_search\n{"query":"current CVEs"}\n```')
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    policy = build_effective_tool_policy(
+        disabled_tools=WEB_TOOL_NAMES,
+        last_user_message="please look up the latest CVEs",
+    )
+    chunks = _collect(
+        al.stream_agent_loop(
+            "http://local.test/v1",
+            "local-model",
+            [{"role": "user", "content": "please look up the latest CVEs"}],
+            max_rounds=1,
+            relevant_tools={"web_search"},
+            disabled_tools=set(policy.all_disabled_names()),
+            tool_policy=policy,
+        )
+    )
+    events = _events(chunks)
+    blocked = [event for event in events if event.get("type") == "tool_output"]
+
+    assert called is False
+    assert not any(event.get("type") == "tool_start" for event in events)
+    assert blocked
+    assert blocked[0]["tool"] == "web_search"
+    assert blocked[0]["exit_code"] == 1
 
 
 def test_executor_policy_backstop_blocks_tools():
@@ -295,6 +410,36 @@ def test_guide_only_suppresses_active_document_context(monkeypatch):
     assert "SECRET ACTIVE DOCUMENT CONTENT" not in prompt_payloads[0]
     assert "ACTIVE DOCUMENT" not in prompt_payloads[0]
     assert "Relevant skills" not in prompt_payloads[0]
+
+
+def test_document_my_style_does_not_infer_public_persona(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    monkeypatch.setattr(al, "_build_base_prompt", lambda *a, **k: ("BASE", ""), raising=False)
+    monkeypatch.setattr(al, "_cached_base_prompt", None, raising=False)
+    monkeypatch.setattr(al, "_cached_base_prompt_key", None, raising=False)
+
+    import src.settings as settings
+    monkeypatch.setattr(settings, "load_settings", lambda: {"document_writing_style": ""}, raising=False)
+
+    active_doc = SimpleNamespace(
+        id="doc-style",
+        current_content="A short poem already exists here.",
+        title="Morning Poem",
+        language="markdown",
+    )
+
+    messages, _ = al._build_system_prompt(
+        [{"role": "user", "content": "Write as my style"}],
+        model="local-model",
+        active_document=active_doc,
+        mcp_mgr=None,
+        relevant_tools={"edit_document", "update_document"},
+        suppress_skills=True,
+    )
+    payload = "\n\n".join(str(msg.get("content", "")) for msg in messages)
+
+    assert "There is no saved document writing style" in payload
+    assert "do NOT infer that style from memories, identity, public persona" in payload
 
 
 def test_guide_only_skips_teacher_escalation(monkeypatch):

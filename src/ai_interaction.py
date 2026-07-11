@@ -14,6 +14,7 @@ These are agent tools — the LLM writes fenced code blocks and they execute
 through the standard agent_tools.py pipeline.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -134,7 +135,8 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                         r = httpx.get(models_url, headers=headers, timeout=5)
                         r.raise_for_status()
                         data = r.json()
-                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        items = data if isinstance(data, list) else (data.get("data") or [])
+                        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
                         if not model_ids:
                             model_ids = [
                                 m.get("name") or m.get("model")
@@ -228,7 +230,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
         if not model_spec or not instruction:
             return {"error": f"Step {i + 1}: both 'model' and 'instruction' are required"}
         try:
-            url, model, headers = _resolve_model(model_spec, owner=owner)
+            url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
             resolved.append((url, model, headers, instruction))
         except ValueError as e:
             return {"error": f"Step {i + 1}: {e}"}
@@ -431,13 +433,23 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Search needs line 2: query"}
         query = lines[1].strip()
         memories = _memory_manager.load(owner=owner)
+        query_lower = query.lower()
+        exact_results = [m for m in memories if query_lower in (m.get("text", "").lower())]
 
         if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+            vector_results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
         else:
-            # Fallback: simple text search
-            query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
+            vector_results = []
+        seen = set()
+        results = []
+        for m in [*exact_results, *vector_results]:
+            mid = m.get("id")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            results.append(m)
+            if len(results) >= 20:
+                break
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}
@@ -451,8 +463,6 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 
     else:
         return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +635,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
         # Resolve the model to validate it exists
         try:
-            url, model_id, headers = _resolve_model(model_spec, owner=owner)
+            url, model_id, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
         except ValueError as e:
             return {"error": str(e)}
 
@@ -915,7 +925,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     if not model_spec:
         for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
             try:
-                _resolve_model(candidate, owner=owner)
+                await asyncio.to_thread(_resolve_model, candidate, owner=owner)
                 model_spec = candidate
                 break
             except ValueError:
@@ -942,7 +952,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         try:
                             _r = _req.get(_ibase + "/models", timeout=3)
                             _r.raise_for_status()
-                            _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
+                            _data = _r.json()
+                            _ditems = _data if isinstance(_data, list) else (_data.get("data") or [])
+                            _mids = [m.get("id") for m in _ditems if isinstance(m, dict) and m.get("id")]
                             if _mids:
                                 model_spec = _mids[0]
                                 break
@@ -957,7 +969,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     # Resolve the model to find the right endpoint
     try:
-        url, model_id, headers = _resolve_model(model_spec, owner=owner)
+        url, model_id, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
     except ValueError:
         return {"error": f"No endpoint found with image model '{model_spec}'. "
                 "Configure an OpenAI-compatible endpoint with image generation support."}

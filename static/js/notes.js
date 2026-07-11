@@ -1835,6 +1835,9 @@ function _renderNotes() {
           <button class="note-checkbox-agent${agentDoneClass}" data-note-id="${_attrEsc(note.id)}" data-idx="${i}"${agentSessionAttr} data-agent-title="${_attrEsc(agentMenuTitle)}" title="${_attrEsc(agentTitle)}">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
           </button>
+          <button class="note-checkbox-edit" data-note-id="${note.id}" data-idx="${i}" title="Edit item">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
           <button class="note-checkbox-rm" data-note-id="${note.id}" data-idx="${i}" title="Delete item">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -2518,6 +2521,85 @@ function _bindCardEvents(body) {
     });
   });
 
+  function _startChecklistItemEdit(noteId, idx, span) {
+    if (span.isContentEditable) return;
+    const note = _notes.find(n => n.id === noteId);
+    if (!note || !Array.isArray(note.items) || !note.items[idx]) return;
+
+    span.textContent = note.items[idx].text || '';
+    span.contentEditable = "true";
+    span.spellcheck = false;
+    span.focus();
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const save = () => {
+      if (!span.isContentEditable) return;
+      span.contentEditable = "false";
+      const newText = span.textContent.trim();
+      const oldText = (note.items[idx].text || '').trim();
+
+      if (newText === oldText) {
+        _renderNotes();
+        return;
+      }
+
+      const oldItem = note.items[idx];
+      if (!newText) {
+        note.items.splice(idx, 1);
+      } else {
+        note.items[idx].text = newText;
+      }
+
+      _patchNote(noteId, { items: note.items }).catch(() => {
+        if (!newText) note.items.splice(idx, 0, oldItem);
+        else note.items[idx].text = oldText;
+        _renderNotes();
+        uiModule.showError('Failed to update item');
+      });
+      _renderNotes();
+    };
+
+    const onKeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        save();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        span.contentEditable = "false";
+        _renderNotes();
+      }
+    };
+
+    span.addEventListener('blur', save, { once: true });
+    span.addEventListener('keydown', onKeydown);
+  }
+
+  // Edit a single checklist item (hover Edit button)
+  body.querySelectorAll('.note-checkbox-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_selectMode) return;
+      const noteId = btn.dataset.noteId;
+      const idx = parseInt(btn.dataset.idx);
+      const span = btn.parentElement.querySelector('.note-check-text');
+      if (span) _startChecklistItemEdit(noteId, idx, span);
+    });
+  });
+
+  // Prevent clicks from toggling the row while actively editing inline
+  body.querySelectorAll('.note-check-text').forEach(span => {
+    span.addEventListener('click', (e) => {
+      if (span.isContentEditable) {
+        e.stopPropagation();
+      }
+    });
+  });
+
   // Per-item agent solve (hover button next to the X). Scoped to one todo
   // item — uses the note title as context if present, but only the single
   // item's text as the work. Mirrors the per-note _agentSolveNote pattern.
@@ -2775,6 +2857,7 @@ function _collectFormDraft(form) {
   const d = {
     _ts: Date.now(),
     note_type: type,
+    color: form.dataset.noteColor || '',
     title: form.querySelector('.note-form-title')?.value || '',
     label: form.querySelector('.note-form-label')?.value || '',
     due_date: form.querySelector('.note-form-due')?.value || null,
@@ -2820,7 +2903,7 @@ function _applyDraftToNote(note, id) {
   const d = _loadDraft(id);
   if (_isDraftEmpty(d)) return { note, restored: false };
   const merged = { ...(note || {}) };
-  ['note_type', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
+  ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
     if (d[k] !== undefined) merged[k] = d[k];
   });
   return { note: merged, restored: true };
@@ -2836,6 +2919,7 @@ function _buildForm(note = null) {
 
   const form = document.createElement('div');
   form.className = 'note-form';
+  form.dataset.noteColor = color || '';
   if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
   if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
   let currentImageUrl = _safeImgSrc(note?.image_url || '');
@@ -3039,6 +3123,7 @@ function _buildForm(note = null) {
   // Color dots — apply to entire form immediately
   const _applyFormColor = (newColor) => {
     currentColor = newColor || '';
+    form.dataset.noteColor = currentColor;
     const isBg = _isBgImage(currentColor);
     COLORS.forEach(c => { if (c.value && c.value !== 'custom') form.classList.remove('note-color-' + c.value); });
     if (currentColor && !isBg) form.classList.add('note-color-' + currentColor);
@@ -3048,6 +3133,7 @@ function _buildForm(note = null) {
       d.classList.toggle('active', _dotIsActive(d.dataset.color, currentColor));
       d.style.background = _dotBg(d.dataset.color, currentColor);
     });
+    form.dispatchEvent(new Event('change', { bubbles: true }));
   };
   form.querySelectorAll('.note-color-dot').forEach(dot => {
     dot.addEventListener('click', () => {
@@ -4750,8 +4836,14 @@ function _openMobileFullscreenEdit(id, fromCard) {
   const headerActions = overlay.querySelector('.note-fullscreen-actions');
   const archiveBtn = form.querySelector('.note-form-archive-btn');
   const deleteBtn  = form.querySelector('.note-form-delete-btn');
-  if (headerActions && archiveBtn) headerActions.appendChild(archiveBtn);
-  if (headerActions && deleteBtn)  headerActions.appendChild(deleteBtn);
+  if (headerActions && archiveBtn) {
+    archiveBtn.classList.remove('note-form-collapsible');
+    headerActions.appendChild(archiveBtn);
+  }
+  if (headerActions && deleteBtn) {
+    deleteBtn.classList.remove('note-form-collapsible');
+    headerActions.appendChild(deleteBtn);
+  }
   // The built-in archive/delete handlers re-render the notes grid but
   // leave THIS overlay sitting in front of it — looks like nothing
   // happened. Add follow-up listeners that close the overlay so the
@@ -5230,25 +5322,26 @@ async function _initReminders() {
 // just opening the panel when the card isn't found (panel still
 // loading, note in a different filter, etc.).
 async function openNote(noteId) {
-  // If the panel is already open, openPanel() short-circuits and does
-  // nothing — including no re-fetch — so a freshly-created note added
-  // server-side never shows up. Force a refresh by closing first when
-  // open, then re-opening. Clicking the sidebar Notes button as a
-  // last resort keeps this working even if the module state got out
-  // of sync (rare but seen during HMR or after a stuck modal).
-  try {
-    if (isPanelOpen && isPanelOpen()) {
-      closePanel();
-      // give the close animation a frame to settle
-      await new Promise(r => setTimeout(r, 30));
-    }
-  } catch (_) {}
-  openPanel();
-  // openPanel() kicks off _fetchNotes() asynchronously, so the cards
-  // for newly-created notes may not be in the DOM yet. Also poll the
-  // _notes module array directly — if the note IS loaded but the
-  // active filter (e.g. archive view) is hiding it, we can still
-  // surface a confirmation toast.
+  const wasOpen = !!(isPanelOpen && isPanelOpen());
+  _showingArchived = false;
+  _activeLabel = null;
+  _activeFilter = null;
+  _searchQuery = '';
+  if (!wasOpen) {
+    openPanel();
+  } else {
+    _bringNotesToFront();
+    const searchEl = document.getElementById('notes-search');
+    if (searchEl) searchEl.value = '';
+    const pane = document.getElementById('notes-pane');
+    if (pane) pane.classList.remove('notes-pane-archive');
+    const archiveBtn = document.getElementById('notes-archive-toggle');
+    if (archiveBtn) archiveBtn.classList.remove('active');
+    await _fetchNotes();
+    _renderNotes();
+  }
+  // openPanel() kicks off _fetchNotes() asynchronously, so the cards for
+  // newly-created notes may not be in the DOM yet. Poll until the card exists.
   if (!noteId) return;
   let tries = 0;
   const findAndFlash = () => {

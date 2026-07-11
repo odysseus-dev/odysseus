@@ -14,8 +14,10 @@ from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
+from src.model_context import estimate_tokens
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
+from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -99,11 +101,19 @@ class ChatContext:
     uprefs: dict
     preset: PresetInfo
     preprocessed: PreprocessedMessage
+    context_trimmed: bool = False
+    context_messages_before_trim: int = 0
+    context_messages_after_trim: int = 0
+    context_tokens_before_trim: int = 0
+    context_tokens_after_trim: int = 0
     # Documents auto-created server-side during preprocess (e.g. when an
     # attached fillable PDF gets rendered into a markdown editor doc).
     # The chat route emits a doc_update SSE event for each before streaming
     # begins, so the editor pane switches to the new doc immediately.
     auto_opened_docs: list = field(default_factory=list)
+    # Uploads attached to this user turn, resolved and owner-checked for the
+    # agent's private context. This is not emitted to the browser.
+    uploaded_files: list = field(default_factory=list)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────── #
@@ -366,6 +376,62 @@ async def preprocess(
     )
 
 
+def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[str]) -> list[dict]:
+    """Resolve current-turn upload IDs into a small tool-facing manifest.
+
+    The chat UI already sends attachment ids, and preprocessing inlines as much
+    text as fits. Agent mode still needs a discoverable bridge for files whose
+    content was truncated/omitted or when the model chooses file tools. Only
+    owner-authorized uploads are included, and paths must remain inside the
+    configured upload directory.
+    """
+    if not att_ids or not upload_handler or not hasattr(upload_handler, "resolve_upload"):
+        return []
+
+    def _read_file_can_open(path: str) -> bool:
+        try:
+            from src.tool_execution import _resolve_tool_path
+
+            return _resolve_tool_path(path) == os.path.realpath(path)
+        except Exception:
+            return False
+
+    manifest: list[dict] = []
+    for att_id in att_ids:
+        try:
+            info = upload_handler.resolve_upload(str(att_id), owner=owner)
+        except Exception:
+            logger.debug("Failed to resolve upload %r for agent manifest", att_id, exc_info=True)
+            continue
+        if not isinstance(info, dict):
+            continue
+
+        path = info.get("path")
+        if path:
+            try:
+                inside = True
+                if hasattr(upload_handler, "_inside_upload_dir"):
+                    inside = bool(upload_handler._inside_upload_dir(path))
+                elif hasattr(upload_handler, "inside_base_dir"):
+                    inside = bool(upload_handler.inside_base_dir(path))
+                if not inside or not os.path.exists(path) or not _read_file_can_open(path):
+                    path = None
+            except Exception:
+                path = None
+
+        ref = attachment_ref({**info, "id": info.get("id") or str(att_id)})
+        ref.update({
+            "id": ref["attachment_id"],
+            "uri": f"odysseus://attachment/{ref['attachment_id']}",
+            "read_policy": "owner_checked_upload",
+            # Transitional compatibility: existing built-in tools can still use
+            # this path, but only after owner, upload-root, and tool-root checks.
+            "path": path,
+        })
+        manifest.append(ref)
+    return manifest
+
+
 def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, incognito: bool = False):
     """Add user message to session history and update session name.
     In incognito mode, still add to in-memory history (for conversation context)
@@ -613,6 +679,11 @@ async def build_chat_context(
     # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
+    uploaded_files = build_uploaded_file_manifest(
+        att_ids or [],
+        getattr(chat_handler, "upload_handler", None),
+        getattr(sess, "owner", None),
+    )
     casual_low_signal = _is_casual_low_signal(message)
 
     # Memory enabled?
@@ -716,7 +787,12 @@ async def build_chat_context(
     messages, context_length, was_compacted = await maybe_compact(
         sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
     )
+    _before_trim_messages = len(messages)
+    _before_trim_tokens = estimate_tokens(messages)
     messages = trim_for_context(messages, context_length)
+    _after_trim_messages = len(messages)
+    _after_trim_tokens = estimate_tokens(messages)
+    _context_trimmed = _after_trim_messages < _before_trim_messages or _after_trim_tokens < _before_trim_tokens
 
     return ChatContext(
         preface=preface,
@@ -730,7 +806,13 @@ async def build_chat_context(
         uprefs=uprefs,
         preset=preset,
         preprocessed=preprocessed,
+        context_trimmed=_context_trimmed,
+        context_messages_before_trim=_before_trim_messages,
+        context_messages_after_trim=_after_trim_messages,
+        context_tokens_before_trim=_before_trim_tokens,
+        context_tokens_after_trim=_after_trim_tokens,
         auto_opened_docs=auto_opened_docs,
+        uploaded_files=uploaded_files,
     )
 
 
