@@ -134,6 +134,12 @@ DEFAULT_SETTINGS = {
     "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
+    # Wall-clock cap (seconds) for a single model-backed task run. A wedged
+    # task can otherwise hold the scheduler's single model slot forever and
+    # starve every other task ("Queued — waiting for a free slot…"). 0 = no cap.
+    # This bounds ALL model-slot runs, including deep-research tasks, so keep it
+    # >= research_run_timeout_seconds if you raise that (or set 0 to disable).
+    "task_max_runtime_seconds": 3600,
     "default_endpoint_id": "",
     "default_model": "",
     # Optional prose style used only for normal document writing/editing.

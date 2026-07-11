@@ -763,6 +763,11 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(404, "Task not found")
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
+            # Cancel any in-flight run first. Without this a task that is
+            # currently executing (or wedged) keeps holding the scheduler's
+            # model slot even after its row is deleted, so deleting a stuck
+            # task never frees the queue (issue #5431).
+            await task_scheduler.stop_task(task_id)
             # Cascade: cookbook_serve tasks may have a linked calendar
             # event (created via the "Create event in calendar" toggle
             # in the schedule modal). If so, delete the calendar event

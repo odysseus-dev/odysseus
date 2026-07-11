@@ -722,6 +722,48 @@ class TaskScheduler:
         finally:
             db.close()
 
+    async def _run_locked_with_timeout(self, task_id: str, run_id: str, release_executing: bool):
+        """Run the model-slot body under a wall-clock cap.
+
+        The scheduler serializes all model-backed tasks through a single slot
+        (`_run_semaphore`, cap 1). Before this cap, a task whose model call
+        wedged (e.g. an unresponsive local endpoint) held that one slot
+        indefinitely, so every other task sat at "Queued — waiting for a free
+        slot…" forever (issue #5431). Bounding the run means a hung task is
+        cancelled and its slot released instead of starving everything.
+
+        `task_max_runtime_seconds <= 0` disables the cap.
+        """
+        from src.settings import get_setting
+        try:
+            timeout_s = float(get_setting("task_max_runtime_seconds", 3600) or 0)
+        except (TypeError, ValueError):
+            timeout_s = 3600.0
+
+        coro = self._execute_task_locked(
+            task_id,
+            run_id,
+            release_executing=release_executing,
+            gate_foreground=True,
+        )
+        if timeout_s <= 0:
+            await coro
+            return
+
+        try:
+            await asyncio.wait_for(coro, timeout=timeout_s)
+        except (asyncio.TimeoutError, TimeoutError):
+            # The wedged run was cancelled; the semaphore is already released by
+            # the enclosing `async with`. Mark the run aborted (if the inner
+            # cancellation handler didn't) and push the task out so it doesn't
+            # immediately re-fire into the same hang.
+            logger.warning(
+                "Task %s exceeded the %.0fs max runtime and was aborted to free the scheduler slot",
+                task_id, timeout_s,
+            )
+            self._mark_run_aborted(task_id, run_id, message="Timed out — exceeded max runtime")
+            self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
+
     async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True):
         # Create the run record with status="queued" BEFORE waiting on the
         # semaphore so the UI can show that a manually-triggered task is in
@@ -759,12 +801,7 @@ class TaskScheduler:
                 return
 
             async with self._run_semaphore:
-                await self._execute_task_locked(
-                    task_id,
-                    run_id,
-                    release_executing=release_executing,
-                    gate_foreground=True,
-                )
+                await self._run_locked_with_timeout(task_id, run_id, release_executing)
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
