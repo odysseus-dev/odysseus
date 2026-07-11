@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from services.factory_service import FactoryService
-from services.factory_orchestrator import plan_project, launch, stop as stop_orchestrator
+from services.factory_orchestrator import plan_project, iterate_project, launch, stop as stop_orchestrator, compile_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,102 @@ def setup_factory_routes() -> APIRouter:
             logger.exception("list_projects failed")
             raise HTTPException(500, str(e))
 
+    # ── Agent model settings ────────────────────────────────────
+
+    @router.get("/settings")
+    async def get_factory_settings():
+        """Return agent model assignments + prompts + available endpoints."""
+        from src.settings import get_setting
+        from core.database import SessionLocal, ModelEndpoint
+        import json as _json
+
+        agent_models = get_setting("factory_agent_models", {}) or {}
+        custom_prompts = get_setting("factory_agent_prompts", {}) or {}
+        agent_max_tokens = get_setting("factory_agent_max_tokens", {}) or {}
+
+        # Build available endpoints list
+        db = SessionLocal()
+        try:
+            endpoints = []
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).order_by(ModelEndpoint.name).all():
+                models = []
+                raw = getattr(ep, "cached_models", None)
+                if raw:
+                    try:
+                        models = _json.loads(raw) if isinstance(raw, str) else (raw or [])
+                    except Exception:
+                        models = []
+                pinned = getattr(ep, "pinned_models", None)
+                if pinned:
+                    try:
+                        pm = _json.loads(pinned) if isinstance(pinned, str) else (pinned or [])
+                        for m in pm:
+                            if m not in models:
+                                models.append(m)
+                    except Exception:
+                        pass
+                if getattr(ep, "model_type", "llm") == "image":
+                    continue
+                endpoints.append({
+                    "id": ep.id,
+                    "name": ep.name,
+                    "models": sorted(models),
+                })
+        finally:
+            db.close()
+
+        from services.factory_orchestrator import AGENTS
+        agents = []
+        for k, v in AGENTS.items():
+            agents.append({
+                "key": k,
+                "name": v["name"],
+                "role": v["role"],
+                "default_prompt": v["system"],
+                "current_prompt": custom_prompts.get(k) or v["system"],
+                "is_custom": bool(custom_prompts.get(k)),
+            })
+
+        return {"agents": agents, "agent_models": agent_models,
+                "agent_prompts": custom_prompts,
+                "agent_max_tokens": agent_max_tokens,
+                "default_max_tokens": 16384,
+                "endpoints": endpoints}
+
+    @router.post("/settings")
+    async def save_factory_settings(request: Request):
+        """Save agent model assignments + custom prompts."""
+        from src.settings import load_settings, save_settings
+        body = await request.json()
+        settings = load_settings()
+
+        if "agent_models" in body:
+            if not isinstance(body["agent_models"], dict):
+                raise HTTPException(400, "agent_models must be an object")
+            settings["factory_agent_models"] = body["agent_models"]
+
+        if "agent_prompts" in body:
+            if not isinstance(body["agent_prompts"], dict):
+                raise HTTPException(400, "agent_prompts must be an object")
+            cleaned = {k: v for k, v in body["agent_prompts"].items() if v and v.strip()}
+            settings["factory_agent_prompts"] = cleaned
+
+        if "agent_max_tokens" in body:
+            if not isinstance(body["agent_max_tokens"], dict):
+                raise HTTPException(400, "agent_max_tokens must be an object")
+            cleaned = {}
+            for k, v in body["agent_max_tokens"].items():
+                try:
+                    val = int(v)
+                    if val > 0:
+                        cleaned[k] = val
+                except (ValueError, TypeError):
+                    pass
+            settings["factory_agent_max_tokens"] = cleaned
+
+        save_settings(settings)
+        return {"ok": True}
+
     @router.get("/projects/{project_id}")
     async def get_project(project_id: int):
         """Get a single project by ID."""
@@ -67,6 +163,27 @@ def setup_factory_routes() -> APIRouter:
         if not result:
             raise HTTPException(404, f"Project {project_id} not found")
         return result
+
+    @router.get("/projects/{project_id}/download")
+    async def download_project(project_id: int):
+        """Download the project's delivery ZIP. Compiles on-demand if needed."""
+        import os
+        from fastapi.responses import FileResponse
+        project = svc.get_project(project_id)
+        if not project:
+            raise HTTPException(404, f"Project {project_id} not found")
+
+        zip_path = compile_delivery(project_id)
+        if not zip_path or not os.path.exists(zip_path):
+            raise HTTPException(404, "No completed tasks to download yet")
+
+        title = project.get("title") or f"project_{project_id}"
+        download_name = f"{title.replace(' ', '_')}.zip"
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=download_name,
+        )
 
     @router.put("/projects/{project_id}")
     async def update_project(project_id: int, request: Request):
@@ -107,6 +224,21 @@ def setup_factory_routes() -> APIRouter:
         except Exception as e:
             logger.exception("start_project failed")
             raise HTTPException(500, str(e))
+
+    @router.post("/projects/{project_id}/iterate")
+    async def iterate_project_route(project_id: int, request: Request):
+        """Add new tasks to a completed/in-progress project via LLM planning."""
+        body = await request.json()
+        prompt = body.get("prompt", "").strip()
+        if not prompt:
+            raise HTTPException(400, "prompt is required")
+        owner = body.get("owner", "default")
+        try:
+            await iterate_project(project_id, prompt, owner=owner)
+        except Exception as e:
+            logger.exception(f"iterate_project failed for {project_id}: {e}")
+            raise HTTPException(500, str(e))
+        return svc.get_project(project_id)
 
     @router.post("/projects/{project_id}/cancel")
     async def cancel_project(project_id: int):
@@ -270,20 +402,35 @@ def setup_factory_routes() -> APIRouter:
             raise HTTPException(400, str(e))
 
     @router.post("/nodes/{node_id}/retry")
-    async def retry_task(node_id: int):
-        """Retry a failed task."""
+    async def retry_task(node_id: int, request: Request):
+        """Retry a failed or blocked task and relaunch the orchestrator."""
         try:
             result = svc.retry_task(node_id)
             if not result:
                 raise HTTPException(404, f"Node {node_id} not found")
-            return result
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+        # Relaunch orchestrator for the parent project
+        pid = result.get("project_id")
+        if pid:
+            owner = "default"
+            try:
+                body = await request.json()
+                owner = body.get("owner", "default")
+            except Exception:
+                pass
+            from services.factory_orchestrator import launch
+            p = svc.get_project(pid)
+            if p and p.get("status") == "paused":
+                svc.resume_project(pid)
+            launch(pid, owner=owner)
+        return result
+
     @router.post("/tasks/{task_id}/retry")
-    async def retry_task_alias(task_id: int):
+    async def retry_task_alias(task_id: int, request: Request):
         """Alias — frontend uses /tasks/{id}/retry."""
-        return await retry_task(task_id)
+        return await retry_task(task_id, request)
 
     @router.post("/nodes/{node_id}/complete")
     async def complete_task(node_id: int, request: Request = None):

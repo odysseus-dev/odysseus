@@ -48,6 +48,7 @@ class FactoryNode(Base):
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     assigned_agent = Column(String, nullable=True)
+    filename = Column(String, nullable=True)
     dependencies = Column(JSON, nullable=True)
     status = Column(String, nullable=False, default="pending")
     result = Column(JSON, nullable=True)

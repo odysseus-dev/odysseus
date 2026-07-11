@@ -40894,7 +40894,348 @@ body.factory-panel-view .factory-divider { display:none; }
   to { transform: rotate(360deg); }
 }
 
+/* ── Task detail view ──────────────────────────────────────── */
+
+.factory-task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.factory-task-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.factory-task-detail-filename {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  color: var(--accent, var(--red));
+}
+
+.factory-task-detail-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--fg-dim, #888);
+  flex-wrap: wrap;
+}
+
+.factory-task-detail-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.factory-task-detail-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim, #888);
+  line-height: 1.5;
+}
+
+.factory-task-detail-error {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #f44336 12%, transparent);
+  border: 1px solid color-mix(in srgb, #f44336 30%, transparent);
+  color: #f44336;
+  font-size: 12px;
+}
+
+.factory-task-detail-running {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.factory-task-detail-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.factory-task-detail-progress-phase {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.factory-task-detail-progress-detail {
+  font-size: 11px;
+  color: var(--fg-dim, #888);
+  font-style: italic;
+}
+
+.factory-task-detail-output-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-dim, #888);
+  margin-bottom: -4px;
+}
+
+.factory-task-detail-output {
+  margin: 0;
+  padding: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 50vh;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
+
+.factory-task-detail-output code {
+  font-family: inherit;
+}
+
+.factory-task-card-file {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 10px;
+  color: var(--accent, var(--red));
+  margin-top: 2px;
+}
+
+.factory-task-card-deps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--fg-dim, #888);
+}
+
+.factory-dep {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.factory-dep-done {
+  background: color-mix(in srgb, var(--green, #2d6a4f) 20%, transparent);
+  color: var(--green, #2d6a4f);
+}
+
+.factory-dep-waiting {
+  background: color-mix(in srgb, var(--orange, #e85d04) 20%, transparent);
+  color: var(--orange, #e85d04);
+}
+
+.factory-task-card-view {
+  font-size: 10px;
+  color: var(--fg-dim, #888);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.factory-task-card:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+}
+
 /* ── Responsive ────────────────────────────────────────────── */
+
+/* ── Agent Settings ────────────────────────────────────────── */
+
+.factory-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.factory-settings-hint {
+  font-size: 12px;
+  color: var(--fg-dim, #888);
+  line-height: 1.5;
+  margin: 0 0 6px 0;
+}
+
+.factory-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.factory-settings-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.factory-settings-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.factory-settings-role {
+  font-size: 11px;
+  color: var(--fg-dim, #888);
+}
+
+.factory-settings-select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.factory-settings-select:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+
+.factory-settings-tokens {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.factory-settings-tokens label {
+  font-size: 10px;
+  color: var(--fg-dim, #888);
+}
+
+.factory-settings-max-tokens {
+  width: 70px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  text-align: center;
+}
+
+.factory-settings-max-tokens:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+
+.factory-settings-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.factory-settings-card .factory-settings-row {
+  border: none;
+  padding: 0;
+  background: none;
+}
+
+.factory-settings-badge {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--accent, var(--red));
+  color: #fff;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.factory-settings-toggle {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.factory-settings-prompt-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.factory-settings-prompt {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  min-height: 120px;
+}
+
+.factory-settings-prompt:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+
+.factory-settings-prompt-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.factory-iterate {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.factory-iterate textarea {
+  flex: 1;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.factory-iterate textarea:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+
+.factory-iterate button {
+  flex-shrink: 0;
+}
 
 @media (max-width: 768px) {
   #factory-overlay {

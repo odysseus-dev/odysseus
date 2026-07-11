@@ -43,6 +43,21 @@ async function restartProject(pid, mode = 'partial') {
   });
 }
 async function retryTask(taskId) { return _fetchJSON(`${_API}/tasks/${taskId}/retry`, { method: 'POST' }); }
+async function iterateProject(pid, prompt) {
+  return _fetchJSON(`${_API}/projects/${pid}/iterate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+}
+async function getFactorySettings() { return _fetchJSON(`${_API}/settings`); }
+async function saveFactorySettings(agentModels, agentPrompts, agentMaxTokens) {
+  return _fetchJSON(`${_API}/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_models: agentModels, agent_prompts: agentPrompts || {}, agent_max_tokens: agentMaxTokens || {} }),
+  });
+}
 
 // ── State ──────────────────────────────────────────────────────
 
@@ -102,9 +117,14 @@ function _renderProjectList(container) {
   container.innerHTML = `
     <div class="factory-subheader">
       <span class="factory-count">${_projects.length} project${_projects.length !== 1 ? 's' : ''}</span>
-      <button id="factory-create-btn" class="factory-btn factory-btn-primary" title="New project">
-        ${ICONS.plus} New
-      </button>
+      <div style="display:flex;gap:6px;">
+        <button id="factory-settings-btn" class="factory-btn factory-btn-ghost" title="Agent settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <button id="factory-create-btn" class="factory-btn factory-btn-primary" title="New project">
+          ${ICONS.plus} New
+        </button>
+      </div>
     </div>
     <div id="factory-project-list" class="factory-list"></div>
   `;
@@ -112,6 +132,7 @@ function _renderProjectList(container) {
   const list = container.querySelector('#factory-project-list');
 
   _el('factory-create-btn')?.addEventListener('click', _showCreateForm);
+  _el('factory-settings-btn')?.addEventListener('click', _openSettings);
 
   if (_projects.length === 0) {
     list.innerHTML = `
@@ -152,6 +173,182 @@ function _renderProjectList(container) {
     `;
     card.addEventListener('click', () => _openProjectStatus(p.id));
     list.appendChild(card);
+  });
+}
+
+// ── Render: Agent Settings View ──────────────────────────────
+
+let _factorySettings = null;
+
+async function _openSettings() {
+  const body = document.getElementById('factory-body');
+  if (!body) return;
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+
+  body.innerHTML = `
+    <div class="factory-subheader">
+      <button id="factory-back-btn" class="factory-btn factory-btn-ghost">${ICONS.back} Back</button>
+      <span style="font-size:13px;font-weight:600;">Agent Model Settings</span>
+    </div>
+    <div id="factory-settings-loading" style="text-align:center;padding:40px;">
+      ${ICONS.spinner} Loading...
+    </div>
+  `;
+
+  _el('factory-back-btn')?.addEventListener('click', () => {
+    _renderProjectList(body);
+  });
+
+  try {
+    _factorySettings = await getFactorySettings();
+  } catch (err) {
+    body.querySelector('#factory-settings-loading').innerHTML =
+      `<p style="color:var(--red)">Failed to load: ${_esc(err.message)}</p>`;
+    return;
+  }
+
+  body.querySelector('#factory-settings-loading').remove();
+  _renderSettings(body, _factorySettings);
+}
+
+function _renderSettings(container, data) {
+  const { agents, agent_models, agent_prompts, agent_max_tokens, default_max_tokens, endpoints } = data;
+  const currentModels = agent_models || {};
+  const currentPrompts = agent_prompts || {};
+  const currentMaxTokens = agent_max_tokens || {};
+  const defaultMT = default_max_tokens || 16384;
+
+  const modelOptions = endpoints.map(ep =>
+    ep.models.map(m => `<option value="${ep.id}::${m}">${ep.name} / ${m}</option>`).join('')
+  ).join('');
+
+  container.innerHTML += `
+    <div class="factory-settings">
+      <p class="factory-settings-hint">
+        Assign models and customize agent instructions. "Default" model uses the task endpoint.
+        Custom prompts override how each agent behaves.
+      </p>
+      ${agents.map(a => {
+        const cfg = currentModels[a.key] || {};
+        const isCustom = a.is_custom;
+        const promptText = a.current_prompt || a.default_prompt || '';
+        return `
+          <div class="factory-settings-card" data-agent-key="${a.key}">
+            <div class="factory-settings-row">
+              <div class="factory-settings-agent">
+                <span class="factory-settings-name">${a.name}</span>
+                <span class="factory-settings-role">${a.role}${isCustom ? ' <span class="factory-settings-badge">custom</span>' : ''}</span>
+              </div>
+              <select class="factory-settings-select" data-agent-key="${a.key}">
+                <option value="">Default (task endpoint)</option>
+                ${modelOptions}
+              </select>
+              <div class="factory-settings-tokens">
+                <label>Tokens</label>
+                <input type="number" class="factory-settings-max-tokens" data-agent-key="${a.key}"
+                  value="${currentMaxTokens[a.key] || defaultMT}" min="256" max="131072" step="1024" />
+              </div>
+            </div>
+            <button class="factory-btn factory-btn-sm factory-btn-ghost factory-settings-toggle" data-agent-key="${a.key}">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+              Edit prompt
+            </button>
+            <div class="factory-settings-prompt-wrap" style="display:none;">
+              <textarea class="factory-settings-prompt" data-agent-key="${a.key}" rows="8">${_esc(promptText)}</textarea>
+              <div class="factory-settings-prompt-actions">
+                <button class="factory-btn factory-btn-sm factory-btn-ghost factory-settings-reset" data-agent-key="${a.key}">Reset to default</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+      <button id="factory-settings-save" class="factory-btn factory-btn-primary" style="margin-top:12px;">
+        Save settings
+      </button>
+    </div>
+  `;
+
+  // Set model dropdown values
+  container.querySelectorAll('.factory-settings-select').forEach(sel => {
+    const key = sel.dataset.agentKey;
+    const cfg = currentModels[key] || {};
+    if (cfg.endpoint_id) {
+      const target = `${cfg.endpoint_id}::${cfg.model || ''}`;
+      for (const opt of sel.options) {
+        if (opt.value === target) { opt.selected = true; break; }
+      }
+    }
+  });
+
+  // Toggle prompt editor
+  container.querySelectorAll('.factory-settings-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.factory-settings-card');
+      const wrap = card.querySelector('.factory-settings-prompt-wrap');
+      const isHidden = wrap.style.display === 'none';
+      wrap.style.display = isHidden ? '' : 'none';
+      btn.innerHTML = isHidden
+        ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 15 12 9 18 15"/></svg> Hide prompt'
+        : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg> Edit prompt';
+    });
+  });
+
+  // Reset to default
+  container.querySelectorAll('.factory-settings-reset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.agentKey;
+      const ta = container.querySelector(`textarea.factory-settings-prompt[data-agent-key="${key}"]`);
+      const agent = agents.find(a => a.key === key);
+      if (ta && agent) {
+        ta.value = agent.default_prompt || '';
+      }
+    });
+  });
+
+  // Save
+  container.querySelector('#factory-settings-save')?.addEventListener('click', async () => {
+    const btn = container.querySelector('#factory-settings-save');
+
+    // Collect models
+    const newModels = {};
+    container.querySelectorAll('.factory-settings-select').forEach(sel => {
+      if (sel.value) {
+        const [endpoint_id, model] = sel.value.split('::');
+        newModels[sel.dataset.agentKey] = { endpoint_id, model };
+      }
+    });
+
+    // Collect prompts — compare to defaults, only save if different
+    const newPrompts = {};
+    container.querySelectorAll('.factory-settings-prompt').forEach(ta => {
+      const key = ta.dataset.agentKey;
+      const agent = agents.find(a => a.key === key);
+      const val = ta.value.trim();
+      if (val && val !== (agent?.default_prompt || '').trim()) {
+        newPrompts[key] = val;
+      }
+    });
+
+    // Collect max_tokens — only save if different from default
+    const newMaxTokens = {};
+    container.querySelectorAll('.factory-settings-max-tokens').forEach(inp => {
+      const val = parseInt(inp.value);
+      if (val && val !== defaultMT) {
+        newMaxTokens[inp.dataset.agentKey] = val;
+      }
+    });
+
+    btn.disabled = true;
+    btn.innerHTML = `${ICONS.spinner} Saving...`;
+    try {
+      await saveFactorySettings(newModels, newPrompts, newMaxTokens);
+      btn.innerHTML = 'Saved!';
+      setTimeout(() => { btn.disabled = false; btn.innerHTML = 'Save settings'; }, 1500);
+    } catch (err) {
+      btn.disabled = false;
+      btn.innerHTML = 'Save settings';
+      alert('Save failed: ' + err.message);
+    }
   });
 }
 
@@ -235,24 +432,7 @@ async function _openProjectStatus(projectId) {
   _el('factory-refresh-btn')?.addEventListener('click', () => _refreshStatus(projectId));
 
   await _refreshStatus(projectId);
-
-  // Auto-poll while the project is in an active state
-  _pollTimer = setInterval(async () => {
-    const overlay = _el('factory-overlay');
-    if (!overlay || !document.body.contains(overlay)) {
-      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
-      return;
-    }
-    if (_activeProjectId !== projectId) {
-      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
-      return;
-    }
-    await _refreshStatus(projectId);
-    const p = _activeStatus;
-    if (p && ['completed', 'failed', 'cancelled', 'paused'].includes(p.status)) {
-      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
-    }
-  }, 3000);
+  _startPolling(projectId);
 }
 
 async function _refreshStatus(projectId) {
@@ -315,6 +495,12 @@ function _renderKanban(container) {
         </div>
       `).join('')}
     </div>
+    ${(p.status === 'completed' || p.status === 'running' || p.status === 'paused') ? `
+      <div class="factory-iterate">
+        <textarea id="factory-iterate-input" placeholder="Describe what to add or change..." rows="2"></textarea>
+        <button id="factory-iterate-btn" class="factory-btn factory-btn-primary">Build more</button>
+      </div>
+    ` : ''}
   `;
 
   columns.forEach(col => {
@@ -327,15 +513,26 @@ function _renderKanban(container) {
       const card = document.createElement('div');
       card.className = 'factory-task-card';
       card.dataset.taskId = task.id;
+      card.style.cursor = 'pointer';
       const resultText = (typeof task.result === 'object' && task.result)
         ? (task.result.output || JSON.stringify(task.result))
         : (task.result || '');
+      const fname = task.filename ? `<div class="factory-task-card-file">${_esc(task.filename)}</div>` : '';
+      const deps = (task.dependencies || []).map(depId => {
+        const dep = tasks.find(t => t.id === depId);
+        if (!dep) return `<span class="factory-dep factory-dep-done">T${depId} ✓</span>`;
+        const done = dep.status === 'completed';
+        return `<span class="factory-dep ${done ? 'factory-dep-done' : 'factory-dep-waiting'}">T${depId} ${done ? '✓' : '⏳'}</span>`;
+      }).join(' ');
+      const depsLine = deps ? `<div class="factory-task-card-deps">Requires: ${deps}</div>` : '';
       card.innerHTML = `
         <div class="factory-task-card-top">
           <span class="factory-task-card-id">T${task.id}</span>
-          <span class="factory-task-card-agent">${_esc(task.agent || task.assigned_agent || task.task_type || '')}</span>
+          <span class="factory-task-card-agent">${_esc(task.agent || task.assigned_agent || '')}${task.task_type ? ` · ${_esc(task.task_type)}` : ''}</span>
         </div>
         <div class="factory-task-card-title">${_esc(task.title || task.description || '')}</div>
+        ${fname}
+        ${depsLine}
         ${resultText ? `<div class="factory-task-card-result">${_esc(String(resultText).substring(0, 150))}${String(resultText).length > 150 ? '...' : ''}</div>` : ''}
         ${task.status === 'human_intervention' ? `
           <button class="factory-btn factory-btn-sm factory-btn-warn factory-task-retry-btn" data-task-id="${task.id}">
@@ -347,7 +544,12 @@ function _renderKanban(container) {
             ${ICONS.spinner} <span>Working...</span>
           </div>
         ` : ''}
+        ${task.status === 'completed' ? `<div class="factory-task-card-view">Click to view output →</div>` : ''}
       `;
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.factory-task-retry-btn')) return;
+        _openTaskDetail(task.id);
+      });
       body.appendChild(card);
     });
   });
@@ -370,6 +572,147 @@ function _renderKanban(container) {
       }
     });
   });
+
+  const iterateBtn = container.querySelector('#factory-iterate-btn');
+  const iterateInput = container.querySelector('#factory-iterate-input');
+  if (iterateBtn && iterateInput) {
+    iterateBtn.addEventListener('click', async () => {
+      const prompt = iterateInput.value.trim();
+      if (!prompt) { iterateInput.focus(); return; }
+      iterateBtn.disabled = true;
+      iterateBtn.innerHTML = `${ICONS.spinner} Planning...`;
+      try {
+        await iterateProject(p.id, prompt);
+        await _openProjectStatus(p.id);
+      } catch (err) {
+        iterateBtn.disabled = false;
+        iterateBtn.innerHTML = 'Build more';
+        alert('Iterate failed: ' + err.message);
+      }
+    });
+  }
+}
+
+function _openTaskDetail(taskId) {
+  const task = (_activeStatus?.tasks || []).find(t => t.id === taskId);
+  if (!task) return;
+
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+
+  const body = document.getElementById('factory-body');
+  if (!body) return;
+
+  _renderTaskDetail(taskId);
+
+  // If the task is still running, poll for updates so the output
+  // appears as soon as the agent finishes.
+  if (task.status === 'running' || task.status === 'ready') {
+    _pollTimer = setInterval(async () => {
+      const overlay = _el('factory-overlay');
+      if (!overlay) { clearInterval(_pollTimer); _pollTimer = null; return; }
+      try {
+        _activeStatus = await getStatus(_activeProjectId);
+      } catch { return; }
+      const updated = (_activeStatus?.tasks || []).find(t => t.id === taskId);
+      if (!updated) return;
+      _renderTaskDetail(taskId);
+      if (updated.status !== 'running' && updated.status !== 'ready') {
+        clearInterval(_pollTimer);
+        _pollTimer = null;
+      }
+    }, 3000);
+  }
+}
+
+function _renderTaskDetail(taskId) {
+  const task = (_activeStatus?.tasks || []).find(t => t.id === taskId);
+  if (!task) return;
+  const body = document.getElementById('factory-body');
+  if (!body) return;
+
+  const resultObj = (typeof task.result === 'object' && task.result) ? task.result : null;
+  const output = resultObj?.output || (typeof task.result === 'string' ? task.result : '');
+  const producer = resultObj?.producer || task.assigned_agent || '';
+  const reviewer = resultObj?.reviewer || '';
+  const attempts = resultObj?.attempts || 0;
+  const isRunning = task.status === 'running' || task.status === 'ready';
+
+  body.innerHTML = `
+    <div class="factory-subheader">
+      <button id="factory-back-btn" class="factory-btn factory-btn-ghost">${ICONS.back} Back to board</button>
+    </div>
+    <div class="factory-task-detail">
+      <div class="factory-task-detail-header">
+        <div>
+          <span class="factory-task-card-id">T${task.id}</span>
+          <span class="factory-card-status factory-status-${task.status}">${task.status}</span>
+          ${task.filename ? `<span class="factory-task-detail-filename">${_esc(task.filename)}</span>` : ''}
+        </div>
+        <div class="factory-task-detail-meta">
+          ${task.task_type ? `<span>Type: <strong>${_esc(task.task_type)}</strong></span>` : ''}
+          ${producer ? `<span>Producer: <strong>${_esc(producer)}</strong></span>` : ''}
+          ${reviewer ? `<span>Reviewer: <strong>${_esc(reviewer)}</strong></span>` : ''}
+          ${attempts ? `<span>Attempts: ${attempts}</span>` : ''}
+        </div>
+      </div>
+      <h3 class="factory-task-detail-title">${_esc(task.title || '')}</h3>
+      ${task.description ? `<p class="factory-task-detail-desc">${_esc(task.description)}</p>` : ''}
+      ${isRunning ? `
+        <div class="factory-task-detail-running">
+          ${ICONS.spinner}
+          <div class="factory-task-detail-progress">
+            <span class="factory-task-detail-progress-phase">${_esc(task.error || `${producer || task.task_type || 'Agent'} working...`)}</span>
+          </div>
+        </div>
+      ` : ''}
+      ${task.error ? `<div class="factory-task-detail-error">${_esc(task.error)}</div>` : ''}
+      ${(task.status === 'human_intervention' || task.status === 'failed') ? `
+        <button class="factory-btn factory-btn-warn" id="factory-detail-retry-btn">${ICONS.retry} Retry task</button>
+      ` : ''}
+      ${output ? `
+        <div class="factory-task-detail-output-label">Output</div>
+        <pre class="factory-task-detail-output"><code>${_esc(output)}</code></pre>
+      ` : ''}
+    </div>
+  `;
+
+  _el('factory-back-btn')?.addEventListener('click', () => {
+    _openProjectStatus(_activeProjectId);
+  });
+
+  _el('factory-detail-retry-btn')?.addEventListener('click', async () => {
+    const btn = _el('factory-detail-retry-btn');
+    btn.disabled = true;
+    btn.innerHTML = `${ICONS.spinner} Retrying...`;
+    try {
+      await retryTask(task.id);
+      _openProjectStatus(_activeProjectId);
+    } catch (err) {
+      btn.disabled = false;
+      btn.innerHTML = `${ICONS.retry} Retry task`;
+      alert('Retry failed: ' + err.message);
+    }
+  });
+}
+
+function _startPolling(projectId) {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  _pollTimer = setInterval(async () => {
+    const overlay = _el('factory-overlay');
+    if (!overlay || !document.body.contains(overlay)) {
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+      return;
+    }
+    if (_activeProjectId !== projectId) {
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+      return;
+    }
+    await _refreshStatus(projectId);
+    const p = _activeStatus;
+    if (p && ['completed', 'failed', 'cancelled', 'paused'].includes(p.status)) {
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+    }
+  }, 3000);
 }
 
 function _renderProjectActions(container, project) {
@@ -377,6 +720,9 @@ function _renderProjectActions(container, project) {
   const info = _projectStatusInfo(project);
 
   let buttons = '';
+  if (info.done > 0) {
+    buttons += `<a class="factory-btn factory-btn-sm factory-btn-primary" href="${_API}/projects/${project.id}/download" download title="Download ZIP"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> ZIP</a>`;
+  }
   if (project.status === 'running' || info.status === 'running') {
     buttons += `<button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-pause-btn">${ICONS.pause} Pause</button>`;
   }

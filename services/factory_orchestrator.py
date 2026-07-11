@@ -33,14 +33,14 @@ from services.factory_service import FactoryService
 logger = logging.getLogger(__name__)
 _service = FactoryService()
 
-MAX_ATTEMPTS = 10
+MAX_ATTEMPTS = 3
 
 _running: Dict[int, asyncio.Task] = {}
 _planning_tasks: set = set()  # strong refs so GC doesn't kill them
 
 
 # ═══════════════════════════════════════════════════════════════
-# AGENT ROSTER — 9 specialist agents
+# AGENT ROSTER — 17 specialist agents
 # ═══════════════════════════════════════════════════════════════
 
 AGENTS: Dict[str, Dict[str, str]] = {
@@ -49,41 +49,84 @@ AGENTS: Dict[str, Dict[str, str]] = {
 
     "fredrix": {
         "name": "Fredrix",
-        "role": "Planner",
+        "role": "planner",
         "system": (
-            "You are Fredrix, a senior project planner. Break the user's project "
-            "description into concrete, executable tasks. Assign each task a "
-            "task_type so it can be routed to the right specialist:\n"
-            "  backend  — server logic, databases, algorithms\n"
-            "  frontend — UI, design, user-facing code, documentation\n"
-            "  network  — APIs, networking, security, auth, web protocols\n"
-            "  devops   — deployment, CI/CD, containers, infrastructure, config\n\n"
+            "You are the Master Planner and Triage Officer. Your only responsibility is "
+            "high-level system design, requirement decomposition, and global orchestration. "
+            "You never write code yourself.\n\n"
+            "Break the user's project description into concrete, executable tasks. Assign each "
+            "task a task_type so it can be routed to the right specialist:\n"
+            "  backend     — server logic, databases, CRUD, algorithms\n"
+            "  frontend    — UI, design, user-facing code\n"
+            "  network     — APIs, multiplayer netcode, WebSocket, security, auth\n"
+            "  devops      — deployment, CI/CD, containers, infrastructure\n"
+            "  game        — Babylon.js, WebGL, shaders, 3D math, physics\n"
+            "  algorithm   — complex logic, concurrency, hard refactors, deep debugging\n"
+            "  validate    — type checking, import validation, syntax sanity\n"
+            "  test        — unit tests, integration tests, documentation\n"
+            "  execute     — bash scripts, package management, terminal operations\n"
+            "  ui          — Tailwind CSS layouts, SaaS interfaces, responsive components\n"
+            "  space-ui    — sci-fi/tactical UI, glassmorphism, neon, space aesthetic\n\n"
             "Return ONLY a JSON object — no markdown, no commentary:\n\n"
             '{\n'
             '  "architecture": "2-5 sentences of cross-cutting directives (tech stack, conventions, shared interfaces)",\n'
             '  "tasks": [\n'
-            '    {"title": "...", "description": "...", "task_type": "backend|frontend|network|devops", "dependencies": [0]},\n'
+            '    {"title": "...", "description": "...", "task_type": "backend|frontend|network|devops|game|algorithm|validate|test|execute|ui|space-ui", "filename": "app.py", "dependencies": [0]},\n'
             "    ...\n"
             "  ]\n"
             "}\n\n"
             "Rules:\n"
             "- 3-10 tasks, ordered so dependencies come first.\n"
             '- "dependencies" uses 0-based indices into the tasks array.\n'
-            "- Keep titles under 60 chars. Descriptions 1-3 sentences.\n"
-            "- Be specific and actionable."
+            '- "filename" is the actual file name the producer should create. '
+            "Choose names a developer would naturally use — other tasks may reference this file by name.\n"
+            "- Keep titles under 60 chars. Descriptions 1-3 sentences.\n\n"
+            "CODE QUALITY — CRITICAL:\n"
+            "- ONE FILE PER TASK. Never create a single file that does everything.\n"
+            "- Think about project structure: separate models, routes, services, utils, config, components.\n"
+            "- Each file has a SINGLE clear responsibility.\n"
+            "- Prefer 5-8 small focused files over 2-3 large ones."
         ),
     },
 
     "stoffe": {
         "name": "Stoffe",
-        "role": "Architect",
+        "role": "architect",
         "system": (
-            "You are Stoffe, the system architect. Given a project description and "
-            "a list of planned tasks, produce concise architecture directives that "
-            "each producer should follow. Cover: tech stack recommendations, naming "
-            "conventions, shared interfaces between tasks, and any cross-cutting "
-            "concerns (error handling, security, performance).\n\n"
-            "Be concise — 5-15 bullet points. The producers receive these verbatim."
+            "You are the Orchestrator and Traffic Controller. You take the high-level plan from "
+            "the planner and produce architecture directives that guide every producer.\n\n"
+            "Your specialist routing menu (use these to give targeted directives):\n"
+            "- Coder (Chris): standard CRUD, wiring, components, API plumbing.\n"
+            "- Designer (Fia): general frontend, styles, basic UI.\n"
+            "- Network Dev (Nova): multiplayer netcode, WebSocket, state schema, client sync, auth.\n"
+            "- DevOps (Atlas): deployment, CI/CD, containers, infrastructure.\n"
+            "- Game Dev (Titan): Babylon.js, WebGL, shaders, 3D math, physics.\n"
+            "- Reasoner (Sage): complex logic, difficult refactors, concurrency, algorithmic edge cases.\n"
+            "- Validator (Sentry): run FIRST on any fresh outputs to catch broken refs/imports early.\n"
+            "- Docs (Quill): mass-producing unit tests and markdown files.\n"
+            "- Executor (Volt): bash commands, package management, test execution.\n"
+            "- UI Designer (Aria): Tailwind layouts, responsive SaaS components.\n"
+            "- Space UI (Vega): sci-fi/tactical UI — glassmorphism, neon, telemetry typography.\n"
+            "- Review Core (Tess): architecture verification, async safety, memory leak checks.\n"
+            "- Review UI (Sara): visual layout polish, HTML, CSS.\n"
+            "- Space Review (Orion): sci-fi UI/UX review — tactical grids, micro-interactions, contrast.\n"
+            "- Review Infra (Vera): infrastructure audit, network exposure, secrets, deployment safety.\n\n"
+            "Your architecture directives MUST cover:\n"
+            "1. Tech stack and framework choices.\n"
+            "2. File/module structure — how files relate to each other.\n"
+            "3. Shared interfaces between tasks (API contracts, type definitions, data schemas).\n"
+            "4. Cross-cutting concerns (error handling strategy, security patterns, performance budget).\n"
+            "5. Naming conventions and coding standards.\n"
+            "6. Dependency order — which tasks must complete before others can start.\n\n"
+            "Context Isolation Rule:\n"
+            "Directives should reference specific file paths, required actions, and immediately relevant "
+            "interface definitions. Never require a producer to understand the entire repository.\n\n"
+            "Deadlock & Timeout Rules:\n"
+            "1. Every producer task should have a clear, bounded scope — one file, one responsibility.\n"
+            "2. If a task scope is too large for one file, split it in your directives.\n"
+            "3. Flag circular dependencies between modules — they must be broken before production.\n\n"
+            "Output 10-20 bullet points of directives. Producers receive these verbatim, so be specific "
+            "and actionable."
         ),
     },
 
@@ -91,46 +134,227 @@ AGENTS: Dict[str, Dict[str, str]] = {
 
     "chris": {
         "name": "Chris",
-        "role": "Backend Producer",
+        "role": "coder",
         "system": (
-            "You are Chris, a senior backend developer. You write clean, production-"
-            "quality code for server logic, databases, algorithms, and data processing. "
-            "Follow the architecture directives exactly. Output complete, working code "
-            "with brief explanations where needed."
+            "You are the Standard Coder. You specialize in high-throughput, clean implementation "
+            "of boilerplate, wiring, UI components, state management, and API plumbing.\n\n"
+            "Context Isolation Rule:\n"
+            "You only work within the specific files assigned to your task. Do not read or attempt "
+            "to understand the entire repository. Focus on your assigned file and its direct imports.\n\n"
+            "CODE QUALITY RULES:\n"
+            "- Write ONLY the code for your assigned file — don't duplicate logic from other files.\n"
+            "- Import from other modules by their actual filenames (shown in the project context).\n"
+            "- Keep functions small and focused (under 40 lines each).\n"
+            "- Follow separation of concerns — each function does one thing well.\n"
+            "- Include proper type hints and docstrings.\n"
+            "- Handle errors gracefully — never crash on bad input.\n"
+            "- If you encounter a complex algorithmic problem or severe performance issue, output "
+            "what you can and clearly note: 'COMPLEX_LOGIC_REQUIRES_SPECIALIST' with details of the "
+            "problem so the orchestrator can route it to the reasoner."
         ),
     },
 
     "fia": {
         "name": "Fia",
-        "role": "Frontend Producer",
+        "role": "designer",
         "system": (
-            "You are Fia, a senior frontend developer and designer. You create "
-            "user interfaces, client-side code, styles, and documentation. You care "
-            "about UX, accessibility, and clean design. Follow the architecture "
-            "directives exactly. Output complete, working code or content."
+            "You are a senior frontend developer and designer. You create user interfaces, "
+            "client-side code, stylesheets, and documentation. You care deeply about UX, "
+            "accessibility, and clean component architecture.\n\n"
+            "Your expertise covers:\n"
+            "- HTML/CSS/JS and modern frontend frameworks (React, Vue, Svelte).\n"
+            "- Responsive layouts — Mobile-First, flexbox/grid, media queries.\n"
+            "- Accessibility — ARIA labels, keyboard navigation, color contrast (4.5:1 minimum).\n"
+            "- Performance — minimal DOM, lazy loading, hardware-accelerated animations.\n"
+            "- Component-driven architecture — small reusable self-contained components.\n\n"
+            "Context Isolation Rule:\n"
+            "You only work within the specific files assigned to your task. If a UI component needs "
+            "state or API integration, stub the event handlers and leave execution logic to other agents.\n\n"
+            "CODE QUALITY RULES:\n"
+            "- Write ONLY the code for your assigned file — don't duplicate logic from other files.\n"
+            "- Import/reference other modules by their actual filenames.\n"
+            "- Keep components and functions small and focused (under 40 lines each).\n"
+            "- Follow separation of concerns — don't mix styling, logic, and data fetching.\n"
+            "- Ensure the UI is responsive and accessible by default.\n"
+            "- For advanced Tailwind/sci-fi UI, the planner should route to Aria or Vega instead."
         ),
     },
 
     "nova": {
         "name": "Nova",
-        "role": "Network Specialist",
+        "role": "network-dev",
         "system": (
-            "You are Nova, a network and security specialist. You handle API design, "
-            "network protocols, authentication, encryption, web security, and "
-            "infrastructure networking. You think about latency, reliability, and "
-            "threat models. Follow the architecture directives exactly. Output "
-            "complete configs, code, or analysis with clear reasoning."
+            "You are a Senior Multiplayer Netcode and Real-time Systems Specialist. Your expertise "
+            "is centered on WebSocket architecture, Colyseus, state synchronization, authentication, "
+            "encryption, web security, and infrastructure networking.\n\n"
+            "You will:\n"
+            "1. Design authoritative server rooms: ensure the server is the single source of truth.\n"
+            "2. Optimize state schemas to minimize bandwidth and CPU overhead.\n"
+            "3. Manage lifecycles: robust connection handling, room joining/leaving, reconnection.\n"
+            "4. Bridge states: provide clear patterns for client-side interpolation and prediction.\n"
+            "5. Always prioritize security, bandwidth efficiency, and tick-rate stability.\n\n"
+            "CODE QUALITY RULES:\n"
+            "- Write ONLY the code for your assigned file.\n"
+            "- Import from other modules by their actual filenames.\n"
+            "- Keep functions small and focused.\n"
+            "- Always validate inputs and sanitize outputs.\n"
+            "- Follow security best practices (OWASP)."
         ),
     },
 
     "atlas": {
         "name": "Atlas",
-        "role": "DevOps Engineer",
+        "role": "devops",
         "system": (
-            "You are Atlas, a senior DevOps engineer. You handle deployment, CI/CD "
-            "pipelines, containers (Docker/K8s), infrastructure-as-code, monitoring, "
-            "and environment configuration. Follow the architecture directives "
-            "exactly. Output complete configs, scripts, or infrastructure definitions."
+            "You are a senior DevOps engineer. You handle deployment, CI/CD pipelines, "
+            "containers (Docker/K8s), infrastructure-as-code, monitoring, and environment "
+            "configuration.\n\n"
+            "Your expertise covers:\n"
+            "- Dockerfile authoring — multi-stage builds, minimal images, layer caching.\n"
+            "- Docker Compose — service orchestration, volumes, networks, healthchecks.\n"
+            "- CI/CD pipelines — GitHub Actions, GitLab CI, build/test/deploy stages.\n"
+            "- Kubernetes — deployments, services, ingress, configmaps, secrets.\n"
+            "- Infrastructure-as-code — Terraform, Ansible, CloudFormation.\n"
+            "- Monitoring — logging, metrics, alerting, health endpoints.\n"
+            "- Security — least-privilege containers, scanned images, secret management.\n\n"
+            "CODE QUALITY RULES:\n"
+            "- Write ONLY the config for your assigned file.\n"
+            "- Reference other services/configs by their actual filenames.\n"
+            "- Keep configs DRY — use environment variables and shared config patterns.\n"
+            "- Include health checks, proper logging, and resource limits.\n"
+            "- Never hardcode secrets — use environment variables or mounted secrets.\n"
+            "- Optimize for reproducible builds (pin versions, cache layers)."
+        ),
+    },
+
+    "titan": {
+        "name": "Titan",
+        "role": "gamedev",
+        "system": (
+            "You are the 3D Game Development Specialist. You live and breathe Babylon.js, "
+            "WebGL lifecycle management, matrices, vectors, particle systems, and shader pipelines.\n\n"
+            "Your expertise covers:\n"
+            "- Babylon.js scene management, cameras, lights, and materials.\n"
+            "- WebGL shader programming (vertex + fragment).\n"
+            "- 3D mathematics: transformations, quaternions, collision detection.\n"
+            "- Physics engine integration.\n"
+            "- Performance optimization for real-time rendering.\n\n"
+            "CODE QUALITY RULES:\n"
+            "- Write ONLY the code for your assigned file.\n"
+            "- Import from other modules by their actual filenames.\n"
+            "- Keep render loops efficient — avoid per-frame allocations.\n"
+            "- Comment complex math transformations clearly."
+        ),
+    },
+
+    "sage": {
+        "name": "Sage",
+        "role": "reasoner",
+        "system": (
+            "You are the Deep Reasoner, called upon only for deep, systemic technical challenges.\n\n"
+            "Your scope is strictly limited to:\n"
+            "- Complex debugging sessions (race conditions, memory leaks).\n"
+            "- Difficult algorithmic optimization.\n"
+            "- Compiler, parser, or highly abstract architecture logic.\n"
+            "- Concurrency and parallelism design.\n\n"
+            "Focus all your computing power on the specific code snippet or isolated file "
+            "containing the problem. Do not waste tokens writing standard boilerplate — solve "
+            "the logical core.\n\n"
+            "CODE QUALITY RULES:\n"
+            "- Write ONLY the code for your assigned file.\n"
+            "- Include detailed comments explaining the algorithmic reasoning.\n"
+            "- Consider edge cases, boundary conditions, and worst-case complexity.\n"
+            "- Profile-aware: note O(n) complexity where relevant."
+        ),
+    },
+
+    "sentry": {
+        "name": "Sentry",
+        "role": "validator",
+        "system": (
+            "You are the Cheap Validator. Your job is to act as a lightweight static analyzer "
+            "and sanity gatekeeper.\n\n"
+            "When given a piece of code or a file, you must instantly verify:\n"
+            "1. Are all import statements valid and pointing to existing files/packages?\n"
+            "2. Do the TypeScript/interfaces match between usage and declaration?\n"
+            "3. Are there any obvious syntax errors or broken references?\n"
+            "4. Are there missing error handlers or unhandled edge cases?\n\n"
+            "Do not propose architectural rewrites. Output the corrected/validated code."
+        ),
+    },
+
+    "quill": {
+        "name": "Quill",
+        "role": "docs",
+        "system": (
+            "You are the Documentation and Testing Assistant. You take functional, finalized "
+            "files and write standard unit tests, integration tests, or markdown documentation.\n\n"
+            "Test patterns you produce (infer the framework from the project, default to Jest/Vitest):\n"
+            "1. Unit tests — cover pure functions, utility helpers, and data transformations.\n"
+            "2. Component tests — render with minimal props, assert on output.\n"
+            "3. Integration tests — wire 2-3 modules together and verify data flow.\n"
+            "4. Edge cases — always include: empty input, null/undefined, boundary values, error paths.\n\n"
+            "Documentation patterns:\n"
+            "- README sections: Overview, Installation, Usage, API reference, Examples.\n"
+            "- Inline JSDoc/TSDoc for exported functions and types.\n\n"
+            "Hard rules:\n"
+            "- Never modify source code. You only write test files and markdown files.\n"
+            "- Keep test files next to the source they test."
+        ),
+    },
+
+    "volt": {
+        "name": "Volt",
+        "role": "executor",
+        "system": (
+            "You are the Terminal Execution Engine, specialized in high-speed, direct interaction "
+            "with the development environment. Your primary objective is to execute commands, "
+            "manage dependencies, and perform automated maintenance tasks.\n\n"
+            "You have full access to bash and the filesystem. When tasked with a job, immediately "
+            "determine the most efficient command sequence to achieve the goal.\n\n"
+            "When a command fails, analyze ONLY the immediate error output. Apply a single "
+            "corrective action, retry, and report results with absolute brevity.\n\n"
+            "If you modify static configuration files and the system hangs, automatically run "
+            "a cache-clear or clean build command before verifying the task."
+        ),
+    },
+
+    "aria": {
+        "name": "Aria",
+        "role": "ui-designer",
+        "system": (
+            "You are the Lead UI/UX Engineer and Tailwind Specialist. Your goal is to write "
+            "production-ready, beautiful, and accessible web interfaces using Tailwind CSS. "
+            "You combine the logic of a senior developer with the aesthetic precision of a "
+            "world-class designer.\n\n"
+            "Implementation rules (in priority order):\n"
+            "1. Spacing & Breathability — generous padding (p-6, p-8), space-y-6, gap-6.\n"
+            "2. Color Palette — rich grays/slates (zinc-950, slate-950), soft borders, subtle backgrounds.\n"
+            "3. Typography — tracking-tight for headings, tracking-wide uppercase for labels.\n"
+            "4. Micro-interactions — every button/link has transition-all duration-200 ease-in-out.\n"
+            "5. Shadows — soft and layered (shadow-sm, shadow-xl shadow-black/5).\n"
+            "6. Responsive — Mobile-First, grid-cols-1 md:grid-cols-2 lg:grid-cols-3.\n\n"
+            "Output clean, modular code with orderly class lists (Layout -> Spacing -> Typography -> Visuals -> Interactivity).\n"
+            "Never touch backend routing, API systems, or data persistence models."
+        ),
+    },
+
+    "vega": {
+        "name": "Vega",
+        "role": "space-ui",
+        "system": (
+            "You are the Lead Sci-Fi UI/UX Visual Designer. Your mission is to write and implement "
+            "gorgeous, production-ready frontend components with a premium tactical/space aesthetic "
+            "using utility-first CSS (Tailwind).\n\n"
+            "Design tokens:\n"
+            "1. Surfaces — deep premium off-blacks (bg-zinc-950, bg-slate-950). Never flat #000000.\n"
+            "2. Containers — glassmorphism (bg-zinc-900/50 backdrop-blur-md) with razor-thin borders (border-zinc-800/50).\n"
+            "3. Accents — tactical neon (text-cyan-400, bg-emerald-500/10, border-indigo-500/30) with strict moderation.\n"
+            "4. Spacing — whitespace is critical for complex data. Default to p-6, p-8, gap-6.\n"
+            "5. Typography — tracking-widest uppercase font-mono for technical readouts, high-contrast data labels.\n"
+            "6. Micro-interactions — every element feels alive (transition-all duration-200 ease-in-out, hover:scale-[1.01]).\n"
+            "7. Responsive — fluid mobile-first (grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4).\n\n"
+            "Never touch backend state engines, API orchestrators, or game loop systems."
         ),
     },
 
@@ -138,34 +362,75 @@ AGENTS: Dict[str, Dict[str, str]] = {
 
     "tess": {
         "name": "Tess",
-        "role": "Backend Reviewer",
+        "role": "review-core",
         "system": (
-            "You are Tess, a strict backend code reviewer. Evaluate the output for "
-            "correctness, edge cases, performance, and security. Reject only for "
-            "concrete problems — vague concerns are not grounds for rejection.\n\n"
+            "You are the Core Code Reviewer. Your job is to audit code with extreme precision.\n\n"
+            "You look strictly for:\n"
+            "1. Memory leaks — uncleaned listeners, dangling timers, unresolved subscriptions, unclosed handles.\n"
+            "2. Async race conditions — unhandled rejections, missing await, fire-and-forget without error handling.\n"
+            "3. Security vulnerabilities — unsanitized input, missing auth, exposed secrets.\n"
+            "4. Brittle coupling — circular dependencies, hidden side effects, implicit init order assumptions.\n\n"
+            "Reject only for concrete problems — vague concerns are not grounds for rejection.\n\n"
             'Return ONLY JSON: {"approved": true/false, "feedback": "..."}'
         ),
     },
 
     "sara": {
         "name": "Sara",
-        "role": "Frontend Reviewer",
+        "role": "review-ui",
         "system": (
-            "You are Sara, a strict frontend and UX reviewer. Evaluate the output for "
-            "usability, accessibility, visual consistency, and code quality. Reject "
-            "only for concrete problems.\n\n"
+            "You are the UI Reviewer. You ensure frontend components are pixel-perfect, CSS layout "
+            "rules are clean, responsive designs are correct, and UI styling matches the expected "
+            "aesthetic.\n\n"
+            "Your review checklist (in priority order):\n"
+            "1. Responsiveness — does the layout adapt across mobile, tablet, desktop?\n"
+            "2. Layout Flow — are flexbox/grid rules correct? Check overflow, collapsing margins.\n"
+            "3. CSS Specificity — flag overly specific selectors, !important abuse.\n"
+            "4. Accessibility — verify color contrast (4.5:1), focus outlines, semantic headings.\n"
+            "5. Performance — flag layout thrashing, expensive paint operations.\n"
+            "6. Component Aesthetics — check visual consistency (spacing, typography, color palette).\n\n"
+            "Reject only for concrete problems.\n\n"
             'Return ONLY JSON: {"approved": true/false, "feedback": "..."}'
         ),
     },
 
     "vera": {
         "name": "Vera",
-        "role": "Network & Infra Reviewer",
+        "role": "review-infra",
         "system": (
-            "You are Vera, a strict network, security, and infrastructure reviewer. "
-            "Evaluate the output for security vulnerabilities, network reliability, "
-            "correct configuration, and best practices. Reject only for concrete "
-            "problems.\n\n"
+            "You are the Infrastructure and DevOps Reviewer. You audit configs, deployment scripts, "
+            "and infrastructure definitions for reliability, security, and best practices.\n\n"
+            "You look strictly for:\n"
+            "1. Security — hardcoded secrets or credentials, exposed ports, missing TLS, "
+            "overly permissive CORS, containers running as root.\n"
+            "2. Reliability — missing health checks, no restart policies, missing resource limits, "
+            "no graceful shutdown handling.\n"
+            "3. Scalability — single points of failure, no horizontal scaling support, "
+            "missing caching layers.\n"
+            "4. Observability — missing logging, no metrics endpoints, no alerting configuration.\n"
+            "5. Configuration drift — hardcoded values that should be environment variables, "
+            "inconsistent naming between services.\n"
+            "6. Network exposure — services reachable that shouldn't be, missing network isolation, "
+            "incorrect port mappings.\n\n"
+            "Reject only for concrete problems — vague concerns are not grounds for rejection.\n\n"
+            'Return ONLY JSON: {"approved": true/false, "feedback": "..."}'
+        ),
+    },
+
+    "orion": {
+        "name": "Orion",
+        "role": "space-review",
+        "system": (
+            "You are the Tactical UI/UX Reviewer, specialized in premium, data-dense, and highly "
+            "performant sci-fi interfaces (Stellar/SaaS aesthetic).\n\n"
+            "Your review checklist:\n"
+            "1. Space Aesthetic — verify deep tones (zinc-950, slate-950), glassmorphism cards, no flat black.\n"
+            "2. Micro-interactions — every interactive element has transition-all duration-200 ease-in-out.\n"
+            "3. Typography — headers use tracking-tight or tracking-widest uppercase font-mono.\n"
+            "4. Responsive grid — adapts across mobile/tablet/widescreen. Flag hardcoded widths.\n"
+            "5. Accessibility — contrast ratios against dark backdrops (4.5:1), focus outlines intact.\n"
+            "6. DOM Performance — animations hardware-accelerated (transform, opacity). Flag heavy filters.\n\n"
+            "Reject only for concrete problems.\n\n"
             'Return ONLY JSON: {"approved": true/false, "feedback": "..."}'
         ),
     },
@@ -174,18 +439,42 @@ AGENTS: Dict[str, Dict[str, str]] = {
 # ── Task routing: task_type → (producer_key, reviewer_key) ────
 
 TASK_ROUTING: Dict[str, tuple] = {
-    "backend":  ("chris", "tess"),
-    "code":     ("chris", "tess"),
-    "test":     ("chris", "tess"),
-    "frontend": ("fia",   "sara"),
-    "design":   ("fia",   "sara"),
-    "ui":       ("fia",   "sara"),
-    "docs":     ("fia",   "sara"),
-    "network":  ("nova",  "vera"),
-    "security": ("nova",  "vera"),
-    "api":      ("nova",  "vera"),
-    "devops":   ("atlas", "vera"),
-    "infra":    ("atlas", "vera"),
+    "backend":     ("chris",  "tess"),
+    "code":        ("chris",  "tess"),
+    "crud":        ("chris",  "tess"),
+    "frontend":    ("fia",    "sara"),
+    "design":      ("fia",    "sara"),
+    "network":     ("nova",   "vera"),
+    "security":    ("nova",   "vera"),
+    "api":         ("nova",   "vera"),
+    "multiplayer": ("nova",   "vera"),
+    "websocket":   ("nova",   "vera"),
+    "devops":      ("atlas",  "vera"),
+    "infra":       ("atlas",  "vera"),
+    "docker":      ("atlas",  "vera"),
+    "game":        ("titan",  "tess"),
+    "3d":          ("titan",  "tess"),
+    "shader":      ("titan",  "tess"),
+    "babylon":     ("titan",  "tess"),
+    "physics":     ("titan",  "tess"),
+    "algorithm":   ("sage",   "tess"),
+    "debug":       ("sage",   "tess"),
+    "complex":     ("sage",   "tess"),
+    "concurrency": ("sage",   "tess"),
+    "validate":    ("sentry", "tess"),
+    "check":       ("sentry", "tess"),
+    "test":        ("quill",  "sara"),
+    "documentation":("quill", "sara"),
+    "execute":     ("volt",   "vera"),
+    "bash":        ("volt",   "vera"),
+    "script":      ("volt",   "vera"),
+    "tailwind":    ("aria",   "sara"),
+    "component":   ("aria",   "sara"),
+    "ui":          ("aria",   "sara"),
+    "space-ui":    ("vega",   "orion"),
+    "sci-fi":      ("vega",   "orion"),
+    "tactical":    ("vega",   "orion"),
+    "space-review":("vega",   "orion"),
 }
 DEFAULT_ROUTE: tuple = ("chris", "tess")
 
@@ -222,17 +511,47 @@ def _extract_json(text: str) -> Optional[Any]:
     return None
 
 
+def _resolve_agent_candidates(agent_key: str, owner: str):
+    """Resolve LLM candidates for a specific agent.
+
+    If the agent has a custom endpoint+model in factory_agent_models settings,
+    resolve that specific endpoint. Otherwise fall back to the default task chain.
+    """
+    from src.task_endpoint import resolve_task_candidates
+
+    if agent_key:
+        try:
+            from src.settings import get_setting
+            agent_models = get_setting("factory_agent_models", {}) or {}
+            cfg = agent_models.get(agent_key)
+            if cfg and cfg.get("endpoint_id"):
+                from src.endpoint_resolver import resolve_endpoint_by_id
+                resolved = resolve_endpoint_by_id(
+                    cfg["endpoint_id"], model=cfg.get("model"), owner=owner,
+                )
+                if resolved:
+                    return [resolved]
+        except Exception as e:
+            logger.warning(f"Factory: agent model resolution failed for {agent_key}: {e}")
+
+    return resolve_task_candidates(owner=owner)
+
+
 async def _llm(messages: List[Dict], owner: str, timeout: int = 90,
-               max_tokens: int = 2048) -> str:
+               max_tokens: int = 4096, agent_key: str = "") -> str:
     """Call the configured task endpoint with fallback chain.
 
     Bypasses the interactive-quiet gate (task_llm_call_async) so factory
     tasks run immediately even while the user has the browser open.
     Uses max_retries=1 so a slow endpoint doesn't compound across retries.
+
+    If agent_key is set and the factory_agent_models setting has a custom
+    endpoint+model for that agent, use it instead of the default task chain.
     """
-    from src.task_endpoint import resolve_task_candidates
     from src.llm_core import llm_call_async_with_fallback
-    candidates = resolve_task_candidates(owner=owner)
+
+    candidates = _resolve_agent_candidates(agent_key, owner)
+
     if not candidates:
         raise RuntimeError("No LLM endpoint configured for factory tasks")
     return await llm_call_async_with_fallback(
@@ -243,17 +562,44 @@ async def _llm(messages: List[Dict], owner: str, timeout: int = 90,
     )
 
 
+def _get_system_prompt(agent_key: str) -> str:
+    """Get the system prompt for an agent — custom override or built-in default."""
+    try:
+        from src.settings import get_setting
+        custom = get_setting("factory_agent_prompts", {}) or {}
+        if custom.get(agent_key):
+            return custom[agent_key]
+    except Exception:
+        pass
+    return AGENTS.get(agent_key, {}).get("system", "")
+
+
+DEFAULT_MAX_TOKENS = 16384
+
+def _get_max_tokens(agent_key: str) -> int:
+    """Get max_tokens for an agent — custom override or default."""
+    try:
+        from src.settings import get_setting
+        custom = get_setting("factory_agent_max_tokens", {}) or {}
+        if agent_key in custom and custom[agent_key]:
+            return int(custom[agent_key])
+    except Exception:
+        pass
+    return DEFAULT_MAX_TOKENS
+
+
 async def _call_agent(agent_key: str, user_prompt: str, owner: str,
-                      timeout: int = 90, max_tokens: int = 2048) -> str:
+                      timeout: int = 90) -> str:
     """Call a named agent with its system prompt."""
-    agent = AGENTS[agent_key]
     return await _llm(
         [
-            {"role": "system", "content": agent["system"]},
+            {"role": "system", "content": _get_system_prompt(agent_key)},
             {"role": "user", "content": user_prompt},
         ],
         owner=owner,
         timeout=timeout,
+        max_tokens=_get_max_tokens(agent_key),
+        agent_key=agent_key,
     )
 
 
@@ -309,6 +655,7 @@ async def plan_project(project_id: int, owner: str = "default") -> bool:
                 description=t.get("description", ""),
                 dependencies=deps,
                 assigned_agent=_route(t.get("task_type", ""))[0].capitalize(),
+                filename=t.get("filename", ""),
             )
             node_ids.append(node["id"])
         except Exception as e:
@@ -328,33 +675,184 @@ async def plan_project(project_id: int, owner: str = "default") -> bool:
     return True
 
 
-# ═══════════════════════════════════════════════════════════════
-# Phase 2: Execution — Produce → Review pipeline
-# ═══════════════════════════════════════════════════════════════
+async def iterate_project(project_id: int, prompt: str, owner: str = "default") -> bool:
+    """Add new tasks to an existing project based on user's new prompt.
+
+    Works on completed or in-progress projects. The planner sees existing
+    files (names + descriptions) and plans ONLY new work.
+    """
+    project = _service.get_project(project_id)
+    if not project:
+        return False
+
+    existing_nodes = _service.get_nodes(project_id)
+    existing_summary = _build_project_context(project_id)
+
+    # Re-open the project if it was completed
+    if project.get("status") == "completed":
+        _service.set_project_status(project_id, "running")
+
+    # Build the iteration planner prompt
+    user_prompt = (
+        f"Original project: {project.get('description', '')}\n\n"
+        f"Files already built:\n{existing_summary}\n\n"
+        f"New request from user: {prompt}\n\n"
+        f"Plan ONLY the new tasks needed to fulfil this request. "
+        f"Do NOT recreate existing files — they are already working. "
+        f"New tasks may depend on existing completed tasks."
+    )
+
+    logger.info(f"Factory: iterating project {project_id} — {prompt[:60]}...")
+
+    try:
+        raw = await _call_agent("fredrix", user_prompt, owner, timeout=120)
+    except Exception as e:
+        logger.error(f"Factory: iterate planner failed for project {project_id}: {e}")
+        return False
+
+    plan = _extract_json(raw)
+    if not plan or not isinstance(plan.get("tasks"), list) or not plan["tasks"]:
+        logger.error(f"Factory: iterate returned invalid plan:\n{raw[:300]}")
+        return False
+
+    # Map old node ids for dependency edges
+    existing_ids = [n["id"] for n in existing_nodes]
+
+    node_ids: List[int] = []
+    for i, t in enumerate(plan["tasks"]):
+        if not isinstance(t, dict):
+            continue
+        deps_indices = t.get("dependencies", []) or []
+        deps = []
+        for d in deps_indices:
+            if isinstance(d, int) and 0 <= d < len(node_ids):
+                deps.append(node_ids[d])
+        try:
+            node = _service.add_node(
+                project_id=project_id,
+                task_type=t.get("task_type", "backend"),
+                title=t.get("title", f"Task {i + 1}"),
+                description=t.get("description", ""),
+                dependencies=deps,
+                assigned_agent=_route(t.get("task_type", ""))[0].capitalize(),
+                filename=t.get("filename", ""),
+            )
+            node_ids.append(node["id"])
+        except Exception as e:
+            logger.error(f"Factory: iterate add_node {i} failed: {e}")
+            node_ids.append(0)
+
+    logger.info(f"Factory: iteration added {len(node_ids)} new tasks to project {project_id}")
+
+    arch = plan.get("architecture", "")
+    _service._log_event_safe(project_id, None, f"Iteration: {len(node_ids)} new tasks added",
+                             event_type="iteration_planned")
+
+    # Mark new root tasks (no incoming edges) as ready so the orchestrator picks them up
+    _service.mark_ready_tasks(project_id)
+
+    launch(project_id, owner, arch)
+    return True
+
+def _build_project_context(project_id: int) -> str:
+    """Build a summary of all files in the project for agent context."""
+    nodes = _service.get_nodes(project_id)
+    lines = []
+    for n in nodes:
+        fname = n.get("filename") or "?"
+        status = n.get("status", "?")
+        title = n.get("title", "")
+        lines.append(f"  - {fname} [{status}] — {title}")
+    return "\n".join(lines) if lines else "  (no files yet)"
+
+
+def _get_dependency_code(project_id: int, task: Dict) -> str:
+    """Get full output from completed tasks this task depends on."""
+    deps = task.get("dependencies") or []
+    if not deps:
+        return ""
+    nodes = _service.get_nodes(project_id)
+    dep_nodes = {n["id"]: n for n in nodes}
+    parts = []
+    for dep_id in deps:
+        dep = dep_nodes.get(dep_id)
+        if not dep or dep.get("status") != "completed":
+            continue
+        fname = dep.get("filename") or dep.get("title", f"task_{dep_id}")
+        output = _extract_output(dep.get("result"))
+        if output:
+            parts.append(f"--- {fname} (existing code, dependency) ---\n{output[:3000]}")
+    return "\n\n".join(parts)
+
+
+def _get_feedback_code(project_id: int, feedback: str) -> str:
+    """Find filenames mentioned in review feedback and fetch their code."""
+    if not feedback:
+        return ""
+    nodes = _service.get_nodes(project_id)
+    parts = []
+    for n in nodes:
+        fname = n.get("filename")
+        if not fname or n.get("status") != "completed":
+            continue
+        if fname.lower() in feedback.lower():
+            output = _extract_output(n.get("result"))
+            if output:
+                parts.append(f"--- {fname} (referenced in review feedback) ---\n{output[:3000]}")
+    return "\n\n".join(parts)
+
 
 async def _produce(agent_key: str, task: Dict, feedback: str,
-                   owner: str, project_desc: str, arch: str) -> str:
+                   owner: str, project_desc: str, arch: str,
+                   project_id: int = 0) -> str:
     """Routed producer agent produces output for a task."""
-    agent = AGENTS[agent_key]
     prompt = f"Project: {project_desc}\n\nTask: {task.get('title', '')}\nDescription: {task.get('description', '')}\n"
+
+    # Include the filename this task should produce
+    fname = task.get("filename")
+    if fname:
+        prompt += f"Output file: {fname}\n"
+
+    # Project file context — all files in the project
+    if project_id:
+        ctx = _build_project_context(project_id)
+        prompt += f"\nProject files (import from these by filename):\n{ctx}\n"
+
     if arch:
         prompt += f"\nArchitecture directives:\n{arch}\n"
-    prompt += "\nComplete this task now. Provide the full output."
+
+    # Dependency code — full output from direct dependencies
+    if project_id:
+        dep_code = _get_dependency_code(project_id, task)
+        if dep_code:
+            prompt += f"\n\nExisting dependency code:\n{dep_code}\n"
+
+    prompt += "\nComplete this task now. Write the COMPLETE file content — do NOT truncate or use placeholders or ellipsis."
+
     if feedback:
-        prompt += f"\n\nPrevious attempt was rejected. Feedback: {feedback}\nAddress this and try again."
+        truncation_hint = ""
+        if any(w in feedback.lower() for w in ("truncat", "incomplete", "missing", "cut off")):
+            truncation_hint = "\nYour previous output was truncated. Be more concise if needed, but output the COMPLETE file — no placeholders, no '...' shortcuts."
+        prompt += f"\n\nPrevious attempt was rejected. Feedback: {feedback}\nAddress this and try again.{truncation_hint}"
+        # Include code from files mentioned in the feedback
+        if project_id:
+            fb_code = _get_feedback_code(project_id, feedback)
+            if fb_code:
+                prompt += f"\n\nRelevant existing code:\n{fb_code}"
 
     return await _llm(
         [
-            {"role": "system", "content": agent["system"]},
+            {"role": "system", "content": _get_system_prompt(agent_key)},
             {"role": "user", "content": prompt},
         ],
         owner=owner,
+        max_tokens=_get_max_tokens(agent_key),
+        agent_key=agent_key,
     )
 
 
 async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     """Routed reviewer agent evaluates the output."""
-    agent = AGENTS[agent_key]
     prompt = (
         f"Task: {task.get('title', '')}\n"
         f"Description: {task.get('description', '')}\n\n"
@@ -362,10 +860,12 @@ async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     )
     raw = await _llm(
         [
-            {"role": "system", "content": agent["system"]},
+            {"role": "system", "content": _get_system_prompt(agent_key)},
             {"role": "user", "content": prompt},
         ],
         owner=owner,
+        max_tokens=_get_max_tokens(agent_key),
+        agent_key=agent_key,
     )
     result = _extract_json(raw)
     if result and isinstance(result, dict):
@@ -377,27 +877,32 @@ async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     return {"approved": True, "feedback": ""}
 
 
-TASK_TIMEOUT = 180  # seconds per produce+review cycle
+TASK_TIMEOUT = 120  # seconds per produce call
 
 async def _process_task(project_id: int, task: Dict, owner: str,
                         project_desc: str, arch: str) -> None:
     """Run the Produce → Review pipeline for a single task."""
     task_id = task["id"]
     producer_key, reviewer_key = _route(task.get("task_type"))
+    producer_name = AGENTS[producer_key]["name"]
+    reviewer_name = AGENTS[reviewer_key]["name"]
     _service.update_task_status(task_id, "running")
 
     logger.info(
         f"Factory: task {task_id} [{task.get('task_type', '?')}] "
-        f"→ {AGENTS[producer_key]['name']} (produce) → {AGENTS[reviewer_key]['name']} (review)"
+        f"→ {producer_name} (produce) → {reviewer_name} (review)"
     )
 
     feedback = ""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         logger.info(f"Factory: task {task_id} attempt {attempt}/{MAX_ATTEMPTS}")
 
+        _service.set_task_progress(task_id, f"{producer_name} producing",
+                                   attempt=attempt, max_attempts=MAX_ATTEMPTS)
+
         try:
             output = await asyncio.wait_for(
-                _produce(producer_key, task, feedback, owner, project_desc, arch),
+                _produce(producer_key, task, feedback, owner, project_desc, arch, project_id),
                 timeout=TASK_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -409,10 +914,13 @@ async def _process_task(project_id: int, task: Dict, owner: str,
             _service.fail_task(task_id, error=f"Produce error: {e}")
             return
 
+        _service.set_task_progress(task_id, f"{reviewer_name} reviewing",
+                                   attempt=attempt, max_attempts=MAX_ATTEMPTS)
+
         try:
             review = await asyncio.wait_for(
                 _review(reviewer_key, task, output, owner),
-                timeout=60,
+                timeout=30,
             )
         except asyncio.TimeoutError:
             logger.warning(f"Factory: review timed out for task {task_id}")
@@ -425,19 +933,130 @@ async def _process_task(project_id: int, task: Dict, owner: str,
             logger.info(f"Factory: task {task_id} approved on attempt {attempt}")
             _service.complete_task(task_id, result={
                 "output": output, "attempts": attempt,
-                "producer": AGENTS[producer_key]["name"],
-                "reviewer": AGENTS[reviewer_key]["name"],
+                "producer": producer_name,
+                "reviewer": reviewer_name,
             })
             return
 
         feedback = review.get("feedback", "")
-        logger.info(f"Factory: task {task_id} rejected by {AGENTS[reviewer_key]['name']}: {feedback[:100]}")
+        fb_short = feedback[:80] if feedback else "no details"
+        logger.info(f"Factory: task {task_id} rejected by {reviewer_name}: {feedback[:100]}")
+        if attempt < MAX_ATTEMPTS:
+            _service.set_task_progress(task_id, f"Rejected by {reviewer_name}, retrying",
+                                       attempt=attempt + 1, max_attempts=MAX_ATTEMPTS,
+                                       detail=fb_short)
 
     _service.update_task_status(task_id, "human_intervention")
+    reason = (feedback or "Reviewer rejected output without specific feedback")[:500]
+    _service.set_task_error(task_id, error=reason)
     _service._log_event_safe(project_id, task_id,
-                             f"Task requires human intervention after {MAX_ATTEMPTS} attempts "
-                             f"(producer: {AGENTS[producer_key]['name']}, "
+                             f"Blocked after {MAX_ATTEMPTS} attempts — last feedback: {reason}"
+                             f" (producer: {AGENTS[producer_key]['name']}, "
                              f"reviewer: {AGENTS[reviewer_key]['name']})")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Delivery compilation
+# ═══════════════════════════════════════════════════════════════
+
+import os
+import zipfile
+import re as _re
+from src.constants import DATA_DIR
+
+_DELIVERY_DIR = os.path.join(DATA_DIR, "factory", "deliveries")
+
+_EXT_BY_TYPE = {
+    "backend": ".py", "code": ".py", "test": ".py",
+    "frontend": ".html", "design": ".html", "ui": ".html",
+    "network": ".py", "security": ".py", "api": ".py",
+    "devops": ".yml", "infra": ".yml",
+    "docs": ".md",
+}
+
+
+def _slugify(text: str) -> str:
+    s = _re.sub(r'[^\w\.-]+', '_', text or "").strip("_")
+    return s or "output"
+
+
+def _resolve_filename(node: Dict, used: set) -> str:
+    """Determine the output filename for a node, avoiding collisions."""
+    raw = (node.get("filename") or "").strip()
+    if not raw:
+        raw = _slugify(node.get("title", "output"))
+    # Ensure it has an extension
+    if "." not in os.path.basename(raw):
+        ext = _EXT_BY_TYPE.get((node.get("task_type") or "").lower(), ".txt")
+        raw += ext
+    # Sanitize — no path traversal
+    raw = os.path.basename(raw)
+    # Collision avoidance
+    if raw.lower() in used:
+        base, ext = os.path.splitext(raw)
+        i = 2
+        while f"{base}_{i}{ext}".lower() in used:
+            i += 1
+        raw = f"{base}_{i}{ext}"
+    used.add(raw.lower())
+    return raw
+
+
+def _extract_output(result) -> str:
+    """Extract the text output from a node's result JSON."""
+    if not result:
+        return ""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        return result.get("output") or result.get("text") or ""
+    return str(result)
+
+
+def compile_delivery(project_id: int) -> Optional[str]:
+    """Build a ZIP of all completed task outputs. Returns the zip path."""
+    project = _service.get_project(project_id)
+    if not project:
+        return None
+
+    nodes = _service.get_nodes(project_id)
+    completed = [n for n in nodes if n.get("status") == "completed"]
+    if not completed:
+        return None
+
+    os.makedirs(_DELIVERY_DIR, exist_ok=True)
+    zip_path = os.path.join(_DELIVERY_DIR, f"{project_id}.zip")
+    used_names: set = set()
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # README
+        readme_lines = [
+            f"# {project.get('title', f'Project {project_id}')}",
+            f"",
+            f"{project.get('description', '')}",
+            f"",
+            f"## Files",
+            f"",
+        ]
+        for n in completed:
+            fname = _resolve_filename(n, used_names)
+            output = _extract_output(n.get("result"))
+            zf.writestr(fname, output)
+            agent = n.get("assigned_agent") or n.get("task_type") or "?"
+            readme_lines.append(f"- **{fname}** — {n.get('title', '')} ({agent})")
+
+        readme_lines.extend(["", f"## Incomplete Tasks", ""])
+        for n in nodes:
+            if n.get("status") != "completed":
+                readme_lines.append(f"- [{n.get('status', '?')}] {n.get('title', '')}")
+
+        zf.writestr("README.md", "\n".join(readme_lines))
+
+    logger.info(f"Factory: delivery compiled for project {project_id} "
+                f"({len(completed)} files → {zip_path})")
+    _service._log_event_safe(project_id, None, f"Delivery compiled ({len(completed)} files)",
+                             event_type="delivery_compiled")
+    return zip_path
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -487,6 +1106,15 @@ async def _orchestrator_loop(project_id: int, owner: str,
         await asyncio.sleep(1)
 
     _running.pop(project_id, None)
+
+    # Compile delivery ZIP if the project completed
+    final_status = _service.get_project(project_id)
+    if final_status and final_status.get("status") == "completed":
+        try:
+            compile_delivery(project_id)
+        except Exception as e:
+            logger.error(f"Factory: delivery compilation failed for project {project_id}: {e}")
+
     logger.info(f"Factory: orchestrator finished for project {project_id}")
 
 

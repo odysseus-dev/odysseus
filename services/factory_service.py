@@ -57,6 +57,7 @@ def _node_to_dict(n: FactoryNode) -> Dict[str, Any]:
         "status": n.status or "pending",
         "assigned_agent": n.assigned_agent or "",
         "agent": n.assigned_agent or "",
+        "filename": getattr(n, "filename", None) or "",
         "result": n.result,
         "error": n.error,
         "dependencies": n.dependencies,
@@ -95,7 +96,7 @@ _VALID_PROJECT_TRANSITIONS = {
     "queued":       {"planning", "running", "cancelled", "failed"},
     "running":      {"paused", "completed", "failed", "cancelled"},
     "paused":       {"running", "completed", "failed", "cancelled"},
-    "completed":    set(),
+    "completed":    {"running"},  # allow re-opening for iteration
     "failed":       {"queued"},
     "cancelled":    set(),
 }
@@ -162,7 +163,15 @@ class FactoryService:
             rows = db.query(FactoryProject).filter(
                 FactoryProject.owner == owner
             ).order_by(FactoryProject.id.desc()).all()
-            return [_project_to_dict(r) for r in rows]
+            result = []
+            for p in rows:
+                data = _project_to_dict(p)
+                nodes = db.query(FactoryNode).filter(
+                    FactoryNode.project_id == p.id
+                ).order_by(FactoryNode.id).all()
+                data["tasks"] = [_node_to_dict(n) for n in nodes]
+                result.append(data)
+            return result
 
     def update_project(
         self,
@@ -234,12 +243,13 @@ class FactoryService:
         assigned_agent: str = "",
         dependencies: Optional[List[int]] = None,
         priority: int = 0,
+        filename: Optional[str] = None,
     ) -> Dict[str, Any]:
         with get_db_session() as db:
             p = db.query(FactoryProject).filter(FactoryProject.id == project_id).first()
             if not p:
                 raise ValueError(f"Project {project_id} not found")
-            if p.status not in ("planning", "queued"):
+            if p.status not in ("planning", "queued", "running"):
                 raise ValueError(
                     f"Cannot add nodes to project in '{p.status}' status"
                 )
@@ -251,6 +261,7 @@ class FactoryService:
                 description=description,
                 status="pending",
                 assigned_agent=assigned_agent,
+                filename=filename,
                 dependencies=dependencies or [],
                 priority=priority,
                 retries=0,
@@ -478,8 +489,8 @@ class FactoryService:
             n = db.query(FactoryNode).filter(FactoryNode.id == node_id).first()
             if not n:
                 return None
-            if n.status != "failed":
-                raise ValueError(f"Can only retry failed tasks (current: {n.status})")
+            if n.status not in ("failed", "human_intervention"):
+                raise ValueError(f"Can only retry failed or blocked tasks (current: {n.status})")
             n.status = "ready"
             n.error = None
             n.retries = (n.retries or 0) + 1
@@ -487,6 +498,47 @@ class FactoryService:
             self._log_event(db, n.project_id, event_type="task_retried",
                             node_id=node_id, message=f"Task retried (attempt {n.retries})")
             return _node_to_dict(n)
+
+    def set_task_error(self, node_id: int, error: str) -> None:
+        """Set the error message on a node without changing its status."""
+        with get_db_session() as db:
+            n = db.query(FactoryNode).filter(FactoryNode.id == node_id).first()
+            if n:
+                n.error = error
+                n.updated_at = _now()
+
+    def set_task_progress(self, node_id: int, phase: str, attempt: int = 0,
+                          max_attempts: int = 0, detail: str = "") -> None:
+        """Update the live progress on a running task so the frontend can show it."""
+        with get_db_session() as db:
+            n = db.query(FactoryNode).filter(FactoryNode.id == node_id).first()
+            if n:
+                parts = [phase]
+                if attempt and max_attempts:
+                    parts.append(f"attempt {attempt}/{max_attempts}")
+                if detail:
+                    parts.append(detail)
+                n.error = " — ".join(parts)
+                n.updated_at = _now()
+
+    def mark_ready_tasks(self, project_id: int) -> int:
+        """Mark root pending tasks (no incoming edges) as ready. Returns count."""
+        with get_db_session() as db:
+            edges = db.query(FactoryEdge).filter(
+                FactoryEdge.project_id == project_id
+            ).all()
+            has_incoming = {e.to_node_id for e in edges}
+            nodes = db.query(FactoryNode).filter(
+                FactoryNode.project_id == project_id,
+                FactoryNode.status == "pending",
+            ).all()
+            count = 0
+            for n in nodes:
+                if n.id not in has_incoming:
+                    n.status = "ready"
+                    n.updated_at = _now()
+                    count += 1
+            return count
 
     def start_project(self, project_id: int) -> Dict[str, Any]:
         """Transition project to running and mark root tasks as ready."""
@@ -551,6 +603,7 @@ class FactoryService:
 
             n.status = "completed"
             n.result = result
+            n.error = None
             n.updated_at = _now()
             self._log_event(
                 db, n.project_id, event_type="task_completed",

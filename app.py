@@ -1242,6 +1242,27 @@ async def _startup_event():
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
+    # Resume any Factory projects that were mid-execution when the server
+    # stopped. Projects in "running" status have their orchestrator relaunched
+    # so pending/ready tasks continue processing.
+    async def _resume_factory_projects():
+        try:
+            from services.factory_service import FactoryService
+            from services.factory_orchestrator import launch
+            fsvc = FactoryService()
+            for fowner in ("default",):
+                for fp in fsvc.get_projects(owner=fowner):
+                    if fp.get("status") == "running":
+                        dag = fsvc.get_dag(fp["id"])
+                        if dag.get("pending_tasks", 0) > 0 or dag.get("running_tasks", 0) > 0:
+                            logger.info("[startup] Resuming factory project %s (%s)",
+                                        fp["id"], (fp.get("title") or "")[:40])
+                            launch(fp["id"], owner=fowner)
+        except Exception as e:
+            logger.warning("Factory resume on startup failed: %s", e)
+
+    _startup_tasks.append(asyncio.create_task(_resume_factory_projects()))
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():
