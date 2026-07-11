@@ -561,7 +561,6 @@ async def _llm(messages: List[Dict], owner: str, timeout: int = 90,
         workload="background",
     )
 
-
 def _get_system_prompt(agent_key: str) -> str:
     """Get the system prompt for an agent — custom override or built-in default."""
     try:
@@ -805,7 +804,13 @@ def _get_feedback_code(project_id: int, feedback: str) -> str:
 async def _produce(agent_key: str, task: Dict, feedback: str,
                    owner: str, project_desc: str, arch: str,
                    project_id: int = 0) -> str:
-    """Routed producer agent produces output for a task."""
+    """Routed producer agent produces output for a task.
+
+    If the model returns truncated output (e.g. it hit a per-request output
+    token cap and cut off mid-tag), the factory_continuation module sends
+    "continue from here" turns and stitches the chunks together. This defeats
+    the "truncated HTML -> rejected by reviewer -> human_intervention" loop.
+    """
     prompt = f"Project: {project_desc}\n\nTask: {task.get('title', '')}\nDescription: {task.get('description', '')}\n"
 
     # Include the filename this task should produce
@@ -840,14 +845,24 @@ async def _produce(agent_key: str, task: Dict, feedback: str,
             if fb_code:
                 prompt += f"\n\nRelevant existing code:\n{fb_code}"
 
-    return await _llm(
-        [
-            {"role": "system", "content": _get_system_prompt(agent_key)},
-            {"role": "user", "content": prompt},
-        ],
-        owner=owner,
-        max_tokens=_get_max_tokens(agent_key),
-        agent_key=agent_key,
+    # Per-call read timeout: bounded so multiple continuation rounds fit inside
+    # the outer TASK_TIMEOUT wait_for guard in _process_task.
+    call_timeout = min(_PRODUCE_CALL_TIMEOUT, TASK_TIMEOUT - 15)
+    sys_prompt = _get_system_prompt(agent_key)
+    max_tokens = min(_get_max_tokens(agent_key), _get_produce_max_tokens())
+
+    async def _llm_adapter(messages):
+        return await _llm(
+            messages, owner=owner, timeout=call_timeout,
+            max_tokens=max_tokens, agent_key=agent_key,
+        )
+
+    from services.factory_continuation import produce_with_continuation
+    return await produce_with_continuation(
+        system_prompt=sys_prompt,
+        user_prompt=prompt,
+        llm_call=_llm_adapter,
+        fname=fname or "",
     )
 
 
@@ -877,7 +892,25 @@ async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
     return {"approved": True, "feedback": ""}
 
 
-TASK_TIMEOUT = 120  # seconds per produce call
+TASK_TIMEOUT = 300  # total budget per produce call (incl. continuation rounds)
+_PRODUCE_CALL_TIMEOUT = 120  # per-LLM-call read timeout inside _produce
+def _get_produce_max_tokens() -> int:
+    """Per-call token cap for producer agent calls.
+    
+    Lower values mean faster per-call response times (good for continuation),
+    higher values mean fewer continuation rounds needed. 8192 is a sensible
+    default that balances speed vs completeness for deepseek-v4-pro.
+    
+    Override via the `factory_produce_max_tokens` setting.
+    """
+    try:
+        from src.settings import get_setting
+        v = get_setting("factory_produce_max_tokens", None)
+        if v is not None:
+            return max(1024, int(v))
+    except Exception:
+        pass
+    return 8192
 
 async def _process_task(project_id: int, task: Dict, owner: str,
                         project_desc: str, arch: str) -> None:
@@ -1080,11 +1113,33 @@ async def _orchestrator_loop(project_id: int, owner: str,
             logger.info(f"Factory: orchestrator stopping — project {project_id} is {status}")
             break
 
+        # Recover tasks left 'running' by a previous orchestrator that died
+        # mid-produce (e.g. server restart). Re-queue anything stale so the
+        # loop can pick it up instead of orphaning it.
+        try:
+            requeued = _service.requeue_stale_running(project_id, TASK_TIMEOUT + 60)
+            if requeued:
+                logger.info(f"Factory: re-queued {requeued} stale running task(s) in project {project_id}")
+        except Exception as e:
+            logger.warning(f"Factory: stale-run requeue failed for project {project_id}: {e}")
+
         ready = _service.get_next_ready_tasks(project_id)
         if not ready:
             dag = _service.get_dag(project_id)
             if dag.get("pending_tasks", 0) == 0 and dag.get("running_tasks", 0) == 0:
                 logger.info(f"Factory: project {project_id} — all tasks done")
+                break
+            # No ready tasks but work remains — check for terminal blockage
+            # (a task in human_intervention/failed whose dependents can never
+            # become ready). Stop spinning instead of looping forever.
+            try:
+                nodes = _service.get_nodes(project_id)
+            except Exception:
+                nodes = []
+            blocked = [n for n in nodes if n.get("status") in ("human_intervention", "failed")]
+            if blocked:
+                names = ", ".join(f"#{n.get('id')} {n.get('title', '')}" for n in blocked)
+                logger.info(f"Factory: project {project_id} blocked — task(s) need intervention: {names}")
                 break
             await asyncio.sleep(3)
             continue
@@ -1136,10 +1191,29 @@ def launch_planning(project_id: int, owner: str = "default") -> None:
 
 
 def launch(project_id: int, owner: str = "default", arch: str = "") -> None:
-    """Launch (or re-launch) the orchestrator for a project."""
+    """Launch (or re-launch) the orchestrator for a project.
+
+    If an orchestrator task already exists and is still alive, it is left
+    running UNLESS force=True — in which case it is cancelled and replaced
+    (used by restart/retry to recover a stuck loop).
+    """
     existing = _running.get(project_id)
     if existing and not existing.done():
         return
+    _start_orchestrator_task(project_id, owner, arch)
+
+
+def relaunch(project_id: int, owner: str = "default", arch: str = "") -> None:
+    """Cancel any existing orchestrator for this project and start a fresh one.
+
+    Use this from restart/retry paths so a stuck (e.g. hung-inside-wait_for)
+    orchestrator is replaced instead of silently no-oping.
+    """
+    stop(project_id)
+    _start_orchestrator_task(project_id, owner, arch)
+
+
+def _start_orchestrator_task(project_id: int, owner: str, arch: str) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

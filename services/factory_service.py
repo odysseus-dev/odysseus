@@ -12,7 +12,7 @@ core.database — no raw sqlite3.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -40,7 +40,7 @@ def _project_to_dict(p: FactoryProject) -> Dict[str, Any]:
         "title": p.title,
         "description": p.description or "",
         "status": p.status,
-        "model": p.model or "gpt-4o-mini",
+        "model": p.model or "",
         "owner": p.owner or "default",
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
@@ -127,7 +127,7 @@ class FactoryService:
         self,
         description: str = "",
         title: Optional[str] = None,
-        model: str = "gpt-4o-mini",
+        model: str = "",
         owner: str = "default",
     ) -> Dict[str, Any]:
         with get_db_session() as db:
@@ -520,6 +520,35 @@ class FactoryService:
                     parts.append(detail)
                 n.error = " — ".join(parts)
                 n.updated_at = _now()
+
+    def requeue_stale_running(self, project_id: int, max_age_seconds: int) -> int:
+        """Re-queue tasks stuck in 'running' longer than max_age_seconds.
+
+        Used by the orchestrator at startup to recover tasks that were left
+        'running' because a previous orchestrator task was cancelled/killed
+        mid-produce. Bypasses the normal transition table (running->ready is
+        normally invalid) since this is a recovery/admin operation.
+        Returns the number of tasks re-queued.
+        """
+        threshold = _now() - timedelta(seconds=max_age_seconds)
+        count = 0
+        with get_db_session() as db:
+            stale = db.query(FactoryNode).filter(
+                FactoryNode.project_id == project_id,
+                FactoryNode.status == "running",
+                FactoryNode.updated_at < threshold,
+            ).all()
+            for n in stale:
+                n.status = "ready"
+                n.error = "re-queued (previous run was stale)"
+                n.updated_at = _now()
+                count += 1
+                self._log_event(
+                    db, project_id, event_type="task_requeued_stale",
+                    node_id=n.id,
+                    message=f"Task '{n.title}' re-queued after stale running state",
+                )
+        return count
 
     def mark_ready_tasks(self, project_id: int) -> int:
         """Mark root pending tasks (no incoming edges) as ready. Returns count."""

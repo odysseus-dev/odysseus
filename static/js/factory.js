@@ -77,6 +77,7 @@ const ICONS = {
   back: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>',
   close: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
   spinner: '<svg class="factory-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg>',
+  eye: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
 
 // ── Status helpers ─────────────────────────────────────────────
@@ -222,7 +223,12 @@ function _renderSettings(container, data) {
     ep.models.map(m => `<option value="${ep.id}::${m}">${ep.name} / ${m}</option>`).join('')
   ).join('');
 
-  container.innerHTML += `
+  // NOTE: append via a fragment, NOT `container.innerHTML +=`. The latter
+  // re-serializes and recreates every node in `container` (incl. the back
+  // button wired in _openSettings), dropping its click listener — which is
+  // why the back button stopped working.
+  const _settingsFrag = document.createElement('div');
+  _settingsFrag.innerHTML = `
     <div class="factory-settings">
       <p class="factory-settings-hint">
         Assign models and customize agent instructions. "Default" model uses the task endpoint.
@@ -267,6 +273,7 @@ function _renderSettings(container, data) {
       </button>
     </div>
   `;
+  container.appendChild(_settingsFrag.firstElementChild);
 
   // Set model dropdown values
   container.querySelectorAll('.factory-settings-select').forEach(sel => {
@@ -517,6 +524,10 @@ function _renderKanban(container) {
       const resultText = (typeof task.result === 'object' && task.result)
         ? (task.result.output || JSON.stringify(task.result))
         : (task.result || '');
+      const previewOutput = (typeof task.result === 'object' && task.result)
+        ? (task.result.output || '')
+        : (typeof task.result === 'string' ? task.result : '');
+      const isPreviewable = _isPreviewable(task);
       const fname = task.filename ? `<div class="factory-task-card-file">${_esc(task.filename)}</div>` : '';
       const deps = (task.dependencies || []).map(depId => {
         const dep = tasks.find(t => t.id === depId);
@@ -529,6 +540,7 @@ function _renderKanban(container) {
         <div class="factory-task-card-top">
           <span class="factory-task-card-id">T${task.id}</span>
           <span class="factory-task-card-agent">${_esc(task.agent || task.assigned_agent || '')}${task.task_type ? ` · ${_esc(task.task_type)}` : ''}</span>
+          ${isPreviewable ? `<button class="factory-preview-eye-btn" data-task-id="${task.id}" title="Preview output">${ICONS.eye}</button>` : ''}
         </div>
         <div class="factory-task-card-title">${_esc(task.title || task.description || '')}</div>
         ${fname}
@@ -548,9 +560,36 @@ function _renderKanban(container) {
       `;
       card.addEventListener('click', (e) => {
         if (e.target.closest('.factory-task-retry-btn')) return;
+        if (e.target.closest('.factory-preview-eye-btn')) return;
         _openTaskDetail(task.id);
       });
       body.appendChild(card);
+
+      // ── Eye button preview toggle ─────────────────────────
+      if (isPreviewable) {
+        const eyeBtn = card.querySelector('.factory-preview-eye-btn');
+        if (eyeBtn) {
+          eyeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            let expander = card.nextElementSibling;
+            if (expander && expander.classList.contains('factory-task-card-preview')) {
+              const hidden = expander.style.display === 'none';
+              expander.style.display = hidden ? '' : 'none';
+              eyeBtn.classList.toggle('active', hidden);
+            } else {
+              expander = document.createElement('div');
+              expander.className = 'factory-task-card-preview';
+              const iframe = document.createElement('iframe');
+              iframe.className = 'factory-task-card-preview-iframe';
+              iframe.sandbox = 'allow-scripts';
+              iframe.srcdoc = previewOutput;
+              expander.appendChild(iframe);
+              card.parentNode.insertBefore(expander, card.nextSibling);
+              eyeBtn.classList.add('active');
+            }
+          });
+        }
+      }
     });
   });
 
@@ -636,6 +675,7 @@ function _renderTaskDetail(taskId) {
   const reviewer = resultObj?.reviewer || '';
   const attempts = resultObj?.attempts || 0;
   const isRunning = task.status === 'running' || task.status === 'ready';
+  const showPreview = task.status === 'completed' && _isPreviewable(task);
 
   body.innerHTML = `
     <div class="factory-subheader">
@@ -671,7 +711,23 @@ function _renderTaskDetail(taskId) {
       ` : ''}
       ${output ? `
         <div class="factory-task-detail-output-label">Output</div>
-        <pre class="factory-task-detail-output"><code>${_esc(output)}</code></pre>
+        ${showPreview ? `
+          <div class="factory-preview-split">
+            <div class="factory-preview-code-pane">
+              <pre class="factory-task-detail-output"><code>${_esc(output)}</code></pre>
+            </div>
+            <div class="factory-preview-render-pane">
+              <div class="factory-preview-toolbar">
+                <span class="factory-preview-toolbar-label">Preview</span>
+                <button class="factory-preview-refresh-btn" title="Refresh preview">↻ Refresh</button>
+                <button class="factory-preview-resize-btn" title="Toggle split direction">⬌</button>
+              </div>
+              <iframe class="factory-preview-iframe" sandbox="allow-scripts" src="about:blank"></iframe>
+            </div>
+          </div>
+        ` : `
+          <pre class="factory-task-detail-output"><code>${_esc(output)}</code></pre>
+        `}
       ` : ''}
     </div>
   `;
@@ -693,6 +749,22 @@ function _renderTaskDetail(taskId) {
       alert('Retry failed: ' + err.message);
     }
   });
+
+  // ── Preview wiring ──────────────────────────────────────────
+  if (showPreview) {
+    const iframe = body.querySelector('.factory-preview-iframe');
+    if (iframe) iframe.srcdoc = output;
+
+    body.querySelector('.factory-preview-refresh-btn')?.addEventListener('click', () => {
+      const ifr = body.querySelector('.factory-preview-iframe');
+      if (ifr) ifr.srcdoc = output;
+    });
+
+    body.querySelector('.factory-preview-resize-btn')?.addEventListener('click', () => {
+      const split = body.querySelector('.factory-preview-split');
+      if (split) split.classList.toggle('factory-preview-split-stacked');
+    });
+  }
 }
 
 function _startPolling(projectId) {
@@ -765,6 +837,21 @@ function _esc(str) {
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML;
+}
+
+function _isPreviewable(task) {
+  if (!task || task.status !== 'completed') return false;
+  const resultObj = (typeof task.result === 'object' && task.result) ? task.result : null;
+  const output = resultObj?.output || (typeof task.result === 'string' ? task.result : '');
+  if (!output) return false;
+  const tt = (task.task_type || '').toLowerCase();
+  const fname = (task.filename || '').toLowerCase();
+  const trimmed = output.trim();
+  if (['frontend', 'design', 'ui', 'webpage'].includes(tt)) return true;
+  if (fname.endsWith('.html') || fname.endsWith('.htm')) return true;
+  if (trimmed.startsWith('<') || trimmed.toLowerCase().startsWith('<!doctype') || trimmed.toLowerCase().startsWith('<html')) return true;
+  if (output.includes('<html') && output.includes('</html>')) return true;
+  return false;
 }
 
 // ── Public API ─────────────────────────────────────────────────

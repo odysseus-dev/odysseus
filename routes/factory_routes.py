@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from services.factory_service import FactoryService
-from services.factory_orchestrator import plan_project, iterate_project, launch, stop as stop_orchestrator, compile_delivery
+from services.factory_orchestrator import plan_project, iterate_project, launch, relaunch, stop as stop_orchestrator, compile_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +322,7 @@ def setup_factory_routes() -> APIRouter:
             if not result:
                 raise HTTPException(404, f"Project {project_id} not found")
             svc.set_project_status(project_id, "running")
-            launch(project_id, owner=owner)
+            relaunch(project_id, owner=owner)
             return result
         except ValueError as e:
             raise HTTPException(400, str(e))
@@ -420,11 +420,11 @@ def setup_factory_routes() -> APIRouter:
                 owner = body.get("owner", "default")
             except Exception:
                 pass
-            from services.factory_orchestrator import launch
+            from services.factory_orchestrator import relaunch
             p = svc.get_project(pid)
             if p and p.get("status") == "paused":
                 svc.resume_project(pid)
-            launch(pid, owner=owner)
+            relaunch(pid, owner=owner)
         return result
 
     @router.post("/tasks/{task_id}/retry")
