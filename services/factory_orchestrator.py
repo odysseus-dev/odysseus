@@ -1129,19 +1129,21 @@ async def _orchestrator_loop(project_id: int, owner: str,
             if dag.get("pending_tasks", 0) == 0 and dag.get("running_tasks", 0) == 0:
                 logger.info(f"Factory: project {project_id} — all tasks done")
                 break
-            # No ready tasks but work remains — check for terminal blockage
-            # (a task in human_intervention/failed whose dependents can never
-            # become ready). Stop spinning instead of looping forever.
+            # No ready tasks but work remains. DON'T exit — keep polling so
+            # that when a blocked task is retried from the UI (human_intervention
+            # -> ready), the orchestrator picks it up and its dependents advance.
+            # Use a longer sleep when blocked to reduce DB load + log spam.
             try:
                 nodes = _service.get_nodes(project_id)
             except Exception:
                 nodes = []
             blocked = [n for n in nodes if n.get("status") in ("human_intervention", "failed")]
             if blocked:
-                names = ", ".join(f"#{n.get('id')} {n.get('title', '')}" for n in blocked)
-                logger.info(f"Factory: project {project_id} blocked — task(s) need intervention: {names}")
-                break
-            await asyncio.sleep(3)
+                names = ", ".join(f"#{n.get('id')}" for n in blocked)
+                logger.info(f"Factory: project {project_id} waiting — blocked task(s): {names}; retry from UI to continue")
+                await asyncio.sleep(10)
+            else:
+                await asyncio.sleep(3)
             continue
 
         project_desc = project.get("description", "")

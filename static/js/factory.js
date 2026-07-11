@@ -234,6 +234,13 @@ function _renderSettings(container, data) {
         Assign models and customize agent instructions. "Default" model uses the task endpoint.
         Custom prompts override how each agent behaves.
       </p>
+      <div class="factory-settings-bulk" style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border,#333);border-radius:6px;">
+        <label for="factory-bulk-tokens" style="font-size:12px;font-weight:600;white-space:nowrap;">Set all token limits:</label>
+        <input type="number" id="factory-bulk-tokens" value="4096" min="1024" max="131072" step="1024"
+               style="width:90px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#333);background:transparent;color:inherit;font-size:13px;" />
+        <button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-bulk-tokens-apply" type="button">Set All</button>
+        <span style="font-size:11px;opacity:0.6;margin-left:4px;">Applies to every agent below</span>
+      </div>
       ${agents.map(a => {
         const cfg = currentModels[a.key] || {};
         const isCustom = a.is_custom;
@@ -274,6 +281,14 @@ function _renderSettings(container, data) {
     </div>
   `;
   container.appendChild(_settingsFrag.firstElementChild);
+
+  // Bulk "Set All" token limit
+  container.querySelector('#factory-bulk-tokens-apply')?.addEventListener('click', () => {
+    const val = parseInt(container.querySelector('#factory-bulk-tokens')?.value);
+    if (val && val >= 1024) {
+      container.querySelectorAll('.factory-settings-max-tokens').forEach(inp => { inp.value = val; });
+    }
+  });
 
   // Set model dropdown values
   container.querySelectorAll('.factory-settings-select').forEach(sel => {

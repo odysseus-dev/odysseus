@@ -33,7 +33,7 @@ from typing import Awaitable, Callable, List
 logger = logging.getLogger(__name__)
 
 # Max auto-continue rounds after the initial produce call.
-MAX_CONTINUATIONS = 4
+MAX_CONTINUATIONS = 8
 
 CONTINUATION_PROMPT = (
     "Continue EXACTLY from where the previous output stopped. "
@@ -198,11 +198,12 @@ def _looks_truncated_lang(s: str, fl: str) -> bool:
     """Language-specific structural checks. Conservative — only flags the
     truncation direction (openers > closers)."""
     low = s.lower()
-    # Markup: must contain the document close.
+    # Markup: document must END with the close tag (not just contain it
+    # somewhere — a premature </html> mid-document is a false negative).
     if fl.endswith(_MARKUP_HTML_SUFFIXES):
-        return "</html>" not in low
+        return not re.search(r'</html>\s*$', low)
     if fl.endswith((".svg",)):
-        return "</svg>" not in low
+        return not re.search(r'</svg>\s*$', low)
     if fl.endswith(".vue"):
         # SFC: needs </template>; script block must be brace-balanced.
         if "</template>" not in low:
@@ -285,6 +286,43 @@ def _is_repetition(output: str, chunk: str) -> bool:
     return head in output[-400:]
 
 
+def _continuation_prompt_for_round(output: str, fname: str, rounds: int) -> str:
+    """Build a continuation prompt — increasingly explicit on later rounds.
+
+    Shows the tail of the output on ALL rounds so the model knows EXACTLY where
+    to resume, plus forceful anti-repetition language and a language-specific
+    hint about what closing structure is missing.
+    """
+    tail = output.rstrip()[-400:]
+    fl = (fname or "").lower()
+    missing_hint = ""
+    if fl.endswith((".html", ".htm", ".xhtml")):
+        missing_hint = (" The document must include ALL remaining sections and end "
+                        "with </body></html>.")
+    elif fl.endswith((".css", ".scss", ".sass", ".less")):
+        missing_hint = " All CSS rules must be properly closed with }."
+    elif fl.endswith((".py", ".gd")):
+        missing_hint = " All functions and classes must be complete."
+    elif fl.endswith((".js", ".ts", ".jsx", ".tsx")):
+        missing_hint = " All functions and blocks must be properly closed with }."
+    if rounds <= 1:
+        base = CONTINUATION_PROMPT
+    else:
+        base = (
+            "The file is STILL INCOMPLETE — it has not been finished yet."
+        )
+    return (
+        f"{base}\n\n"
+        f"The output so far ends with EXACTLY this text:\n\n"
+        f">>>{tail}<<<\n\n"
+        f"Write ONLY what comes IMMEDIATELY AFTER the text above. "
+        f"DO NOT start over. DO NOT repeat ANY content. "
+        f"DO NOT include any text that already appears above. "
+        f"Start with the exact next character that should follow."
+        f"{missing_hint}"
+    )
+
+
 # Callable: messages -> awaited content string
 LlmCall = Callable[[List[dict]], Awaitable[str]]
 
@@ -320,11 +358,12 @@ async def produce_with_continuation(
     rounds = 0
     while output and looks_truncated(output, fname) and rounds < max_continuations:
         rounds += 1
+        prompt = _continuation_prompt_for_round(output, fname, rounds)
         logger.info("Factory continuation: output looks truncated (len=%d); "
                     "sending round %d/%d", len(output), rounds, max_continuations)
         conversation = conversation + [
-            {"role": "assistant", "content": chunk},
-            {"role": "user", "content": CONTINUATION_PROMPT},
+            {"role": "assistant", "content": chunk or ""},
+            {"role": "user", "content": prompt},
         ]
         try:
             chunk = await llm_call(conversation)
@@ -334,14 +373,74 @@ async def produce_with_continuation(
             break
 
         if is_refusal(chunk):
-            logger.info("Factory continuation: model returned a refusal/complete "
-                        "response; stopping (no append).")
-            break
+            if not looks_truncated(output, fname):
+                logger.info("Factory continuation: model confirms complete; stopping.")
+                break
+            # Model refused but output is STILL truncated — the refusal is wrong.
+            # Replace the last user prompt with an even more explicit version and
+            # retry WITHOUT consuming another round. The model never sees its own
+            # refusal in the conversation.
+            logger.warning("Factory continuation: model refused on round %d but output "
+                           "still truncated (len=%d); retrying with explicit close prompt",
+                           rounds, len(output))
+            explicit = _continuation_prompt_for_round(output, fname, rounds + 2)
+            if conversation and conversation[-1].get("role") == "user":
+                conversation[-1]["content"] = explicit
+            try:
+                chunk = await llm_call(conversation)
+            except Exception as e:
+                logger.warning("Factory continuation: explicit retry failed (%s)", e)
+                break
+            if not chunk or is_refusal(chunk) or _is_repetition(output, chunk):
+                logger.warning("Factory continuation: explicit retry also refused/empty; "
+                               "giving up with %d bytes", len(output))
+                break
+            output = output + chunk
+            continue
+
+        # Stalled progress: chunk is too short to complete the file and output
+        # is still truncated. The model returned minimal content without
+        # refusing. Retry with an explicit prompt instead of wasting the round.
+        if chunk and len(chunk.strip()) < 200 and looks_truncated(output + chunk, fname) \
+                and rounds < max_continuations:
+            logger.warning("Factory continuation: round %d produced only %d bytes and output "
+                           "still truncated; retrying with explicit prompt",
+                           rounds, len(chunk.strip()))
+            explicit = _continuation_prompt_for_round(output, fname, rounds + 2)
+            if conversation and conversation[-1].get("role") == "user":
+                conversation[-1]["content"] = explicit
+            try:
+                retry_chunk = await llm_call(conversation)
+            except Exception as e:
+                logger.warning("Factory continuation: stalled retry failed (%s)", e)
+                break
+            if not retry_chunk or is_refusal(retry_chunk) or _is_repetition(output, retry_chunk):
+                logger.warning("Factory continuation: stalled retry also failed; "
+                               "accepting %d-byte chunk", len(chunk))
+            else:
+                chunk = retry_chunk
 
         if _is_repetition(output, chunk):
-            logger.info("Factory continuation: model repeated existing output "
-                        "(len=%d); stopping to avoid duplication.", len(chunk))
-            break
+            if not looks_truncated(output, fname):
+                logger.info("Factory continuation: model repeated, output complete; stopping.")
+                break
+            # Output still truncated but model repeated — retry with explicit prompt
+            logger.warning("Factory continuation: round %d model repeated but output still "
+                           "truncated (len=%d); retrying with explicit prompt",
+                           rounds, len(output))
+            explicit = _continuation_prompt_for_round(output, fname, rounds + 2)
+            if conversation and conversation[-1].get("role") == "user":
+                conversation[-1]["content"] = explicit
+            try:
+                retry_chunk = await llm_call(conversation)
+            except Exception as e:
+                logger.warning("Factory continuation: repetition retry failed (%s)", e)
+                break
+            if not retry_chunk or is_refusal(retry_chunk) or _is_repetition(output, retry_chunk):
+                logger.warning("Factory continuation: repetition retry also failed; "
+                               "giving up with %d bytes", len(output))
+                break
+            chunk = retry_chunk
 
         output = output + chunk
 
