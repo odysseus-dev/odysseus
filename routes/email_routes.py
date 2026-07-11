@@ -3347,7 +3347,11 @@ def setup_email_routes():
             img = db.query(_GI).filter(_GI.id == item_id, _GI.is_active == True).first()
             if not img:
                 raise HTTPException(status_code=404, detail="Image not found")
-            if owner and img.owner and img.owner != owner:
+            # Scope to an exact owner match, mirroring the gallery's own
+            # `_owner_filter` (owner == user for authenticated callers). An
+            # owner-less legacy row must not leak to another tenant here even
+            # though the gallery library itself never surfaces it to them.
+            if owner and img.owner != owner:
                 raise HTTPException(status_code=404, detail="Image not found")
             from routes.gallery.gallery_routes import _gallery_image_path
             src = _gallery_image_path(img.filename)
