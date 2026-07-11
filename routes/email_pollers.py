@@ -119,6 +119,7 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
                                    days_back: int = 1,
                                    account_id: str | None = None,
                                    max_process: int | None = None,
+                                   owner: str = "",
                                    progress_cb=None) -> str:
     """One iteration of the email scan. Temporarily flips settings flags
     so the existing background-loop logic runs exactly once for the requested ops."""
@@ -137,6 +138,7 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
             days_back=days_back,
             account_id=account_id,
             max_process=max_process,
+            owner=owner,
             progress_cb=progress_cb,
         )
     finally:
@@ -176,7 +178,7 @@ def _latest_inbox_fallback_uids(conn, reconnect):
         return [], reconnect()
 
 
-async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, owner: str = "", progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
     When account_id is None, iterates over every enabled account in
@@ -194,6 +196,8 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                     .order_by(_EA.is_default.desc(), _EA.created_at.asc())
                     .all()
                 )
+                if owner:
+                    rows = [r for r in rows if (getattr(r, "owner", "") or "") == owner]
                 ids = [r.id for r in rows]
                 names = {r.id: r.name for r in rows}
             finally:
@@ -207,6 +211,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                 days_back=days_back,
                 account_id=(ids[0] if ids else None),
                 max_process=max_process,
+                owner=owner,
                 progress_cb=progress_cb,
             )
         outs = []
@@ -217,6 +222,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                     days_back=days_back,
                     account_id=aid,
                     max_process=max_process,
+                    owner=owner,
                     progress_cb=progress_cb,
                 )
                 outs.append(f"[{names.get(aid, aid[:8])}] {result}")
@@ -228,11 +234,12 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
         days_back=days_back,
         account_id=account_id,
         max_process=max_process,
+        owner=owner,
         progress_cb=progress_cb,
     )
 
 
-async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, owner: str = "", progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan for ONE account.
     Reads current settings flags."""
     import asyncio
@@ -254,6 +261,15 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     # One resolution feeds both the mailbox path (account_owner) and upstream's
     # calendar path (_acct_owner, which expects None rather than "").
     account_owner = _owner_for_email_account(account_id)
+
+    if owner and account_id and account_owner != owner:
+        raise PermissionError(
+            "Email account is not available to this task owner"
+        )
+
+    # A scheduled task owner is authoritative. Only trusted legacy/system
+    # callers without an owner may derive authority from the account row.
+    account_owner = owner or account_owner
     _acct_owner = account_owner or None
 
     conn = None

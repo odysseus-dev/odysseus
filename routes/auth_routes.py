@@ -84,6 +84,45 @@ class SetOpenRegistrationRequest(BaseModel):
 SESSION_COOKIE = "odysseus_session"
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_PROXY_HEADERS = (
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+)
+
+
+def _request_from_loopback(request: Request) -> bool:
+    """Return true only for a direct localhost request.
+
+    A reverse proxy on the same host also connects from loopback, so the TCP
+    peer alone is not sufficient. Require both the peer and requested host to
+    be localhost and reject requests carrying proxy forwarding headers.
+    """
+    client_host = (
+        str(request.client.host if request.client else "")
+        .strip()
+        .rstrip(".")
+        .lower()
+    )
+    request_host = (
+        str(getattr(getattr(request, "url", None), "hostname", "") or "")
+        .strip()
+        .rstrip(".")
+        .lower()
+    )
+
+    if any(request.headers.get(name) for name in _PROXY_HEADERS):
+        return False
+
+    return (
+        client_host in _LOOPBACK_HOSTS
+        and request_host in _LOOPBACK_HOSTS
+    )
+
+
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -102,6 +141,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         if auth_manager.is_configured:
             raise HTTPException(400, "Already configured")
+        if not _request_from_loopback(request):
+            raise HTTPException(
+                403,
+                "First-run setup must be completed directly from localhost",
+            )
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
         if len(body.username.strip()) < 1:

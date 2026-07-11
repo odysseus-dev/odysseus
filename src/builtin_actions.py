@@ -539,6 +539,7 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
             do_summary=True,
             do_reply=False,
             account_id=_email_task_account_id(kwargs),
+            owner=owner,
         )
         if _result_is_config_error(result):
             return result, False
@@ -559,6 +560,7 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
             do_reply=True,
             account_id=_email_task_account_id(kwargs),
             days_back=7,
+            owner=owner,
             progress_cb=kwargs.get("progress_cb"),
         )
         if _result_is_config_error(result):
@@ -1067,6 +1069,7 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
                         days_back=days_back,
                         account_id=account_id,
                         max_process=max_process,
+                        owner=owner,
                     ),
                     timeout=timeout,
                 )
@@ -1353,7 +1356,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         recent_subjects: list[tuple[str, str]] = []
         try:
             import email as _email
-            conn = _imap_connect(None)
+            conn = _imap_connect(None, owner=owner)
             try:
                 conn.select("INBOX", readonly=True)
                 status, data = conn.search(None, "UNSEEN")
