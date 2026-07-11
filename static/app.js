@@ -40,6 +40,7 @@ import themeModule from './js/theme.js';
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
 import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
+import * as factoryModule from './js/factory.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
@@ -1009,6 +1010,14 @@ function initializeEventListeners() {
   if (toolResearchBtn) {
     toolResearchBtn.addEventListener('click', () => {
       researchPanelModule.toggle();
+    });
+  }
+
+  // ── Factory tool button
+  const toolFactoryBtn = el("tool-factory-btn");
+  if (toolFactoryBtn) {
+    toolFactoryBtn.addEventListener("click", () => {
+      factoryModule.toggle();
     });
   }
 
@@ -3654,6 +3663,7 @@ function startOdysseusApp() {
   const _railToolMap = {
     'rail-compare':   'tool-compare-btn',
     'rail-research':  'tool-research-btn',
+    'rail-factory':   'tool-factory-btn',
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-archive':   'tool-library-btn',
     'rail-gallery':   'tool-gallery-btn',

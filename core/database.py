@@ -1818,6 +1818,7 @@ def init_db():
     Should be called when starting the application.
     """
     _migrate_model_endpoints()
+    _migrate_factory_tables_schema()
     Base.metadata.create_all(bind=engine)
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
@@ -2399,7 +2400,43 @@ def archive_session(session_id: str):
             return True
     return False
 
+
+def _migrate_factory_tables_schema():
+    """Drop old-schema factory tables so create_all recreates them.
+
+    The factory tables were originally created by a different schema (raw
+    sqlite3 with columns like ``name`` instead of ``title``).  Because
+    ``create_all`` only creates tables that don't exist, the stale tables
+    block the correct SQLAlchemy models from being applied — every query
+    fails with "no such column: title".
+
+    Detect the old schema by checking for the ``name`` column on
+    ``factory_projects`` (new schema uses ``title``).  If found, drop all
+    four factory tables so ``create_all`` recreates them from the current
+    models.  Safe to repeat — once the new schema is in place the ``name``
+    column is gone and the migration is a no-op.
+    """
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(factory_projects)"))]
+            if not cols:
+                return  # table doesn't exist yet — create_all will make it
+            if "title" in cols:
+                return  # already new schema — nothing to do
+            # Old schema detected — drop all four tables so create_all
+            # recreates them with the correct columns.
+            logging.getLogger(__name__).info(
+                "Migrating factory tables: old schema detected, recreating")
+            for table in ("factory_edges", "factory_nodes",
+                          "factory_events", "factory_projects"):
+                conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"factory table migration: {e}")
+
+
 # Initialize the database by creating all tables
+from services.factory_models import *  # Register factory tables with Base.metadata
 
 
 init_db()

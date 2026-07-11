@@ -5264,6 +5264,7 @@ body.bg-pattern-sparkles {
       #doclib-modal,
       #compare-model-overlay,
       #research-overlay,
+      #factory-overlay,
       #theme-modal,
       #settings-modal,
       #email-lib-modal {
@@ -40447,4 +40448,465 @@ body.theme-frosted .modal {
 @media (max-width: 768px) {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Factory Project Manager — floating modal (modal-content family)
+   ═══════════════════════════════════════════════════════════════ */
+
+body.factory-panel-view .factory-divider { display:none; }
+
+/* Factory overlay inherits the default .modal centered/floating layout
+   (same as gallery/calendar/research). The pane uses .modal-content for
+   base styling; .factory-content adds factory-specific overrides. */
+.factory-content {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.factory-pane-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.factory-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 20%, transparent) transparent;
+  padding: 8px 10px 10px;
+}
+.factory-body::-webkit-scrollbar { width: 5px; }
+.factory-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+  border-radius: 3px;
+}
+
+/* ── Sub-header (per-view action bar inside the body) ─────────── */
+
+.factory-subheader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 8px;
+  flex-shrink: 0;
+}
+
+.factory-count {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg-dim, #888);
+}
+
+/* ── Buttons ────────────────────────────────────────────────── */
+
+.factory-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.factory-btn:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 25%, transparent);
+}
+.factory-btn:active { transform: scale(0.97); }
+
+.factory-btn-primary {
+  background: var(--accent, var(--red, #e53935));
+  color: #fff;
+  border-color: var(--accent, var(--red, #e53935));
+}
+.factory-btn-primary:hover {
+  filter: brightness(1.1);
+  border-color: var(--accent, var(--red, #e53935));
+}
+
+.factory-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  padding: 5px 8px;
+  color: var(--fg-dim, #888);
+}
+.factory-btn-ghost:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.factory-btn-sm { padding: 3px 8px; font-size: 11px; }
+
+.factory-btn-warn {
+  color: #e5a33a;
+  border-color: color-mix(in srgb, #e5a33a 30%, transparent);
+}
+.factory-btn-warn:hover {
+  background: color-mix(in srgb, #e5a33a 12%, transparent);
+}
+
+/* ── Project list ───────────────────────────────────────────── */
+
+.factory-list {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.factory-empty {
+  text-align: center;
+  padding: 30px 14px;
+  font-size: 12px;
+  opacity: 0.4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.factory-empty-icon {
+  font-size: 28px;
+  opacity: 0.5;
+}
+
+.factory-empty-hint {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* ── Project cards ─────────────────────────────────────────── */
+
+.factory-card {
+  margin: 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.factory-card:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 20%, transparent);
+}
+
+.factory-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.factory-card-id {
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  color: var(--fg-dim, #888);
+  opacity: 0.7;
+}
+
+.factory-card-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.factory-status-running   { background: color-mix(in srgb, #4caf50 15%, transparent); color: #4caf50; }
+.factory-status-paused    { background: color-mix(in srgb, #e5a33a 15%, transparent); color: #e5a33a; }
+.factory-status-completed { background: color-mix(in srgb, #5b8abf 15%, transparent); color: #5b8abf; }
+.factory-status-pending   { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg-dim, #888); }
+.factory-status-error     { background: color-mix(in srgb, #f44336 15%, transparent); color: #f44336; }
+.factory-status-cancelled { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg-dim, #888); }
+
+.factory-card-desc {
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.factory-card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Progress bar ───────────────────────────────────────────── */
+
+.factory-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.factory-progress-bar-lg { height: 8px; }
+
+.factory-progress-fill {
+  height: 100%;
+  background: var(--accent, var(--red, #e53935));
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  min-width: 0;
+}
+
+.factory-progress-text {
+  font-size: 11px;
+  color: var(--fg-dim, #888);
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ── Project detail view ─────────────────────────────────────── */
+
+.factory-project-info {
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.factory-project-info-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.factory-project-desc {
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+.factory-project-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Kanban board ───────────────────────────────────────────── */
+
+.factory-kanban {
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  scrollbar-width: thin;
+  scrollbar-height: 5px;
+  scrollbar-color: color-mix(in srgb, var(--fg) 15%, transparent) transparent;
+}
+
+.factory-kanban-col {
+  flex: 0 0 240px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.factory-kanban-col-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.factory-kanban-col-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim, #888);
+}
+
+.factory-kanban-col-count {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg-dim, #888);
+}
+
+.factory-kanban-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Task cards ─────────────────────────────────────────────── */
+
+.factory-task-card {
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.factory-task-card:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.factory-task-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.factory-task-card-id {
+  font-size: 10px;
+  font-family: var(--mono, monospace);
+  color: var(--fg-dim, #888);
+  opacity: 0.7;
+}
+
+.factory-task-card-agent {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #a07ae0 12%, transparent);
+  color: #a07ae0;
+}
+
+.factory-task-card-title {
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.factory-task-card-result {
+  font-size: 11px;
+  color: var(--fg-dim, #888);
+  max-height: 60px;
+  overflow-y: auto;
+  line-height: 1.4;
+  scrollbar-width: thin;
+}
+
+.factory-task-retry-btn {
+  margin-top: 6px;
+}
+
+/* ── Create form ───────────────────────────────────────────── */
+
+.factory-create-form {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.factory-create-form textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg);
+  resize: vertical;
+  line-height: 1.5;
+}
+.factory-create-form textarea:focus {
+  outline: none;
+  border-color: var(--accent, var(--red, #e53935));
+}
+
+.factory-create-form label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-dim, #888);
+}
+
+.factory-create-form select,
+.factory-create-form input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg);
+}
+.factory-create-form select:focus,
+.factory-create-form input:focus {
+  outline: none;
+  border-color: var(--accent, var(--red, #e53935));
+}
+
+.factory-create-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Spinner ────────────────────────────────────────────────── */
+
+.factory-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--fg) 15%, transparent);
+  border-top-color: var(--accent, var(--red, #e53935));
+  border-radius: 50%;
+  animation: factory-spin 0.6s linear infinite;
+}
+
+@keyframes factory-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Responsive ────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  #factory-overlay {
+    align-items: flex-end !important;
+    justify-content: stretch !important;
+  }
+  .factory-kanban {
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+  .factory-kanban-col {
+    flex: 0 0 auto;
+    max-height: 200px;
+  }
 }

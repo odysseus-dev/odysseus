@@ -1370,6 +1370,7 @@ async function _cmdOpen(args, ctx) {
       memory: ['tool-memory-btn', 'rail-memory'],
       memories: ['tool-memory-btn', 'rail-memory'],
       research: ['tool-research-btn', 'rail-research'],
+      factory: ['tool-factory-btn', 'rail-factory'],
       compare: ['tool-compare-btn', 'rail-compare'],
       theme: ['tool-theme-btn', 'rail-theme'],
     };
