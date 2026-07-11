@@ -137,6 +137,14 @@ class ChatHandler:
         (e.g. from an attached fillable PDF) appends entries describing the
         new doc so the caller can announce it to the frontend before streaming.
         """
+        # ── Slash commands ────────────────────────────────────────────────
+        # Handle /compact and /goal before normal preprocessing
+        if message.strip().startswith("/compact"):
+            return await self._handle_compact_command(sess), "", "", [], []
+        if message.strip().startswith("/goal"):
+            goal_text = message.strip()[5:].strip()
+            return await self._handle_goal_command(sess, goal_text), "", "", [], []
+
         enhanced_message = message
         attachment_meta: List[Dict[str, Any]] = []
 
@@ -315,6 +323,79 @@ class ChatHandler:
     # ------------------------------------------------------------------
     # Session helpers
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Slash commands
+    # ------------------------------------------------------------------
+
+    async def _handle_compact_command(self, sess) -> str:
+        """Handle /compact — trigger context compaction and checkpoint."""
+        try:
+            import os
+            from src.agent.checkpoint_writer import CheckpointWriter
+            from src.agent_loop import estimate_tokens
+
+            session_id = getattr(sess, "id", "")
+            data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            base_dir = os.path.join(data_dir, "memory", session_id)
+            writer = CheckpointWriter(base_dir)
+
+            # Extract recent context for checkpoint
+            messages = getattr(sess, "history", [])
+            recent_user = ""
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    recent_user = (msg.get("content") or "")[:500]
+                    break
+                elif hasattr(msg, "role") and msg.role == "user":
+                    recent_user = (getattr(msg, "content", "") or "")[:500]
+                    break
+
+            tokens = estimate_tokens(messages) if messages else 0
+
+            writer.write_checkpoint(
+                active_intent=recent_user or "Manual compact requested",
+                next_action="Continue from compacted context",
+                current_work=f"Manual compact at {tokens} tokens",
+            )
+
+            # Hard trim: keep last 4 messages
+            if hasattr(sess, "history") and len(sess.history) > 4:
+                sess.history = sess.history[-4:]
+
+            return (
+                f"✅ Context compacted. Checkpoint saved to `{base_dir}/checkpoint.md`.\n"
+                f"Previous context: ~{tokens} tokens. Recent 4 messages retained."
+            )
+        except Exception as e:
+            return f"❌ Compact failed: {e}"
+
+    async def _handle_goal_command(self, sess, goal_text: str) -> str:
+        """Handle /goal <condition> — set a stopping condition for the session."""
+        if not goal_text:
+            return (
+                "## Goal Mode\n\n"
+                "Usage: `/goal <stopping condition>`\n\n"
+                "Sets a condition that must be met before the agent can stop. "
+                "An independent evaluation checks whether the goal is truly satisfied.\n\n"
+                "Examples:\n"
+                "- `/goal All tests pass and code is committed`\n"
+                "- `/goal The bug is fixed and verified in production`\n"
+                "- `/goal Documentation is complete with examples`"
+            )
+
+        # Store goal in session metadata
+        if not hasattr(sess, "metadata"):
+            sess.metadata = {}
+        sess.metadata["goal"] = goal_text
+        sess.metadata["goal_set_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+
+        return (
+            f"## Goal Set\n\n"
+            f"**Condition:** {goal_text}\n\n"
+            f"The agent will not stop until this goal is evaluated as satisfied. "
+            f"Use `/goal` without arguments to see the current goal."
+        )
 
     def update_session_name_if_needed(self, session, message: str):
         if not session.name:
