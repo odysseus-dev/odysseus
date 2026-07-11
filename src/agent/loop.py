@@ -25,6 +25,8 @@ from typing import AsyncGenerator, Dict, List, Optional, Set
 from src.agent.loop_detector import LoopDetector, RecoveryLevel, StableSignature
 from src.agent.recovery import IntentSupervisor, RecoveryPrompts
 from src.agent.checkpoint import ContextManager
+from src.agent.context_rebuild import ContextRebuilder
+from src.agent.checkpoint_writer import CheckpointWriter
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +52,20 @@ from src.prompt_security import untrusted_context_message
 
 # Re-export for backward compatibility
 async def stream_agent_loop(**kwargs) -> AsyncGenerator[str, None]:
-    """New modular agent loop — delegates to pipeline.
-
-    This wraps the same signature as the old agent_loop.stream_agent_loop()
-    but uses the new modular architecture internally.
-
-    For now, this is a thin wrapper. As modules are proven, the old
-    agent_loop.py code is gradually migrated here.
-    """
+    """New modular agent loop — delegates to pipeline with context rebuild."""
     from src.agent_loop import stream_agent_loop as _legacy_loop
-    # Delegate to legacy for now — modules are tested independently
-    # and will be integrated incrementally
+    
+    # Check if context rebuild is needed
+    session_id = kwargs.get("session_id", "")
+    if session_id:
+        import os
+        data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+        base_dir = os.path.join(data_dir, "memory", session_id)
+        rebuilder = ContextRebuilder(base_dir)
+        
+        if rebuilder.needs_rebuild():
+            messages = kwargs.get("messages", [])
+            kwargs["messages"] = rebuilder.inject_checkpoint_into_messages(messages)
+    
     async for event in _legacy_loop(**kwargs):
         yield event
