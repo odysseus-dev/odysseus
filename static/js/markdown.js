@@ -662,7 +662,7 @@ export function mdToHtml(src, opts) {
       } catch (e) { return match; }
     });
     // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
-    s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
+    s = s.replace(/(?<!\$)\$(?![\$\d])([^\$\n]+?)\$(?!\$)/g, (match, math) => {
       try {
         const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
