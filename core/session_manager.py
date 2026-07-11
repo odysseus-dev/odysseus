@@ -334,6 +334,28 @@ class SessionManager:
         session = self.get_session(session_id)
         db = SessionLocal()
         try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session is None:
+                logger.warning("Cannot replace history for missing session %s", session_id)
+                return False
+
+            # Reserve every incoming attachment before removing any durable
+            # message row. reserve_upload() shares the upload lifecycle lock
+            # with cleanup, so an upload cannot be deleted between this
+            # ownership check/access touch and the replacement transaction.
+            # A failed reservation must leave the existing transcript intact.
+            for message in messages:
+                missing_upload_id = reserve_message_upload_references(
+                    getattr(self, "upload_handler", None),
+                    getattr(db_session, "owner", None),
+                    message.content,
+                    message.metadata,
+                )
+                if missing_upload_id:
+                    raise ValueError(
+                        f"Referenced upload is no longer available: {missing_upload_id}"
+                    )
+
             db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
             now = datetime.now(timezone.utc)
             for i, message in enumerate(messages):
@@ -353,12 +375,10 @@ class SessionManager:
                     message.metadata = {}
                 message.metadata["_db_id"] = msg_id
 
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.message_count = len(messages)
-                db_session.updated_at = now
-                db_session.last_accessed = now
-                db_session.last_message_at = now
+            db_session.message_count = len(messages)
+            db_session.updated_at = now
+            db_session.last_accessed = now
+            db_session.last_message_at = now
 
             db.commit()
             session.history = list(messages)
