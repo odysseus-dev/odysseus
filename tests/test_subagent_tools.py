@@ -14,7 +14,8 @@ async def test_spawn_subagent_tool_execute():
         {"session_id": "test-session", "owner": "test"},
     )
     assert "actor_id" in result
-    assert result["status"] == "spawned"
+    # Subagent runs and completes (may succeed or fail depending on endpoint)
+    assert result["status"] in ("idle", "running")
 
 
 @pytest.mark.asyncio
@@ -25,16 +26,17 @@ async def test_spawn_subagent_tool_background():
         {"session_id": "test-session", "owner": "test"},
     )
     assert result["background"] is True
+    assert result["status"] == "spawned"
 
 
 @pytest.mark.asyncio
 async def test_wait_actor_tool_execute():
     tool = WaitActorTool()
     result = await tool.execute(
-        '{"actor_id": "explore-1", "timeout": 0.1}',
+        '{"actor_id": "nonexistent-1", "timeout": 0.1}',
         {"session_id": "test-session", "owner": "test"},
     )
-    assert "status" in result
+    assert result["status"] == "not_found"
 
 
 @pytest.mark.asyncio

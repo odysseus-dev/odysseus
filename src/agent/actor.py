@@ -40,6 +40,9 @@ class Actor:
     background: bool = False
     error: Optional[str] = None
     turn_count: int = 0
+    result: Optional[str] = None
+    tool_events: list = field(default_factory=list)
+    _task: Optional[asyncio.Task] = field(default=None, repr=False)
     _waiters: List[asyncio.Future] = field(default_factory=list, repr=False)
 
     @property
