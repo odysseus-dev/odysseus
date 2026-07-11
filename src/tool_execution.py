@@ -519,6 +519,20 @@ async def _document_tool_dispatch(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+async def _productivity_tool_dispatch(
+    tool: str,
+    content: str,
+    session_id: Optional[str] = None,
+    owner: Optional[str] = None,
+) -> Optional[Dict]:
+    from src.agent_tools import TOOL_HANDLERS
+
+    handler = TOOL_HANDLERS.get(tool)
+    if handler:
+        return await handler(content, owner)
+
+    return None
+
 # Dictionary Registry Mapping
 TOOL_HANDLERS = {
     "ask_user": WorkflowTools.ask_user,
@@ -727,6 +741,18 @@ async def _execute_tool_block_impl(
         desc = f"{tool}: {first_line}" if first_line else tool
         result = await _document_tool_dispatch(tool, content, session_id, owner) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("manage_notes", "manage_calendar", "manage_contact", "resolve_contact"):
+        first_line = content.split(chr(10))[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _productivity_tool_dispatch(
+            tool,
+            content,
+            session_id,
+            owner,
+        ) or {
+            "error": f"{tool}: execution failed",
+            "exit_code": 1,
+        }
     elif tool in ("pipeline", "manage_memory", "ui_control"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
