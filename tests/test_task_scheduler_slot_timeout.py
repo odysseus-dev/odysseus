@@ -229,7 +229,7 @@ async def test_delete_task_cancels_inflight_run():
     try:
         db.add(cdb.ScheduledTask(
             id="del-task", owner="alice", name="del-task",
-            prompt="do work", task_type="llm", trigger_type="webhook",
+            prompt="do work", task_type="llm",
             status="active", output_target="session",
         ))
         db.commit()
