@@ -93,6 +93,44 @@ GET /misumi/status
 
 Reports readiness, household reachability and Git dirtiness, task counts, persona skill counts, recent event-log count, Phase A, and `writes_allowed: false`.
 
+The additive `memory` object reports capsule, inbox, open-loop, stale-loop and pending-handoff counts together with the newest capture, top open loop, recommended action and responsible persona. `memory.writes_allowed` is always `false`; local memory persistence does not grant household writes.
+
+## Passive memory
+
+All write routes below require the existing `misumi:execute` scope. Read routes require `misumi:read`.
+
+```http
+POST /misumi/memory/capture
+GET /misumi/memory/inbox?limit=20
+GET /misumi/memory/recent?limit=20
+GET /misumi/memory/open-loops
+POST /misumi/memory/{id}/confirm
+POST /misumi/memory/{id}/route
+POST /misumi/memory/{id}/close
+GET /misumi/glance
+```
+
+Capture accepts `text` plus optional `source`, `type`, `persona`, `entities`, `next_action`, and `meta`. It returns the full capsule. Explicit type and persona values override deterministic inference; invalid values return 422. Confirm, route, and close append a new version of the capsule. Listings fold these versions and report `corrupt_lines` rather than failing on malformed JSONL records.
+
+Route body:
+
+```json
+{"persona_primary": "ichigo", "persona_secondary": "kurisu"}
+```
+
+Close body is optional and may contain `{"resolution": "verified locally"}`.
+
+## Local handoffs
+
+```http
+POST /misumi/handoff
+GET /misumi/handoffs
+GET /misumi/handoffs?status=pending
+POST /misumi/handoffs/{id}/resolve
+```
+
+A handoff contains `from_persona`, `to_persona`, a short local `action`, and optional `capsule_id` and `note`. It is a local coordination record only. Actions containing outbound operations such as email, notification, payment, transfer, posting or calling are rejected.
+
 ## Interface-box configuration
 
 After side-by-side validation, set the box-local `agentUrl` to:

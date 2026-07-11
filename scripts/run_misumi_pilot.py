@@ -15,7 +15,7 @@ from src.misumi_pilots import load_pilot_config, run_pilot
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("pilot", choices=("morning-status", "skill-audit", "task-triage", "household-qa"))
+    parser.add_argument("pilot", choices=("morning-status", "skill-audit", "task-triage", "household-qa", "memory-digest"))
     parser.add_argument("--question", default="")
     parser.add_argument("--manual", action="store_true", help="Run a disabled pilot manually for evaluation")
     parser.add_argument("--no-persist", action="store_true")

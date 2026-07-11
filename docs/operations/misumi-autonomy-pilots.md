@@ -9,9 +9,12 @@ python scripts/run_misumi_pilot.py morning-status --manual
 python scripts/run_misumi_pilot.py skill-audit --manual
 python scripts/run_misumi_pilot.py task-triage --manual
 python scripts/run_misumi_pilot.py household-qa --manual --question "What is on the shopping list?"
+python scripts/run_misumi_pilot.py memory-digest --manual
 ```
 
 Each output includes `household_unchanged`. A false value is a hard failure.
+
+`memory-digest` is local and manual-only. It reads the append-only Misumi memory stores and writes `DATA_DIR/misumi/memory/digests/<UTC date>-digest.md`. Before writing, it compares path, size, and modification-time snapshots of the household root. Any difference aborts the digest with `household_unchanged: false` and no digest file.
 
 ## Scheduling gate
 
@@ -30,6 +33,7 @@ Suggested order:
 2. task triage;
 3. skill audit;
 4. household question answering remains request-driven.
+5. memory digest remains manual-only.
 
 ## Rollback
 

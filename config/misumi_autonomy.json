@@ -25,6 +25,12 @@
       "schedule": "manual only",
       "writes_allowed": false,
       "external_sends_allowed": false
+    },
+    "memory-digest": {
+      "enabled": false,
+      "schedule": "manual only",
+      "writes_allowed": false,
+      "external_sends_allowed": false
     }
   }
 }
