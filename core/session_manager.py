@@ -17,6 +17,7 @@ from typing import Dict, Optional
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
 from src.attachment_refs import persistable_message_content
+from src.upload_handler import reserve_message_upload_references
 
 # Re-export singleton accessors from models for convenience
 from .models import set_session_manager_instance, get_session_manager_instance
@@ -73,6 +74,7 @@ class SessionManager:
     def __init__(self, sessions_file: str = None):
         # sessions_file kept for backward compat, not used
         self.sessions: Dict[str, Session] = {}
+        self.upload_handler = None
         self.load_sessions()
 
     # ------------------------------------------------------------------
@@ -230,6 +232,17 @@ class SessionManager:
                 self.sessions.pop(session_id, None)
                 logger.warning("Dropping message for deleted session %s", session_id)
                 return
+
+            missing_upload_id = reserve_message_upload_references(
+                getattr(self, "upload_handler", None),
+                getattr(db_session, "owner", None),
+                message.content,
+                message.metadata,
+            )
+            if missing_upload_id:
+                raise ValueError(
+                    f"Referenced upload is no longer available: {missing_upload_id}"
+                )
 
             msg_id = str(uuid.uuid4())
             msg_time = datetime.utcnow()
