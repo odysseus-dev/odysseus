@@ -15,7 +15,7 @@
     --panel2: #1e2228;
     --fg: #9cdef2;           /* signature cyan text */
     --heading: #9cdef2;
-    --muted: #6b8a94;        /* app subheader */
+    --muted: #86a9b4;        /* readable app subheader */
     --border: #355a66;       /* teal border */
     --accent: #e06c75;       /* app accent (the send-button coral) */
     --accent2: #f0989e;      /* lighter coral for gradients */
@@ -25,20 +25,10 @@
     --radius: 8px;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; scroll-padding-top: 60px; }
-  /* REMOVED: "scroll-snap-type: y proximity"
-     The idea was: >>Each section is a full-viewport "page" with its content centered,
-     so only one shows at a time and the snap is obvious.<<
-
-     PROBLEM: sections easily grow taller than 100vh IRL
-     This cause forced jumps mid-read. It's intrusive UX.
-     The landing-page is not a PowerPoint presentation!
-
-     Preserved: CSS snap-points to avoid destroying code meta-data*/
-  .hero, section {
-    scroll-snap-align: start; min-height: 100vh;
-    display: flex; flex-direction: column; justify-content: center;
-  }
+  html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+  .hero, section { display: flex; flex-direction: column; justify-content: center; }
+  .hero { min-height: calc(100svh - 60px); }
+  section { scroll-margin-top: 60px; }
   /* Alternate the page backgrounds: slate (the body) ↔ black, to make each
      page boundary obvious. */
   /* Subtle dot-grid texture across the whole page. */
@@ -61,26 +51,10 @@
       radial-gradient(circle, rgba(156,222,242,0.06) 1px, transparent 1.4px);
     background-size: cover, cover, 24px 24px;
   }
-  /* Domino reveal — each section fades/slides up as it scrolls into view. */
-  .hero, section { opacity: 0; transform: translateY(24px); transition: opacity .6s cubic-bezier(.2,.7,.2,1), transform .6s cubic-bezier(.2,.7,.2,1); }
-  .hero.in, section.in { opacity: 1; transform: none; }
   @media (prefers-reduced-motion: reduce) {
-    html { scroll-snap-type: none; }
-    .hero, section { opacity: 1 !important; transform: none !important; transition: none; }
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   }
-  /* Capabilities cards cascade in like the app's domino expand. */
-  #features .feature { opacity: 0; transform: translateY(16px); }
-  #features.in .feature { animation: domino-in .5s cubic-bezier(.2,.7,.2,1) forwards; }
-  #features.in .feature:nth-child(1) { animation-delay: .04s; }
-  #features.in .feature:nth-child(2) { animation-delay: .09s; }
-  #features.in .feature:nth-child(3) { animation-delay: .14s; }
-  #features.in .feature:nth-child(4) { animation-delay: .19s; }
-  #features.in .feature:nth-child(5) { animation-delay: .24s; }
-  #features.in .feature:nth-child(6) { animation-delay: .29s; }
-  #features.in .feature:nth-child(7) { animation-delay: .34s; }
-  #features.in .feature:nth-child(8) { animation-delay: .39s; }
-  #features.in .feature:nth-child(9) { animation-delay: .44s; }
-  @keyframes domino-in { to { opacity: 1; transform: none; } }
   body {
     margin: 0;
     background:
@@ -93,7 +67,8 @@
     -webkit-font-smoothing: antialiased;
   }
   a { color: var(--accent); text-decoration: none; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+  a:focus-visible, button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent2); outline-offset: 4px; }
+  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 22px; }
 
   /* Nav */
   nav {
@@ -122,7 +97,7 @@
   .btn.primary:hover { filter: brightness(1.07); }
 
   /* Hero */
-  .hero { padding: 86px 0 40px; text-align: center; position: relative; overflow: hidden; }
+  .hero { padding: 78px 0 64px; text-align: center; position: relative; overflow: hidden; }
   #hero-flow { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0.9; }
   .hero .wrap { position: relative; z-index: 2; }
   .hero h1, .hero .lede, .hero .wordmark { text-shadow: 0 2px 20px rgba(0,0,0,0.45); }
@@ -187,7 +162,7 @@
   @keyframes term-blink { 50% { opacity: 0; } }
 
   /* Sections */
-  section { padding: 60px 0; }
+  section { padding: 104px 0; }
   .eyebrow { color: var(--accent); font-weight: 700; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; }
   .eyebrow svg { width: 14px; height: 14px; flex-shrink: 0; }
   h2.h { font-size: clamp(19px, 2.7vw, 26px); margin: 8px 0 12px; letter-spacing: -0.01em; color: var(--heading); font-weight: 700; }
@@ -234,7 +209,7 @@
   .tcard.cyclops { border-color: rgba(255,90,90,0.45); background: linear-gradient(180deg, rgba(255,80,80,0.06), var(--panel)); }
   .tcard.cyclops .q { color: #ff8a8a; font-weight: 700; letter-spacing: 0.4px; word-break: break-word; }
   .tnav { display: block; text-align: center; margin-top: 18px; }
-  .tdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #39414d; margin: 0 4px; cursor: pointer; }
+  .tdot { display: inline-block; width: 9px; height: 9px; border: 0; padding: 0; border-radius: 50%; background: #39414d; margin: 0 4px; cursor: pointer; }
   .tdot.on { background: var(--accent); }
   .thint { font-size: 12px; color: var(--muted); margin-top: 8px; }
   @keyframes tshake {
@@ -312,10 +287,14 @@
   }
   .preview-panel:hover .label .desc, .preview-panel:focus-visible .label .desc, .preview-panel.is-active .label .desc { max-height: 64px; opacity: 1; }
   @media (max-width: 760px) {
-    .previews { flex-direction: column; height: auto; touch-action: pan-y; }
-    .preview-panel { height: 190px; flex: none; width: 100%; }
-    .preview-panel.is-active { height: 280px !important; }
-    .previews:hover .preview-panel, .preview-panel:hover { flex: none !important; }
+    .previews {
+      justify-content: flex-start; height: 330px; overflow-x: auto; overflow-y: hidden;
+      width: calc(100% + 44px); max-width: none; margin-inline: -22px; padding: 0 22px 14px; scroll-snap-type: x mandatory;
+      scrollbar-width: thin; scrollbar-color: var(--border) transparent; touch-action: pan-x pan-y;
+    }
+    .preview-panel { height: 300px; flex: 0 0 min(84vw, 340px); scroll-snap-align: center; }
+    .preview-panel.is-active { height: 300px !important; }
+    .previews:hover .preview-panel, .preview-panel:hover { flex: 0 0 min(84vw, 340px) !important; height: 300px !important; }
     .preview-panel .label .desc { max-height: 64px; opacity: 1; }
   }
 
@@ -389,6 +368,8 @@
     .codeblock .copy-btn { margin-left: auto; }
   }
   @media (max-width: 520px) {
+    .hero { min-height: calc(100svh - 60px); padding: 58px 0 52px; }
+    section { padding: 76px 0; }
     .grid { grid-template-columns: 1fr; }
     .tgrid .tcard { padding: 20px; gap: 16px; }
     .tcard .av { width: 64px; height: 64px; }
@@ -418,7 +399,7 @@
   </nav>
 
   <!-- HERO -->
-  <header class="hero">
+  <header class="hero" id="top">
     <canvas id="hero-flow" aria-hidden="true"></canvas>
     <div class="wrap">
       <div class="hero-logo">
@@ -437,7 +418,7 @@
       </p>
       <div class="hero-cta">
         <a class="btn primary" href="#start">Get started</a>
-        <a class="btn" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank">View on GitHub</a>
+        <a class="btn" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank" rel="noopener noreferrer">View on GitHub</a>
       </div>
 
     </div>
@@ -680,7 +661,7 @@
         <p class="sub center" style="margin:0 auto;">It's open source and free. No sales team, no demo request, no Trojan horse.</p>
         <div class="codeblock"><span><span class="prompt">$</span> git clone https://github.com/pewdiepie-archdaemon/odysseus.git &amp;&amp; cd odysseus</span><button class="copy-btn" data-copy="git clone https://github.com/pewdiepie-archdaemon/odysseus.git && cd odysseus">Copy</button></div>
         <div>
-          <a class="btn primary" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank" style="margin-top:14px;">View on GitHub</a>
+          <a class="btn primary" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank" rel="noopener noreferrer" style="margin-top:14px;">View on GitHub</a>
         </div>
         <div class="pill-row">
           <span class="pill">Self-hosted</span>
@@ -824,6 +805,8 @@
           v.addEventListener('pause', function () { /* keep last frame */ });
         }
         p.setAttribute('aria-expanded', 'false');
+        p.setAttribute('role', 'button');
+        p.setAttribute('aria-label', p.querySelector('.label .t').textContent.trim() + ' preview');
         p.addEventListener('mouseenter', function () { setActive(i); });
         p.addEventListener('focus', function () { setActive(i); });
         p.addEventListener('mouseleave', function () {
@@ -835,6 +818,9 @@
         });
         p.addEventListener('blur', function () { pausePanel(p); });
         p.addEventListener('click', function () { setActive(i); });
+        p.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActive(i); }
+        });
       });
       var strip = document.querySelector('.previews');
       var sx = null, sy = null;
@@ -854,21 +840,7 @@
           sx = sy = null;
         }, { passive: true });
       }
-    })();
-
-    // Domino reveal: fade/slide each section in as it scrolls into view.
-    (function () {
-      var els = document.querySelectorAll('.hero, section');
-      if (!('IntersectionObserver' in window)) {
-        els.forEach(function (e) { e.classList.add('in'); });
-        return;
-      }
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
-          if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-        });
-      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
-      els.forEach(function (e) { io.observe(e); });
+      setActive(0, false);
     })();
 
     // Fake terminal window buttons — minimize, maximize, close (and reopen).
@@ -902,8 +874,10 @@
       var idx = 0;
 
       var dots = cards.map(function (_, k) {
-        var d = document.createElement('span');
+        var d = document.createElement('button');
         d.className = 'tdot';
+        d.type = 'button';
+        d.setAttribute('aria-label', 'Show testimonial ' + (k + 1));
         d.addEventListener('click', function (e) { e.stopPropagation(); show(k); });
         nav.appendChild(d);
         return d;
@@ -916,7 +890,10 @@
       function show(i) {
         idx = (i + cards.length) % cards.length;
         cards.forEach(function (c, k) { c.classList.toggle('active', k === idx); c.classList.remove('shake'); });
-        dots.forEach(function (d, k) { d.classList.toggle('on', k === idx); });
+        dots.forEach(function (d, k) {
+          d.classList.toggle('on', k === idx);
+          d.setAttribute('aria-current', k === idx ? 'true' : 'false');
+        });
         var cur = cards[idx];
         if (cur.getAttribute('data-shake') === '1') {
           void cur.offsetWidth;
