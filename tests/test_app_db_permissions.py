@@ -51,6 +51,14 @@ def test_app_db_created_with_0600(tmp_path):
     assert db_file.stat().st_mode & 0o777 == 0o600, "existing 0644 DB not re-locked on startup"
 
 
+def test_normalize_sqlite_url_preserves_sqlite_uri_filename():
+    """URI filenames must reach SQLAlchemy unchanged for SQLite to parse."""
+    from core.database import _normalize_sqlite_url
+
+    url = "sqlite:///file:/tmp/app.db?mode=rwc&uri=true"
+    assert _normalize_sqlite_url(url) == url
+
+
 def test_sqlite_db_path_handles_driver_and_query_forms():
     """The path fed to chmod must come from SQLAlchemy's parsed URL, not a naive
     replace("sqlite:///"). A driver-qualified URL (sqlite+pysqlite://) or one
@@ -128,6 +136,27 @@ def test_sqlite_db_path_handles_file_uri_forms(tmp_path):
         _sqlite_db_path(make_url(f"sqlite:///file:{db_file}?cache=shared&uri=true"))
         == str(db_file)
     )
+
+    localhost_db = tmp_path / "localhost-uri.db"
+    assert (
+        _sqlite_db_path(
+            make_url(
+                f"sqlite+pysqlite:///file://localhost{localhost_db}"
+                "?mode=rwc&uri=true"
+            )
+        )
+        == str(localhost_db)
+    )
+
+    non_uri_mode_db = tmp_path / "mode-query-file.db"
+    assert (
+        _sqlite_db_path(
+            make_url(
+                f"sqlite+pysqlite:///{non_uri_mode_db}?mode=memory"
+            )
+        )
+        == str(non_uri_mode_db)
+    )
     assert (
         _sqlite_db_path(make_url("sqlite+pysqlite:///file::memory:?cache=shared&uri=true"))
         is None
@@ -148,6 +177,82 @@ def test_app_db_file_uri_created_with_0600(tmp_path):
     env = {
         **os.environ,
         "DATABASE_URL": f"sqlite+pysqlite:///file:{db_file}?mode=rwc&uri=true",
+    }
+    repo_root = Path(__file__).resolve().parents[1]
+
+    subprocess.run(
+        [sys.executable, "-c", "import core.database"],
+        env=env,
+        cwd=repo_root,
+        check=True,
+    )
+
+    assert db_file.exists()
+    mode = db_file.stat().st_mode & 0o777
+    assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; safe_chmod no-ops there.",
+)
+def test_app_db_localhost_file_uri_created_with_0600(tmp_path):
+    """A file://localhost URI must chmod the local path SQLite opens."""
+    db_file = tmp_path / "localhost-uri.db"
+    env = {
+        **os.environ,
+        "DATABASE_URL": (
+            f"sqlite+pysqlite:///file://localhost{db_file}"
+            "?mode=rwc&uri=true"
+        ),
+    }
+    repo_root = Path(__file__).resolve().parents[1]
+
+    subprocess.run(
+        [sys.executable, "-c", "import core.database"],
+        env=env,
+        cwd=repo_root,
+        check=True,
+    )
+
+    assert db_file.exists()
+    mode = db_file.stat().st_mode & 0o777
+    assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; safe_chmod no-ops there.",
+)
+def test_app_db_non_uri_mode_query_created_with_0600(tmp_path):
+    """mode=memory without uri=true must not hide a real SQLite file."""
+    db_file = tmp_path / "mode-query-file.db"
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite+pysqlite:///{db_file}?mode=memory",
+    }
+    repo_root = Path(__file__).resolve().parents[1]
+
+    subprocess.run(
+        [sys.executable, "-c", "import core.database"],
+        env=env,
+        cwd=repo_root,
+        check=True,
+    )
+
+    assert db_file.exists()
+    mode = db_file.stat().st_mode & 0o777
+    assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; safe_chmod no-ops there.",
+)
+def test_app_db_plain_file_uri_created_with_0600(tmp_path):
+    """The documented sqlite:///file: URI form must remain protected."""
+    db_file = tmp_path / "plain-uri-app.db"
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite:///file:{db_file}?mode=rwc&uri=true",
     }
     repo_root = Path(__file__).resolve().parents[1]
 
