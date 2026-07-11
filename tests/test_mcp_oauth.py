@@ -1,4 +1,5 @@
 import asyncio
+import json
 from src import mcp_oauth
 
 
@@ -79,3 +80,53 @@ def test_db_token_storage_round_trip():
     t = asyncio.run(go())
     assert t.access_token == "abc"
     assert srv.oauth_tokens is not None  # persisted as JSON
+
+
+def _fake_storage(oauth_tokens):
+    class FakeSrv:
+        pass
+
+    srv = FakeSrv()
+    srv.oauth_tokens = oauth_tokens
+
+    class FakeQuery:
+        def filter(self, *a):
+            return self
+
+        def first(self):
+            return srv
+
+    class FakeSession:
+        def query(self, *a):
+            return FakeQuery()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    return srv, mcp_oauth.DbTokenStorage("srv-1", session_factory=lambda: FakeSession())
+
+
+def test_load_falls_back_to_empty_dict_for_non_dict_json():
+    # A corrupted/migrated oauth_tokens column holding a JSON array, not an
+    # object, must not crash _load()'s callers with AttributeError.
+    _srv, storage = _fake_storage('["stale", "data"]')
+    assert storage._load() == {}
+
+
+def test_get_tokens_returns_none_for_non_dict_oauth_tokens():
+    _srv, storage = _fake_storage("42")
+
+    async def go():
+        return await storage.get_tokens()
+
+    assert asyncio.run(go()) is None
+
+
+def test_update_recovers_from_non_dict_oauth_tokens():
+    # _update() must not raise TypeError trying to item-assign into a list.
+    srv, storage = _fake_storage('["stale", "data"]')
+    storage._update("tokens", {"access_token": "new"})
+    assert json.loads(srv.oauth_tokens) == {"tokens": {"access_token": "new"}}
