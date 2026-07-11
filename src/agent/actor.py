@@ -48,9 +48,18 @@ class Actor:
 
 
 class ActorRegistry:
+    _instance: Optional["ActorRegistry"] = None
+
     def __init__(self) -> None:
         self._actors: Dict[str, Actor] = {}
         self._counters: Dict[str, int] = {}
+
+    @classmethod
+    def get_instance(cls) -> "ActorRegistry":
+        """Get or create the global singleton registry."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
 
     def register(self, actor: Actor) -> None:
         self._actors[actor.id] = actor

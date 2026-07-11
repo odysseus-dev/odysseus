@@ -35,7 +35,7 @@ class SpawnSubagentTool:
         background = args.get("background", False)
         tool_allowlist = args.get("tool_allowlist")
         from src.agent.actor import Actor, ActorMode, ActorRegistry
-        registry = ActorRegistry()
+        registry = ActorRegistry.get_instance()
         actor_id = registry.allocate_id(agent_type)
         actor = Actor(id=actor_id, session_id=ctx.get("session_id", ""), mode=ActorMode.SUBAGENT, parent_id=ctx.get("actor_id", "main"), background=background, tool_allowlist=set(tool_allowlist) if tool_allowlist else None)
         registry.register(actor)
@@ -66,7 +66,7 @@ class WaitActorTool:
             return {"error": "Invalid JSON"}
         actor_id = args.get("actor_id", "")
         from src.agent.actor import ActorRegistry
-        registry = ActorRegistry()
+        registry = ActorRegistry.get_instance()
         actor = registry.get(actor_id)
         if not actor:
             return {"actor_id": actor_id, "status": "not_found", "outcome": None, "error": f"Actor {actor_id} not found"}
@@ -83,6 +83,6 @@ class ListActorsTool:
 
     async def execute(self, content: str, ctx: Dict) -> Dict:
         from src.agent.actor import ActorRegistry
-        registry = ActorRegistry()
+        registry = ActorRegistry.get_instance()
         active = registry.list_active()
         return {"actors": [{"id": a.id, "mode": a.mode.value, "status": a.status.value, "outcome": a.outcome.value if a.outcome else None} for a in active]}
