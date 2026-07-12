@@ -14,7 +14,7 @@ from collections import OrderedDict
 from fastapi import APIRouter, HTTPException, Request
 
 from services.factory_service import FactoryService
-from services.factory_orchestrator import plan_project, iterate_project, launch, relaunch, stop as stop_orchestrator, compile_delivery
+from services.factory_orchestrator import plan_project, iterate_project, launch_iteration, launch, relaunch, stop as stop_orchestrator, compile_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -359,17 +359,40 @@ def setup_factory_routes() -> APIRouter:
 
     @router.post("/projects/{project_id}/iterate")
     async def iterate_project_route(project_id: int, request: Request):
-        """Add new tasks to a completed/in-progress project via LLM planning."""
+        """Add new tasks to a completed/in-progress project via LLM planning.
+
+        Launches planning as a background task (non-blocking) so the route
+        returns immediately — the planner LLM call can take 30-120 seconds,
+        which would exceed reverse proxy timeouts (504). The frontend polls
+        for new tasks via the status endpoint.
+        """
         body = await request.json()
         prompt = body.get("prompt", "").strip()
         if not prompt:
             raise HTTPException(400, "prompt is required")
         owner = body.get("owner", "default")
-        try:
-            await iterate_project(project_id, prompt, owner=owner)
-        except Exception as e:
-            logger.exception(f"iterate_project failed for {project_id}: {e}")
-            raise HTTPException(500, str(e))
+
+        project = svc.get_project(project_id)
+        if not project:
+            raise HTTPException(404, f"Project {project_id} not found")
+
+        # Re-open completed projects synchronously so the frontend sees
+        # the status change immediately (not 60s later when planning finishes)
+        if project.get("status") == "completed":
+            try:
+                svc.set_project_status(project_id, "running")
+            except Exception:
+                pass  # transition may fail if already running — not critical
+
+        # Log the iteration request
+        svc._log_event_safe(project_id, None,
+                            f"Iteration requested: {prompt[:200]}",
+                            event_type="iteration_started")
+
+        # Launch planning as a background task — returns immediately
+        launch_iteration(project_id, prompt, owner=owner)
+
+        # Return current state — new tasks appear via polling
         return svc.get_project(project_id)
 
     @router.post("/projects/{project_id}/cancel")

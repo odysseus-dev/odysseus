@@ -1474,6 +1474,24 @@ def launch_planning(project_id: int, owner: str = "default") -> None:
     logger.info(f"Factory: launched planning for project {project_id}")
 
 
+def launch_iteration(project_id: int, prompt: str, owner: str = "default") -> None:
+    """Launch project iteration as a background task with a strong reference.
+
+    Same pattern as launch_planning — fires iterate_project as a non-blocking
+    asyncio task so the HTTP route returns immediately. The frontend polls
+    for new tasks via the status endpoint.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    task = loop.create_task(iterate_project(project_id, prompt, owner))
+    _planning_tasks.add(task)
+    task.add_done_callback(_planning_tasks.discard)
+    logger.info(f"Factory: launched iteration for project {project_id}")
+
+
 def launch(project_id: int, owner: str = "default", arch: str = "",
            autonomous: bool = False) -> None:
     """Launch (or re-launch) the orchestrator for a project.
