@@ -515,6 +515,55 @@ def _extract_json(text: str) -> Optional[Any]:
     return None
 
 
+def _estimate_task_tokens(task: Dict) -> int:
+    """Estimate how many output tokens a task will require.
+
+    Port of the frontend _estimateTokens() — uses task-type profiles,
+    description feature count, and filename to produce a rough but
+    directionally-correct estimate. Used by the auto-split check.
+    """
+    desc = ((task.get("description") or "") + " " + (task.get("title") or "")).strip()
+    if not desc:
+        return 500
+
+    tt = (task.get("task_type") or "").lower().strip()
+    fname = (task.get("filename") or "").lower().strip()
+
+    # Feature count: description clauses separated by commas, "and",
+    # numbered items, semicolons, newlines.
+    parts = re.split(r'[,;]|\band\b|\balso\b|\n|\d+[.)]', desc)
+    features = [p.strip() for p in parts if len(p.strip()) > 8]
+    feature_count = max(1, len(features))
+
+    words = len(desc.split())
+
+    profiles = {
+        "frontend":   {"base": 600, "per_feat": 550},
+        "design":     {"base": 600, "per_feat": 550},
+        "ui":         {"base": 500, "per_feat": 450},
+        "space-ui":   {"base": 500, "per_feat": 500},
+        "backend":    {"base": 400, "per_feat": 350},
+        "code":       {"base": 400, "per_feat": 350},
+        "api":        {"base": 400, "per_feat": 350},
+        "network":    {"base": 400, "per_feat": 350},
+        "devops":     {"base": 200, "per_feat": 180},
+        "infra":      {"base": 200, "per_feat": 180},
+        "test":       {"base": 300, "per_feat": 250},
+        "docs":       {"base": 200, "per_feat": 180},
+        "execute":    {"base": 100, "per_feat": 80},
+    }
+    p = profiles.get(tt, {"base": 400, "per_feat": 350})
+    est = p["base"] + (feature_count * p["per_feat"])
+
+    if fname.endswith((".html", ".htm")):
+        est = round(est * 1.3)
+    elif fname.endswith((".css", ".scss")):
+        est = round(est * 1.1)
+
+    word_est = round(words * 4 * 1.3)
+    return max(est, word_est)
+
+
 def _resolve_agent_candidates(agent_key: str, owner: str):
     """Resolve LLM candidates for a specific agent.
 
@@ -926,10 +975,154 @@ def _get_produce_max_tokens() -> int:
         pass
     return 16384
 
+
+# ═══════════════════════════════════════════════════════════════
+# Auto-split support
+# ═══════════════════════════════════════════════════════════════
+
+async def _try_split_task(project_id: int, task: Dict, owner: str) -> bool:
+    """Check if a task is too large for a single produce call and auto-split it.
+
+    Uses _estimate_task_tokens to predict output size. If the estimate exceeds
+    85% of the produce token budget, calls the planner LLM to decompose the task
+    into 2-3 smaller sub-tasks — each producing a separate file. Creates the
+    sub-tasks as new nodes, re-routes dependencies, and marks the original as
+    completed (split).
+
+    Returns True if the task was split (caller should skip normal processing),
+    False if the task should proceed normally.
+    """
+    est = _estimate_task_tokens(task)
+    budget = _get_produce_max_tokens()
+    threshold = int(budget * 0.85)
+
+    if est <= threshold:
+        return False
+
+    fname = (task.get("filename") or "").strip()
+    if not fname:
+        return False  # can't split without a filename
+
+    task_id = task["id"]
+    logger.info(f"Factory: task {task_id} estimated ~{est} tokens > {threshold} threshold — attempting auto-split")
+
+    # Build a split prompt for the planner
+    split_prompt = (
+        f"This task is too large for a single code generation call "
+        f"(estimated ~{est} tokens, max budget {budget} tokens).\n\n"
+        f"Split it into 2-3 smaller tasks, each producing a SEPARATE file.\n\n"
+        f"Original task:\n"
+        f"  Title: {task.get('title', '')}\n"
+        f"  Description: {task.get('description', '')}\n"
+        f"  File: {fname}\n\n"
+        f"Split rules:\n"
+        f"- Break features into logical groups, one group per file.\n"
+        f"- Name files descriptively based on what they contain.\n"
+        f"- Each file must be self-contained (own imports, own init).\n"
+        f"- Distribute features so each file is under ~250 lines.\n"
+        f"- Keep the same base directory as the original file.\n\n"
+        f"Return ONLY JSON — no markdown fences:\n"
+        f'{{"split": true, "tasks": [{{"title": "...", "description": "...", "filename": "..."}}]}}\n\n'
+        f"If the task genuinely cannot be split (single-purpose, config file), return:\n"
+        f'{{"split": false}}'
+    )
+
+    try:
+        raw = await asyncio.wait_for(
+            _call_agent("fredrix", split_prompt, owner, timeout=60),
+            timeout=65,
+        )
+    except Exception as e:
+        logger.warning(f"Factory: splitter LLM call failed for task {task_id}: {e}")
+        return False
+
+    plan = _extract_json(raw)
+    if not plan or not plan.get("split") or not isinstance(plan.get("tasks"), list):
+        logger.info(f"Factory: splitter returned no split for task {task_id}")
+        return False
+
+    sub_task_defs = plan["tasks"]
+    # Filter to valid sub-tasks with filenames
+    sub_task_defs = [t for t in sub_task_defs if isinstance(t, dict) and t.get("filename")]
+    if len(sub_task_defs) < 2:
+        logger.info(f"Factory: splitter produced {len(sub_task_defs)} sub-tasks for task {task_id} — need at least 2")
+        return False
+
+    # Mark original task as running (state machine: ready -> running -> completed)
+    try:
+        _service.update_task_status(task_id, "running")
+    except Exception:
+        pass  # already running or other state — proceed anyway
+
+    # Create sub-task nodes
+    deps = task.get("dependencies") or []
+    sub_ids: List[int] = []
+    for st in sub_task_defs:
+        try:
+            node = _service.add_node(
+                project_id=project_id,
+                task_type=task.get("task_type", "backend"),
+                title=st.get("title", f"Split sub-task"),
+                description=st.get("description", ""),
+                dependencies=list(deps),  # inherit original's deps
+                assigned_agent=task.get("assigned_agent", ""),
+                filename=st.get("filename", ""),
+            )
+            sub_ids.append(node["id"])
+        except Exception as e:
+            logger.error(f"Factory: failed to create split sub-task: {e}")
+
+    if not sub_ids:
+        logger.warning(f"Factory: no sub-tasks created for task {task_id} — proceeding normally")
+        return False
+
+    # Re-route: tasks that depended on the original now depend on all sub-tasks
+    _service.reroute_dependencies(project_id, task_id, sub_ids)
+
+    # Mark sub-tasks as ready (their inherited deps should already be completed)
+    for sid in sub_ids:
+        try:
+            _service.update_task_status(sid, "ready")
+        except Exception:
+            pass  # state machine might reject if deps aren't met — orchestrator will promote later
+
+    # Mark original task as completed with split metadata
+    split_summary = ", ".join(f"T{sid}" for sid in sub_ids)
+    _service.complete_task(task_id, result={
+        "output": f"(Auto-split into {len(sub_ids)} sub-tasks: {split_summary} — estimated {est} tokens exceeded {threshold} threshold)",
+        "split_into": sub_ids,
+        "estimated_tokens": est,
+        "producer": "Auto-Splitter",
+        "reviewer": "—",
+    })
+
+    logger.info(f"Factory: task {task_id} auto-split into {len(sub_ids)} sub-tasks: {split_summary}")
+    _service._log_event_safe(
+        project_id, task_id,
+        f"Task auto-split into {len(sub_ids)} sub-tasks ({split_summary}) — was ~{est} tokens, budget {budget}",
+        event_type="task_auto_split",
+    )
+
+    return True
+
+
 async def _process_task(project_id: int, task: Dict, owner: str,
                         project_desc: str, arch: str) -> None:
     """Run the Produce → Review pipeline for a single task."""
     task_id = task["id"]
+
+    # ── Auto-split check ──────────────────────────────────────
+    # Before producing, check if this task is too large for a single
+    # produce call. If the token estimate exceeds 85% of the budget,
+    # decompose it into smaller sub-tasks automatically.
+    try:
+        if await _try_split_task(project_id, task, owner):
+            return  # Task was split — sub-tasks are now ready and will
+                    # be picked up by the orchestrator loop on the next pass.
+    except Exception as e:
+        logger.warning(f"Factory: auto-split check failed for task {task_id}: {e} — proceeding with normal production")
+
+    # ── Normal Produce → Review pipeline ──────────────────────
     producer_key, reviewer_key = _route(task.get("task_type"))
     producer_name = AGENTS[producer_key]["name"]
     reviewer_name = AGENTS[reviewer_key]["name"]

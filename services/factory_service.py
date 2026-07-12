@@ -388,6 +388,45 @@ class FactoryService:
             db.delete(edge)
             return True
 
+    def reroute_dependencies(self, project_id: int, old_node_id: int,
+                             new_node_ids: List[int]) -> int:
+        """Re-route dependency edges: any task that depended on old_node_id
+        now depends on ALL new_node_ids instead.
+
+        Used by the auto-split feature: when task T is split into T1, T2, T3,
+        tasks that depended on T now depend on T1, T2, and T3.
+        Returns the number of edges re-routed.
+        """
+        with get_db_session() as db:
+            # Find edges FROM old_node_id (these are the "old_node is a dependency of" edges)
+            old_edges = db.query(FactoryEdge).filter(
+                FactoryEdge.project_id == project_id,
+                FactoryEdge.from_node_id == old_node_id,
+            ).all()
+
+            count = 0
+            for edge in old_edges:
+                dependent_id = edge.to_node_id
+                db.delete(edge)
+                count += 1
+                # Add new edges from each sub-task to the dependent
+                for new_id in new_node_ids:
+                    # Don't create self-loops or duplicates
+                    if new_id == dependent_id:
+                        continue
+                    existing = db.query(FactoryEdge).filter(
+                        FactoryEdge.project_id == project_id,
+                        FactoryEdge.from_node_id == new_id,
+                        FactoryEdge.to_node_id == dependent_id,
+                    ).first()
+                    if not existing:
+                        db.add(FactoryEdge(
+                            project_id=project_id,
+                            from_node_id=new_id,
+                            to_node_id=dependent_id,
+                        ))
+            return count
+
     def _would_create_cycle(
         self, db: Session, project_id: int, from_node_id: int, to_node_id: int
     ) -> bool:
