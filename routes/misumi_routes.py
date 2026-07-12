@@ -23,6 +23,13 @@ from src.misumi_task_router import MisumiTaskRouter
 
 logger = logging.getLogger(__name__)
 
+_HONESTY_CONSTRAINTS = (
+    "Answer concisely and never claim an action unless a structured tool result proves it. "
+    "Phase A household access is read-only."
+)
+_RATIFICATION_CONSTRAINT = "Household changes go through proposals that the user ratifies."
+_NEUTRAL_HANDOFF_ACTION = "review the plan and contribute next steps"
+
 
 class MisumiRespondRequest(BaseModel):
     prompt: str = ""
@@ -97,6 +104,118 @@ def _short_text(value: object, limit: int = 420) -> str:
     return text[:limit].rstrip()
 
 
+def _consultation_enabled() -> bool:
+    value = (os.getenv("MISUMI_CONSULT", "1") or "").strip().lower()
+    return value not in {"", "0", "false", "no", "off"}
+
+
+def _term_positions(text: str, terms: List[str]) -> List[int]:
+    positions = []
+    for term in terms:
+        match = re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, flags=re.I)
+        if match:
+            positions.append(match.start())
+    return positions
+
+
+def _intent_score(prompt: str, intents: List[str]) -> int:
+    normalized_prompt = re.sub(r"[-_]", " ", prompt.lower())
+    score = 0
+    for intent in intents:
+        normalized_intent = re.sub(r"[-_]", " ", intent.lower()).strip()
+        terms = [normalized_intent]
+        if " " in normalized_intent:
+            terms.extend(part for part in normalized_intent.split() if len(part) >= 3)
+        if any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", normalized_prompt) for term in terms):
+            score += 1
+    return score
+
+
+def _consultation_plan(prompt: str, primary_reply: str, persona: str) -> List[str]:
+    """Choose at most two synchronous consultation targets deterministically."""
+    if persona != "aoteru" or not _consultation_enabled():
+        return []
+
+    from src.persona_capabilities import consult_edges, routing_intents
+
+    policy_order = list(load_persona_policy())
+    allowed = set(policy_order) - {"aoteru"}
+    edges = [item.lower() for item in (consult_edges("aoteru") or [])]
+    edges = [item for item in edges if item in allowed]
+    intent_scores = {
+        item: _intent_score(prompt, routing_intents(item) or [])
+        for item in policy_order
+        if item in allowed
+    }
+    candidates = list(dict.fromkeys(edges + [item for item in policy_order if intent_scores.get(item, 0)]))
+
+    def rank(item: str) -> tuple[int, int, int, int]:
+        record = persona_record(item)
+        terms = list(dict.fromkeys((item, str(record.get("display_name") or item))))
+        mentions = _term_positions(primary_reply, terms)
+        if mentions:
+            return (0, min(mentions), 0, policy_order.index(item))
+        score = intent_scores.get(item, 0)
+        if score:
+            return (1, 0, -score, policy_order.index(item))
+        return (2, edges.index(item), 0, policy_order.index(item))
+
+    return sorted(candidates, key=rank)[:2]
+
+
+async def _consult_persona(
+    prompt: str,
+    primary_reply: str,
+    persona: str,
+    backend: str,
+    model: str,
+) -> str:
+    from src.llm_core import llm_call_async
+    from src.persona_capabilities import capability_summary
+    from src.seed_order_context import build_seed_order_context
+
+    record = persona_record(persona)
+    system = (
+        f"You are {persona}, the Misumi {record.get('role')}. Review Aoteru's plan and contribute "
+        f"concise, practical critique or next steps. {_HONESTY_CONSTRAINTS}"
+    )
+    capabilities = capability_summary(persona)
+    if capabilities:
+        system += f"\n\n{capabilities}"
+    system += f"\n{_RATIFICATION_CONSTRAINT}"
+    seed = build_seed_order_context()
+    messages = []
+    if seed:
+        messages.append({"role": "system", "content": seed})
+    messages.extend((
+        {"role": "system", "content": system},
+        {
+            "role": "user",
+            "content": (
+                f"User prompt:\n{prompt[:4000]}\n\n"
+                f"Aoteru's plan under discussion:\n{_short_text(primary_reply, 600)}"
+            ),
+        },
+    ))
+    text = await llm_call_async(
+        backend,
+        model,
+        messages,
+        max_tokens=240,
+        timeout=20,
+        allow_reasoning_fallback=False,
+    )
+    contribution = _short_text(text, 1200)
+    if not contribution:
+        raise RuntimeError("consulted model returned empty content")
+    return contribution
+
+
+def _handoff_action(contribution: str) -> str:
+    sentence = re.split(r"(?<=[.!?])\s+", contribution, maxsplit=1)[0]
+    return _short_text(sentence, 200)
+
+
 async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], Optional[str]]:
     """Return text, backend, model; degrade honestly when no endpoint works."""
     fallback_url = (os.getenv("MISUMI_MODEL_URL") or os.getenv("MISUMI_OLLAMA_URL") or "").strip()
@@ -116,14 +235,11 @@ async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], O
         if not url or not model:
             raise RuntimeError("no model endpoint configured")
         record = persona_record(persona)
-        system = (
-            f"You are {persona}, the Misumi {record.get('role')}. Answer concisely and never claim an action "
-            "unless a structured tool result proves it. Phase A household access is read-only."
-        )
+        system = f"You are {persona}, the Misumi {record.get('role')}. {_HONESTY_CONSTRAINTS}"
         capabilities = capability_summary(persona)
         if capabilities:
             system += f"\n\n{capabilities}"
-        system += "\nHousehold changes go through proposals that the user ratifies."
+        system += f"\n{_RATIFICATION_CONSTRAINT}"
         seed = build_seed_order_context()
         messages = []
         if seed:
@@ -204,6 +320,67 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
         else:
             text, backend, model = await _model_reply(prompt, persona)
         outcome = "grounded" if sources else "absent" if domain else "model" if backend else "degraded"
+
+        consulted = []
+        capsule_id = None
+        handoff_ids = []
+        if outcome == "model" and backend and model:
+            primary_reply = text
+            targets = _consultation_plan(prompt, primary_reply, persona)
+            contributions = []
+            for target in targets:
+                try:
+                    contribution = await _consult_persona(
+                        prompt, primary_reply, target, backend, model
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Misumi consultation failed for %s: %s", target, exc,
+                        exc_info=True,
+                    )
+                    continue
+                contributions.append((target, contribution))
+                consulted.append({"persona": target})
+                text += f"\n\n— {persona_record(target).get('display_name')}: {contribution}"
+
+            if targets:
+                capsule_type = (
+                    "decision"
+                    if re.search(r"\b(plan|planning|decide|deciding|decision)\b", prompt, re.I)
+                    else "observation"
+                )
+                try:
+                    capsule = memory.capture(
+                        f"{prompt}\n\nAoteru's plan: {_short_text(primary_reply, 600)}",
+                        source="consultation",
+                        capsule_type=capsule_type,
+                        persona="aoteru",
+                    )
+                    capsule_id = str(capsule["id"])
+                except Exception as exc:
+                    logger.warning("Misumi consultation capsule failed: %s", exc, exc_info=True)
+
+                for target, contribution in (contributions if capsule_id else []):
+                    action = _handoff_action(contribution)
+                    try:
+                        try:
+                            handoff = memory.create_handoff(
+                                "aoteru", target, action, capsule_id
+                            )
+                        except ValueError as exc:
+                            logger.warning(
+                                "Misumi consultation handoff action rejected for %s: %s; using neutral action",
+                                target, exc,
+                            )
+                            handoff = memory.create_handoff(
+                                "aoteru", target, _NEUTRAL_HANDOFF_ACTION, capsule_id
+                            )
+                        handoff_ids.append(str(handoff["id"]))
+                    except Exception as exc:
+                        logger.warning(
+                            "Misumi consultation handoff failed for %s: %s", target, exc,
+                            exc_info=True,
+                        )
         events.emit({
             "request_id": request_id,
             "persona": persona,
@@ -215,7 +392,7 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
             "outcome": outcome,
             "approval_mode": "none",
         })
-        return {
+        response = {
             "text": text,
             "state": "speaking",
             "mood": body.mood or "focused",
@@ -228,6 +405,13 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
             "request_id": request_id,
             "sources": sources,
         }
+        if _consultation_enabled():
+            response.update({
+                "consulted": consulted,
+                "capsule_id": capsule_id,
+                "handoff_ids": handoff_ids,
+            })
+        return response
 
     @router.post("/task")
     async def task(request: Request, body: MisumiTaskRequest):

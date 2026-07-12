@@ -82,8 +82,8 @@ def _line(label: str, value: Any) -> str | None:
     return f"{label}: {', '.join(items) if items else 'none specified'}"
 
 
-def capability_summary(persona_id: object) -> str | None:
-    """Return a bounded persona capability block, or ``None`` if unavailable."""
+def _persona_record(persona_id: object) -> Mapping[str, Any] | None:
+    """Return one cached persona record without propagating load failures."""
     try:
         root = _resolve_seed_root()
         if root is None:
@@ -97,7 +97,48 @@ def capability_summary(persona_id: object) -> str | None:
         personas = _load_personas(path)
         persona = str(persona_id or "").strip().lower()
         record = personas.get(persona) if personas else None
-        if not isinstance(record, Mapping):
+        return record if isinstance(record, Mapping) else None
+    except Exception as exc:
+        logger.debug("Misumi persona record unavailable: %s", exc, exc_info=True)
+        return None
+
+
+def consult_edges(persona_id: object) -> list[str] | None:
+    """Return a persona's consult edges, or ``None`` if missing or malformed."""
+    try:
+        record = _persona_record(persona_id)
+        if record is None or "consults" not in record:
+            return None
+        value = record.get("consults")
+        if not isinstance(value, (list, tuple, set)):
+            return None
+        return _items(value)
+    except Exception as exc:
+        logger.debug("Misumi persona consult edges unavailable: %s", exc, exc_info=True)
+        return None
+
+
+def routing_intents(persona_id: object) -> list[str] | None:
+    """Return a persona's routing intents, or ``None`` if unavailable."""
+    try:
+        record = _persona_record(persona_id)
+        if record is None:
+            return None
+        routing = record.get("routing")
+        if not isinstance(routing, Mapping) or "intents" not in routing:
+            return None
+        return _items(routing.get("intents"))
+    except Exception as exc:
+        logger.debug("Misumi persona routing intents unavailable: %s", exc, exc_info=True)
+        return None
+
+
+def capability_summary(persona_id: object) -> str | None:
+    """Return a bounded persona capability block, or ``None`` if unavailable."""
+    try:
+        persona = str(persona_id or "").strip().lower()
+        record = _persona_record(persona)
+        if record is None:
             return None
 
         role = record.get("role")

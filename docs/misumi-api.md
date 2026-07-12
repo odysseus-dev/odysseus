@@ -39,6 +39,9 @@ Response:
   "audio_url": null,
   "voice": null,
   "tts_provider": null,
+  "consulted": [],
+  "capsule_id": null,
+  "handoff_ids": [],
   "sources": [
     {"path": "household/food/shopping-list.md", "line": 3, "snippet": "- [ ] miso", "score": 1}
   ]
@@ -46,6 +49,10 @@ Response:
 ```
 
 Repository-backed answers cite the canonical path and line. Missing data or model state degrades explicitly; no action is claimed.
+
+For successful Aoteru model replies, bounded consultation may append labelled contributions from at most two personas. `consulted` identifies personas that returned a contribution, `capsule_id` references the single local consultation capsule, and `handoff_ids` references local handoff records created from successful contributions. These fields are presentation and reference data only: they grant no permission, approval, autonomy, task execution, external action, or household write access.
+
+Consultations are synchronous within the initiating `/respond` request. They do not start background work or persona swarms. Set `MISUMI_CONSULT=false` to disable consultation; the default is enabled. When disabled, `/respond` follows the legacy path and omits the three additive fields.
 
 ## Task planning
 
