@@ -66,6 +66,7 @@ import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
+from src.logging_config import configure_route_logging
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -73,6 +74,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
+configure_route_logging()
 logger = logging.getLogger(__name__)
 
 # ========= APP =========

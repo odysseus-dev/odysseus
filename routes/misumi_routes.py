@@ -8,6 +8,7 @@ import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -22,6 +23,8 @@ from src.misumi_task_router import MisumiTaskRouter
 
 
 logger = logging.getLogger(__name__)
+
+_last_model_error: Optional[str] = None
 
 _HONESTY_CONSTRAINTS = (
     "Answer concisely and never claim an action unless a structured tool result proves it. "
@@ -107,6 +110,105 @@ def _short_text(value: object, limit: int = 420) -> str:
 def _consultation_enabled() -> bool:
     value = (os.getenv("MISUMI_CONSULT", "1") or "").strip().lower()
     return value not in {"", "0", "false", "no", "off"}
+
+
+def _model_env_fallbacks() -> tuple[str, str]:
+    url = (os.getenv("MISUMI_MODEL_URL") or os.getenv("MISUMI_OLLAMA_URL") or "").strip()
+    model = (os.getenv("MISUMI_MODEL") or "").strip()
+    return url, model
+
+
+def _resolve_misumi_endpoint():
+    from src.endpoint_resolver import resolve_endpoint
+
+    fallback_url, fallback_model = _model_env_fallbacks()
+    return resolve_endpoint(
+        "default",
+        fallback_url=fallback_url or None,
+        fallback_model=fallback_model or None,
+        owner=None,
+    )
+
+
+def _configured_model_present() -> bool:
+    """Whether the selected settings chain names a model explicitly."""
+    try:
+        from src.settings import get_user_setting, load_settings
+
+        settings = load_settings()
+
+        def setting(key: str) -> str:
+            return (get_user_setting(key, "", settings.get(key, "")) or "").strip()
+
+        if setting("default_endpoint_id"):
+            return bool(setting("default_model"))
+        if setting("utility_endpoint_id"):
+            return bool(setting("utility_model"))
+    except Exception:
+        pass
+    return False
+
+
+def _safe_model_url(value: object) -> Optional[str]:
+    """Return a diagnostic URL without credentials, query values, or fragments."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = urlsplit(text)
+        if not parsed.scheme or not parsed.hostname:
+            return None
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_model_error(exc: Exception) -> str:
+    """Build the cached/logged summary without exposing URL credentials."""
+    text = str(exc)
+
+    def replace_url(match: re.Match[str]) -> str:
+        return _safe_model_url(match.group(0)) or "<redacted-url>"
+
+    text = re.sub(r"https?://[^\s]+", replace_url, text)
+    text = re.sub(r"(?i)\bBearer\s+[^\s]+", "Bearer <redacted>", text)
+    text = re.sub(r"\bsk-[A-Za-z0-9_-]+", "sk-<redacted>", text)
+    return _short_text(f"Misumi model reply failed: {text}", 1000)
+
+
+def _model_resolution_debug() -> Dict[str, object]:
+    fallback_url, fallback_model = _model_env_fallbacks()
+    url, model, _headers = _resolve_misumi_endpoint()
+    env_present = bool(fallback_url and fallback_model)
+    used_env = (
+        bool(fallback_url and fallback_model)
+        and str(url or "") == fallback_url
+        and str(model or "") == fallback_model
+    )
+    if used_env or (not url and not model and env_present):
+        source = "env-fallback"
+    elif _configured_model_present():
+        source = "configured"
+    else:
+        source = "discovered"
+    return {
+        "url": _safe_model_url(url),
+        "model": str(model) if model else None,
+        "source": source,
+        "env_fallback_present": env_present,
+        "last_model_error": _last_model_error,
+    }
+
+
+def _admin_debug_allowed(request: Request) -> bool:
+    try:
+        require_admin(request)
+        return True
+    except HTTPException:
+        return False
 
 
 def _term_positions(text: str, terms: List[str]) -> List[int]:
@@ -218,20 +320,13 @@ def _handoff_action(contribution: str) -> str:
 
 async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], Optional[str]]:
     """Return text, backend, model; degrade honestly when no endpoint works."""
-    fallback_url = (os.getenv("MISUMI_MODEL_URL") or os.getenv("MISUMI_OLLAMA_URL") or "").strip()
-    fallback_model = (os.getenv("MISUMI_MODEL") or "").strip()
+    global _last_model_error
     try:
-        from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.persona_capabilities import capability_summary
         from src.seed_order_context import build_seed_order_context
 
-        url, model, headers = resolve_endpoint(
-            "default",
-            fallback_url=fallback_url or None,
-            fallback_model=fallback_model or None,
-            owner=None,
-        )
+        url, model, headers = _resolve_misumi_endpoint()
         if not url or not model:
             raise RuntimeError("no model endpoint configured")
         record = persona_record(persona)
@@ -261,7 +356,8 @@ async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], O
             raise RuntimeError("model returned empty content (reasoning-only)")
         return reply, str(url), str(model)
     except Exception as exc:
-        logger.exception("Misumi model reply failed: %s", exc)
+        _last_model_error = _safe_model_error(exc)
+        logger.exception("%s", _last_model_error)
         return "Odysseus is available, but no working model backend is configured for this request.", None, None
 
 
@@ -442,7 +538,7 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
     @router.get("/personas")
     async def personas(request: Request):
         _require_api_scope(request, "misumi:read")
-        return {
+        response = {
             "personas": [
                 {"id": name, **record}
                 for name, record in sorted(load_persona_policy().items())
@@ -524,7 +620,7 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
         candidates = task_router.discover()
         installed = skills_manager.load(owner=_owner(request))
         memory_state = memory_call(memory.glance)
-        return {
+        response = {
             "status": "ready" if readiness.get("ready") else "degraded",
             "source": "odysseus-misumi-status",
             "phase": "A",
@@ -553,6 +649,9 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None,
             },
             "writes_allowed": False,
         }
+        if _admin_debug_allowed(request):
+            response["model_resolution"] = _model_resolution_debug()
+        return response
 
     @router.post("/memory/capture")
     async def capture_memory(request: Request, body: MisumiMemoryCaptureRequest):

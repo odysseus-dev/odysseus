@@ -366,6 +366,7 @@ def _build_ollama_payload(
     stream: bool = False,
     tools: Optional[List[Dict]] = None,
     num_ctx: Optional[int] = None,
+    think: Optional[bool] = None,
 ) -> Dict:
     """Build the JSON payload for Ollama's /api/chat endpoint.
 
@@ -394,12 +395,17 @@ def _build_ollama_payload(
         payload["options"] = options
     if tools:
         payload["tools"] = tools
+    if think is not None:
+        payload["think"] = think
     return payload
 
 
-def _parse_ollama_response(data: dict) -> str:
+def _parse_ollama_response(data: dict, *, allow_reasoning_fallback: bool = True) -> str:
     message = data.get("message") or {}
-    return message.get("content") or data.get("response") or ""
+    content = message.get("content") or data.get("response") or ""
+    if content or not allow_reasoning_fallback:
+        return content
+    return message.get("thinking") or ""
 
 
 def _host_match(url: str, *domains: str) -> bool:
@@ -1424,6 +1430,7 @@ async def llm_call_async(
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
+            think=False if not allow_reasoning_fallback else None,
         )
     else:
         target_url = url
@@ -1476,7 +1483,10 @@ async def llm_call_async(
                 if provider == "anthropic":
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
-                    response = _parse_ollama_response(data)
+                    response = _parse_ollama_response(
+                        data,
+                        allow_reasoning_fallback=allow_reasoning_fallback,
+                    )
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or ""

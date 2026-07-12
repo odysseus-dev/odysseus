@@ -96,3 +96,63 @@ def test_llm_call_async_withholds_reasoning_fallback(monkeypatch):
     ))
 
     assert result == ""
+
+
+def test_native_ollama_disables_thinking_when_reasoning_fallback_is_disabled(monkeypatch):
+    seen = {}
+
+    class FakeAsyncClient:
+        async def post(self, url, **kwargs):
+            seen["url"] = url
+            seen["payload"] = kwargs["json"]
+            request = httpx.Request("POST", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={"message": {"content": "A concise answer."}, "done": True},
+            )
+
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: FakeAsyncClient())
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda _url: False)
+
+    result = asyncio.run(llm_core.llm_call_async(
+        "http://127.0.0.1:11434/api",
+        "qwen3:8b",
+        [{"role": "user", "content": "hello"}],
+        allow_reasoning_fallback=False,
+    ))
+
+    assert result == "A concise answer."
+    assert seen["url"] == "http://127.0.0.1:11434/api/chat"
+    assert seen["payload"]["think"] is False
+
+
+def test_native_ollama_thinking_only_is_not_returned_as_content(monkeypatch):
+    class FakeAsyncClient:
+        async def post(self, url, **kwargs):
+            request = httpx.Request("POST", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "message": {"content": "", "thinking": "private reasoning"},
+                    "done": True,
+                    "done_reason": "length",
+                },
+            )
+
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: FakeAsyncClient())
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda _url: False)
+
+    result = asyncio.run(llm_core.llm_call_async(
+        "http://127.0.0.1:11434/api",
+        "qwen3:8b",
+        [{"role": "user", "content": "hello"}],
+        allow_reasoning_fallback=False,
+    ))
+
+    assert result == ""
+    assert llm_core._parse_ollama_response(
+        {"message": {"content": "", "thinking": "private reasoning"}},
+        allow_reasoning_fallback=False,
+    ) == ""
