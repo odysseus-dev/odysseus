@@ -609,6 +609,37 @@ def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
 _ollama_normalize_tool_messages = _ollama_normalize_messages
 
 
+def _flatten_ollama_openai_compat_messages(messages: List[Dict]) -> List[Dict]:
+    """Flatten multimodal content arrays for Ollama's OpenAI-compatible /v1 endpoint.
+
+    Ollama's Go-based OpenAI-compatible server rejects ``content`` as a list
+    with ``json: cannot unmarshal array into Go struct field
+    ChatRequest.messages.content of type string``. When the endpoint is an
+    Ollama OpenAI-compatible URL (``/v1/chat/completions``), flatten the
+    OpenAI-style ``[{type:"text",...},{type:"image_url",...}]`` content into
+    a plain string, dropping image blocks (the /v1 endpoint doesn't support
+    the ``images`` array the native API uses). (#4249)
+
+    This is a no-op for non-Ollama endpoints and for messages whose content
+    is already a string.
+    """
+    out: List[Dict] = []
+    for m in messages or []:
+        if not isinstance(m, dict) or not isinstance(m.get("content"), list):
+            out.append(m)
+            continue
+        text_parts = []
+        for block in m["content"]:
+            if isinstance(block, dict) and block.get("type") == "text":
+                t = block.get("text")
+                if t:
+                    text_parts.append(str(t))
+        nm = dict(m)
+        nm["content"] = "\n".join(text_parts).strip()
+        out.append(nm)
+    return out
+
+
 def _build_ollama_payload(
     model: str,
     messages: List[Dict],
@@ -1812,6 +1843,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
+        # Ollama's /v1 endpoint rejects multimodal content arrays (#4249).
+        if _is_ollama_openai_compat_url(url):
+            messages_copy = _flatten_ollama_openai_compat_messages(messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -2020,6 +2054,9 @@ async def llm_call_async(
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
+        # Ollama's /v1 endpoint rejects multimodal content arrays (#4249).
+        if _is_ollama_openai_compat_url(url):
+            messages_copy = _flatten_ollama_openai_compat_messages(messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -2175,6 +2212,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = _normalize_openai_chat_url(url)
+        # Ollama's /v1 endpoint rejects multimodal content arrays (#4249).
+        if _is_ollama_openai_compat_url(url):
+            messages_copy = _flatten_ollama_openai_compat_messages(messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
