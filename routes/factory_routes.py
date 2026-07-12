@@ -816,7 +816,7 @@ def setup_factory_routes() -> APIRouter:
         # (CRA, Next.js) that don't support --base, we rewrite here as a safety net.
         if mimetype == "text/html" or file_path.endswith('.html'):
             import re as _re2
-            with _os2.open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 html_content = f.read()
             proxy_prefix = f"/api/factory/projects/{project_id}/static"
             html_content = _re2.sub(

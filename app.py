@@ -279,6 +279,7 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        _re.compile(r"^/api/factory/projects/\d+/(static|proxy)/.*$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
