@@ -2954,5 +2954,16 @@ function stopNotificationPolling() {
 startNotificationPolling();
 
 const tasksModule = { openTasks, closeTasks, isTasksOpen, startNotificationPolling, stopNotificationPolling };
+// Exposed so notifications.js can trigger task-UI side effects when a
+// WebSocket push notification arrives (the fallback HTTP poll won't fire
+// because the WS handler already marks notifications as seen).
+tasksModule.handleWebSocketNotification = function(n) {
+  if (n && n.status !== 'success') {
+    _setTaskFailurePending(true);
+    if (_open && document.querySelector('.tasks-tab.active[data-tab="activity"]')) {
+      _renderActivityView();
+    }
+  }
+};
 export default tasksModule;
 window.tasksModule = tasksModule;

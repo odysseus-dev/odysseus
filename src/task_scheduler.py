@@ -417,9 +417,13 @@ class TaskScheduler:
             self._pending_notifications = self._pending_notifications[-50:]
         # Push to WebSocket subscribers if the channel is available
         try:
-            from routes.ws_routes import push_notification
-            if owner:
+            from routes.ws_routes import push_notification, _ANONYMOUS_OWNER
+            if owner is not None:
                 push_notification(owner, note)
+            else:
+                # Auth-disabled path: push to the anonymous channel so
+                # the WebSocket subscriber receives the notification.
+                push_notification(_ANONYMOUS_OWNER, note)
         except Exception:
             pass
 

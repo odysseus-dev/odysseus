@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 # ── In-memory notification channels ──────────────────────────────────────
 # Maps owner username → list of asyncio.Queue instances, one per connected WS.
-_notify_channels: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+_notify_channels: Dict[str | None, List[asyncio.Queue]] = defaultdict(list)
+
+# Sentinel key for anonymous (auth-disabled) installs
+_ANONYMOUS_OWNER = "_anonymous"
 
 
 def push_notification(owner: str, notification: dict):
@@ -80,7 +83,8 @@ def _validate_api_token(raw_token: str) -> str | None:
 
 
 def _revalidate_api_token(raw_token: str, expected_owner: str) -> bool:
-    """Re-validate an API token is still active and maps to *expected_owner*."""
+    """Re-validate an API token is still active and maps to *expected_owner*
+    and still has the ``notifications:read`` scope."""
     prefix = raw_token[:8]
     try:
         with get_db_session() as db:
@@ -93,7 +97,8 @@ def _revalidate_api_token(raw_token: str, expected_owner: str) -> bool:
                 .first()
             )
             if row and bcrypt.checkpw(raw_token.encode(), row.token_hash.encode()):
-                return row.owner == expected_owner
+                scopes = [s.strip() for s in (row.scopes or "").split(",") if s.strip()]
+                return row.owner == expected_owner and "notifications:read" in scopes
     except Exception:
         logger.warning("API token re-validation failed", exc_info=True)
     return False
@@ -155,7 +160,7 @@ def setup_ws_routes():
 
         # Fallback: if auth is disabled, allow anonymous
         if not owner and not (auth_mgr and auth_mgr.is_configured):
-            owner = ""
+            owner = _ANONYMOUS_OWNER
 
         if owner is None:
             await websocket.close(code=4001)

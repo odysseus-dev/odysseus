@@ -135,6 +135,15 @@ function _showNotification(n) {
     const ui = window.uiModule || window._uiModule;
     if (!ui) return;
     if (ok) ui.showToast(msg, { duration: 5000 });
-    else ui.showError(msg);
+    else {
+      ui.showError(msg);
+      // Also notify the tasks module so it can update its failure-pending state
+      // and activity view — the fallback HTTP poll won't fire because this
+      // notification was already marked seen.
+      try {
+        const tm = window.tasksModule;
+        if (tm && tm.handleWebSocketNotification) tm.handleWebSocketNotification(n);
+      } catch (_) {}
+    }
   } catch (_) {}
 }
