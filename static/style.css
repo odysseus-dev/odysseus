@@ -40823,6 +40823,38 @@ body.factory-panel-view .factory-divider { display:none; }
   margin-top: 6px;
 }
 
+/* ── Factory token estimation badges ───────────────────────── */
+.factory-token-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--mono, 'Fira Code', monospace);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.factory-token-safe {
+  background: rgba(80, 250, 123, 0.12);
+  color: #50fa7b;
+  border: 1px solid rgba(80, 250, 123, 0.2);
+}
+.factory-token-moderate {
+  background: rgba(255, 184, 108, 0.12);
+  color: #ffb86c;
+  border: 1px solid rgba(255, 184, 108, 0.2);
+}
+.factory-token-risky {
+  background: rgba(255, 85, 85, 0.12);
+  color: #ff5555;
+  border: 1px solid rgba(255, 85, 85, 0.25);
+  animation: factory-token-pulse 2s ease-in-out infinite;
+}
+@keyframes factory-token-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 /* ── Create form ───────────────────────────────────────────── */
 
 .factory-create-form {

@@ -188,10 +188,15 @@ def setup_factory_routes() -> APIRouter:
                 "is_custom": bool(custom_prompts.get(k)),
             })
 
+        _produce_max = get_setting("factory_produce_max_tokens", None)
+        if not _produce_max:
+            _produce_max = 16384
+
         return {"agents": agents, "agent_models": agent_models,
                 "agent_prompts": custom_prompts,
                 "agent_max_tokens": agent_max_tokens,
                 "default_max_tokens": 16384,
+                "produce_max_tokens": int(_produce_max),
                 "endpoints": endpoints}
 
     @router.post("/settings")

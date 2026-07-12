@@ -66,6 +66,7 @@ let _activeProjectId = null;
 let _activeStatus = null;
 let _lastFingerprint = '';
 let _autoMode = false;
+let _produceMaxTokens = 16384; // fetched from settings, used for token estimation badges
 
 // ── SVG icons (compact) ───────────────────────────────────────
 
@@ -215,11 +216,12 @@ async function _openSettings() {
 }
 
 function _renderSettings(container, data) {
-  const { agents, agent_models, agent_prompts, agent_max_tokens, default_max_tokens, endpoints } = data;
+  const { agents, agent_models, agent_prompts, agent_max_tokens, default_max_tokens, produce_max_tokens, endpoints } = data;
   const currentModels = agent_models || {};
   const currentPrompts = agent_prompts || {};
   const currentMaxTokens = agent_max_tokens || {};
   const defaultMT = default_max_tokens || 16384;
+  _produceMaxTokens = produce_max_tokens || default_max_tokens || 16384;
 
   const modelOptions = endpoints.map(ep =>
     ep.models.map(m => `<option value="${ep.id}::${m}">${ep.name} / ${m}</option>`).join('')
@@ -585,6 +587,7 @@ function _renderKanban(container) {
         <div class="factory-task-card-top">
           <span class="factory-task-card-id">T${task.id}</span>
           <span class="factory-task-card-agent">${_esc(task.agent || task.assigned_agent || '')}${task.task_type ? ` · ${_esc(task.task_type)}` : ''}</span>
+          ${_tokenBadge(task)}
         </div>
         <div class="factory-task-card-title">${_esc(task.title || task.description || '')}</div>
         ${fname}
@@ -715,6 +718,7 @@ function _renderTaskDetail(taskId) {
           ${producer ? `<span>Producer: <strong>${_esc(producer)}</strong></span>` : ''}
           ${reviewer ? `<span>Reviewer: <strong>${_esc(reviewer)}</strong></span>` : ''}
           ${attempts ? `<span>Attempts: ${attempts}</span>` : ''}
+          <span>Tokens: ${_tokenBadge(task)}</span>
         </div>
       </div>
       <h3 class="factory-task-detail-title">${_esc(task.title || '')}</h3>
@@ -1174,6 +1178,80 @@ function _isPreviewable(task) {
   if (trimmed.startsWith('<') || trimmed.toLowerCase().startsWith('<!doctype') || trimmed.toLowerCase().startsWith('<html')) return true;
   if (output.includes('<html') && output.includes('</html>')) return true;
   return false;
+}
+
+/**
+ * Estimate how many output tokens a task will likely require.
+ * Uses description complexity + task type + filename to produce a
+ * rough but directionally-correct estimate. Shown to the user as a
+ * risk indicator (green/yellow/red) so they know upfront whether a
+ * task is likely to hit the token budget and truncate.
+ */
+function _estimateTokens(task) {
+  const desc = ((task.description || '') + ' ' + (task.title || '')).trim();
+  if (!desc) return 500;
+
+  const tt = (task.task_type || '').toLowerCase().trim();
+  const fname = (task.filename || '').toLowerCase().trim();
+
+  // Feature count: description clauses separated by commas, "and",
+  // numbered items, semicolons, newlines.
+  const features = desc.split(/[,;]|\band\b|\balso\b|\n|\d+[.)]/)
+    .map(s => s.trim())
+    .filter(s => s.length > 8);
+  const featureCount = Math.max(1, features.length);
+
+  const words = desc.split(/\s+/).filter(w => w.length > 0).length;
+
+  // Token profiles by task type: {base, perFeature}
+  const profiles = {
+    frontend:   { base: 600, perFeat: 550 },
+    design:     { base: 600, perFeat: 550 },
+    ui:         { base: 500, perFeat: 450 },
+    'space-ui': { base: 500, perFeat: 500 },
+    backend:    { base: 400, perFeat: 350 },
+    code:       { base: 400, perFeat: 350 },
+    api:        { base: 400, perFeat: 350 },
+    network:    { base: 400, perFeat: 350 },
+    devops:     { base: 200, perFeat: 180 },
+    infra:      { base: 200, perFeat: 180 },
+    test:       { base: 300, perFeat: 250 },
+    docs:       { base: 200, perFeat: 180 },
+    execute:    { base: 100, perFeat: 80 },
+  };
+  const p = profiles[tt] || { base: 400, perFeat: 350 };
+  let est = p.base + (featureCount * p.perFeat);
+
+  // HTML files expand more (markup + inline styles + scripts)
+  if (fname.endsWith('.html') || fname.endsWith('.htm')) est = Math.round(est * 1.3);
+  else if (fname.endsWith('.css') || fname.endsWith('.scss')) est = Math.round(est * 1.1);
+
+  // Cross-check with word-based estimate: code ≈ 4× desc words × 1.3 tokens/word
+  const wordEst = Math.round(words * 4 * 1.3);
+
+  return Math.max(est, wordEst);
+}
+
+/**
+ * Build a colored token-budget badge for a task.
+ */
+function _tokenBadge(task) {
+  const est = _estimateTokens(task);
+  const budget = _produceMaxTokens || 16384;
+  const pct = est / budget;
+  const estK = est >= 1024 ? (est / 1024).toFixed(1).replace(/\.0$/, '') + 'K' : est.toString();
+  const budK = Math.round(budget / 1024) + 'K';
+
+  let cls;
+  if (pct < 0.6) cls = 'factory-token-safe';
+  else if (pct < 0.85) cls = 'factory-token-moderate';
+  else cls = 'factory-token-risky';
+
+  const titleText = pct >= 0.85
+    ? `Estimated ~${est.toLocaleString()} tokens (budget ${budget.toLocaleString()}). HIGH RISK of truncation — consider splitting the task.`
+    : `Estimated ~${est.toLocaleString()} tokens (budget ${budget.toLocaleString()}).`;
+
+  return `<span class="factory-token-badge ${cls}" title="${_esc(titleText)}">~${estK}/${budK}</span>`;
 }
 
 // ── Public API ─────────────────────────────────────────────────
