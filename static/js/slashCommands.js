@@ -7,6 +7,45 @@ window.cancelActiveTour = function cancelActiveTour() {
   document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   document.getElementById('tour-tooltip')?.remove();
   document.body?.classList.remove('tour-active');
+  // ── Agent commands (MiMo-Code inspired) ──────────────────────────
+  goal: {
+    alias: [],
+    category: 'Agent',
+    help: 'Set a stopping condition for the session',
+    handler: _cmdGoal,
+    noUserBubble: false,
+    usage: '/goal <condition>',
+  },
+  dream: {
+    alias: [],
+    category: 'Agent',
+    help: 'Extract knowledge from session to memory',
+    handler: _cmdDream,
+    noUserBubble: false,
+    usage: '/dream',
+  },
+  status: {
+    alias: [],
+    category: 'Agent',
+    help: 'Show session status, goal, context size',
+    handler: _cmdStatus,
+    noUserBubble: false,
+    usage: '/status',
+  },
+  task: {
+    alias: ['tasks'],
+    category: 'Agent',
+    help: 'Manage tasks (list, add, done, status)',
+    default: 'list',
+    handler: _cmdTask,
+    noUserBubble: false,
+    subs: {
+      'list':   { handler: _cmdTaskList,   alias: ['ls'],      help: 'List all tasks',        usage: '/task list' },
+      'add':    { handler: _cmdTaskAdd,    alias: ['create'],  help: 'Add a new task',        usage: '/task add <description>' },
+      'done':   { handler: _cmdTaskDone,   alias: ['complete'],help: 'Mark task as done',      usage: '/task done <id>' },
+      'status': { handler: _cmdTaskStatus, alias: ['stat'],    help: 'Show task summary',      usage: '/task status' },
+    },
+  },
 };
 
 import Storage from './storage.js';
@@ -5743,6 +5782,83 @@ async function _cmdHelp(args, ctx) {
 // Each top-level key is a command group.  Flat commands have a handler
 // directly; grouped commands use `subs`.  `default` is the sub run
 // when the command is invoked bare (e.g. `/chats` -> info).
+
+// ── Agent commands (MiMo-Code inspired) ──
+
+async function _cmdGoal(args, ctx) {
+  const goal = args.join(' ');
+  if (!goal) {
+    ctx.slashReply(
+      '## 🎯 Goal Mode
+
+' +
+      '**Usage:** `/goal <stopping condition>`
+
+' +
+      'Sets a condition that must be met before the agent can stop.
+
+' +
+      '**Examples:**
+' +
+      '- `/goal All tests pass and code is committed`
+' +
+      '- `/goal The bug is fixed and verified in production`
+' +
+      '- `/goal Documentation is complete with examples`'
+    );
+    return true;
+  }
+  ctx.slashReply(`⏳ Setting goal: "${goal}"...`);
+  return false;
+}
+
+async function _cmdDream(args, ctx) {
+  ctx.slashReply('⏳ Scanning session and extracting knowledge...');
+  return false;
+}
+
+async function _cmdStatus(args, ctx) {
+  ctx.slashReply('⏳ Loading session status...');
+  return false;
+}
+
+async function _cmdTask(args, ctx) {
+  if (args.length === 0) {
+    ctx.slashReply('⏳ Loading tasks...');
+    return false;
+  }
+  return false;
+}
+
+async function _cmdTaskList(args, ctx) {
+  ctx.slashReply('⏳ Loading tasks...');
+  return false;
+}
+
+async function _cmdTaskAdd(args, ctx) {
+  const desc = args.join(' ');
+  if (!desc) {
+    ctx.slashReply('❌ Usage: `/task add <description>`');
+    return true;
+  }
+  ctx.slashReply(`⏳ Adding task: "${desc}"...`);
+  return false;
+}
+
+async function _cmdTaskDone(args, ctx) {
+  const taskId = args[0];
+  if (!taskId) {
+    ctx.slashReply('❌ Usage: `/task done <id>`');
+    return true;
+  }
+  ctx.slashReply(`⏳ Marking task ${taskId} as done...`);
+  return false;
+}
+
+async function _cmdTaskStatus(args, ctx) {
+  ctx.slashReply('⏳ Loading task status...');
+  return false;
+}
 
 const COMMANDS = {
   chats: {
