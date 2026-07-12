@@ -99,7 +99,8 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "path": {"type": "string", "description": "File path to read"},
                     "offset": {"type": "integer", "description": "1-based line to start reading from (optional)"},
-                    "limit": {"type": "integer", "description": "Max number of lines to read from offset (optional)"}
+                    "limit": {"type": "integer", "description": "Max number of lines to read from offset (optional)"},
+                    "line_numbers": {"type": "boolean", "description": "Prefix each line with 'N<TAB>' line numbers for precise references (optional). The prefixes are NOT part of the file — never copy them into edit_file old_string."}
                 },
                 "required": ["path"]
             }
@@ -179,16 +180,29 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "edit_file",
-            "description": "Edit a file ON DISK by exact string replacement (home folder, project files, any real path like ~/sweden.txt or /path/to/file). This is the right tool for files on disk — NOT edit_document (that's for editor-panel documents). PREFER this over bash (sed/echo) — it shows a diff. old_string must match the file exactly and be unique (or set replace_all). Use write_file to create a new file.",
+            "description": "Edit a file ON DISK by exact string replacement (home folder, project files, any real path like ~/sweden.txt or /path/to/file). This is the right tool for files on disk — NOT edit_document (that's for editor-panel documents). PREFER this over bash (sed/echo) — it shows a diff. old_string must match the file exactly and be unique (or set replace_all). For SEVERAL changes to the same file, pass `edits` (applied in order, all-or-nothing) instead of many single calls. Use write_file to create a new file.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path to edit"},
                     "old_string": {"type": "string", "description": "Exact text to replace (must match the file, including indentation)"},
                     "new_string": {"type": "string", "description": "Replacement text"},
-                    "replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring a unique match"}
+                    "replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring a unique match"},
+                    "edits": {
+                        "type": "array",
+                        "description": "Batch mode: list of {old_string, new_string, replace_all?} applied in order, atomically — if any edit fails to match, the file is left untouched. Later edits match against already-edited text. Use INSTEAD of old_string/new_string.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_string": {"type": "string"},
+                                "new_string": {"type": "string"},
+                                "replace_all": {"type": "boolean"}
+                            },
+                            "required": ["old_string", "new_string"]
+                        }
+                    }
                 },
-                "required": ["path", "old_string", "new_string"]
+                "required": ["path"]
             }
         }
     },

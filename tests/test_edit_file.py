@@ -92,3 +92,90 @@ async def test_edit_file_non_unique():
 async def test_edit_file_outside_allowed_roots():
     res = await EditFileTool().execute(json.dumps({"path": "/etc/hosts", "old_string": "x", "new_string": "y"}), {})
     assert res["exit_code"] == 1 and ("outside the allowed roots" in res["error"] or "sensitive" in res["error"])
+
+
+# ── Batch mode (edits array) ──────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_edit_file_batch_success():
+    p = os.path.join("/tmp", "ef_batch.py")
+    open(p, "w").write("def f():\n    return 1\n\ndef g():\n    return 2\n")
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "return 1", "new_string": "return 10"},
+        {"old_string": "return 2", "new_string": "return 20"},
+    ]}), {})
+    assert res["exit_code"] == 0
+    assert "2 edits" in res["output"] and "2 replacements" in res["output"]
+    assert open(p).read() == "def f():\n    return 10\n\ndef g():\n    return 20\n"
+    assert res["diff"]["added"] == 2 and res["diff"]["removed"] == 2
+    os.unlink(p)
+
+
+@pytest.mark.asyncio
+async def test_edit_file_batch_atomic_on_not_found():
+    # If any edit fails to match, the file must be left byte-identical.
+    p = os.path.join("/tmp", "ef_batch_nf.txt")
+    original = "alpha\nbeta\n"
+    open(p, "w").write(original)
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "alpha", "new_string": "ALPHA"},
+        {"old_string": "does-not-exist", "new_string": "x"},
+    ]}), {})
+    assert res["exit_code"] == 1
+    assert "edits[2]" in res["error"] and "not found" in res["error"]
+    assert "No changes were applied" in res["error"]
+    assert open(p).read() == original
+    os.unlink(p)
+
+
+@pytest.mark.asyncio
+async def test_edit_file_batch_atomic_on_not_unique():
+    p = os.path.join("/tmp", "ef_batch_dup.txt")
+    original = "x\nx\nunique\n"
+    open(p, "w").write(original)
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "unique", "new_string": "UNIQUE"},
+        {"old_string": "x", "new_string": "y"},
+    ]}), {})
+    assert res["exit_code"] == 1
+    assert "edits[2]" in res["error"] and "not unique" in res["error"]
+    assert open(p).read() == original
+    # replace_all inside the failing item resolves it.
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "unique", "new_string": "UNIQUE"},
+        {"old_string": "x", "new_string": "y", "replace_all": True},
+    ]}), {})
+    assert res["exit_code"] == 0 and "3 replacements" in res["output"]
+    assert open(p).read() == "y\ny\nUNIQUE\n"
+    os.unlink(p)
+
+
+@pytest.mark.asyncio
+async def test_edit_file_batch_sequential_semantics():
+    # Later edits match against the text produced by earlier edits.
+    p = os.path.join("/tmp", "ef_batch_seq.txt")
+    open(p, "w").write("one\n")
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "one", "new_string": "two"},
+        {"old_string": "two", "new_string": "three"},
+    ]}), {})
+    assert res["exit_code"] == 0
+    assert open(p).read() == "three\n"
+    os.unlink(p)
+
+
+@pytest.mark.asyncio
+async def test_edit_file_batch_validation():
+    p = os.path.join("/tmp", "ef_batch_val.txt")
+    open(p, "w").write("a\n")
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "", "new_string": "x"},
+    ]}), {})
+    assert res["exit_code"] == 1 and "edits[1]" in res["error"] and "old_string required" in res["error"]
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": [
+        {"old_string": "a", "new_string": "a"},
+    ]}), {})
+    assert res["exit_code"] == 1 and "identical" in res["error"]
+    res = await EditFileTool().execute(json.dumps({"path": p, "edits": ["not-a-dict"]}), {})
+    assert res["exit_code"] == 1 and "must be an object" in res["error"]
+    assert open(p).read() == "a\n"
+    os.unlink(p)

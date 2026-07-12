@@ -300,10 +300,16 @@ _DOMAIN_RULES = {
 - Odysseus chats are sessions. Use `list_sessions`/`manage_session`; do not shell out looking for chat files.
 - Preserve clickable session links from tool output in your final answer.""",
     "files": """\
-## File rules
+## File & coding rules
 - Use file tools for real disk files. Use document tools only for editor documents.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
-- Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+- Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.
+- Locate before you write: `grep`/`glob` for the symbol or file first, and read the surrounding code before changing it.
+- Read a file before editing it. `old_string` must be copied EXACTLY from the file, including indentation; if you read with `line_numbers`, strip the number+TAB prefix.
+- Several changes to one file → ONE `edit_file` call with an `edits` array (applied in order, all-or-nothing), not a burst of single edits.
+- If an edit fails with "not found"/"not unique", re-read that region and retry with the exact current text — do not guess or paraphrase.
+- Match the existing style of the file (naming, indentation, idioms). Do not reformat code you are not changing.
+- After changing code, VERIFY it before declaring done: run the relevant test, `python -m py_compile`, `node --check`, or execute the script and check its output. An unverified edit is not a finished coding task.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -392,7 +398,11 @@ Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check ex
 ```read_file
 <file path>
 ```
-Read a file and return its contents.""",
+Read a file and return its contents. For large files or precise references, pass JSON instead:
+```read_file
+{"path": "<file path>", "offset": 100, "limit": 50, "line_numbers": true}
+```
+`offset`/`limit` read a line range; `line_numbers` prefixes each line with `N<TAB>`. The prefixes are NOT part of the file — never copy them into edit_file old_string.""",
 
     "write_file": """\
 ```write_file
@@ -405,7 +415,12 @@ Write content to a file. First line is the path, rest is the content.""",
 ```edit_file
 {"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
 ```
-Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.
+For SEVERAL changes to the same file, make ONE call with an `edits` array instead of many single calls:
+```edit_file
+{"path": "<file path>", "edits": [{"old_string": "<a>", "new_string": "<b>"}, {"old_string": "<c>", "new_string": "<d>"}]}
+```
+Edits apply in order, all-or-nothing: if any old_string fails to match, the file is left untouched.""",
 
     "get_workspace": """\
 ```get_workspace

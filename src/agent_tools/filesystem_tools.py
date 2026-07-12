@@ -78,36 +78,64 @@ class EditFileTool:
         except (json.JSONDecodeError, TypeError):
             args = {}
         raw_path = (args.get("path") or "").strip()
-        old = args.get("old_string", "")
-        new = args.get("new_string", "")
-        replace_all = bool(args.get("replace_all", False))
         if not raw_path:
             return {"error": "edit_file: path required", "exit_code": 1}
         try:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"edit_file: {e}", "exit_code": 1}
-        if old == "":
-            return {"error": "edit_file: old_string required (use write_file to create a file)", "exit_code": 1}
-        if old == new:
-            return {"error": "edit_file: old_string and new_string are identical", "exit_code": 1}
+
+        # Two calling forms: a single old_string/new_string pair, or a batch
+        # `edits` array applied in order. Both funnel into one edits list so
+        # the validation and apply paths below are shared.
+        raw_edits = args.get("edits")
+        batch = isinstance(raw_edits, list) and len(raw_edits) > 0
+        if batch:
+            items = raw_edits
+        else:
+            items = [{
+                "old_string": args.get("old_string", ""),
+                "new_string": args.get("new_string", ""),
+                "replace_all": args.get("replace_all", False),
+            }]
+        edits = []
+        for i, item in enumerate(items, 1):
+            label = f"edits[{i}]: " if batch else ""
+            if not isinstance(item, dict):
+                return {"error": f"edit_file: {label}each edit must be an object with old_string/new_string", "exit_code": 1}
+            old = item.get("old_string", "")
+            new = item.get("new_string", "")
+            if old == "":
+                return {"error": f"edit_file: {label}old_string required (use write_file to create a file)", "exit_code": 1}
+            if old == new:
+                return {"error": f"edit_file: {label}old_string and new_string are identical", "exit_code": 1}
+            edits.append((old, new, bool(item.get("replace_all", False))))
 
         def _apply():
-            """Helper function that performs the actual string replacement and file writing logic."""
+            """Apply every edit in order against in-memory text; write only if all succeed.
+
+            Later edits match against the text produced by earlier ones, and a
+            batch is all-or-nothing: any not-found/not-unique failure leaves
+            the file untouched.
+            """
             with open(path, "r", encoding="utf-8") as f:
                 original = f.read()
-            count = original.count(old)
-            if count == 0:
-                return original, None, "not_found"
-            if count > 1 and not replace_all:
-                return original, None, f"not_unique:{count}"
-            updated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
+            updated = original
+            total = 0
+            for i, (old, new, replace_all) in enumerate(edits, 1):
+                count = updated.count(old)
+                if count == 0:
+                    return original, None, 0, f"not_found:{i}"
+                if count > 1 and not replace_all:
+                    return original, None, 0, f"not_unique:{i}:{count}"
+                updated = updated.replace(old, new) if replace_all else updated.replace(old, new, 1)
+                total += count if replace_all else 1
             with open(path, "w", encoding="utf-8") as f:
                 f.write(updated)
-            return original, updated, "ok"
+            return original, updated, total, "ok"
 
         try:
-            original, updated, status = await asyncio.to_thread(_apply)
+            original, updated, total, status = await asyncio.to_thread(_apply)
         except FileNotFoundError:
             return {"error": f"edit_file: {path}: not found (use write_file to create it)", "exit_code": 1}
         except (IsADirectoryError, UnicodeDecodeError):
@@ -117,14 +145,22 @@ class EditFileTool:
         except OSError as e:
             return {"error": f"edit_file: {path}: {e}", "exit_code": 1}
 
-        if status == "not_found":
-            return {"error": f"edit_file: old_string not found in {path}. Read the file and match it exactly.", "exit_code": 1}
+        if status.startswith("not_found"):
+            i = int(status.split(":", 1)[1])
+            label = f"edits[{i}]: " if batch else ""
+            hint = " No changes were applied — each old_string must match the text as already edited by the earlier items." if batch else ""
+            return {"error": f"edit_file: {label}old_string not found in {path}. Read the file and match it exactly.{hint}", "exit_code": 1}
         if status.startswith("not_unique"):
-            n = status.split(":", 1)[1]
-            return {"error": f"edit_file: old_string is not unique in {path} ({n} matches). Add surrounding context or set replace_all=true.", "exit_code": 1}
+            _, i, n = status.split(":")
+            label = f"edits[{int(i)}]: " if batch else ""
+            hint = " No changes were applied." if batch else ""
+            return {"error": f"edit_file: {label}old_string is not unique in {path} ({n} matches). Add surrounding context or set replace_all=true.{hint}", "exit_code": 1}
 
-        n = original.count(old)
-        result = {"output": f"Edited {path} ({n} replacement{'s' if n != 1 else ''})", "exit_code": 0}
+        if batch:
+            msg = f"Edited {path} ({len(edits)} edits, {total} replacement{'s' if total != 1 else ''})"
+        else:
+            msg = f"Edited {path} ({total} replacement{'s' if total != 1 else ''})"
+        result = {"output": msg, "exit_code": 0}
         diff = _unified_diff(original, updated, path)
         if diff:
             result["diff"] = diff
@@ -133,7 +169,7 @@ class EditFileTool:
 class ReadFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
-        raw_path, offset, limit = content.split("\n", 1)[0].strip(), 0, 0
+        raw_path, offset, limit, line_numbers = content.split("\n", 1)[0].strip(), 0, 0, False
         _stripped = content.strip()
         if _stripped.startswith("{"):
             try:
@@ -141,6 +177,7 @@ class ReadFileTool:
                 raw_path = str(_a.get("path", "")).strip()
                 offset = int(_a.get("offset") or 0)
                 limit = int(_a.get("limit") or 0)
+                line_numbers = bool(_a.get("line_numbers", False))
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
         try:
@@ -151,7 +188,7 @@ class ReadFileTool:
             def _read():
                 if offset > 0 or limit > 0:
                     start = max(offset, 1)
-                    out, n, budget = [], 0, MAX_READ_CHARS
+                    out, n, budget, trunc = [], 0, MAX_READ_CHARS, False
                     with open(path, "r", encoding="utf-8", errors="replace") as f:
                         for i, line in enumerate(f, 1):
                             if i < start:
@@ -162,12 +199,16 @@ class ReadFileTool:
                             n += 1
                             budget -= len(line)
                             if budget <= 0:
-                                out.append(f"\n... [truncated at {MAX_READ_CHARS} chars]")
+                                trunc = True
                                 break
-                    return "".join(out)
+                    return out, start, trunc
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    return f.read(MAX_READ_CHARS + 1)
-            data = await asyncio.to_thread(_read)
+                    data = f.read(MAX_READ_CHARS + 1)
+                trunc = len(data) > MAX_READ_CHARS
+                if trunc:
+                    data = data[:MAX_READ_CHARS]
+                return data.splitlines(keepends=True), 1, trunc
+            lines, start, truncated = await asyncio.to_thread(_read)
         except FileNotFoundError:
             return {"error": f"read_file: {path}: not found", "exit_code": 1}
         except PermissionError:
@@ -176,8 +217,12 @@ class ReadFileTool:
             return {"error": f"read_file: {path}: is a directory (use ls)", "exit_code": 1}
         except OSError as e:
             return {"error": f"read_file: {path}: {e}", "exit_code": 1}
-        if not (offset > 0 or limit > 0) and len(data) > MAX_READ_CHARS:
-            data = data[:MAX_READ_CHARS] + f"\n... [truncated at {MAX_READ_CHARS} chars]"
+        if line_numbers:
+            data = "".join(f"{i}\t{ln}" for i, ln in enumerate(lines, start))
+        else:
+            data = "".join(lines)
+        if truncated:
+            data += f"\n... [truncated at {MAX_READ_CHARS} chars]"
         return {"output": data, "exit_code": 0}
 
 class WriteFileTool:
