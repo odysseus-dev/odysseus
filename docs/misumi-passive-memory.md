@@ -48,6 +48,12 @@ Memory is local, append-only, and separate from the household repository. Househ
 
 The only autonomy addition is the disabled-by-default, manual-only `memory-digest` pilot. It verifies that the household snapshot is unchanged before writing a local digest.
 
+## Plan consultation
+
+A successful Aoteru model response may synchronously consult at most two relevant personas within the same user-initiated request. The route records one local capsule with source `consultation`, then creates one linked handoff for each persona that returned a genuine contribution. A failed or timed-out persona is logged and receives no fabricated contribution or handoff. Handoff actions use the contribution's first sentence, capped at 200 characters; forbidden outbound-action wording is replaced by the neutral local action `review the plan and contribute next steps`.
+
+Consultation remains Phase A local coordination. It creates no background loop, grants no execution authority, performs no external action, and never writes to the household repository. `MISUMI_CONSULT=false` disables the flow; the default is enabled.
+
 ## Completion standard
 
 | Question | Answer surface |

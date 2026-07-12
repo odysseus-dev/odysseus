@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.persona_capabilities import capability_summary
+from src.persona_capabilities import capability_summary, consult_edges, routing_intents
 
 
 PERSONAS = """\
@@ -75,3 +75,21 @@ def test_aoteru_summary_includes_routing_and_one_passive_memory_line(tmp_path, m
     assert "never writes to the household" in summary
     assert sum("Passive memory:" in line for line in summary.splitlines()) == 1
     assert len(summary.splitlines()) <= 13
+
+
+def test_consult_edges_and_routing_intents_use_cached_persona_data(tmp_path, monkeypatch):
+    _root(tmp_path, monkeypatch)
+
+    assert consult_edges("aoteru") == ["kurisu"]
+    assert routing_intents("sanji") == ["meal-planning", "pantry"]
+
+
+def test_consult_edges_returns_none_when_missing_or_malformed(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch, "personas:\n  aoteru:\n    role: head\n")
+    assert consult_edges("aoteru") is None
+
+    (root / "config" / "personas.yaml").write_text(
+        "personas:\n  aoteru:\n    role: head\n    consults: {bad: value}\n",
+        encoding="utf-8",
+    )
+    assert consult_edges("aoteru") is None
