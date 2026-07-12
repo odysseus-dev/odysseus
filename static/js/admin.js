@@ -1093,6 +1093,11 @@ function initEndpointForm() {
       if (epType) fd.append('model_type', epType.value);
       if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
       else fd.append('skip_probe', 'false');
+      // Native function calling support
+      const supportsTools = el('adm-epSupportsTools');
+      if (supportsTools) {
+        fd.append('supports_tools', supportsTools.checked ? 'true' : 'false');
+      }
       const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
       const d = await res.json();
       if (res.ok) {

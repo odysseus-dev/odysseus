@@ -3116,6 +3116,10 @@ async def stream_agent_loop(
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
     _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
+    
+    # Auto-detect native function calling support based on first round response
+    # If the model returns tool calls in text (not native function calls), it doesn't support native function calling
+    _auto_detected_native = None  # None = unknown, True = supports, False = doesn't support
     messages, mcp_schemas = _build_system_prompt(
         messages, model, _prompt_active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
@@ -3678,6 +3682,18 @@ async def stream_agent_loop(
             is_api_model=(_is_api_model and not guide_only),
             allow_fenced_for_api=_ody_doc_finetune_mode,
         )
+        
+        # Auto-detect native function calling support based on first round response
+        # If we haven't detected yet and the model returned tool blocks from fenced code
+        # (not native function calls), it likely doesn't support native function calling
+        if _auto_detected_native is None and round_num == 1:
+            if tool_blocks and not used_native:
+                _auto_detected_native = False
+                logger.info(f"[agent] Auto-detected: model does NOT support native function calling (fenced blocks used)")
+            elif native_tool_calls:
+                _auto_detected_native = True
+                logger.info(f"[agent] Auto-detected: model supports native function calling")
+        
         if _ody_doc_stream_create_mode and tool_blocks:
             create_idx = next(
                 (idx for idx, block in enumerate(tool_blocks) if block.tool_type == "create_document"),
