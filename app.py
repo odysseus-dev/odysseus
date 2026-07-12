@@ -857,8 +857,11 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
-from routes.factory_routes import setup_factory_routes
+from routes.factory_routes import setup_factory_routes, factory_preview_middleware
 app.include_router(setup_factory_routes())
+# Factory preview middleware runs OUTSIDE SecurityHeadersMiddleware so it can
+# override CSP/X-Frame-Options for preview paths without modifying core code.
+app.middleware("http")(factory_preview_middleware)
 
 # Factory creates its own tables (decoupled from core/database.py's create_all)
 from services.factory_models import init_factory_tables

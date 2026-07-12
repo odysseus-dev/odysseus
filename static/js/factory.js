@@ -893,9 +893,10 @@ function _showProjectPreview(files, htmlFiles, activeFile) {
       if (ov) ov.remove();
       return;
     }
-    // If single file, open directly in new tab
+    // If single file, open directly in new tab with filename so relative URLs
+    // (e.g. <script src="js/main.js">) resolve against the token's directory.
     if (!showTabs && htmlFiles.length === 1) {
-      window.open(baseUrl, '_blank');
+      window.open(`${baseUrl}/${activeFile}`, '_blank');
       document.getElementById('factory-project-preview')?.remove();
       return;
     }

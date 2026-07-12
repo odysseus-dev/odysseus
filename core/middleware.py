@@ -73,6 +73,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
+
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
@@ -104,24 +105,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'self'"
             )
         else:
-            if "X-Frame-Options" not in response.headers:
-                response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-Frame-Options"] = "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
             # Migrating to nonce-only requires templating the HTML files +
             # auditing every JS-set style attribute. Since inline styles
             # don't execute script, the residual risk is visual-only.
-            if "Content-Security-Policy" not in response.headers:
-                response.headers["Content-Security-Policy"] = (
-                    "default-src 'self'; "
-                    f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
-                    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                    "font-src 'self' https://cdn.jsdelivr.net; "
-                    "img-src 'self' data: blob: https:; "
-                    "media-src 'self' blob:; "
-                    "connect-src 'self'; "
-                    "frame-src 'self'; "
-                    "frame-ancestors 'none'"
-                )
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self'; "
+                "frame-src 'self'; "
+                "frame-ancestors 'none'"
+            )
         return response

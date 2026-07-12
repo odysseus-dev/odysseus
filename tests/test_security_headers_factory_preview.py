@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.testclient import TestClient
 
 from core.middleware import SecurityHeadersMiddleware
+from routes.factory_routes import factory_preview_middleware
 
 # Shared CSP constant matching the one in routes/factory_routes.py
 _FACTORY_PREVIEW_CSP = (
@@ -31,17 +32,19 @@ _FACTORY_PREVIEW_CSP = (
 
 
 def _client():
-    """Build a minimal test app with SecurityHeadersMiddleware and a stubbed
-    factory preview route.
+    """Build a minimal test app with SecurityHeadersMiddleware + outer
+    factory_preview_middleware and a stubbed factory preview route.
 
-    We stub the route directly rather than mounting the real factory router +
-    database, so these tests stay fast and focused on header correctness. The
-    stubs return minimal HTML that exercises the CSP (inline <script> content,
-    Google Fonts <link>). CSP is set per-route (like the real handler) since
-    the middleware no longer applies the factory CSP.
+    The middleware stack matches app.py: SecurityHeadersMiddleware is inner,
+    factory_preview_middleware is outer so it runs last in the response phase
+    and can override headers for preview paths. We stub the route directly
+    rather than mounting the real factory router + database, so these tests
+    stay fast and focused on header correctness. The stubs return minimal HTML
+    that exercises the CSP (inline <script> content, Google Fonts <link>).
     """
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware)
+    app.middleware("http")(factory_preview_middleware)
 
     @app.get("/api/factory/nodes/{node_id}/preview")
     async def preview_node(node_id: int):
@@ -54,8 +57,6 @@ def _client():
         )
         from fastapi.responses import HTMLResponse
         response = HTMLResponse(content=html, media_type="text/html")
-        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
-        response.headers["X-Frame-Options"] = "SAMEORIGIN"
         return response
 
     @app.get("/api/factory/nodes/{node_id}")
@@ -167,12 +168,13 @@ _test_preview_main: dict = {}
 
 
 def _client_with_preview_cache():
-    """Test client with SecurityHeadersMiddleware + stubs for the project-delivery
-    preview token-cache endpoints (POST /api/factory/preview, GET /api/factory/preview/{token}).
-    CSP headers are set per-route to match the real handler behaviour.
+    """Test client with SecurityHeadersMiddleware + outer factory_preview_middleware
+    + stubs for the project-delivery preview token-cache endpoints (POST
+    /api/factory/preview, GET /api/factory/preview/{token}).
     """
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware)
+    app.middleware("http")(factory_preview_middleware)
 
     @app.post("/api/factory/preview")
     async def post_preview(request: Request):
@@ -199,8 +201,6 @@ def _client_with_preview_cache():
         if not html:
             return JSONResponse(status_code=404, content={"detail": "No preview content"})
         response = HTMLResponse(content=html, media_type="text/html")
-        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
-        response.headers["X-Frame-Options"] = "SAMEORIGIN"
         return response
 
     @app.get("/api/factory/preview/{token}/{file_path:path}")
@@ -218,8 +218,6 @@ def _client_with_preview_cache():
             return JSONResponse(status_code=404, content={"detail": f"File not found: {file_path}"})
         mimetype = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
         response = Response(content=content, media_type=mimetype)
-        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
-        response.headers["X-Frame-Options"] = "SAMEORIGIN"
         return response
 
     @app.get("/api/factory/nodes/{node_id}")

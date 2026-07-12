@@ -101,6 +101,25 @@ _FACTORY_PREVIEW_CSP = (
     "frame-ancestors 'self'"
 )
 
+async def factory_preview_middleware(request: Request, call_next):
+    """Override CSP/X-Frame-Options for factory preview endpoints.
+
+    Registered as an OUTER middleware in app.py (after SecurityHeadersMiddleware)
+    so it runs last in the response phase and can overwrite the core middleware's
+    strict defaults for factory-specific paths. This keeps core/middleware.py
+    pristine — no factory code in core files.
+    """
+    response = await call_next(request)
+    path = request.url.path
+    is_preview = (
+        (path.startswith("/api/factory/nodes/") and path.endswith("/preview"))
+        or path.startswith("/api/factory/preview/")
+    )
+    if is_preview:
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+    return response
+
 
 def setup_factory_routes() -> APIRouter:
     router = APIRouter(prefix="/api/factory", tags=["factory"])

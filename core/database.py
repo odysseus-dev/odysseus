@@ -1818,11 +1818,6 @@ def init_db():
     Should be called when starting the application.
     """
     _migrate_model_endpoints()
-    # NOTE: Factory table migrations (_migrate_factory_tables_schema and
-    # _migrate_factory_nodes_filename) have been removed — Factory creates
-    # its own tables via init_factory_tables(engine) during app startup
-    # (see services/factory_models.py). The migrations were one-time schema
-    # fixes for legacy tables and are no longer needed.
     Base.metadata.create_all(bind=engine)
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
@@ -2404,6 +2399,7 @@ def archive_session(session_id: str):
             return True
     return False
 
-
 # Initialize the database by creating all tables
+
+
 init_db()
