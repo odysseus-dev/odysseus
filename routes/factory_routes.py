@@ -530,8 +530,14 @@ def setup_factory_routes() -> APIRouter:
         # Vite-specific: set the port via flag if vite is the runner
         is_vite = "vite" in (pkg.get("devDependencies", {}) or {}) or "vite" in (pkg.get("dependencies", {}) or {})
 
+        # Base path for the proxy — all asset URLs must go through the proxy
+        # to avoid hitting Odysseus's root (which returns JSON 404s).
+        proxy_base = f"/api/factory/projects/{project_id}/proxy/"
+
         if is_vite:
-            cmd = f"npx vite --port {port} --host 0.0.0.0"
+            # Vite --base makes ALL generated URLs include the prefix:
+            # <script src="/@vite/client"> → <script src="/api/factory/projects/{id}/proxy/@vite/client">
+            cmd = f"npx vite --port {port} --host 0.0.0.0 --base {proxy_base}"
         else:
             cmd = f"npm run {run_script}"
 
@@ -555,7 +561,7 @@ def setup_factory_routes() -> APIRouter:
         reachable = False
         for attempt in range(10):
             try:
-                async with _httpx.AsyncClient() as client:
+                async with _httpx.AsyncClient(follow_redirects=True) as client:
                     resp = await client.get(f"http://localhost:{port}/", timeout=2)
                     if resp.status_code < 500:
                         reachable = True
@@ -620,14 +626,33 @@ def setup_factory_routes() -> APIRouter:
         query = dict(request.query_params)
         target = f"http://localhost:{port}/{path}"
         try:
-            async with _httpx.AsyncClient() as client:
-                resp = await client.get(target, params=query, timeout=10, follow_redirects=False)
-                # Forward the response — strip hop-by-hop headers
-                excluded = {"transfer-encoding", "connection", "content-encoding"}
+            async with _httpx.AsyncClient(follow_redirects=False) as client:
+                resp = await client.get(target, params=query, timeout=10)
+                excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
                 headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+                content_type = resp.headers.get("content-type", "")
+
+                # For HTML responses: rewrite absolute paths to go through the proxy.
+                # Vite handles this via --base, but CRA/Next.js/other frameworks
+                # inject absolute paths (/static/js/main.js) that bypass the proxy.
+                content = resp.content
+                if "text/html" in content_type:
+                    proxy_prefix = f"/api/factory/projects/{project_id}/proxy"
+                    text = content.decode("utf-8", errors="replace")
+                    # Rewrite src="/..." and href="/..." to include the proxy prefix.
+                    # But DON'T rewrite paths that already start with the proxy prefix,
+                    # or are protocol-relative (//) or absolute URLs (http://, https://).
+                    import re as _re
+                    text = _re.sub(
+                        r'((?:src|href)\s*=\s*["\'])/(?!/|api/factory)',
+                        rf'\1{proxy_prefix}/',
+                        text
+                    )
+                    content = text.encode("utf-8")
+
                 from fastapi.responses import Response
-                return Response(content=resp.content, status_code=resp.status_code,
-                                headers=headers, media_type=resp.headers.get("content-type"))
+                return Response(content=content, status_code=resp.status_code,
+                                headers=headers, media_type=content_type)
         except _httpx.ConnectError:
             raise HTTPException(502, "Dev server not responding")
         except Exception as e:
