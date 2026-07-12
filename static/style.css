@@ -1858,6 +1858,13 @@ body.bg-pattern-sparkles {
     }
     .chat-history > * {
       flex: 0 0 auto;
+      /* Skip rendering/compositing for off-screen messages. This is the
+         single biggest GPU-saver on long chat sessions — without it, every
+         message (including code blocks, markdown, syntax highlighting)
+         stays in the compositor even when scrolled far off-screen, driving
+         45-95% GPU usage on laptops like MacBook M1. (#4911) */
+      content-visibility: auto;
+      contain-intrinsic-size: auto 120px;
     }
     /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
        a header was clickable (the Newest sort on the Model column was invisible).
