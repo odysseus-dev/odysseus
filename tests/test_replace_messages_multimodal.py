@@ -1,14 +1,9 @@
-"""replace_messages must JSON-serialize multimodal (list) content.
+"""replace_messages must persist readable, path-free multimodal history.
 
-A chat with an image/audio attachment carries list content. When such a
-chat is compacted, the manual-compaction path calls replace_messages with
-the retained messages. replace_messages wrote message.content straight into
-the Text column, so SQLAlchemy bound the list\'s single-quoted repr. On
-reload _parse_msg_content only de-serializes a string that contains the
-double-quoted "type", so the repr failed the check and the message came
-back as a corrupted string blob - the attachment was destroyed. The
-sibling _persist_message json.dumps-es list content; replace_messages did
-not.
+Live model input may contain provider-specific media blocks and inline data
+URLs. Compaction uses replace_messages for the retained transcript, which must
+store readable text plus stable structured attachment references without
+copying raw base64 payloads into ChatMessage.content.
 """
 import uuid
 
@@ -27,6 +22,7 @@ def manager(monkeypatch):
     monkeypatch.setattr(sm, "SessionLocal", _TS)
     mgr = sm.SessionManager.__new__(sm.SessionManager)
     mgr.sessions = {}
+    mgr.upload_handler = None
     return mgr
 
 
@@ -41,33 +37,71 @@ def _make_session(sid, owner="alice"):
         db.close()
 
 
-def test_multimodal_content_round_trips_through_replace_messages(manager):
+def test_multimodal_content_persists_text_and_attachment_ref_without_payload(manager):
     sid = "sess-" + uuid.uuid4().hex[:8]
     _make_session(sid)
 
+    upload_id = "a" * 32 + ".png"
     multimodal = [
         {"type": "text", "text": "what is this?"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
     ]
-    msgs = [ChatMessage(role="user", content=multimodal)]
+    msgs = [ChatMessage(
+        role="user",
+        content=multimodal,
+        metadata={
+            "attachments": [{
+                "id": upload_id,
+                "name": "diagram.png",
+                "mime": "image/png",
+                "size": 4,
+                "checksum_sha256": "sha256-digest",
+            }]
+        },
+    )]
     assert manager.replace_messages(sid, msgs) is True
+
+    expected = (
+        "what is this?\n"
+        "[1 inline media payload omitted]\n"
+        f"[Attachment: diagram.png | id={upload_id} | mime=image/png | "
+        "size=4 bytes | sha256=sha256-digest]"
+    )
+
+    db = _TS()
+    try:
+        stored = db.query(cdb.ChatMessage).filter_by(session_id=sid).one()
+        assert stored.content == expected
+        assert "data:image/png;base64,AAAA" not in stored.content
+        assert "base64" not in stored.content
+        assert "AAAA" not in stored.content
+    finally:
+        db.close()
 
     # Drop the in-memory cache so the next read hydrates from the DB.
     manager.sessions.clear()
     reloaded = manager.get_session(sid)
     assert len(reloaded.history) == 1
-    # Content must come back as the original list, not a repr string blob.
-    assert reloaded.history[0].content == multimodal
+    persisted = reloaded.history[0].content
+    assert isinstance(persisted, str)
+    assert persisted == expected
+    assert reloaded.history[0].metadata["attachments"][0]["id"] == upload_id
+    assert (
+        reloaded.history[0].metadata["attachments"][0]["checksum_sha256"]
+        == "sha256-digest"
+    )
 
 
-def test_plain_string_content_still_round_trips(manager):
+def test_jsonlike_plain_string_content_still_round_trips(manager):
     sid = "sess-" + uuid.uuid4().hex[:8]
     _make_session(sid)
-    msgs = [ChatMessage(role="user", content="just text")]
+    text = '[{"type": "object", "name": "foo"}]'
+    msgs = [ChatMessage(role="user", content=text)]
     assert manager.replace_messages(sid, msgs) is True
     manager.sessions.clear()
     reloaded = manager.get_session(sid)
-    assert reloaded.history[0].content == "just text"
+    assert isinstance(reloaded.history[0].content, str)
+    assert reloaded.history[0].content == text
 
 
 def test_replace_messages_keeps_history_alias_for_context_messages(manager):

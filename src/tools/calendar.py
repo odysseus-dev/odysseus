@@ -10,6 +10,8 @@ import re
 from typing import Dict, Optional
 
 from src.tools._common import _parse_tool_args
+from src.tool_utils import get_upload_handler
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
 
@@ -408,11 +410,25 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             importance = args.get("importance") or "normal"
             minutes_before = _reminder_minutes(args)
 
+            event_description = _event_description(args, minutes_before)
+            event_location = args.get("location", "") or ""
+            missing_id = reserve_upload_references(
+                get_upload_handler(),
+                owner,
+                event_description,
+                event_location,
+            )
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
+
             uid = str(_uuid.uuid4())
             ev = CalendarEvent(
                 uid=uid, calendar_id=cal.id, summary=summary,
-                description=_event_description(args, minutes_before),
-                location=args.get("location", "") or "",
+                description=event_description,
+                location=event_location,
                 dtstart=dtstart, dtend=dtend, all_day=all_day,
                 is_utc=dtstart_is_utc and not all_day,
                 rrule=args.get("rrule", "") or "",
@@ -465,6 +481,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
+            missing_id = reserve_upload_references(
+                get_upload_handler(),
+                owner,
+                args.get("description"),
+                args.get("location"),
+            )
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
             if args.get("summary") is not None:
                 ev.summary = args["summary"]
             if args.get("description") is not None:
