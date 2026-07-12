@@ -32,6 +32,39 @@ from typing import Awaitable, Callable, List
 
 logger = logging.getLogger(__name__)
 
+
+def strip_code_fences(text: str) -> str:
+    """Strip markdown code fences wrapping the entire output.
+
+    Models often wrap file content in ```language ... ``` despite instructions
+    not to. This removes a single outer fence if present, preserving inner
+    content (e.g. embedded code blocks inside a markdown file).
+    """
+    if not text:
+        return text
+    s = text.strip()
+    # Match opening fence: ```lang\n ... ``` at the very start and end
+    # Only strip if the fence wraps the ENTIRE output (not embedded blocks).
+    if not s.startswith("```"):
+        return text
+    lines = s.split("\n")
+    if len(lines) < 2:
+        return text
+    # First line is ```lang — strip it
+    # Last non-empty line must be ``` — strip it
+    first = lines[0].strip()
+    if not first.startswith("```"):
+        return text
+    # Find the last ``` line
+    last_idx = len(lines) - 1
+    while last_idx > 0 and not lines[last_idx].strip():
+        last_idx -= 1
+    if lines[last_idx].strip() != "```":
+        return text  # no closing fence at the end — don't strip
+    inner = "\n".join(lines[1:last_idx])
+    return inner
+
+
 # Max auto-continue rounds after the initial produce call.
 MAX_CONTINUATIONS = 8
 
@@ -393,6 +426,12 @@ async def produce_with_continuation(
             {"role": "assistant", "content": chunk or ""},
             {"role": "user", "content": prompt},
         ]
+        # Cap conversation size: after round 2, trim intermediate rounds to
+        # prevent context window exhaustion (each round's accumulated output
+        # eats into the available output token budget for the next round).
+        # Keep: system + original user + last assistant chunk + current continuation prompt.
+        if rounds >= 2 and len(conversation) > 5:
+            conversation = conversation[:2] + conversation[-2:]
         try:
             chunk = await llm_call(conversation)
         except Exception as e:

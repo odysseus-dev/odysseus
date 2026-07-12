@@ -33,7 +33,7 @@ from services.factory_service import FactoryService
 logger = logging.getLogger(__name__)
 _service = FactoryService()
 
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 4
 MAX_AUTO_ITERATIONS = 5
 
 _running: Dict[int, asyncio.Task] = {}
@@ -78,6 +78,9 @@ AGENTS: Dict[str, Dict[str, str]] = {
             "}\n\n"
             "Rules:\n"
             "- 3-10 tasks, ordered so dependencies come first.\n"
+            "- SIZE BUDGET: Each task must produce a file that fits in one response (~300 lines max). "
+            "If a feature needs more, SPLIT IT into multiple files with clear dependencies. "
+            "Never put 5+ features in one file — split them into separate files (e.g. nav.js, lightbox.js, forms.js).\n"
             '- "dependencies" uses 0-based indices into the tasks array.\n'
             '- "filename" is the actual file name the producer should create. '
             "Choose names a developer would naturally use — other tasks may reference this file by name.\n"
@@ -833,7 +836,15 @@ async def _produce(agent_key: str, task: Dict, feedback: str,
         if dep_code:
             prompt += f"\n\nExisting dependency code:\n{dep_code}\n"
 
-    prompt += "\nComplete this task now. Write the COMPLETE file content — do NOT truncate or use placeholders or ellipsis."
+    prompt += (
+        "\n\n=== OUTPUT FORMAT — CRITICAL ===\n"
+        "Output ONLY the raw file content. No markdown fences (no ```), no explanations, "
+        "no planning text, no commentary, no 'Here is the file:' preamble. "
+        "Start directly with the first line of the file and end with the last line. "
+        "If this is code, the first character must be an import, a comment, or code — never prose.\n"
+        "Write the COMPLETE file content — do NOT truncate or use placeholders or ellipsis. "
+        "If the file is long, prioritize completing all functions over adding extensive comments."
+    )
 
     if feedback:
         truncation_hint = ""
@@ -858,13 +869,14 @@ async def _produce(agent_key: str, task: Dict, feedback: str,
             max_tokens=max_tokens, agent_key=agent_key,
         )
 
-    from services.factory_continuation import produce_with_continuation
-    return await produce_with_continuation(
+    from services.factory_continuation import produce_with_continuation, strip_code_fences
+    output = await produce_with_continuation(
         system_prompt=sys_prompt,
         user_prompt=prompt,
         llm_call=_llm_adapter,
         fname=fname or "",
     )
+    return strip_code_fences(output)
 
 
 async def _review(agent_key: str, task: Dict, output: str, owner: str) -> Dict:
@@ -897,11 +909,12 @@ TASK_TIMEOUT = 600  # total budget per produce call (incl. continuation rounds)
 _PRODUCE_CALL_TIMEOUT = 90  # per-LLM-call read timeout inside _produce
 def _get_produce_max_tokens() -> int:
     """Per-call token cap for producer agent calls.
-    
+
     Lower values mean faster per-call response times (good for continuation),
-    higher values mean fewer continuation rounds needed. 8192 is a sensible
-    default that balances speed vs completeness for deepseek-v4-pro.
-    
+    higher values mean fewer continuation rounds needed. 16384 is the default
+    that provides a generous output budget for complete files while still
+    fitting inside most model context windows.
+
     Override via the `factory_produce_max_tokens` setting.
     """
     try:
@@ -911,7 +924,7 @@ def _get_produce_max_tokens() -> int:
             return max(1024, int(v))
     except Exception:
         pass
-    return 8192
+    return 16384
 
 async def _process_task(project_id: int, task: Dict, owner: str,
                         project_desc: str, arch: str) -> None:
@@ -947,6 +960,24 @@ async def _process_task(project_id: int, task: Dict, owner: str,
             logger.error(f"Factory: produce failed for task {task_id}: {e}")
             _service.fail_task(task_id, error=f"Produce error: {e}")
             return
+
+        # Pre-review truncation guard: if the output STILL looks truncated after
+        # the continuation module exhausted its rounds, don't waste a review round
+        # (the reviewer will reject truncated output, burning all MAX_ATTEMPTS).
+        # Log a warning and proceed anyway — the reviewer may still find it useful.
+        from services.factory_continuation import looks_truncated
+        fname = task.get("filename") or ""
+        if looks_truncated(output, fname):
+            logger.warning(
+                f"Factory: task {task_id} output still truncated after continuation "
+                f"(len={len(output)}, file={fname}). Proceeding to review — "
+                f"reviewer may reject."
+            )
+            _service.set_task_progress(
+                task_id,
+                f"Output may be incomplete ({len(output)} chars) — under review",
+                attempt=attempt, max_attempts=MAX_ATTEMPTS,
+            )
 
         _service.set_task_progress(task_id, f"{reviewer_name} reviewing",
                                    attempt=attempt, max_attempts=MAX_ATTEMPTS)
