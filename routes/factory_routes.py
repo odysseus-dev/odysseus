@@ -326,7 +326,6 @@ def setup_factory_routes() -> APIRouter:
         Extracts completed files to data/factory/workspace/{id}/ on each call
         (ensures latest versions), then runs the command with cwd set there.
         """
-        import subprocess
         import os as _os
         from src.constants import DATA_DIR
 
@@ -368,25 +367,34 @@ def setup_factory_routes() -> APIRouter:
             except Exception:
                 pass  # skip unwritable files
 
-        # Execute the command
-        timeout = min(int(body.get("timeout", 30)), 60)
+        # Execute the command — async so we don't block the event loop
+        import asyncio as _asyncio
+        timeout = min(int(body.get("timeout", 60)), 300)
         try:
-            result = subprocess.run(
-                cmd, shell=True, cwd=workspace,
-                capture_output=True, text=True,
-                timeout=timeout,
+            proc = await _asyncio.create_subprocess_shell(
+                cmd, cwd=workspace,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
             )
+            try:
+                stdout_b, stderr_b = await _asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+            except _asyncio.TimeoutExpired:
+                proc.kill()
+                await proc.wait()
+                return {
+                    "stdout": "",
+                    "stderr": f"Command timed out after {timeout}s",
+                    "exit_code": -1,
+                    "workspace": workspace,
+                }
+            stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
+            stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
             return {
-                "stdout": result.stdout[-20000:] if len(result.stdout) > 20000 else result.stdout,
-                "stderr": result.stderr[-20000:] if len(result.stderr) > 20000 else result.stderr,
-                "exit_code": result.returncode,
-                "workspace": workspace,
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "stdout": "",
-                "stderr": f"Command timed out after {timeout}s",
-                "exit_code": -1,
+                "stdout": stdout[-20000:] if len(stdout) > 20000 else stdout,
+                "stderr": stderr[-20000:] if len(stderr) > 20000 else stderr,
+                "exit_code": proc.returncode,
                 "workspace": workspace,
             }
         except Exception as e:

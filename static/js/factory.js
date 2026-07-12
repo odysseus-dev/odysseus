@@ -687,7 +687,11 @@ function _renderTerminalView(container, projectId) {
       const res = await fetch(`${_API}/projects/${projectId}/exec`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd }),
+        body: JSON.stringify({
+          command: cmd,
+          // Long-running commands get 5 min, everything else 60s
+          timeout: /^(npm|yarn|pnpm|pip|pip3|cargo|go|composer|bundle|gem)\s+(install|update|build)/i.test(cmd.trim()) ? 300 : 60,
+        }),
       });
       const result = await res.json();
       loadingLine.remove();
