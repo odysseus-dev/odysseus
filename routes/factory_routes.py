@@ -121,7 +121,7 @@ async def factory_preview_middleware(request: Request, call_next):
     is_preview = (
         (path.startswith("/api/factory/nodes/") and path.endswith("/preview"))
         or path.startswith("/api/factory/preview/")
-        or (path.startswith("/api/factory/projects/") and "/proxy/" in path)
+        or (path.startswith("/api/factory/projects/") and ("/proxy/" in path or "/static/" in path))
     )
     if is_preview:
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
@@ -525,6 +525,57 @@ def setup_factory_routes() -> APIRouter:
             except Exception as e:
                 raise HTTPException(500, f"npm install failed: {e}")
 
+        # Try building the project first — static output is more reliable
+        # than proxying a dev server (no base-path/HMR/MIME issues).
+        build_scripts = pkg.get("scripts", {})
+        build_cmd = None
+        if "build" in build_scripts:
+            build_cmd = "npm run build"
+        elif "preview" in build_scripts:
+            # Some projects only have preview (e.g. Vite with build step)
+            build_cmd = "npm run build"  # vite preview needs build first
+
+        if build_cmd:
+            try:
+                build_proc = await _asyncio.create_subprocess_shell(
+                    build_cmd,
+                    cwd=workspace,
+                    stdout=_asyncio.subprocess.PIPE,
+                    stderr=_asyncio.subprocess.STDOUT,
+                )
+                try:
+                    stdout_b, _ = await _asyncio.wait_for(build_proc.communicate(), timeout=120)
+                    build_log = stdout_b.decode("utf-8", errors="replace")[-3000:]
+                except _asyncio.TimeoutExpired:
+                    build_proc.kill()
+                    await build_proc.wait()
+                    build_log = "Build timed out after 120s"
+
+                if build_proc.returncode == 0:
+                    # Build succeeded — check for output directory
+                    dist_dir = None
+                    for candidate in ("dist", "build", "out"):
+                        candidate_path = _os.path.join(workspace, candidate)
+                        if _os.path.isdir(candidate_path):
+                            dist_dir = candidate_path
+                            break
+
+                    if dist_dir:
+                        logger.info(f"Factory: project {project_id} built successfully → {dist_dir}")
+                        return {
+                            "url": f"/api/factory/projects/{project_id}/static/",
+                            "mode": "static",
+                            "build_log": build_log[-500:] if build_log else None,
+                            "status": "running",
+                        }
+                    else:
+                        logger.warning(f"Factory: build succeeded but no dist/build/out dir found")
+                else:
+                    logger.warning(f"Factory: build failed for project {project_id} (exit {build_proc.returncode})")
+            except Exception as e:
+                logger.warning(f"Factory: build attempt failed: {e}")
+
+        # Fall back to dev server if build failed or wasn't possible
         # Start the dev server as a background process
         env = dict(_os.environ)
         env["PORT"] = str(port)
@@ -705,6 +756,66 @@ def setup_factory_routes() -> APIRouter:
     async def proxy_project_root(project_id: int, request: Request):
         """Proxy root path to the dev server."""
         return await proxy_project(project_id, "", request)
+
+    @router.get("/projects/{project_id}/static/{path:path}")
+    async def serve_static_file(project_id: int, path: str):
+        """Serve a file from the project's build output (dist/ or build/)."""
+        import mimetypes as _mt
+        from fastapi.responses import FileResponse as _FR
+        import os as _os2
+        from src.constants import DATA_DIR as _DD
+
+        workspace = _os2.path.join(_DD, "factory", "workspace", str(project_id))
+
+        # Find the build output directory
+        dist_dir = None
+        for candidate in ("dist", "build", "out"):
+            candidate_path = _os2.path.join(workspace, candidate)
+            if _os2.path.isdir(candidate_path):
+                dist_dir = candidate_path
+                break
+
+        if not dist_dir:
+            raise HTTPException(404, "No build output found — run the server first")
+
+        # Resolve the requested path within the dist directory
+        if not path or path == "/":
+            path = "index.html"
+
+        file_path = _os2.path.normpath(_os2.path.join(dist_dir, path))
+
+        # Path traversal protection
+        if not file_path.startswith(dist_dir + _os2.sep) and file_path != dist_dir:
+            raise HTTPException(403, "Access denied")
+
+        # SPA fallback: if the file doesn't exist, serve index.html
+        # (handles client-side routes like /about, /dashboard, etc.)
+        if not _os2.path.exists(file_path) or _os2.path.isdir(file_path):
+            index_path = _os2.path.join(dist_dir, "index.html")
+            if _os2.path.exists(index_path):
+                file_path = index_path
+            else:
+                raise HTTPException(404, f"File not found: {path}")
+
+        # Determine MIME type
+        mimetype, _ = _mt.guess_type(file_path)
+        if not mimetype:
+            low = file_path.lower()
+            if low.endswith(('.js', '.mjs')):
+                mimetype = "text/javascript"
+            elif low.endswith(('.jsx', '.tsx')):
+                mimetype = "text/javascript"
+            elif low.endswith('.css'):
+                mimetype = "text/css"
+            else:
+                mimetype = "application/octet-stream"
+
+        return _FR(file_path, media_type=mimetype)
+
+    @router.get("/projects/{project_id}/static/")
+    async def serve_static_root(project_id: int):
+        """Serve index.html from the build output."""
+        return await serve_static_file(project_id, "index.html")
 
     @router.put("/projects/{project_id}")
     async def update_project(project_id: int, request: Request):
