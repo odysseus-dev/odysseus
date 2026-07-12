@@ -309,7 +309,8 @@ _DOMAIN_RULES = {
 - Several changes to one file → ONE `edit_file` call with an `edits` array (applied in order, all-or-nothing), not a burst of single edits.
 - If an edit fails with "not found"/"not unique", re-read that region and retry with the exact current text — do not guess or paraphrase.
 - Match the existing style of the file (naming, indentation, idioms). Do not reformat code you are not changing.
-- After changing code, VERIFY it before declaring done: run the relevant test, `python -m py_compile`, `node --check`, or execute the script and check its output. An unverified edit is not a finished coding task.""",
+- After changing code, VERIFY it before declaring done: run the relevant test, `python -m py_compile`, `node --check`, or execute the script and check its output. An unverified edit is not a finished coding task.
+- Multi-file or multi-step coding task → open your reply with a short numbered plan (3-6 steps), then execute the steps in order, verifying each. If you discover mid-task that the plan must change, say so and show the revised steps instead of drifting silently.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
