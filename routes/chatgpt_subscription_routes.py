@@ -82,7 +82,9 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         ep.api_key = None
         ep.provider_auth_id = auth.id
         ep.is_enabled = True
-        ep.supports_tools = False
+        # The provider adapter supports Responses function tools, streamed
+        # function calls, and structural function_call_output replay.
+        ep.supports_tools = True
         ep.model_type = "llm"
         ep.endpoint_kind = "api"
         ep.model_refresh_mode = "manual"

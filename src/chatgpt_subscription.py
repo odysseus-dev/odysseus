@@ -299,17 +299,386 @@ def to_http_exception(exc: Exception) -> HTTPException:
     return HTTPException(502, str(exc))
 
 
-def build_responses_input(messages: list[dict]) -> list[dict]:
+def _content_as_text(content: Any) -> str:
+    # Flatten Odysseus message content to text accepted by Responses.
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                if part is not None:
+                    parts.append(str(part))
+                continue
+            value = part.get("text")
+            if value is None:
+                value = part.get("content")
+            if value is not None:
+                parts.append(str(value))
+        return "\n".join(parts)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(content)
+
+
+def _arguments_as_json(arguments: Any) -> str:
+    # Return the JSON-string form required by Responses function calls.
+    if isinstance(arguments, str):
+        return arguments if arguments.strip() else "{}"
+    if arguments is None:
+        return "{}"
+    try:
+        return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def _tool_output_as_text(content: Any) -> str:
+    # Responses function_call_output.output must be a string.
+    return _content_as_text(content)
+
+
+def build_responses_tools(tools: Optional[list[dict]]) -> list[dict]:
+    # Convert Chat Completions function schemas to Responses schemas.
+    converted: list[dict] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            # Accept an already-flattened Responses function schema too.
+            function = tool
+        name = function.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        parameters = function.get("parameters")
+        item: dict[str, Any] = {
+            "type": "function",
+            "name": name.strip(),
+            "parameters": parameters
+            if isinstance(parameters, dict)
+            else {"type": "object", "properties": {}},
+        }
+        description = function.get("description")
+        if isinstance(description, str) and description:
+            item["description"] = description
+        strict = function.get("strict", tool.get("strict"))
+        if isinstance(strict, bool):
+            item["strict"] = strict
+        converted.append(item)
+    return converted
+
+
+def _same_responses_model(source_model: Any, requested_model: Any) -> bool:
+    if not source_model or not requested_model:
+        return True
+    source = str(source_model).strip().lower()
+    requested = str(requested_model).strip().lower()
+    return (
+        source == requested
+        or source.startswith(requested + "-")
+        or requested.startswith(source + "-")
+    )
+
+
+def _sanitize_reasoning_item(item: Any) -> Optional[dict]:
+    # Stateless Responses replay needs encrypted_content. Never replay arbitrary
+    # response fields or plaintext chain-of-thought content.
+    if not isinstance(item, dict) or item.get("type") != "reasoning":
+        return None
+    encrypted = item.get("encrypted_content")
+    if not isinstance(encrypted, str) or not encrypted:
+        return None
+    cleaned: dict[str, Any] = {
+        "type": "reasoning",
+        "encrypted_content": encrypted,
+    }
+    item_id = item.get("id")
+    if isinstance(item_id, str) and item_id:
+        cleaned["id"] = item_id
+    summary = item.get("summary")
+    if isinstance(summary, list):
+        safe_summary: list[dict] = []
+        for part in summary:
+            if not isinstance(part, dict):
+                continue
+            part_type = part.get("type")
+            text = part.get("text")
+            if isinstance(part_type, str) and isinstance(text, str):
+                safe_summary.append({"type": part_type, "text": text})
+        cleaned["summary"] = safe_summary
+    return cleaned
+
+
+def _reasoning_item_key(item: dict) -> str:
+    item_id = item.get("id")
+    if isinstance(item_id, str) and item_id:
+        return "id:" + item_id
+    return "enc:" + str(item.get("encrypted_content") or "")
+
+
+def _replay_reasoning_items(
+    tool_calls: Any,
+    requested_model: Optional[str],
+) -> list[dict]:
+    items: list[dict] = []
+    seen: set[str] = set()
+    for tool_call in tool_calls or []:
+        if not isinstance(tool_call, dict):
+            continue
+        extra = tool_call.get("extra_content")
+        if not isinstance(extra, dict):
+            continue
+        if not _same_responses_model(extra.get("responses_model"), requested_model):
+            continue
+        for raw in extra.get("responses_reasoning_items") or []:
+            item = _sanitize_reasoning_item(raw)
+            if item is None:
+                continue
+            key = _reasoning_item_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+    return items
+
+
+def build_responses_input(
+    messages: list[dict],
+    model: Optional[str] = None,
+) -> list[dict]:
+    # Convert canonical Odysseus history to Responses input items. Assistant
+    # calls and tool results remain structural and keep the exact call_id.
     input_items: list[dict] = []
     for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role") or "user"
+
         if role == "tool":
-            role = "user"
-        content = msg.get("content")
-        if isinstance(content, list):
-            text = "\n".join(str(part.get("text") or part.get("content") or "") for part in content if isinstance(part, dict))
-        else:
-            text = "" if content is None else str(content)
-        input_type = "output_text" if role == "assistant" else "input_text"
-        input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+            call_id = msg.get("tool_call_id")
+            if isinstance(call_id, str) and call_id:
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": _tool_output_as_text(msg.get("content")),
+                })
+            continue
+
+        tool_calls = msg.get("tool_calls") or []
+        if role == "assistant" and tool_calls:
+            # GPT reasoning models may require the opaque reasoning item from
+            # the call-producing response to be replayed before call outputs.
+            input_items.extend(_replay_reasoning_items(tool_calls, model))
+
+        content = _content_as_text(msg.get("content"))
+        if content or role != "assistant" or not tool_calls:
+            input_type = "output_text" if role == "assistant" else "input_text"
+            input_items.append({
+                "role": role,
+                "content": [{"type": input_type, "text": content}],
+            })
+
+        if role == "assistant":
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function") or {}
+                if not isinstance(function, dict):
+                    continue
+                name = function.get("name")
+                call_id = tool_call.get("id")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                if not isinstance(call_id, str) or not call_id:
+                    continue
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": name.strip(),
+                    "arguments": _arguments_as_json(function.get("arguments")),
+                })
     return input_items
+
+
+class ResponsesToolCallAccumulator:
+    # Aggregate streamed Responses function calls and replayable reasoning.
+
+    def __init__(self) -> None:
+        self._records: list[dict[str, Any]] = []
+        self._reasoning_items: list[dict] = []
+        self._reasoning_keys: set[str] = set()
+        self._response_model: Optional[str] = None
+
+    def _capture_response_model(self, event: dict) -> None:
+        response = event.get("response")
+        if isinstance(response, dict):
+            model = response.get("model")
+            if isinstance(model, str) and model:
+                self._response_model = model
+        model = event.get("model")
+        if isinstance(model, str) and model:
+            self._response_model = model
+
+    def _capture_reasoning(self, item: Any) -> None:
+        cleaned = _sanitize_reasoning_item(item)
+        if cleaned is None:
+            return
+        key = _reasoning_item_key(cleaned)
+        if key in self._reasoning_keys:
+            return
+        self._reasoning_keys.add(key)
+        self._reasoning_items.append(cleaned)
+
+    def _find(
+        self,
+        *,
+        output_index: Any = None,
+        call_id: Any = None,
+        item_id: Any = None,
+    ) -> Optional[dict[str, Any]]:
+        for record in self._records:
+            if output_index is not None and record.get("output_index") == output_index:
+                return record
+            if call_id and record.get("call_id") == call_id:
+                return record
+            if item_id and record.get("item_id") == item_id:
+                return record
+        return None
+
+    def _record(self, event: dict, item: Optional[dict] = None) -> dict[str, Any]:
+        item = item if isinstance(item, dict) else {}
+        output_index = event.get("output_index", item.get("output_index"))
+        call_id = item.get("call_id") or event.get("call_id")
+        item_id = item.get("id") or event.get("item_id")
+        record = self._find(
+            output_index=output_index,
+            call_id=call_id,
+            item_id=item_id,
+        )
+        if record is None:
+            record = {
+                "output_index": output_index,
+                "call_id": call_id,
+                "item_id": item_id,
+                "name": "",
+                "arguments": "",
+                "argument_deltas": [],
+                "sequence": len(self._records),
+            }
+            self._records.append(record)
+        else:
+            if record.get("output_index") is None and output_index is not None:
+                record["output_index"] = output_index
+            if not record.get("call_id") and call_id:
+                record["call_id"] = call_id
+            if not record.get("item_id") and item_id:
+                record["item_id"] = item_id
+        return record
+
+    def feed(self, event: dict, event_type: str = "") -> None:
+        if not isinstance(event, dict):
+            return
+        self._capture_response_model(event)
+        kind = event_type or str(event.get("type") or "")
+
+        if kind in {"response.output_item.added", "response.output_item.done"}:
+            item = event.get("item") or {}
+            if not isinstance(item, dict):
+                return
+            if item.get("type") == "reasoning":
+                self._capture_reasoning(item)
+                return
+            if item.get("type") != "function_call":
+                return
+            record = self._record(event, item)
+            if isinstance(item.get("name"), str):
+                record["name"] = item["name"]
+            if isinstance(item.get("arguments"), str):
+                if kind == "response.output_item.done" or item["arguments"]:
+                    record["arguments"] = item["arguments"]
+            return
+
+        if kind in {
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+        }:
+            item = event.get("item")
+            record = self._record(event, item if isinstance(item, dict) else None)
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                record["name"] = item["name"]
+            if kind.endswith(".delta"):
+                delta = event.get("delta")
+                if isinstance(delta, str) and delta:
+                    record["argument_deltas"].append(delta)
+            else:
+                arguments = event.get("arguments")
+                if not isinstance(arguments, str) and isinstance(item, dict):
+                    arguments = item.get("arguments")
+                if isinstance(arguments, str):
+                    record["arguments"] = arguments
+            return
+
+        if kind == "response.completed":
+            response = event.get("response") or {}
+            if not isinstance(response, dict):
+                return
+            for index, item in enumerate(response.get("output") or []):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "reasoning":
+                    self._capture_reasoning(item)
+                    continue
+                if item.get("type") != "function_call":
+                    continue
+                synthetic_event = dict(event)
+                synthetic_event["output_index"] = item.get("output_index", index)
+                record = self._record(synthetic_event, item)
+                if isinstance(item.get("name"), str):
+                    record["name"] = item["name"]
+                if isinstance(item.get("arguments"), str):
+                    record["arguments"] = item["arguments"]
+
+    def calls(self) -> list[dict]:
+        calls: list[dict] = []
+        seen: set[str] = set()
+        records = sorted(
+            self._records,
+            key=lambda record: (
+                record.get("output_index")
+                if isinstance(record.get("output_index"), int)
+                else 10**9,
+                record.get("sequence", 0),
+            ),
+        )
+        for index, record in enumerate(records):
+            name = record.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            call_id = record.get("call_id") or record.get("item_id") or f"call_{index}"
+            call_id = str(call_id)
+            if call_id in seen:
+                continue
+            seen.add(call_id)
+            arguments = record.get("arguments")
+            if not isinstance(arguments, str) or not arguments:
+                arguments = "".join(record.get("argument_deltas") or []) or "{}"
+            calls.append({
+                "id": call_id,
+                "name": name,
+                "arguments": arguments,
+            })
+
+        if calls and self._reasoning_items:
+            extra: dict[str, Any] = {
+                "responses_reasoning_items": list(self._reasoning_items),
+            }
+            if self._response_model:
+                extra["responses_model"] = self._response_model
+            # Agent history preserves extra_content on each canonical tool call.
+            # Attach the shared reasoning envelope once to avoid replay duplicates.
+            calls[0]["extra_content"] = extra
+        return calls

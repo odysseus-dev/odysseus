@@ -1085,24 +1085,34 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+    tool_choice_none: bool = False,
 ) -> Dict:
-    from src.chatgpt_subscription import build_responses_input
+    from src.chatgpt_subscription import build_responses_input, build_responses_tools
 
-    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    conversation = [
+        msg for msg in (messages or [])
+        if (msg.get("role") or "") != "system"
+    ]
     payload: Dict = {
         "model": model,
         "instructions": _chatgpt_subscription_instructions(messages),
-        "input": build_responses_input(conversation),
+        "input": build_responses_input(conversation, model=model),
         "stream": stream,
         "store": False,
     }
+    response_tools = build_responses_tools(tools)
+    if response_tools:
+        payload["tools"] = response_tools
+        payload["tool_choice"] = "none" if tool_choice_none else "auto"
+        payload["parallel_tool_calls"] = True
+        # With store=False, opaque encrypted reasoning is the stateless replay
+        # mechanism required by GPT reasoning models across tool rounds.
+        payload["include"] = ["reasoning.encrypted_content"]
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
-    # ChatGPT Subscription Codex API does not support max_output_tokens —
-    # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
-    # Do not include it in the payload.
+    # ChatGPT Subscription Codex API does not support max_output_tokens.
     return payload
-
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
     if status_code in (401, 403):
@@ -2172,7 +2182,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model,
+            messages_copy,
+            temperature,
+            max_tokens,
+            stream=True,
+            tools=tools,
+            tool_choice_none=tool_choice_none,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2228,6 +2246,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         event_name = ""
         input_tokens = 0
         output_tokens = 0
+        from src.chatgpt_subscription import ResponsesToolCallAccumulator
+        _chatgpt_tool_calls = ResponsesToolCallAccumulator()
+        _chatgpt_tool_calls_emitted = False
         try:
             client = _get_http_client()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
@@ -2253,6 +2274,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                     except json.JSONDecodeError:
                         continue
                     evt = data.get("type") or event_name
+                    _chatgpt_tool_calls.feed(data, evt)
                     if evt == "response.output_text.delta":
                         delta = data.get("delta") or ""
                         if delta:
@@ -2267,6 +2289,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                         output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or output_tokens
                         if input_tokens or output_tokens:
                             yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens}})}\n\n'
+                        _calls = _chatgpt_tool_calls.calls()
+                        if _calls and not _chatgpt_tool_calls_emitted:
+                            yield f"data: {json.dumps({'type': 'tool_calls', 'calls': _calls})}\n\n"
+                            _chatgpt_tool_calls_emitted = True
                         yield "data: [DONE]\n\n"
                         return
                     elif evt in ("response.failed", "error"):
@@ -2274,6 +2300,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                         text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
                         yield f'event: error\ndata: {json.dumps({"status": 502, "text": text})}\n\n'
                         return
+                _calls = _chatgpt_tool_calls.calls()
+                if _calls and not _chatgpt_tool_calls_emitted:
+                    yield f"data: {json.dumps({'type': 'tool_calls', 'calls': _calls})}\n\n"
+                    _chatgpt_tool_calls_emitted = True
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
