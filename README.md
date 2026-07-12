@@ -38,16 +38,24 @@ Open `http://localhost:7000` when the containers are healthy. The first admin pa
 
 ### Windows Desktop
 
-For a native desktop experience with system tray, taskbar icon, and no browser tabs, use the included `odysseus-desktop.py` harness (requires Python 3.11+ and Git for Windows):
+For a native desktop experience with system tray, taskbar icon, and no browser tabs, use the included `odysseus-desktop.py` harness (requires Python 3.11+ and Git for Windows).
+
+Until the upstream PR is merged, clone this branch (it already includes the harness + deps):
 
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone -b desktop/windows-native-harness https://github.com/whoxllm/odysseus.git
 cd odysseus
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 python setup.py install
 venv\Scripts\python.exe odysseus-desktop.py
+```
+
+After the PR merges into upstream `dev`/`main`, the same commands work with:
+
+```bash
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 ```
 
 `pip install -r requirements.txt` pulls `pywebview`, `pystray`, and `pillow` automatically — the harness needs all three.
