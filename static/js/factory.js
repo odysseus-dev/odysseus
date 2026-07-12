@@ -121,6 +121,12 @@ function _projectStatusInfo(p) {
 
 // ── Render: Project List View ─────────────────────────────────
 
+/** Refresh projects then render list — used by back buttons. */
+async function _showProjectList(container) {
+  await _refreshProjects();
+  _renderProjectList(container);
+}
+
 function _renderProjectList(container) {
   const stats = _el('factory-stats');
   const _activeCount = _projects.filter(p => p.status === 'planning' || p.status === 'running').length;
@@ -205,19 +211,29 @@ function _renderProjectList(container) {
           container._listPollTimer = null;
           return;
         }
+        // Snapshot current statuses before refresh
+        const before = _projects.map(p => `${p.id}:${p.status}`).join(',');
         await _refreshProjects();
-        // Re-render just the stats text + project list without full innerHTML rebuild
-        const statsEl = _el('factory-stats');
-        if (statsEl) {
-          const ac = _projects.filter(p => p.status === 'planning' || p.status === 'running').length;
-          const al = ac > 0 ? ` \u00b7 ${ac} active` : '';
-          statsEl.textContent = _projects.length ? `${_projects.length} project${_projects.length !== 1 ? 's' : ''}${al}` : '';
+        const after = _projects.map(p => `${p.id}:${p.status}`).join(',');
+        // If data changed, full re-render (updates cards + stats)
+        if (before !== after) {
+          _renderProjectList(container);
+        } else {
+          // No status change — just update the stats text
+          const statsEl = _el('factory-stats');
+          if (statsEl) {
+            const ac = _projects.filter(p => p.status === 'planning' || p.status === 'running').length;
+            const al = ac > 0 ? ` \u00b7 ${ac} active` : '';
+            statsEl.textContent = _projects.length ? `${_projects.length} project${_projects.length !== 1 ? 's' : ''}${al}` : '';
+          }
         }
-        // If no more active projects, stop polling
+        // Stop polling when no active projects remain
         if (!_projects.some(p => p.status === 'planning' || p.status === 'running')) {
           clearInterval(container._listPollTimer);
           container._listPollTimer = null;
-          _renderProjectList(container); // Final full re-render
+          if (before !== after) {
+            _renderProjectList(container); // Final render already done above
+          }
         }
       }, 5000);
     }
@@ -244,7 +260,7 @@ async function _openSettings() {
   `;
 
   _el('factory-back-btn')?.addEventListener('click', () => {
-    _renderProjectList(body);
+    _showProjectList(body);
   });
 
   try {
@@ -482,7 +498,7 @@ function _showCreateForm() {
     </div>
   `;
 
-  _el('factory-back-btn')?.addEventListener('click', () => _renderProjectList(body));
+  _el('factory-back-btn')?.addEventListener('click', () => _showProjectList(body));
   _el('factory-submit-btn')?.addEventListener('click', _handleCreate);
 }
 
@@ -536,7 +552,7 @@ async function _openProjectStatus(projectId) {
 
   _el('factory-back-btn')?.addEventListener('click', () => {
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
-    _renderProjectList(body);
+    _showProjectList(body);
   });
   _el('factory-refresh-btn')?.addEventListener('click', () => _refreshStatus(projectId));
 
