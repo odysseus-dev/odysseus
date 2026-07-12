@@ -35,6 +35,7 @@ _service = FactoryService()
 
 MAX_ATTEMPTS = 4
 MAX_AUTO_ITERATIONS = 5
+MAX_CONCURRENT_TASKS = 3  # max tasks processed simultaneously per project
 
 _running: Dict[int, asyncio.Task] = {}
 _planning_tasks: set = set()  # strong refs so GC doesn't kill them
@@ -1429,18 +1430,42 @@ async def _orchestrator_loop(project_id: int, owner: str,
             continue
 
         project_desc = project.get("description", "")
-        for task in ready:
-            p = _service.get_project(project_id)
-            if not p or p.get("status") in ("paused", "cancelled"):
-                break
-            try:
-                await _process_task(project_id, task, owner, project_desc, arch)
-            except Exception as e:
-                logger.error(f"Factory: error processing task {task.get('id')}: {e}")
+
+        # Check project status before launching tasks
+        p = _service.get_project(project_id)
+        if not p or p.get("status") in ("paused", "cancelled"):
+            await asyncio.sleep(1)
+            continue
+
+        # Process all ready tasks CONCURRENTLY (bounded by semaphore).
+        # Independent root tasks run in parallel — e.g., frontend + backend +
+        # config all produce at the same time instead of sequentially.
+        # Tasks WITH dependencies are never concurrent (they can't be "ready"
+        # until all their deps are completed).
+        sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+
+        async def _safe_process(task):
+            async with sem:
+                # Re-check project status inside the semaphore — might have
+                # been paused while waiting for a slot
+                pr = _service.get_project(project_id)
+                if not pr or pr.get("status") in ("paused", "cancelled"):
+                    return
                 try:
-                    _service.fail_task(task["id"], error=str(e))
-                except Exception:
-                    pass
+                    await _process_task(project_id, task, owner, project_desc, arch)
+                except Exception as e:
+                    logger.error(f"Factory: error processing task {task.get('id')}: {e}")
+                    try:
+                        _service.fail_task(task["id"], error=str(e))
+                    except Exception:
+                        pass
+
+        if len(ready) == 1:
+            # Single task — no need for gather overhead
+            await _safe_process(ready[0])
+        else:
+            logger.info(f"Factory: project {project_id} — processing {len(ready)} tasks concurrently (max {MAX_CONCURRENT_TASKS})")
+            await asyncio.gather(*[_safe_process(task) for task in ready])
 
         await asyncio.sleep(1)
 
