@@ -1269,13 +1269,46 @@ async function _serveNodeProject(project) {
   } catch (err) {
     statusEl.textContent = `Error: ${err.message}`;
     logEl.textContent = '';
-    // Add a close button since the server didn't start
+    // Remove existing retry button if present
+    const existingRetry = loadingEl.querySelector('.factory-serve-retry');
+    if (existingRetry) existingRetry.remove();
+    // Retry button — re-attempt serve within the same overlay
     const retryBtn = document.createElement('button');
-    retryBtn.className = 'factory-btn factory-btn-sm factory-btn-warn';
-    retryBtn.textContent = 'Close';
+    retryBtn.className = 'factory-btn factory-btn-sm factory-btn-primary factory-serve-retry';
+    retryBtn.textContent = 'Try Again';
     retryBtn.style.marginTop = '12px';
-    retryBtn.addEventListener('click', _close);
+    retryBtn.addEventListener('click', async () => {
+      retryBtn.remove();
+      statusEl.textContent = 'Retrying...';
+      logEl.textContent = '';
+      try {
+        const res = await fetch(`${_API}/projects/${project.id}/serve`, { method: 'POST' });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(errData.detail || `Server error (${res.status})`);
+        }
+        const result = await res.json();
+        if (result.install_log) logEl.textContent = result.install_log;
+        statusEl.textContent = `Server running on port ${result.port} (npm run ${result.script})`;
+        await new Promise(r => setTimeout(r, 500));
+        loadingEl.style.display = 'none';
+        frameWrap.style.display = '';
+        iframe.src = result.url;
+        overlay.querySelector('.factory-project-preview-title').textContent =
+          `${_esc(project.title || 'Project')} — running on :${result.port}`;
+      } catch (err2) {
+        statusEl.textContent = `Error: ${err2.message}`;
+      }
+    });
     loadingEl.appendChild(retryBtn);
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'factory-btn factory-btn-sm factory-btn-warn';
+    closeBtn.textContent = 'Close';
+    closeBtn.style.marginTop = '12px';
+    closeBtn.style.marginLeft = '8px';
+    closeBtn.addEventListener('click', _close);
+    loadingEl.appendChild(closeBtn);
   }
 }
 

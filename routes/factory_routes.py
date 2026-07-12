@@ -120,6 +120,7 @@ async def factory_preview_middleware(request: Request, call_next):
     is_preview = (
         (path.startswith("/api/factory/nodes/") and path.endswith("/preview"))
         or path.startswith("/api/factory/preview/")
+        or (path.startswith("/api/factory/projects/") and "/proxy/" in path)
     )
     if is_preview:
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
@@ -468,7 +469,14 @@ def setup_factory_routes() -> APIRouter:
         # Check for package.json
         pkg_json_path = _os.path.join(workspace, "package.json")
         if not _os.path.exists(pkg_json_path):
-            raise HTTPException(400, "No package.json found — this is not a Node.js project")
+            # List what files ARE in the workspace for diagnostics
+            ws_files = []
+            for root, dirs, files in _os.walk(workspace):
+                for f in files:
+                    rel = _os.path.relpath(_os.path.join(root, f), workspace)
+                    ws_files.append(rel)
+            file_list = ", ".join(ws_files[:20]) if ws_files else "(empty)"
+            raise HTTPException(400, f"No package.json found in workspace. Files present: {file_list}")
 
         try:
             with open(pkg_json_path, "r") as f:
@@ -484,7 +492,8 @@ def setup_factory_routes() -> APIRouter:
                 run_script = candidate
                 break
         if not run_script:
-            raise HTTPException(400, "No dev/start/preview script found in package.json")
+            available = ", ".join(scripts.keys()) if scripts else "(none)"
+            raise HTTPException(400, f"No dev/start/preview/serve script in package.json. Available scripts: {available}")
 
         # Determine port
         port = 4200 + project_id
