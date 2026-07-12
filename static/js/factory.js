@@ -817,17 +817,16 @@ function _startPolling(projectId) {
 }
 
 /**
- * POST assembled preview HTML to the server and return a preview token URL.
- * The server serves the HTML via GET /api/factory/preview/{token} with a
- * permissive CSP (inline scripts + external fonts allowed), avoiding the
- * strict parent CSP that srcdoc/blob: URLs would inherit.
+ * POST all project files to the server and return a base preview URL.
+ * Files are served individually so the browser resolves relative URLs
+ * (e.g. <script src="js/main.js">) naturally against the preview path.
  */
-async function _postPreviewUrl(html) {
+async function _postPreviewFiles(files, mainFile) {
   try {
     const res = await fetch(`${_API}/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html })
+      body: JSON.stringify({ files, main: mainFile })
     });
     if (!res.ok) return null;
     const { token } = await res.json();
@@ -837,22 +836,21 @@ async function _postPreviewUrl(html) {
 
 /**
  * Assemble all completed task files into a full project preview.
- * Inlines CSS/JS dependencies for ALL HTML files, shows tabs for switching.
+ * Files are served individually so the browser resolves relative URLs
+ * (<script src="js/main.js">, <link href="css/style.css">) naturally.
  */
 function _previewProject(project) {
   const tasks = project.tasks || [];
   const completed = tasks.filter(t => t.status === 'completed');
   if (!completed.length) return;
 
-  // Build file map: filename → content (with basename aliases)
+  // Build file map: filename → content
   const files = {};
   completed.forEach(task => {
     const fname = (task.filename || '').trim();
     const output = _getOutput(task.result);
     if (!fname || !output) return;
     files[fname] = output;
-    const basename = fname.split('/').pop();
-    if (basename && basename !== fname) files[basename] = output;
   });
 
   // Find ALL HTML files
@@ -862,91 +860,49 @@ function _previewProject(project) {
     return;
   }
 
-  // Build assembled pages: {filename: assembledHTML}
-  const pages = {};
-  const _inlineHTML = (html) => {
-    // Inline CSS: <link rel="stylesheet" href="..."> → <style>...</style>
-    html = html.replace(/<link[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*\/?>/gi, (match, href) => {
-      const resolved = _resolveFile(href, files);
-      if (resolved) return `<style>/* ${href} */\n${resolved}\n</style>`;
-      return match;
-    });
-    // Inline JS: <script src="..."></script> → <script>...</script>
-    html = html.replace(/<script[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (match, src) => {
-      const resolved = _resolveFile(src, files);
-      if (resolved) return `<script>/* ${src} */\n${resolved}\n</script>`;
-      return match;
-    });
-    // Inline CSS @import
-    html = html.replace(/<style>([\s\S]*?)<\/style>/gi, (match, css) => {
-      const resolved = css.replace(/@import\s+["']([^"']+)["']\s*;/gi, (im, imp) => {
-        const impContent = _resolveFile(imp, files);
-        if (impContent) return `/* @import ${imp} */\n${impContent}`;
-        return im;
-      });
-      return `<style>${resolved}</style>`;
-    });
-    return html;
-  };
-
-  htmlFiles.forEach(fname => {
-    const raw = files[fname];
-    if (raw) pages[fname] = _inlineHTML(raw);
-  });
-
-  // Default to index.html, else first file
+  // Default to index.html, else first HTML file
   const defaultFile = htmlFiles.find(f => f.toLowerCase() === 'index.html') || htmlFiles[0];
 
-  // Show preview overlay with tabs
-  _showProjectPreview(pages, htmlFiles, defaultFile);
+  // Show preview overlay with tabs — the server serves files individually
+  // so relative URLs resolve naturally.
+  _showProjectPreview(files, htmlFiles, defaultFile);
 }
 
 /**
- * Resolve a file reference against the virtual file map.
- * Tries: exact match, basename match, match without leading ./
- */
-function _resolveFile(ref, files) {
-  if (!ref) return null;
-  // Remove query strings and hashes
-  ref = ref.replace(/[?#].*$/, '');
-  // Direct match
-  if (files[ref]) return files[ref];
-  // Basename match
-  const bn = ref.split('/').pop();
-  if (bn && files[bn]) return files[bn];
-  // Without leading ./
-  const clean = ref.replace(/^\.\//, '');
-  if (clean !== ref && files[clean]) return files[clean];
-  // Partial match (contains)
-  for (const key of Object.keys(files)) {
-    if (key.endsWith('/' + ref) || key.endsWith('\\' + ref) || key === ref) {
-      return files[key];
-    }
-  }
-  return null;
-}
-
-/**
- * Show full-screen preview overlay with tabbed HTML pages
- * @param {Object} pages - {filename: assembledHTML}
+ * Show full-screen preview overlay with tabbed HTML pages.
+ * POSTs all files once; each tab sets iframe.src to a server-served URL
+ * so relative URLs (e.g. <script src="js/main.js">) resolve naturally.
+ * @param {Object} files - {filename: content} for ALL project files
  * @param {string[]} htmlFiles - ordered list of HTML filenames
  * @param {string} activeFile - the initially selected filename
  */
-function _showProjectPreview(pages, htmlFiles, activeFile) {
+function _showProjectPreview(files, htmlFiles, activeFile) {
   // Remove any existing preview overlay
   const existing = document.getElementById('factory-project-preview');
   if (existing) existing.remove();
 
   const showTabs = htmlFiles.length > 1;
+  let _previewBaseUrl = null;
 
-  // If only one page, open directly in a new tab (no overlay needed)
-  if (!showTabs && htmlFiles.length === 1) {
-    const html = pages[htmlFiles[0]];
-    if (html) {
-      _postPreviewUrl(html).then(url => { if (url) window.open(url, '_blank'); });
+  // POST all files once, then use the base URL for everything
+  _postPreviewFiles(files, activeFile).then(baseUrl => {
+    _previewBaseUrl = baseUrl;
+    if (!baseUrl) {
+      // If POST failed and overlay is still shown, close it
+      const ov = document.getElementById('factory-project-preview');
+      if (ov) ov.remove();
+      return;
     }
-    return;
-  }
+    // If single file, open directly in new tab
+    if (!showTabs && htmlFiles.length === 1) {
+      window.open(baseUrl, '_blank');
+      document.getElementById('factory-project-preview')?.remove();
+      return;
+    }
+    // Load the initial page into the iframe
+    const ifr = document.querySelector('#factory-project-preview-iframe');
+    if (ifr) ifr.src = `${baseUrl}/${activeFile}`;
+  });
 
   const overlay = document.createElement('div');
   overlay.id = 'factory-project-preview';
@@ -979,16 +935,13 @@ function _showProjectPreview(pages, htmlFiles, activeFile) {
   
   // Load a specific page into the iframe
   function _loadPage(file) {
-    if (iframe && pages[file]) {
-      // POST assembled HTML → get token URL → set as iframe src.
-      // The server response carries the permissive factory CSP, avoiding
-      // the srcdoc CSP-inheritance problem.
-      _postPreviewUrl(pages[file]).then(url => { if (url && iframe) iframe.src = url; });
+    if (iframe && _previewBaseUrl) {
+      iframe.src = `${_previewBaseUrl}/${file}`;
     }
   }
 
-  // Load initial page
-  _loadPage(activeFile);
+  // Load initial page (handled async above, but also do it directly for tabs)
+  // If baseUrl is already set, load now; otherwise the async handler above does it
 
   // Tab switching
   if (showTabs) {
@@ -1013,10 +966,9 @@ function _showProjectPreview(pages, htmlFiles, activeFile) {
   // Open in new tab
   overlay.querySelector('#factory-preview-open-tab-btn')?.addEventListener('click', () => {
     const activeTab = overlay.querySelector('.factory-preview-tab.active');
-    const file = activeTab ? activeTab.dataset.file : Object.keys(pages)[0];
-    const html = pages[file];
-    if (html) {
-      _postPreviewUrl(html).then(url => { if (url) window.open(url, '_blank'); });
+    const file = activeTab ? activeTab.dataset.file : activeFile;
+    if (_previewBaseUrl) {
+      window.open(`${_previewBaseUrl}/${file}`, '_blank');
     }
   });
 

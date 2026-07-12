@@ -107,4 +107,24 @@ class FactoryEvent(Base):
     project = relationship("FactoryProject", back_populates="events")
 
 
-__all__ = ["FactoryProject", "FactoryNode", "FactoryEdge", "FactoryEvent"]
+def init_factory_tables(engine) -> None:
+    """Create factory tables if they don't exist.
+
+    Called during app startup instead of relying on a circular import
+    in core/database.py. Uses the shared Base.metadata so models are
+    consistent, but only creates THIS module's tables (not all tables
+    in metadata — avoids race with core's own create_all).
+    """
+    from sqlalchemy import inspect
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            FactoryProject.__table__,
+            FactoryNode.__table__,
+            FactoryEdge.__table__,
+            FactoryEvent.__table__,
+        ],
+    )
+
+
+__all__ = ["FactoryProject", "FactoryNode", "FactoryEdge", "FactoryEvent", "init_factory_tables"]

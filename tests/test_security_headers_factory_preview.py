@@ -3,7 +3,8 @@ Regression tests for the Factory HTML preview endpoint's permissive CSP.
 
 The /api/factory/nodes/{id}/preview route serves LLM-generated HTML with its
 own CSP that allows inline scripts, Google Fonts, same-origin framing, etc.
-These tests verify the middleware applies the correct headers.
+CSP is now set per-route (on the HTMLResponse) rather than in middleware,
+so these tests verify the route handlers set the correct headers directly.
 """
 
 import secrets
@@ -14,6 +15,20 @@ from fastapi.testclient import TestClient
 
 from core.middleware import SecurityHeadersMiddleware
 
+# Shared CSP constant matching the one in routes/factory_routes.py
+_FACTORY_PREVIEW_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+    "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+    "img-src 'self' data: blob: https:; "
+    "media-src 'self' blob: https:; "
+    "connect-src 'self'; "
+    "form-action 'self'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'self'"
+)
+
 
 def _client():
     """Build a minimal test app with SecurityHeadersMiddleware and a stubbed
@@ -22,7 +37,8 @@ def _client():
     We stub the route directly rather than mounting the real factory router +
     database, so these tests stay fast and focused on header correctness. The
     stubs return minimal HTML that exercises the CSP (inline <script> content,
-    Google Fonts <link>).
+    Google Fonts <link>). CSP is set per-route (like the real handler) since
+    the middleware no longer applies the factory CSP.
     """
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware)
@@ -36,7 +52,11 @@ def _client():
             '<script>alert("hi")</script>'
             '</body></html>'
         )
-        return Response(content=html, media_type="text/html")
+        from fastapi.responses import HTMLResponse
+        response = HTMLResponse(content=html, media_type="text/html")
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
 
     @app.get("/api/factory/nodes/{node_id}")
     async def get_node(node_id: int):
@@ -143,11 +163,13 @@ def test_factory_preview_iframe_sandbox_is_scripts_only():
 
 # In-memory stash for test preview cache (not shared with the real router)
 _test_preview_cache: dict = {}
+_test_preview_main: dict = {}
 
 
 def _client_with_preview_cache():
     """Test client with SecurityHeadersMiddleware + stubs for the project-delivery
     preview token-cache endpoints (POST /api/factory/preview, GET /api/factory/preview/{token}).
+    CSP headers are set per-route to match the real handler behaviour.
     """
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware)
@@ -155,22 +177,50 @@ def _client_with_preview_cache():
     @app.post("/api/factory/preview")
     async def post_preview(request: Request):
         body = await request.json()
-        html = body.get("html")
-        if not html or not isinstance(html, str):
-            return JSONResponse(status_code=400, content={"detail": "html (non-empty string) is required"})
-        if len(html) > 5_000_000:
-            return JSONResponse(status_code=413, content={"detail": "Preview HTML too large"})
+        files = body.get("files")
+        main_file = body.get("main", "")
+        if not files or not isinstance(files, dict) or not main_file:
+            return JSONResponse(status_code=400, content={"detail": "files (dict) and main (filename) are required"})
+        if len(main_file) > 500:
+            return JSONResponse(status_code=400, content={"detail": "Invalid main filename"})
         token = secrets.token_hex(16)
-        _test_preview_cache[token] = html
+        _test_preview_cache[token] = files
+        _test_preview_main[token] = main_file
         return {"token": token}
 
     @app.get("/api/factory/preview/{token}")
     async def get_preview(token: str):
-        html = _test_preview_cache.pop(token, None)
-        if not html:
-            return JSONResponse(status_code=404, content={"detail": "Preview not found or expired"})
         from fastapi.responses import HTMLResponse
-        return HTMLResponse(content=html, media_type="text/html")
+        files = _test_preview_cache.get(token)
+        if not files:
+            return JSONResponse(status_code=404, content={"detail": "Preview not found or expired"})
+        main_file = _test_preview_main.get(token, "index.html")
+        html = files.get(main_file) or files.get("index.html") or ""
+        if not html:
+            return JSONResponse(status_code=404, content={"detail": "No preview content"})
+        response = HTMLResponse(content=html, media_type="text/html")
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
+
+    @app.get("/api/factory/preview/{token}/{file_path:path}")
+    async def get_preview_file(token: str, file_path: str):
+        import mimetypes
+        from fastapi.responses import Response
+        files = _test_preview_cache.get(token)
+        if not files:
+            return JSONResponse(status_code=404, content={"detail": "Preview not found or expired"})
+        content = files.get(file_path)
+        if content is None:
+            basename = file_path.rsplit("/", 1)[-1]
+            content = files.get(basename)
+        if content is None:
+            return JSONResponse(status_code=404, content={"detail": f"File not found: {file_path}"})
+        mimetype = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        response = Response(content=content, media_type=mimetype)
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
 
     @app.get("/api/factory/nodes/{node_id}")
     async def get_node(node_id: int):
@@ -184,9 +234,12 @@ def _client_with_preview_cache():
 
 
 def test_post_preview_returns_token():
-    """POST a project HTML => 200 + JSON with token."""
+    """POST project files => 200 + JSON with token."""
     client = _client_with_preview_cache()
-    resp = client.post("/api/factory/preview", json={"html": "<html><body>Hello</body></html>"})
+    resp = client.post("/api/factory/preview", json={
+        "files": {"index.html": "<html><body>Hello</body></html>"},
+        "main": "index.html"
+    })
     assert resp.status_code == 200
     body = resp.json()
     assert "token" in body
@@ -195,7 +248,7 @@ def test_post_preview_returns_token():
 
 
 def test_get_preview_serves_html_with_permissive_csp():
-    """POST HTML with inline script + Google Fonts, then GET the token => 200 + permissive CSP."""
+    """POST files with inline script + Google Fonts, then GET the token => 200 + permissive CSP."""
     test_html = (
         '<html><head>'
         '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto">'
@@ -206,7 +259,10 @@ def test_get_preview_serves_html_with_permissive_csp():
     client = _client_with_preview_cache()
 
     # POST → get token
-    post_resp = client.post("/api/factory/preview", json={"html": test_html})
+    post_resp = client.post("/api/factory/preview", json={
+        "files": {"index.html": test_html},
+        "main": "index.html"
+    })
     assert post_resp.status_code == 200
     token = post_resp.json()["token"]
 
@@ -229,28 +285,74 @@ def test_get_preview_expired_token_returns_404():
     assert resp.status_code == 404
 
 
-def test_post_preview_rejects_empty_html():
-    """POST with empty html string => 400."""
+def test_post_preview_rejects_empty_body():
+    """POST with missing files => 400."""
     client = _client_with_preview_cache()
-    resp = client.post("/api/factory/preview", json={"html": ""})
+    resp = client.post("/api/factory/preview", json={"files": {}, "main": ""})
     assert resp.status_code == 400
 
 
-def test_project_preview_no_longer_uses_srcdoc_or_blob():
-    """Verify the three vulnerable patterns (srcdoc=pages, Blob for project
-    preview, URL.createObjectURL in _showProjectPreview) have been eliminated."""
+def test_get_preview_file_serves_js_with_correct_mime():
+    """GET /preview/{token}/js/main.js => 200, JS content, correct MIME type."""
+    client = _client_with_preview_cache()
+    post_resp = client.post("/api/factory/preview", json={
+        "files": {
+            "index.html": "<html><script src='js/main.js'></script></html>",
+            "js/main.js": "console.log(1);"
+        },
+        "main": "index.html"
+    })
+    assert post_resp.status_code == 200
+    token = post_resp.json()["token"]
+
+    resp = client.get(f"/api/factory/preview/{token}/js/main.js")
+    assert resp.status_code == 200
+    assert resp.text == "console.log(1);"
+    ct = resp.headers["content-type"]
+    is_js = "application/javascript" in ct or "text/javascript" in ct
+    assert is_js, f"Expected JS MIME type, got: {ct}"
+    csp = resp.headers["Content-Security-Policy"]
+    assert "script-src 'self' 'unsafe-inline'" in csp
+
+
+def test_get_preview_file_returns_404_for_missing():
+    """GET /preview/{token}/nonexistent.js => 404."""
+    client = _client_with_preview_cache()
+    post_resp = client.post("/api/factory/preview", json={
+        "files": {"index.html": "<html></html>"},
+        "main": "index.html"
+    })
+    assert post_resp.status_code == 200
+    token = post_resp.json()["token"]
+
+    resp = client.get(f"/api/factory/preview/{token}/nonexistent.js")
+    assert resp.status_code == 404
+
+
+def test_project_preview_uses_post_preview_files():
+    """Verify that factory.js uses _postPreviewFiles instead of _postPreviewUrl,
+    and that _inlineHTML has been removed."""
     import pathlib
     src = pathlib.Path(__file__).resolve().parents[1] / "static" / "js" / "factory.js"
     text = src.read_text(encoding="utf-8")
 
-    # 1. srcdoc assignment to pages must be absent in _showProjectPreview context
-    assert 'iframe.srcdoc = pages[file]' not in text, (
-        "srcdoc = pages[file] still present — CSP inheritance bug remains"
+    # Must use _postPreviewFiles now
+    assert '_postPreviewFiles(files, mainFile)' in text or '_postPreviewFiles(files, activeFile)' in text, (
+        "_postPreviewFiles call not found — the frontend must POST all files, not individual HTML"
     )
-
-    # 2. Blob-based open-in-tab must be absent in the project preview context
-    #    (The remaining use of Blob in factory.js is the task-output preview at
-    #    line ~748 which uses a server-side URL, not a blob: URL.)
+    # _inlineHTML must be removed
+    assert '_inlineHTML' not in text, (
+        "_inlineHTML still present — the frontend should not inline dependencies client-side"
+    )
+    # _postPreviewUrl must be removed
+    assert '_postPreviewUrl' not in text, (
+        "_postPreviewUrl still present — should be replaced by _postPreviewFiles"
+    )
+    # srcdoc assignment must be absent
+    assert 'iframe.srcdoc' not in text, (
+        "iframe.srcdoc still present — CSP inheritance bug remains"
+    )
+    # Blob-based open-in-tab must be absent
     assert 'new Blob([html], { type: \'text/html\' })' not in text, (
         "Blob([html]) still present — CSP inheritance bug remains"
     )

@@ -66,7 +66,7 @@ from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
-from core.database import SessionLocal, ApiToken
+from core.database import engine, SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
 from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
@@ -859,6 +859,10 @@ app.include_router(setup_companion_routes())
 
 from routes.factory_routes import setup_factory_routes
 app.include_router(setup_factory_routes())
+
+# Factory creates its own tables (decoupled from core/database.py's create_all)
+from services.factory_models import init_factory_tables
+init_factory_tables(engine)
 
 # ========= ROUTES (kept in app.py) =========
 

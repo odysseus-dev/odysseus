@@ -52,41 +52,54 @@ def _extract_output(result):
     return str(val)
 
 
-# Ephemeral token→HTML cache for project-delivery previews. The assembled HTML
-# is produced client-side (multi-file _inlineHTML assembly), so we stash it
-# here briefly and serve it via a GET URL that gets the permissive factory
-# CSP (see SecurityHeadersMiddleware). This avoids srcdoc/blob: CSP inheritance.
-_preview_cache: OrderedDict = OrderedDict()  # token -> (html, timestamp)
+# Ephemeral token→files cache for project-delivery previews. Stores ALL
+# project files (JS, CSS, images, HTML) keyed by filename, so the catch-all
+# route can serve individual files with correct MIME types — the browser
+# resolves relative URLs naturally instead of fragile client-side inlining.
+_preview_cache: OrderedDict = OrderedDict()  # token -> (files_dict, main_file, timestamp)
 _PREVIEW_TTL = 300      # 5 minutes
 _PREVIEW_MAX = 100      # max cached entries (FIFO eviction)
 
 
-def _store_preview(html: str) -> str:
-    """Store assembled preview HTML, return a one-time-ish token. Cleans up
-    expired entries and evicts oldest when at capacity."""
+def _store_preview(files: dict, main_file: str) -> str:
+    """Store assembled preview files, return a token."""
     now = time.time()
     # Purge expired
-    expired = [k for k, (_, ts) in _preview_cache.items() if now - ts > _PREVIEW_TTL]
+    expired = [k for k, (_, _, ts) in _preview_cache.items() if now - ts > _PREVIEW_TTL]
     for k in expired:
         _preview_cache.pop(k, None)
     # Evict oldest if at capacity
     while len(_preview_cache) >= _PREVIEW_MAX:
         _preview_cache.popitem(last=False)
     token = secrets.token_hex(16)
-    _preview_cache[token] = (html, now)
+    _preview_cache[token] = (files, main_file, now)
     return token
 
 
 def _get_preview(token: str):
-    """Return cached HTML for token, or None if missing/expired."""
+    """Return (files_dict, main_file) for token, or None if missing/expired."""
     entry = _preview_cache.get(token)
     if not entry:
         return None
-    html, ts = entry
+    files, main_file, ts = entry
     if time.time() - ts > _PREVIEW_TTL:
         _preview_cache.pop(token, None)
         return None
-    return html
+    return files, main_file
+
+
+_FACTORY_PREVIEW_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+    "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+    "img-src 'self' data: blob: https:; "
+    "media-src 'self' blob: https:; "
+    "connect-src 'self'; "
+    "form-action 'self'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'self'"
+)
 
 
 def setup_factory_routes() -> APIRouter:
@@ -477,9 +490,9 @@ def setup_factory_routes() -> APIRouter:
     async def preview_node(node_id: int):
         """Return a completed task's HTML output as a standalone preview page.
 
-        Served with its own permissive CSP (see SecurityHeadersMiddleware) so
-        LLM-generated inline scripts + external fonts/styles run inside the
-        preview iframe. The iframe is sandboxed client-side.
+        Served with its own permissive CSP so LLM-generated inline scripts +
+        external fonts/styles run inside the preview iframe. The iframe is
+        sandboxed client-side.
         """
         from fastapi.responses import HTMLResponse
         node = svc.get_node(node_id)
@@ -490,38 +503,69 @@ def setup_factory_routes() -> APIRouter:
         output = _extract_output(node.get("result"))
         if not output:
             raise HTTPException(404, "No output to preview")
-        return HTMLResponse(content=output, media_type="text/html")
+        response = HTMLResponse(content=output, media_type="text/html")
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
 
     @router.post("/preview")
     async def post_preview(request: Request):
-        """Stash assembled project-delivery HTML and return a preview token.
-
-        The client POSTs the multi-file _inlineHTML-assembled page here; the
-        token is then loaded via GET /api/factory/preview/{token} inside an
-        iframe or new tab. That GET response carries the permissive factory
-        CSP so inline scripts + external fonts run.
-        """
+        """Stash project files for preview and return a token."""
         body = await request.json()
-        html = body.get("html")
-        if not html or not isinstance(html, str):
-            raise HTTPException(400, "html (non-empty string) is required")
-        if len(html) > 5_000_000:  # 5 MB safety cap
-            raise HTTPException(413, "Preview HTML too large")
-        token = _store_preview(html)
+        files = body.get("files")
+        main_file = body.get("main", "")
+        if not files or not isinstance(files, dict) or not main_file:
+            raise HTTPException(400, "files (dict) and main (filename) are required")
+        if len(main_file) > 500:
+            raise HTTPException(400, "Invalid main filename")
+        total_size = sum(len(v) for v in files.values() if isinstance(v, str))
+        if total_size > 10_000_000:  # 10 MB safety cap
+            raise HTTPException(413, "Preview files too large")
+        token = _store_preview(files, main_file)
         return {"token": token}
 
     @router.get("/preview/{token}")
     async def get_preview(token: str):
-        """Serve a previously-stashed preview page as standalone HTML.
-
-        Served with the permissive factory CSP (see SecurityHeadersMiddleware)
-        so inline scripts + Google Fonts run inside the preview iframe/tab.
-        """
+        """Serve the main preview page as standalone HTML."""
         from fastapi.responses import HTMLResponse
-        html = _get_preview(token)
-        if not html:
+        entry = _get_preview(token)
+        if not entry:
             raise HTTPException(404, "Preview not found or expired")
-        return HTMLResponse(content=html, media_type="text/html")
+        files, main_file = entry
+        html = files.get(main_file) or files.get("index.html") or ""
+        if not html:
+            raise HTTPException(404, "No preview content")
+        response = HTMLResponse(content=html)
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
+
+    @router.get("/preview/{token}/{file_path:path}")
+    async def get_preview_file(token: str, file_path: str):
+        """Serve an individual file from a preview stash (JS, CSS, images).
+
+        This makes relative URLs in the preview HTML resolve correctly:
+        <script src="js/main.js"> → /api/factory/preview/{token}/js/main.js
+        The browser fetches the file here with the correct MIME type.
+        """
+        import mimetypes
+        from fastapi.responses import Response
+        entry = _get_preview(token)
+        if not entry:
+            raise HTTPException(404, "Preview not found or expired")
+        files, _ = entry
+        # Try exact match, then basename match
+        content = files.get(file_path)
+        if content is None:
+            basename = file_path.rsplit("/", 1)[-1]
+            content = files.get(basename)
+        if content is None:
+            raise HTTPException(404, f"File not found: {file_path}")
+        mimetype = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        response = Response(content=content, media_type=mimetype)
+        response.headers["Content-Security-Policy"] = _FACTORY_PREVIEW_CSP
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
 
     @router.delete("/nodes/{node_id}")
     async def delete_node(node_id: int):
