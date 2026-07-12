@@ -14,26 +14,43 @@ import types
 import importlib
 
 # Stub the mcp package so email_server.py can be imported without it.
-for _mod_name in ("mcp", "mcp.server", "mcp.server.stdio", "mcp.types"):
-    if _mod_name not in sys.modules:
-        sys.modules[_mod_name] = types.ModuleType(_mod_name)
+# Only stub if the real mcp package isn't installed — never replace the
+# real one, which would break other MCP server tests that need real types.
+try:
+    import mcp  # noqa: F401
+except ImportError:
+    for _mod_name in ("mcp", "mcp.server", "mcp.server.stdio", "mcp.types"):
+        if _mod_name not in sys.modules:
+            sys.modules[_mod_name] = types.ModuleType(_mod_name)
 
-sys.modules["mcp"].server = sys.modules["mcp.server"]
-sys.modules["mcp.server"].stdio = sys.modules["mcp.server.stdio"]
-sys.modules["mcp"].types = sys.modules["mcp.types"]
+    sys.modules["mcp"].server = sys.modules["mcp.server"]
+    sys.modules["mcp.server"].stdio = sys.modules["mcp.server.stdio"]
+    sys.modules["mcp"].types = sys.modules["mcp.types"]
 
-# Minimal stubs for the classes/functions email_server imports.
-class _StubServer:
-    def __init__(self, *a, **kw): pass
-    def tool(self, *a, **kw): return lambda f: f
-    def list_tools(self, *a, **kw): return lambda f: f
-    def call_tool(self, *a, **kw): return lambda f: f
-    def run(self, *a, **kw): pass
+    class _StubServer:
+        def __init__(self, *a, **kw): pass
+        def tool(self, *a, **kw): return lambda f: f
+        def list_tools(self, *a, **kw): return lambda f: f
+        def call_tool(self, *a, **kw): return lambda f: f
+        def run(self, *a, **kw): pass
 
-sys.modules["mcp.server"].Server = _StubServer
-sys.modules["mcp.server.stdio"].stdio_server = lambda *a, **kw: None
-sys.modules["mcp.types"].Tool = type("Tool", (), {})
-sys.modules["mcp.types"].TextContent = type("TextContent", (), {})
+    sys.modules["mcp.server"].Server = _StubServer
+    sys.modules["mcp.server.stdio"].stdio_server = lambda *a, **kw: None
+
+    class _TextContent:
+        """Minimal stub for mcp.types.TextContent that accepts kwargs."""
+        def __init__(self, **kwargs):
+            self.type = kwargs.get("type", "text")
+            self.text = kwargs.get("text", "")
+
+    class _Tool:
+        """Minimal stub for mcp.types.Tool."""
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    sys.modules["mcp.types"].Tool = _Tool
+    sys.modules["mcp.types"].TextContent = _TextContent
 
 # Now import the module under test.
 import os
