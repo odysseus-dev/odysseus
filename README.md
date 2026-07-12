@@ -36,6 +36,22 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
+### Windows Desktop
+
+For a native desktop experience with system tray, taskbar icon, and no browser tabs:
+
+```bash
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python setup.py install
+venv\Scripts\python.exe odysseus-desktop.py
+```
+
+The web UI opens in its own window. Close minimizes to tray; quit from the tray menu. Depends on `pywebview`, `pystray`, and `pillow` (all in `requirements.txt`).
+
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
 ## Features
