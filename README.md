@@ -59,6 +59,10 @@ venv\Scripts\python.exe odysseus-desktop.py
 - Close button minimizes to tray instead of quitting
 - Taskbar icon set to the Odysseus boat logo
 
+**First launch:** the web UI auto-detects there's no admin account yet and shows a "Create Admin Account" setup screen (username, password, confirm password) instead of the login form. No separate signup step needed — just fill it in and you're logged in as admin.
+
+**Resetting the account:** if you need to redo setup — testing, handing the app to someone else, or you forgot the password — use the tray menu's **"Reset Account (First-Run Setup)"** option. It deletes the stored admin credentials, restarts the backend, and reloads the window straight to the "Create Admin Account" screen. Sessions, chats, and other data are untouched.
+
 **PyInstaller packaging** (optional, builds a standalone `.exe`):
 ```bash
 venv\Scripts\python.exe -m PyInstaller odysseus-desktop.spec
