@@ -319,6 +319,84 @@ def setup_factory_routes() -> APIRouter:
             filename=download_name,
         )
 
+    @router.post("/projects/{project_id}/exec")
+    async def exec_project_command(project_id: int, request: Request):
+        """Execute a shell command in the project's workspace directory.
+
+        Extracts completed files to data/factory/workspace/{id}/ on each call
+        (ensures latest versions), then runs the command with cwd set there.
+        """
+        import subprocess
+        import os as _os
+        from src.constants import DATA_DIR
+
+        body = await request.json()
+        cmd = body.get("command", "").strip()
+        if not cmd:
+            raise HTTPException(400, "command is required")
+
+        project = svc.get_project(project_id)
+        if not project:
+            raise HTTPException(404, f"Project {project_id} not found")
+
+        # Extract completed files to workspace (deduped by filename — latest version)
+        workspace = _os.path.join(DATA_DIR, "factory", "workspace", str(project_id))
+        _os.makedirs(workspace, exist_ok=True)
+
+        nodes = svc.get_nodes(project_id)
+        completed = [n for n in nodes if n.get("status") == "completed" and n.get("filename")]
+
+        # Dedupe: latest task wins per filename
+        by_filename = {}
+        for n in completed:
+            fname = n["filename"]
+            if fname not in by_filename or n.get("id", 0) > by_filename[fname].get("id", 0):
+                by_filename[fname] = n
+
+        for fname, n in by_filename.items():
+            output = _extract_output(n.get("result"))
+            if not output:
+                continue
+            # Security: prevent path traversal — normalize and verify within workspace
+            file_path = _os.path.normpath(_os.path.join(workspace, fname))
+            if not file_path.startswith(workspace + _os.sep) and file_path != workspace:
+                continue
+            _os.makedirs(_os.path.dirname(file_path), exist_ok=True)
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(output)
+            except Exception:
+                pass  # skip unwritable files
+
+        # Execute the command
+        timeout = min(int(body.get("timeout", 30)), 60)
+        try:
+            result = subprocess.run(
+                cmd, shell=True, cwd=workspace,
+                capture_output=True, text=True,
+                timeout=timeout,
+            )
+            return {
+                "stdout": result.stdout[-20000:] if len(result.stdout) > 20000 else result.stdout,
+                "stderr": result.stderr[-20000:] if len(result.stderr) > 20000 else result.stderr,
+                "exit_code": result.returncode,
+                "workspace": workspace,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "stdout": "",
+                "stderr": f"Command timed out after {timeout}s",
+                "exit_code": -1,
+                "workspace": workspace,
+            }
+        except Exception as e:
+            return {
+                "stdout": "",
+                "stderr": str(e),
+                "exit_code": -1,
+                "workspace": workspace,
+            }
+
     @router.put("/projects/{project_id}")
     async def update_project(project_id: int, request: Request):
         """Update project metadata (title, description, model)."""

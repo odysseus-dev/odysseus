@@ -623,6 +623,134 @@ function _renderFilesView(container, project) {
   });
 }
 
+/**
+ * Render the Terminal tab: command input + output panel.
+ * Sends commands to POST /api/factory/projects/{id}/exec which
+ * extracts project files to a workspace and runs the command there.
+ */
+function _renderTerminalView(container, projectId) {
+  let _cmdHistory = [];
+  let _historyIdx = -1;
+  let _running = false;
+
+  container.innerHTML = `
+    <div class="factory-terminal">
+      <div class="factory-terminal-output" id="factory-term-output">
+        <div class="factory-term-line factory-term-info">Project workspace terminal. Type a command and press Enter.</div>
+        <div class="factory-term-line factory-term-info">Files are extracted from completed tasks on each run. Try: ls -la, cat index.html, python -m http.server</div>
+      </div>
+      <div class="factory-terminal-input-row">
+        <span class="factory-terminal-prompt">$</span>
+        <input type="text" id="factory-term-input" class="factory-terminal-input"
+               placeholder="Enter command..." autocomplete="off"
+               spellcheck="false" autocapitalize="off" />
+      </div>
+    </div>
+  `;
+
+  const outputEl = container.querySelector('#factory-term-output');
+  const inputEl = container.querySelector('#factory-term-input');
+
+  function _appendLine(text, cls) {
+    const line = document.createElement('div');
+    line.className = `factory-term-line ${cls || ''}`;
+    // Use textContent for safety, but preserve whitespace with white-space:pre-wrap (CSS)
+    line.textContent = text;
+    outputEl.appendChild(line);
+    outputEl.scrollTop = outputEl.scrollHeight;
+    return line;
+  }
+
+  async function _runCommand(cmd) {
+    if (_running) return;
+    _running = true;
+    inputEl.disabled = true;
+
+    // Echo the command
+    _appendLine(`$ ${cmd}`, 'factory-term-cmd');
+
+    // Add to history (skip duplicates)
+    if (_cmdHistory[0] !== cmd) {
+      _cmdHistory.unshift(cmd);
+      if (_cmdHistory.length > 50) _cmdHistory.pop();
+    }
+    _historyIdx = -1;
+
+    // Show loading
+    const loadingLine = document.createElement('div');
+    loadingLine.className = 'factory-term-line factory-term-loading';
+    loadingLine.textContent = 'Running...';
+    outputEl.appendChild(loadingLine);
+    outputEl.scrollTop = outputEl.scrollHeight;
+
+    try {
+      const res = await fetch(`${_API}/projects/${projectId}/exec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd }),
+      });
+      const result = await res.json();
+      loadingLine.remove();
+
+      if (result.stdout && result.stdout.trim()) {
+        _appendLine(result.stdout, 'factory-term-stdout');
+      }
+      if (result.stderr && result.stderr.trim()) {
+        _appendLine(result.stderr, 'factory-term-stderr');
+      }
+      if (result.exit_code !== 0) {
+        _appendLine(`[exit code: ${result.exit_code}]`, 'factory-term-exit');
+      }
+      if (!result.stdout && !result.stderr) {
+        _appendLine('(no output)', 'factory-term-info');
+      }
+    } catch (err) {
+      loadingLine.remove();
+      _appendLine(`Error: ${err.message}`, 'factory-term-stderr');
+    }
+
+    _running = false;
+    inputEl.disabled = false;
+    inputEl.focus();
+  }
+
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const cmd = inputEl.value.trim();
+      if (cmd) {
+        _runCommand(cmd);
+        inputEl.value = '';
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (_historyIdx < _cmdHistory.length - 1) {
+        _historyIdx++;
+        inputEl.value = _cmdHistory[_historyIdx] || '';
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (_historyIdx > 0) {
+        _historyIdx--;
+        inputEl.value = _cmdHistory[_historyIdx] || '';
+      } else {
+        _historyIdx = -1;
+        inputEl.value = '';
+      }
+    } else if (e.key === 'l' && e.ctrlKey) {
+      // Ctrl+L = clear screen (like real terminal)
+      e.preventDefault();
+      outputEl.innerHTML = '';
+    }
+  });
+
+  // Focus the input when the terminal area is clicked
+  container.querySelector('.factory-terminal')?.addEventListener('click', () => {
+    inputEl.focus();
+  });
+
+  inputEl.focus();
+}
+
 function _renderKanban(container) {
   if (!container) return;
   const p = _activeStatus;
@@ -774,6 +902,7 @@ function _renderKanban(container) {
       tabBar.innerHTML = `
         <button class="factory-tab${_activeView === 'tasks' ? ' active' : ''}" data-view="tasks">Tasks</button>
         <button class="factory-tab${_activeView === 'files' ? ' active' : ''}" data-view="files">Files (${fileCount})</button>
+        <button class="factory-tab${_activeView === 'terminal' ? ' active' : ''}" data-view="terminal">Terminal</button>
       `;
       tabBar.querySelectorAll('.factory-tab').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -783,6 +912,25 @@ function _renderKanban(container) {
         });
       });
     }
+  }
+
+  // ── Terminal view ──
+  if (_activeView === 'terminal') {
+    const kanban = container.querySelector('#factory-kanban');
+    if (kanban) kanban.style.display = 'none';
+    const iterateSection = container.querySelector('.factory-iterate');
+    if (iterateSection) iterateSection.style.display = 'none';
+
+    // Reuse the same files container for terminal
+    let termContainer = container.querySelector('#factory-files-container');
+    if (!termContainer) {
+      termContainer = document.createElement('div');
+      termContainer.id = 'factory-files-container';
+      const refEl = container.querySelector('#factory-kanban') || container.querySelector('.factory-project-info');
+      if (refEl) refEl.insertAdjacentElement('afterend', termContainer);
+      else container.appendChild(termContainer);
+    }
+    _renderTerminalView(termContainer, p.id);
   }
 
   // ── Files view ──

@@ -41743,3 +41743,61 @@ body.factory-panel-view .factory-divider { display:none; }
 .factory-file-code code {
   font-family: inherit;
 }
+
+/* ── Factory terminal ── */
+.factory-terminal {
+  background: #0c0c0c;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 350px;
+  max-height: 500px;
+  overflow: hidden;
+}
+.factory-terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-family: var(--mono, 'Fira Code', monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.factory-term-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: 1px;
+}
+.factory-term-info { color: #666; }
+.factory-term-cmd { color: #6c8; font-weight: 600; }
+.factory-term-stdout { color: #ccc; }
+.factory-term-stderr { color: #f85; }
+.factory-term-exit { color: #f55; font-size: 11px; }
+.factory-term-loading { color: #888; font-style: italic; }
+.factory-terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #222;
+  background: #111;
+}
+.factory-terminal-prompt {
+  color: #6c8;
+  font-family: var(--mono, 'Fira Code', monospace);
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.factory-terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #eee;
+  font-family: var(--mono, 'Fira Code', monospace);
+  font-size: 13px;
+}
+.factory-terminal-input::placeholder { color: #444; }
+.factory-terminal-input:disabled { opacity: 0.5; }
