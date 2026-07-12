@@ -3558,6 +3558,12 @@ function _rerenderCachedModels() {
 // _fetchCachedModels — so a delete targets the SAME machine the model
 // actually lives on, not just the globally-selected serve host.
 function _resolveCacheHost() {
+  return _resolveCacheTarget().host;
+}
+
+// Full cache-delete target: host + port + platform of the cache dropdown,
+// independent of the currently active serve selection.
+function _resolveCacheTarget() {
   let host = _envState.remoteHost || '';
   const cacheSrv = document.getElementById('hwfit-cache-server');
 
@@ -3579,7 +3585,9 @@ function _resolveCacheHost() {
       if (s) host = s.host;
     }
   }
-  return host;
+  const platform = _getPlatform(host || 'local') || '';
+  const port = host ? (_getPort(host) || '') : '';
+  return { host, port, platform };
 }
 
 function _localWinPowerShellCmd(ps) {
@@ -3597,24 +3605,30 @@ function _isOllamaCachedModel(m) {
   return !!(m && (m.is_ollama || m.backend === 'ollama' || m.path === 'ollama'));
 }
 
-function _ollamaDeleteCmd(modelName, host = '') {
+function _ollamaDeleteCmd(modelName, target = {}) {
   const name = String(modelName || '').trim();
   if (!name) return '';
+  const host = typeof target === 'string' ? target : (target?.host || '');
+  const platform = typeof target === 'object'
+    ? (target?.platform || _getPlatform(host || 'local') || '')
+    : (_getPlatform(host || 'local') || '');
+  const port = typeof target === 'object' ? (target?.port || _getPort(host) || '') : _getPort(host);
+  const isWin = platform === 'windows';
   const _psSingleQuote = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
-  if (_isWindows()) {
+  if (isWin) {
     const ps = [
       'if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Write-Error \'Ollama not found\'; exit 127 }',
       `$null | ollama rm ${_psSingleQuote(name)}`,
       'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
     ].join('; ');
     if (host) {
-      const pf = _sshPrefix(_getPort(host));
+      const pf = _sshPrefix(port);
       return `ssh ${pf}${host} "powershell -Command \\"${ps.replace(/"/g, '\\"')}\\""`;
     }
     return _localWinPowerShellCmd(ps);
   }
   let cmd = `ollama rm ${_shellQuote(name)}`;
-  if (host) cmd = _sshCmd(host, cmd, _getPort(host));
+  if (host) cmd = _sshCmd(host, cmd, port);
   return cmd;
 }
 
@@ -3651,12 +3665,14 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
       return;
     }
   }
-  const host = _resolveCacheHost();
+  const cacheTarget = _resolveCacheTarget();
+  const host = cacheTarget.host;
+  const isWinCache = cacheTarget.platform === 'windows';
   let cmd;
   if (isOllama) {
-    cmd = _ollamaDeleteCmd(repo, host);
+    cmd = _ollamaDeleteCmd(repo, cacheTarget);
     if (!cmd) return;
-  } else if (_isWindows()) {
+  } else if (isWinCache) {
     const _psSingleQuote = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
     const winTarget = target.startsWith('~')
       ? target.replace(/^~/, '$env:USERPROFILE').replace(/\//g, '\\')
@@ -3675,7 +3691,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
       ps = `if (Test-Path ${_psSingleQuote(winTarget)}) { Remove-Item -Recurse -Force ${_psSingleQuote(winTarget)} -ErrorAction Stop }`;
     }
     if (host) {
-      const pf = _sshPrefix(_getPort(host));
+      const pf = _sshPrefix(cacheTarget.port || _getPort(host));
       cmd = `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
     } else {
       cmd = _localWinPowerShellCmd(ps);
@@ -3694,7 +3710,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
     } else {
       cmd = `rm -rf "${unixTarget}"`;
     }
-    if (host) cmd = _sshCmd(host, cmd, _getPort(host));
+    if (host) cmd = _sshCmd(host, cmd, cacheTarget.port || _getPort(host));
   }
   // Deleting a large model (tens/hundreds of GB) can take a while, especially
   // over SSH — show a whirlpool spinner on the row so it doesn't look frozen.

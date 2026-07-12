@@ -126,6 +126,72 @@ async def test_stop_served_model_uses_validated_remote_target(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cancel_download_resolves_windows_platform_and_download_task_type(monkeypatch):
+    """Agent cancel must resolve remote Windows platform from server config and
+    only send repo_id for download tasks."""
+    posts = _install_httpx_client(
+        monkeypatch,
+        state={
+            "env": {
+                "servers": [
+                    {"host": "user@winbox", "platform": "windows", "port": "22"},
+                ],
+            },
+            "tasks": [
+                {
+                    "sessionId": "cookbook-abc123",
+                    "type": "download",
+                    "remoteHost": "user@winbox",
+                    "sshPort": "22",
+                    # platform intentionally missing — must come from servers[]
+                    "payload": {"repo_id": "org/model"},
+                }
+            ],
+        },
+    )
+
+    result = await tools.do_cancel_download(
+        json.dumps({"session_id": "cookbook-abc123"})
+    )
+
+    assert result["exit_code"] == 0
+    stop_posts = [p for p in posts if str(p[0]).endswith("/api/cookbook/stop-session")]
+    assert stop_posts
+    body = stop_posts[0][1]
+    assert body["platform"] == "windows"
+    assert body["task_type"] == "download"
+    assert body["repo_id"] == "org/model"
+
+
+@pytest.mark.asyncio
+async def test_stop_served_model_does_not_send_download_repo_metadata(monkeypatch):
+    posts = _install_httpx_client(
+        monkeypatch,
+        state={
+            "tasks": [
+                {
+                    "sessionId": "serve-abc123",
+                    "type": "serve",
+                    "remoteHost": "",
+                    "payload": {"repo_id": "org/model"},
+                }
+            ],
+        },
+    )
+
+    result = await tools.do_stop_served_model(
+        json.dumps({"session_id": "serve-abc123"})
+    )
+
+    assert result["exit_code"] == 0
+    stop_posts = [p for p in posts if str(p[0]).endswith("/api/cookbook/stop-session")]
+    assert stop_posts
+    body = stop_posts[0][1]
+    assert body.get("task_type") == "serve"
+    assert "repo_id" not in body
+
+
+@pytest.mark.asyncio
 async def test_cancel_download_rejects_invalid_remote_host_before_shell(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 

@@ -581,10 +581,31 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       const _zh = zombieCandidate.remoteHost || '';
       const _zPort = (_serverByVal?.(zombieCandidate.remoteServerKey || zombieCandidate.payload?.remote_server_key || _zh)
         || (_envState.servers || []).find(s => s.host === _zh) || {}).port;
-      const _sshPf = _zh ? `ssh ${_zPort && _zPort !== '22' ? `-p ${_zPort} ` : ''}${_zh} '` : '';
-      const _sshSf = _zh ? `'` : '';
-      const _probePrefix = _zh ? 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ' : '';
-      const _probeCmd = `${_sshPf}${_probePrefix}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
+      const _zPlat = zombieCandidate.platform
+        || zombieCandidate.payload?.platform
+        || _getPlatform(zombieCandidate)
+        || (_zh ? _getPlatform(_zh) : _getPlatform('local'))
+        || '';
+      const _isWinZombie = _zPlat === 'windows';
+      let _probeCmd;
+      if (_isWinZombie) {
+        // Remote/local Windows downloads are detached PowerShell processes, not tmux.
+        const sid = zombieCandidate.sessionId;
+        const usePs = _zh
+          ? `$p = Get-Content (Join-Path (Join-Path $env:TEMP 'odysseus-sessions') '${sid}.pid') -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } }; exit 1`
+          : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } }; exit 1`;
+        if (_zh) {
+          const pf = _zPort && _zPort !== '22' ? `-p ${_zPort} ` : '';
+          _probeCmd = `ssh ${pf}${_zh} "powershell -NoProfile -Command \\"${usePs.replace(/"/g, '\\"')}\\""`;
+        } else {
+          _probeCmd = `powershell -NoProfile -Command "${usePs.replace(/"/g, '\\"')}"`;
+        }
+      } else {
+        const _sshPf = _zh ? `ssh ${_zPort && _zPort !== '22' ? `-p ${_zPort} ` : ''}${_zh} '` : '';
+        const _sshSf = _zh ? `'` : '';
+        const _probePrefix = _zh ? 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ' : '';
+        _probeCmd = `${_sshPf}${_probePrefix}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
+      }
       const _r = await fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -592,7 +613,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       });
       const _d = await _r.json();
       if (_d.exit_code === 0) {
-        // tmux still alive → not actually done. Revive + tell the user.
+        // Session still alive → not actually done. Revive + tell the user.
         const _fresh = _loadTasks();
         const _ft = _fresh.find(t => t.sessionId === zombieCandidate.sessionId);
         if (_ft) {

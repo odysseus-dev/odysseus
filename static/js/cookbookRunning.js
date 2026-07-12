@@ -1191,14 +1191,20 @@ function _winSessionStopTreeOnlyPs(task) {
 }
 
 async function _stopCookbookSession(task) {
-  const repoId = task?.payload?.repo_id || task?.payload?.repoId || '';
+  const taskType = task?.type || '';
   const body = {
     session_id: task.sessionId,
     remote_host: task.remoteHost || '',
     ssh_port: _getPort(task) || '',
     platform: task.platform || _getPlatform(task) || '',
+    task_type: taskType,
   };
-  if (repoId) body.repo_id = repoId;
+  // Download-only: HF repo_id drives stopped-repo markers / orphan cleanup.
+  // Serve tasks also carry HF-shaped repo_id — do not send it for non-downloads.
+  if (taskType === 'download') {
+    const repoId = task?.payload?.repo_id || task?.payload?.repoId || '';
+    if (repoId) body.repo_id = repoId;
+  }
   try {
     const r = await fetch('/api/cookbook/stop-session', {
       method: 'POST',

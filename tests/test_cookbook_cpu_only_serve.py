@@ -191,7 +191,9 @@ def test_local_windows_cached_model_delete_uses_powershell():
     block = text[idx:idx + 3600]
     assert "function _localWinPowerShellCmd(ps)" in text
     assert "function _isOllamaCachedModel(m)" in text
-    assert "function _ollamaDeleteCmd(modelName, host = '')" in text
+    assert "function _ollamaDeleteCmd(modelName, target = {})" in text
+    assert "function _resolveCacheTarget()" in text
+    assert "cacheTarget.platform === 'windows'" in block
     assert "ollama rm" in text
     assert "cmd = _localWinPowerShellCmd(ps);" in block
     assert "if (Test-Path" in block
@@ -206,3 +208,21 @@ def test_local_windows_cached_model_delete_uses_powershell():
     assert "Remove-Item -Recurse -Force" in block
     # Remote Windows still goes through ssh + powershell; local must not rely on bash.
     assert 'ssh ${pf}${host} "powershell -Command' in block
+    # Delete dialect must follow the cache dropdown target, not active serve OS.
+    assert "_getPlatform(host || 'local')" in text
+    assert "_isWindows()" not in block or "cacheTarget.platform" in block
+
+
+def test_cache_delete_uses_selected_cache_target_platform():
+    text = SERVE_SRC.read_text(encoding="utf-8")
+    idx = text.index("function _resolveCacheTarget()")
+    block = text[idx:idx + 900]
+    assert "const platform = _getPlatform(host || 'local')" in block
+    assert "return { host, port, platform }" in block
+    del_idx = text.index("async function _deleteCachedModel")
+    del_block = text[del_idx:del_idx + 2800]
+    assert "const cacheTarget = _resolveCacheTarget()" in del_block
+    assert "const isWinCache = cacheTarget.platform === 'windows'" in del_block
+    assert "_ollamaDeleteCmd(repo, cacheTarget)" in del_block
+    # Must not choose shell dialect from bare active-server _isWindows().
+    assert "else if (_isWindows())" not in del_block

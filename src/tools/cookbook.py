@@ -726,6 +726,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
     sport = ssh_port or ""
     platform = ""
     repo_id = ""
+    task_type = ""
 
     # Look up the task's host + confirm it exists in state.
     state: Dict[str, Any] = {}
@@ -746,7 +747,10 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             if not sport:
                 sport = t.get("sshPort") or ""
             platform = t.get("platform") or ""
+            task_type = (t.get("type") or "").strip().lower()
             payload = t.get("payload") if isinstance(t.get("payload"), dict) else {}
+            if not platform:
+                platform = (payload.get("platform") or "").strip()
             repo_id = payload.get("repo_id") or ""
             break
 
@@ -760,14 +764,28 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         env = state.get("env") if isinstance(state.get("env"), dict) else {}
         platform = env.get("hostPlatform") or ""
 
+    # Resolve platform from configured server profile when task metadata is stale/missing
+    # so remote Windows stops hit taskkill rather than tmux.
+    if not platform and remote:
+        try:
+            servers = await _cookbook_servers()
+            for h in servers.get("hosts") or []:
+                if (h.get("host") or "") == remote and (h.get("platform") or "").strip():
+                    platform = (h.get("platform") or "").strip()
+                    break
+        except Exception as e:
+            logger.debug(f"cookbook platform lookup failed for {remote}: {e}")
+
     target_label = f"{session_id} on {remote}" if remote else session_id
     body: Dict[str, Any] = {
         "session_id": session_id,
         "remote_host": remote,
         "ssh_port": sport,
         "platform": platform,
+        "task_type": task_type,
     }
-    if repo_id:
+    # Download-only: HF repo_id drives stopped-repo markers / orphan cleanup.
+    if repo_id and task_type == "download":
         body["repo_id"] = repo_id
 
     try:

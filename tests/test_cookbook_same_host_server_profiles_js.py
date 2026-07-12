@@ -42,6 +42,18 @@ def test_cookbook_submodules_resolve_visible_profile_selection():
     assert "port: host ? (server?.port || _getPort(host) || '') : ''" in SERVE
 
 
+def test_zombie_download_probe_uses_windows_pid_not_tmux():
+    """Remote/local Windows detached downloads must not be probed with tmux has-session."""
+    idx = DOWNLOAD.index("const zombieCandidate = tasks.find")
+    block = DOWNLOAD[idx:idx + 2200]
+    assert "_isWinZombie" in block
+    assert "odysseus-sessions" in block
+    assert "powershell -NoProfile -Command" in block
+    assert "tmux has-session -t ${zombieCandidate.sessionId}" in block
+    # Windows branch must come before the tmux fallback.
+    assert block.index("_isWinZombie") < block.index("tmux has-session -t ${zombieCandidate.sessionId}")
+
+
 def test_serve_launch_preflights_use_selected_target_and_port():
     launch_target = "const launchTarget = _selectedServeTarget(panel);"
     assert launch_target in SERVE

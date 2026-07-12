@@ -375,10 +375,11 @@ def _cmdline_references_hf_repo(text: str, repo_id: str) -> bool:
     boundary = r"(?![A-Za-z0-9._-])"
     escaped = re.escape(repo_id)
     patterns = (
-        # hf or hf.exe download — optional path prefix (e.g. C:\...\hf.exe download org/model)
-        rf"\bhf(?:\.exe)?\s+download\s+{escaped}{boundary}",
+        # hf / hf.exe / "…\hf.exe" / '…\hf.exe' download <repo>
+        # Optional closing quote after .exe — Windows often quotes the executable path.
+        rf"\bhf(?:\.exe)?[\"']?\s+download\s+{escaped}{boundary}",
         # hf_download.py script arg — quoted/unquoted, optional python -u prefix
-        rf"\bhf_download\.py['\"]?\s+{escaped}{boundary}",
+        rf"\bhf_download\.py[\"']?\s+{escaped}{boundary}",
     )
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
@@ -1041,6 +1042,23 @@ def setup_cookbook_routes() -> APIRouter:
         pid_path.write_text(str(proc.pid), encoding="utf-8")
         return {"pid": proc.pid, "log_path": str(log_path)}
 
+    def _windows_download_process_scan_ps() -> str:
+        return (
+            "Get-CimInstance Win32_Process -Filter "
+            "\"Name='python.exe' OR Name='hf.exe'\" | "
+            "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
+        )
+
+    def _parse_windows_download_scan(stdout: str, repo_id: str) -> int | None:
+        for line in (stdout or "").splitlines():
+            pid_s, _, cmdline = line.partition("\t")
+            if _cmdline_references_hf_repo(cmdline, repo_id):
+                try:
+                    return int(pid_s.strip())
+                except ValueError:
+                    continue
+        return None
+
     def _scan_windows_download_processes(repo_id: str) -> int | None:
         """PID of any live process downloading repo_id (Windows, best-effort).
 
@@ -1050,14 +1068,9 @@ def setup_cookbook_routes() -> APIRouter:
         orphans hold the HF cache file locks and deadlock any new download of
         the same repo.
         """
-        ps = (
-            "Get-CimInstance Win32_Process -Filter "
-            "\"Name='python.exe' OR Name='hf.exe'\" | "
-            "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
-        )
         try:
             out = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
+                ["powershell", "-NoProfile", "-Command", _windows_download_process_scan_ps()],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -1065,14 +1078,96 @@ def setup_cookbook_routes() -> APIRouter:
             ).stdout or ""
         except Exception:
             return None
-        for line in out.splitlines():
-            pid_s, _, cmdline = line.partition("\t")
-            if _cmdline_references_hf_repo(cmdline, repo_id):
-                try:
-                    return int(pid_s.strip())
-                except ValueError:
-                    continue
-        return None
+        return _parse_windows_download_scan(out, repo_id)
+
+    def _ssh_powershell_argv(remote: str, ssh_port: str | None, ps: str) -> list[str]:
+        ssh_args = [
+            "ssh",
+            "-o", "ConnectTimeout=5",
+            "-o", "StrictHostKeyChecking=no",
+        ]
+        safe_port = _coerce_ssh_port(ssh_port)
+        if safe_port and safe_port != "22":
+            ssh_args.extend(["-p", safe_port])
+        ssh_args.extend([remote, "powershell", "-NoProfile", "-Command", ps])
+        return ssh_args
+
+    async def _ssh_powershell(remote: str, ssh_port: str | None, ps: str) -> tuple[int, str]:
+        """Run inline PowerShell on a remote Windows host via ssh argv (no local shell)."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *_ssh_powershell_argv(remote, ssh_port, ps),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+        except Exception:
+            return 1, ""
+        return proc.returncode or 0, (stdout or b"").decode("utf-8", errors="replace")
+
+    async def _scan_remote_windows_download_processes(
+        remote: str, ssh_port: str | None, repo_id: str
+    ) -> int | None:
+        """PID of a live remote-Windows downloader for repo_id (best-effort)."""
+        _rc, out = await _ssh_powershell(remote, ssh_port, _windows_download_process_scan_ps())
+        return _parse_windows_download_scan(out, repo_id)
+
+    def _local_ps1_sessions_for_repo(repo_id: str) -> list[str]:
+        """Session ids whose local _run.ps1 references an HF download of repo_id."""
+        try:
+            runners = sorted(TMUX_LOG_DIR.glob("cookbook-*_run.ps1"))
+        except OSError:
+            return []
+        sids: list[str] = []
+        for path in runners:
+            sid = path.name.removesuffix("_run.ps1")
+            if not _SESSION_ID_RE.match(sid):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if _cmdline_references_hf_repo(text, repo_id):
+                sids.append(sid)
+        return sids
+
+    async def _remote_windows_session_alive(
+        remote: str, ssh_port: str | None, session_id: str
+    ) -> bool:
+        ps = (
+            "$sd = Join-Path $env:TEMP 'odysseus-sessions'; "
+            f"$p = Get-Content (Join-Path $sd '{session_id}.pid') -ErrorAction SilentlyContinue; "
+            "if ($p -match '^\\d+$') { "
+            "Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue | Out-Null; "
+            "if ($?) { exit 0 } }; exit 1"
+        )
+        rc, _out = await _ssh_powershell(remote, ssh_port, ps)
+        return rc == 0
+
+    def _server_platform_for_host(remote_host: str | None) -> str:
+        """Platform string from cookbook server profiles for a remote host."""
+        if not remote_host or not _cookbook_state_path.exists():
+            return ""
+        try:
+            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        env_state = state.get("env") if isinstance(state, dict) else {}
+        servers = env_state.get("servers") if isinstance(env_state, dict) else []
+        if not isinstance(servers, list):
+            return ""
+        for server in servers:
+            if isinstance(server, dict) and (server.get("host") or "").strip() == remote_host:
+                return (server.get("platform") or "").strip().lower()
+        return ""
+
+    def _resolve_windows_platform(remote_host: str | None, platform: str | None) -> str:
+        plat = (platform or "").strip().lower()
+        if plat:
+            return plat
+        if remote_host:
+            return _server_platform_for_host(remote_host)
+        return "windows" if IS_WINDOWS else ""
 
     def _unlink_session_artifacts(session_id: str) -> None:
         for pattern in (f"{session_id}.*", f"{session_id}_run.*"):
@@ -1169,6 +1264,27 @@ def setup_cookbook_routes() -> APIRouter:
                     kill_process_tree(live["orphan_pid"])
             return None
         return _probe_live_local_download(repo_id)
+
+    async def _find_live_remote_windows_download(
+        remote: str, ssh_port: str | None, repo_id: str
+    ) -> dict | None:
+        """Live remote-Windows download of this repo, if any (honours user-stop)."""
+        if repo_id in _read_stopped_repos():
+            for sid in _local_ps1_sessions_for_repo(repo_id):
+                await _stop_remote_windows_session(sid, remote, ssh_port, repo_id)
+            orphan = await _scan_remote_windows_download_processes(remote, ssh_port, repo_id)
+            if orphan:
+                await _ssh_powershell(
+                    remote, ssh_port, f"taskkill /F /T /PID {int(orphan)} 2>$null | Out-Null"
+                )
+            return None
+        for sid in _local_ps1_sessions_for_repo(repo_id):
+            if await _remote_windows_session_alive(remote, ssh_port, sid):
+                return {"session_id": sid}
+        orphan_pid = await _scan_remote_windows_download_processes(remote, ssh_port, repo_id)
+        if orphan_pid:
+            return {"orphan_pid": orphan_pid}
+        return None
 
     def _probe_live_local_download(repo_id: str) -> dict | None:
         """Probe for a live LOCAL download without honouring user-stop markers."""
@@ -1285,6 +1401,50 @@ def setup_cookbook_routes() -> APIRouter:
             "detail": "; ".join(detail) or "session artifacts removed",
         }
 
+    async def _stop_remote_windows_session(
+        session_id: str,
+        remote: str,
+        ssh_port: str | None = None,
+        repo_id: str | None = None,
+    ) -> dict:
+        """Kill a remote Windows detached cookbook session and orphan downloaders."""
+        _write_session_stop_marker(session_id, repo_id)
+        # Pid-file kill + session cmdline sweep + artifact cleanup in one hop.
+        # Orphan repo matching stays in Python so exact HF id boundaries apply.
+        ps = (
+            "$sd = Join-Path $env:TEMP 'odysseus-sessions'; "
+            f"$sid = '{session_id}'; "
+            "$pidPath = Join-Path $sd ($sid + '.pid'); "
+            "$p = Get-Content $pidPath -ErrorAction SilentlyContinue; "
+            "if ($p -match '^\\d+$') { taskkill /F /T /PID $p 2>$null | Out-Null }; "
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $sid + '*') } | "
+            "ForEach-Object { taskkill /F /T /PID $_.ProcessId 2>$null | Out-Null }; "
+            "Remove-Item (Join-Path $sd ($sid + '.*')) -Force -ErrorAction SilentlyContinue"
+        )
+        rc, _out = await _ssh_powershell(remote, ssh_port, ps)
+        detail: list[str] = []
+        if rc == 0:
+            detail.append("remote session tree stopped")
+        else:
+            detail.append(f"remote stop exit {rc}")
+        if repo_id:
+            for _ in range(3):
+                orphan = await _scan_remote_windows_download_processes(remote, ssh_port, repo_id)
+                if not orphan:
+                    break
+                await _ssh_powershell(
+                    remote, ssh_port, f"taskkill /F /T /PID {int(orphan)} 2>$null | Out-Null"
+                )
+                detail.append(f"killed remote orphan downloader pid {orphan}")
+        _unlink_session_artifacts(session_id)
+        return {
+            "ok": True,
+            "stopped": True,
+            "detail": "; ".join(detail) or "remote session stop attempted",
+            "exit_code": rc,
+        }
+
     def _tmux_stop_succeeded(returncode: int, stderr: bytes | str = b"") -> bool:
         if returncode == 0:
             return True
@@ -1307,60 +1467,39 @@ def setup_cookbook_routes() -> APIRouter:
     ) -> dict:
         if not _SESSION_ID_RE.match(session_id):
             return {"ok": False, "error": "invalid session_id"}
-        _write_session_stop_marker(session_id, repo_id)
         remote = (remote_host or "").strip()
         sport = ssh_port or ""
-        is_win = (platform or "").strip().lower() == "windows"
+        is_win = _resolve_windows_platform(remote or None, platform) == "windows"
         if remote:
             if is_win:
-                sd = "Join-Path $env:TEMP 'odysseus-sessions'"
-                ps = (
-                    f"$sd = {sd}; "
-                    f"$pidPath = Join-Path $sd '{session_id}.pid'; "
-                    f"$p = Get-Content $pidPath -ErrorAction SilentlyContinue; "
-                    f"if ($p) {{ taskkill /F /T /PID $p 2>$null | Out-Null }}; "
-                    f"Remove-Item (Join-Path $sd '{session_id}.*') -Force -ErrorAction SilentlyContinue"
-                )
-                ssh_args = [
-                    "ssh",
-                    "-o", "ConnectTimeout=5",
-                    "-o", "StrictHostKeyChecking=no",
-                ]
-                safe_port = _coerce_ssh_port(sport)
-                if safe_port and safe_port != "22":
-                    ssh_args.extend(["-p", safe_port])
-                ssh_args.extend([remote, "powershell", "-NoProfile", "-Command", ps])
-                proc = await asyncio.create_subprocess_exec(
-                    *ssh_args,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            else:
-                sid = shlex.quote(session_id)
-                ssh_args = [
-                    "ssh",
-                    "-o", "ConnectTimeout=5",
-                    "-o", "StrictHostKeyChecking=no",
-                ]
-                safe_port = _coerce_ssh_port(sport)
-                if safe_port and safe_port != "22":
-                    ssh_args.extend(["-p", safe_port])
-                ssh_args.append(remote)
-                ssh_args.append(
-                    f"tmux has-session -t {sid} 2>/dev/null || exit 0; "
-                    f"tmux send-keys -t {sid} C-c 2>/dev/null; "
-                    f"sleep 2; tmux kill-session -t {sid}"
-                )
-                proc = await asyncio.create_subprocess_exec(
-                    *ssh_args,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+                return await _stop_remote_windows_session(session_id, remote, sport, repo_id)
+            _write_session_stop_marker(session_id, repo_id)
+            sid = shlex.quote(session_id)
+            ssh_args = [
+                "ssh",
+                "-o", "ConnectTimeout=5",
+                "-o", "StrictHostKeyChecking=no",
+            ]
+            safe_port = _coerce_ssh_port(sport)
+            if safe_port and safe_port != "22":
+                ssh_args.extend(["-p", safe_port])
+            ssh_args.append(remote)
+            ssh_args.append(
+                f"tmux has-session -t {sid} 2>/dev/null || exit 0; "
+                f"tmux send-keys -t {sid} C-c 2>/dev/null; "
+                f"sleep 2; tmux kill-session -t {sid}"
+            )
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             _stdout, stderr = await proc.communicate()
             ok = _tmux_stop_succeeded(proc.returncode, stderr)
             return {"ok": ok, "exit_code": proc.returncode}
-        if IS_WINDOWS:
+        if IS_WINDOWS or is_win:
             return await asyncio.to_thread(_stop_local_windows_session, session_id, repo_id)
+        _write_session_stop_marker(session_id, repo_id)
         sid = shlex.quote(session_id)
         cmd = (
             f"tmux has-session -t {sid} 2>/dev/null || exit 0; "
@@ -1404,25 +1543,45 @@ def setup_cookbook_routes() -> APIRouter:
             _clear_download_stopped(req.repo_id)
         # Concurrent downloads of the same repo deadlock on the HF cache's
         # per-file locks ("Still waiting to acquire lock..."). If a live local
-        # session is already downloading this repo, reattach the UI to it
-        # instead of launching a duplicate. Remote hosts are covered by the
-        # frontend's tmux has-session zombie probe; Ollama serializes pulls
-        # in its own daemon.
-        if not req.remote_host and not is_ollama_download:
-            live = await asyncio.to_thread(_find_live_local_download, req.repo_id)
+        # or remote-Windows session is already downloading this repo, reattach
+        # the UI to it instead of launching a duplicate. Remote POSIX hosts are
+        # covered by the frontend's tmux has-session zombie probe; Ollama
+        # serializes pulls in its own daemon.
+        if not is_ollama_download:
+            remote_for_guard = (req.remote_host or "").strip() or None
+            plat_for_guard = _resolve_windows_platform(remote_for_guard, req.platform)
+            live = None
+            if not remote_for_guard:
+                live = await asyncio.to_thread(_find_live_local_download, req.repo_id)
+            elif plat_for_guard == "windows":
+                live = await _find_live_remote_windows_download(
+                    remote_for_guard, req.ssh_port, req.repo_id
+                )
             if live and live.get("session_id"):
                 live_sid = live["session_id"]
-                logger.info(f"Download of {req.repo_id} already running locally in {live_sid}; reattaching")
-                return {"ok": True, "session_id": live_sid, "remote": "local", "reused": True}
+                where = remote_for_guard or "local"
+                logger.info(
+                    f"Download of {req.repo_id} already running on {where} in {live_sid}; reattaching"
+                )
+                return {
+                    "ok": True,
+                    "session_id": live_sid,
+                    "remote": remote_for_guard or "local",
+                    "reused": True,
+                }
             if live and live.get("orphan_pid"):
                 pid = live["orphan_pid"]
-                logger.warning(f"Download of {req.repo_id} blocked: untracked downloader process pid={pid} is live")
+                where = remote_for_guard or "local"
+                logger.warning(
+                    f"Download of {req.repo_id} blocked: untracked downloader process "
+                    f"pid={pid} is live on {where}"
+                )
                 return {
                     "ok": False,
                     "error": (
                         f"Another process (pid {pid}) is already downloading {req.repo_id} "
-                        "outside cookbook tracking — likely left over from an earlier stop. "
-                        "Wait for it to finish, or end its process tree (e.g. "
+                        f"on {where} outside cookbook tracking — likely left over from an "
+                        "earlier stop. Wait for it to finish, or end its process tree (e.g. "
                         f"taskkill /F /T /PID {pid}) and retry; the download resumes from cache."
                     ),
                     "session_id": "",
@@ -3521,6 +3680,8 @@ def setup_cookbook_routes() -> APIRouter:
         ssh_port: str | None = None
         platform: str | None = None
         repo_id: str | None = None
+        # download | serve | dependency | … — gates download-only stop side effects
+        task_type: str | None = None
 
     @router.post("/api/cookbook/stop-session")
     async def stop_cookbook_session(request: Request, req: StopSessionRequest):
@@ -3533,15 +3694,22 @@ def setup_cookbook_routes() -> APIRouter:
         validate_remote_host(req.remote_host)
         sport = validate_ssh_port(req.ssh_port)
         repo_id_raw = (req.repo_id or "").strip()
-        # repo_id is optional stop metadata for HF download side effects only.
-        # Never validate it before kill — dependency rows store pip labels
-        # such as llama-cpp-python[server] in payload.repo_id.
-        repo_id_for_stop = repo_id_raw if repo_id_raw and _REPO_ID_RE.match(repo_id_raw) else None
+        task_type = (req.task_type or "").strip().lower()
+        # repo_id is optional download-only metadata for stopped-repo markers and
+        # orphan downloader cleanup. Never validate it before kill — dependency
+        # rows store pip labels such as llama-cpp-python[server] in payload.repo_id.
+        # Serve tasks also carry HF-shaped repo_id; only honour it for downloads.
+        repo_id_for_stop = (
+            repo_id_raw
+            if task_type == "download" and repo_id_raw and _REPO_ID_RE.match(repo_id_raw)
+            else None
+        )
+        platform = _resolve_windows_platform(req.remote_host, req.platform)
         return await _stop_cookbook_session_impl(
             req.session_id.strip(),
             remote_host=req.remote_host or "",
             ssh_port=sport,
-            platform=(req.platform or "").strip(),
+            platform=platform,
             repo_id=repo_id_for_stop,
         )
 

@@ -991,12 +991,18 @@ def test_cmdline_references_hf_repo_exact_match_not_prefix():
         r"C:\Users\app\.venv\Scripts\hf.exe download org/model --local-dir C:\cache", short
     )
     assert _cmdline_references_hf_repo(
+        r'"C:\Users\app\.venv\Scripts\hf.exe" download org/model --local-dir C:\cache', short
+    )
+    assert _cmdline_references_hf_repo(
         r"python -u 'C:\app\scripts\hf_download.py' org/model", short
     )
     assert not _cmdline_references_hf_repo(f"python hf_download.py {long_repo}", short)
     assert not _cmdline_references_hf_repo(f"hf download {long_repo}", short)
     assert not _cmdline_references_hf_repo(
         r"C:\path\hf.exe download org/model-large", short
+    )
+    assert not _cmdline_references_hf_repo(
+        r'"C:\path\hf.exe" download org/model-large', short
     )
 
 
@@ -1047,6 +1053,7 @@ async def test_stop_session_dependency_pip_label_still_kills(monkeypatch):
         ssh_port=None,
         platform=None,
         repo_id="llama-cpp-python[server]",
+        task_type="dependency",
     )
 
     result = await endpoint(request, req)
@@ -1108,6 +1115,7 @@ async def test_remote_windows_stop_session_uses_subprocess_exec(monkeypatch):
         ssh_port="2222",
         platform="windows",
         repo_id=None,
+        task_type=None,
     )
 
     result = await endpoint(request, req)
@@ -1125,6 +1133,184 @@ async def test_remote_windows_stop_session_uses_subprocess_exec(monkeypatch):
     assert "Join-Path $env:TEMP" in ps
     assert "$p" in ps
     assert "taskkill /F /T /PID $p" in ps
+    # Session cmdline sweep covers stale/missing .pid files
+    assert "Get-CimInstance Win32_Process" in ps
+    assert "$sid" in ps
+
+
+@pytest.mark.asyncio
+async def test_remote_windows_stop_session_resolves_platform_from_state(monkeypatch, tmp_path):
+    """Missing task.platform still uses Windows stop when server profile says windows."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    import routes.cookbook_routes as cookbook_routes
+
+    state_path = tmp_path / "cookbook_state.json"
+    state_path.write_text(
+        json.dumps({
+            "env": {
+                "servers": [{"host": "winbox", "platform": "windows", "port": "22"}],
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    captured: list[list[str]] = []
+
+    class FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_subprocess_exec(*args, **kwargs):
+        captured.append(list(args))
+        return FakeProc()
+
+    monkeypatch.setattr(cookbook_routes, "IS_WINDOWS", False)
+    monkeypatch.setattr(cookbook_routes, "COOKBOOK_STATE_FILE", str(state_path))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_subprocess_exec)
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+
+    router = cookbook_routes.setup_cookbook_routes()
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/cookbook/stop-session" and "POST" in route.methods
+    )
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/cookbook/stop-session",
+            "headers": [],
+        }
+    )
+    req = SimpleNamespace(
+        session_id="cookbook-deadbeef",
+        remote_host="winbox",
+        ssh_port="22",
+        platform="",  # missing — must come from server profile
+        repo_id=None,
+        task_type="download",
+    )
+
+    result = await endpoint(request, req)
+
+    assert result["ok"] is True
+    assert captured
+    argv = captured[0]
+    assert "powershell" in argv
+    assert "winbox" in argv
+    # Must not fall through to tmux when platform is resolved from state
+    assert not any("tmux" in str(a) for a in argv)
+
+
+def test_server_platform_for_host_reads_cookbook_state(tmp_path, monkeypatch):
+    import routes.cookbook_routes as cookbook_routes
+
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps({
+            "env": {
+                "servers": [
+                    {"host": "winbox", "platform": "windows"},
+                    {"host": "linuxbox", "platform": "linux"},
+                ]
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cookbook_routes, "COOKBOOK_STATE_FILE", str(state_path))
+    router = cookbook_routes.setup_cookbook_routes()
+    endpoint = next(
+        r.endpoint for r in router.routes
+        if r.path == "/api/cookbook/stop-session" and "POST" in r.methods
+    )
+    helpers = {
+        name: cell.cell_contents
+        for name, cell in zip(endpoint.__code__.co_freevars, endpoint.__closure__ or ())
+    }
+    resolve = helpers.get("_resolve_windows_platform")
+    assert resolve is not None
+    assert resolve("winbox", "") == "windows"
+    assert resolve("linuxbox", "") == "linux"
+    assert resolve("winbox", "windows") == "windows"
+
+
+@pytest.mark.asyncio
+async def test_stop_session_serve_skips_download_repo_side_effects(monkeypatch):
+    """Serve stops must not mark HF repo_id as user-stopped or scan orphans."""
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    import routes.cookbook_routes as cookbook_routes
+
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+
+    router = cookbook_routes.setup_cookbook_routes()
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/cookbook/stop-session" and "POST" in route.methods
+    )
+    seen: list = []
+
+    async def fake_impl(session_id, remote_host="", ssh_port=None, platform="", repo_id=None):
+        seen.append({"repo_id": repo_id, "platform": platform})
+        return {"ok": True}
+
+    for name, cell in zip(endpoint.__code__.co_freevars, endpoint.__closure__ or ()):
+        if name == "_stop_cookbook_session_impl":
+            cell.cell_contents = fake_impl
+            break
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/cookbook/stop-session",
+            "headers": [],
+        }
+    )
+    req = SimpleNamespace(
+        session_id="serve-deadbeef",
+        remote_host=None,
+        ssh_port=None,
+        platform=None,
+        repo_id="org/model",
+        task_type="serve",
+    )
+    result = await endpoint(request, req)
+    assert result["ok"] is True
+    assert seen and seen[0]["repo_id"] is None
+
+    req_dl = SimpleNamespace(
+        session_id="cookbook-deadbeef",
+        remote_host=None,
+        ssh_port=None,
+        platform=None,
+        repo_id="org/model",
+        task_type="download",
+    )
+    await endpoint(request, req_dl)
+    assert seen[-1]["repo_id"] == "org/model"
+
+
+def test_remote_windows_download_guard_scans_before_launch():
+    """Remote Windows /api/model/download must probe for live/orphan downloaders."""
+    import routes.cookbook_routes as cookbook_routes
+
+    src = Path(cookbook_routes.__file__).read_text(encoding="utf-8")
+    assert "_find_live_remote_windows_download" in src
+    assert "_scan_remote_windows_download_processes" in src
+    assert 'plat_for_guard == "windows"' in src
+    assert "_stop_remote_windows_session" in src
 
 
 def test_coerce_ssh_port_rejects_out_of_range():

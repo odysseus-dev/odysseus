@@ -131,3 +131,15 @@ def test_task_menu_reloads_live_status_before_stop_actions():
     assert "_loadTasks().find(t => t.sessionId === task.sessionId)" in block
     assert "if (menuStatus === 'running')" in block
     assert "hide Stop after the user stopped" in block
+
+
+def test_stop_cookbook_session_sends_repo_id_only_for_downloads():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("async function _stopCookbookSession")
+    block = source[idx:idx + 900]
+    assert "task_type: taskType" in block
+    assert "if (taskType === 'download')" in block
+    assert "body.repo_id = repoId" in block
+    # Serve stops must not forward HF-shaped payload.repo_id.
+    assert "const repoId = task?.payload?.repo_id" in block
+    assert block.index("if (taskType === 'download')") < block.index("body.repo_id = repoId")
