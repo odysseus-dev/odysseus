@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/odysseus-browser.jpg" alt="Odysseus interface">
+  <img src="docs/odysseus-browser.png" alt="Odysseus interface">
 </p>
 
 ---
