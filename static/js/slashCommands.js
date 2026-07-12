@@ -7,45 +7,6 @@ window.cancelActiveTour = function cancelActiveTour() {
   document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   document.getElementById('tour-tooltip')?.remove();
   document.body?.classList.remove('tour-active');
-  // ── Agent commands (MiMo-Code inspired) ──────────────────────────
-  goal: {
-    alias: [],
-    category: 'Agent',
-    help: 'Set a stopping condition for the session',
-    handler: _cmdGoal,
-    noUserBubble: false,
-    usage: '/goal <condition>',
-  },
-  dream: {
-    alias: [],
-    category: 'Agent',
-    help: 'Extract knowledge from session to memory',
-    handler: _cmdDream,
-    noUserBubble: false,
-    usage: '/dream',
-  },
-  status: {
-    alias: [],
-    category: 'Agent',
-    help: 'Show session status, goal, context size',
-    handler: _cmdStatus,
-    noUserBubble: false,
-    usage: '/status',
-  },
-  task: {
-    alias: ['tasks'],
-    category: 'Agent',
-    help: 'Manage tasks (list, add, done, status)',
-    default: 'list',
-    handler: _cmdTask,
-    noUserBubble: false,
-    subs: {
-      'list':   { handler: _cmdTaskList,   alias: ['ls'],      help: 'List all tasks',        usage: '/task list' },
-      'add':    { handler: _cmdTaskAdd,    alias: ['create'],  help: 'Add a new task',        usage: '/task add <description>' },
-      'done':   { handler: _cmdTaskDone,   alias: ['complete'],help: 'Mark task as done',      usage: '/task done <id>' },
-      'status': { handler: _cmdTaskStatus, alias: ['stat'],    help: 'Show task summary',      usage: '/task status' },
-    },
-  },
 };
 
 import Storage from './storage.js';
@@ -5789,21 +5750,12 @@ async function _cmdGoal(args, ctx) {
   const goal = args.join(' ');
   if (!goal) {
     ctx.slashReply(
-      '## 🎯 Goal Mode
-
-' +
-      '**Usage:** `/goal <stopping condition>`
-
-' +
-      'Sets a condition that must be met before the agent can stop.
-
-' +
-      '**Examples:**
-' +
-      '- `/goal All tests pass and code is committed`
-' +
-      '- `/goal The bug is fixed and verified in production`
-' +
+      '## 🎯 Goal Mode\n\n' +
+      '**Usage:** `/goal <stopping condition>`\n\n' +
+      'Sets a condition that must be met before the agent can stop.\n\n' +
+      '**Examples:**\n' +
+      '- `/goal All tests pass and code is committed`\n' +
+      '- `/goal The bug is fixed and verified in production`\n' +
       '- `/goal Documentation is complete with examples`'
     );
     return true;
@@ -6215,8 +6167,8 @@ const COMMANDS = {
   },
   compact: {
     alias: [],
-    category: 'Agent',
-    help: 'Compact context and save checkpoint',
+    category: 'Utility',
+    help: 'Compact older chat messages',
     handler: _cmdCompact,
     usage: '/compact'
   },
@@ -6265,6 +6217,45 @@ const COMMANDS = {
   ping:    { alias: ['pong'], category: 'Utility', hidden: true, help: 'Check if model endpoints are alive', handler: _cmdPing, usage: '/ping' },
   probe:   { alias: ['test-models'], category: 'Utility', hidden: true, help: 'Test which models actually respond', handler: _cmdProbe, usage: '/probe [endpoint]' },
   color:   { alias: ['colour'],     hidden: true, handler: _cmdColor,   usage: '/color [hex]' },
+  // ── Agent commands (MiMo-Code inspired) ──────────────────────────
+  goal: {
+    alias: [],
+    category: 'Agent',
+    help: 'Set a stopping condition for the session',
+    handler: _cmdGoal,
+    noUserBubble: false,
+    usage: '/goal <condition>',
+  },
+  dream: {
+    alias: [],
+    category: 'Agent',
+    help: 'Extract knowledge from session to memory',
+    handler: _cmdDream,
+    noUserBubble: false,
+    usage: '/dream',
+  },
+  status: {
+    alias: [],
+    category: 'Agent',
+    help: 'Show session status, goal, context size',
+    handler: _cmdStatus,
+    noUserBubble: false,
+    usage: '/status',
+  },
+  task: {
+    alias: ['tasks'],
+    category: 'Agent',
+    help: 'Manage tasks (list, add, done, status)',
+    default: 'list',
+    handler: _cmdTask,
+    noUserBubble: false,
+    subs: {
+      'list':   { handler: _cmdTaskList,   alias: ['ls'],      help: 'List all tasks',        usage: '/task list' },
+      'add':    { handler: _cmdTaskAdd,    alias: ['create'],  help: 'Add a new task',        usage: '/task add <description>' },
+      'done':   { handler: _cmdTaskDone,   alias: ['complete'],help: 'Mark task as done',      usage: '/task done <id>' },
+      'status': { handler: _cmdTaskStatus, alias: ['stat'],    help: 'Show task summary',      usage: '/task status' },
+    },
+  },
 };
 
 // ── Legacy aliases ────────────────────────────────────────────────
