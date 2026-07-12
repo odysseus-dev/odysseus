@@ -1,6 +1,10 @@
 // @ts-check
 'use strict';
 
+const { section } = require('./lib/markdown');
+const { addLabel, dropLabel } = require('./lib/labels');
+const { upsertComment, deleteComment } = require('./lib/comment');
+
 /** @param {{ github: import('@octokit/rest').Octokit, context: import('@actions/github').context, core: import('@actions/core') }} */
 module.exports = async ({ github, context, core }) => {
   const issue  = context.payload.issue;
@@ -8,18 +12,10 @@ module.exports = async ({ github, context, core }) => {
   const labels = issue.labels.map(l => l.name);
   const owner  = context.repo.owner;
   const repo   = context.repo.repo;
+  const num    = issue.number;
 
   const isBug     = labels.includes('bug');
   const isFeature = labels.includes('enhancement');
-
-  // Extract a Section's text, stripping HTML comments. Matches any heading
-  // depth (#, ##, ###, …) so a manually-written body isn't penalised for
-  // using a different number of hashes than the issue form generates.
-  function section(heading) {
-    const re = new RegExp(`#+\\s+${heading}\\s*([\\s\\S]*?)(?=\\n#+\\s+|$)`, 'i');
-    const m  = body.match(re);
-    return m ? m[1].replace(/<!--[\s\S]*?-->/g, '').trim() : '';
-  }
 
   const failures = [];
 
@@ -41,49 +37,49 @@ module.exports = async ({ github, context, core }) => {
       break;
 
     case 'bug': {
-      if (!section('Install Method')) {
+      if (!section(body, 'Install Method')) {
         failures.push('**Install Method** — select how you installed Odysseus');
       }
 
-      if (!section('Operating System')) {
+      if (!section(body, 'Operating System')) {
         failures.push('**Operating System** — select your OS');
       }
 
-      const stepsText = section('Steps to Reproduce');
+      const stepsText = section(body, 'Steps to Reproduce');
       if (!stepsText || !/\d+\.|[-*]/.test(stepsText)) {
         failures.push('**Steps to Reproduce** — must include at least one numbered or bulleted step');
       }
 
-      if (section('Expected Behaviour').length < 10) {
+      if (section(body, 'Expected Behaviour').length < 10) {
         failures.push('**Expected Behaviour** — section is empty or too short');
       }
 
-      if (section('Actual Behaviour').length < 10) {
+      if (section(body, 'Actual Behaviour').length < 10) {
         failures.push('**Actual Behaviour** — section is empty or too short');
       }
       break;
     }
 
     case 'feature':
-      if (!section('Area')) {
+      if (!section(body, 'Area')) {
         failures.push('**Area** — select which part of the application this affects');
       }
 
-      if (section('Problem or Motivation').length < 20) {
+      if (section(body, 'Problem or Motivation').length < 20) {
         failures.push(
           '**Problem or Motivation** — section is empty or too short ' +
           '(explain the concrete problem this solves)',
         );
       }
 
-      if (section('Proposed Solution').length < 20) {
+      if (section(body, 'Proposed Solution').length < 20) {
         failures.push(
           '**Proposed Solution** — section is empty or too short ' +
           '(describe the change you want to see)',
         );
       }
 
-      if (!section('Are you willing to implement this\\?')) {
+      if (!section(body, 'Are you willing to implement this?')) {
         failures.push('**Are you willing to implement this?** — select an option');
       }
       break;
@@ -122,55 +118,15 @@ module.exports = async ({ github, context, core }) => {
     );
   }
 
-  // ── Labels ────────────────────────────────────────────────────────────────
-  // These labels are expected to already exist in the repo — managing the
-  // repo's label set is the maintainer's job, not this workflow's. We check a
-  // label exists before applying it (issues.addLabels would otherwise silently
-  // create a missing label) and fail soft — warn and skip — if it's absent.
-  async function labelExists(name) {
-    try {
-      await github.rest.issues.getLabel({ owner, repo, name });
-      return true;
-    } catch (e) {
-      if (e.status === 404) return false;
-      throw e;
-    }
-  }
-
-  async function addLabel(name) {
-    if (await labelExists(name)) {
-      await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [name] });
-    } else {
-      core.warning(`Label "${name}" does not exist in the repo — skipping. Create it once to enable labelling.`);
-    }
-  }
-
-  async function dropLabel(name) {
-    try {
-      await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name });
-    } catch (e) {
-      if (e.status !== 404 && e.status !== 410) throw e;
-    }
-  }
-
-  // ── Find existing bot comment to update in-place ──────────────────────────
+  // ── Labels + Comment ─────────────────────────────────────────────────────
   const MARKER = '<!-- issue-description-check -->';
-  const { data: comments } = await github.rest.issues.listComments({
-    owner, repo, issue_number: issue.number,
-  });
-  const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes(MARKER));
-
   const LABEL_BAD  = 'needs more info';
   const LABEL_GOOD = 'ready for review';
 
   if (failures.length === 0) {
-    if (existing) {
-      await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
-    }
-
-    await dropLabel(LABEL_BAD);
-    await addLabel(LABEL_GOOD);
-
+    await deleteComment(github, owner, repo, num, MARKER);
+    await dropLabel(github, owner, repo, num, LABEL_BAD);
+    await addLabel(github, core, owner, repo, num, LABEL_GOOD);
   } else {
     const list = failures.map(f => `- ${f}`).join('\n');
     const commentBody = [
@@ -182,14 +138,9 @@ module.exports = async ({ github, context, core }) => {
       '_This comment is deleted automatically once all sections are complete._',
     ].join('\n');
 
-    if (existing) {
-      await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: commentBody });
-    } else {
-      await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: commentBody });
-    }
-
-    await dropLabel(LABEL_GOOD);
-    await addLabel(LABEL_BAD);
+    await upsertComment(github, owner, repo, num, MARKER, commentBody);
+    await dropLabel(github, owner, repo, num, LABEL_GOOD);
+    await addLabel(github, core, owner, repo, num, LABEL_BAD);
 
     core.setFailed(`Issue description has ${failures.length} issue(s) — see bot comment for details.`);
   }
