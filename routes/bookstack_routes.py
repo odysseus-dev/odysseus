@@ -140,13 +140,6 @@ async def test_connection(request: Request):
             "ok": False,
             "error": "Invalid token format. Expected 'token_id:secret'"
         }
-        return {
-            "ok": False,
-            "error": "Invalid token format. BookStack expects 'Token {token_id}:{secret}'. "
-                     "You provided only part of the token. "
-                     "Go to BookStack → Profile → API Tokens → Create Token, "
-                     "and copy the FULL token string including the colon separator."
-        }
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -163,6 +156,14 @@ async def test_connection(request: Request):
                 return {"ok": False, "error": f"HTTP {resp.status_code}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@router.get("/config")
+async def get_config(request: Request):
+    """Get BookStack configuration (URL only, no token)."""
+    _require_admin(request)
+    base_url, _ = _get_bookstack_config()
+    return {"url": base_url or ""}
 
 
 def setup_bookstack_routes() -> APIRouter:

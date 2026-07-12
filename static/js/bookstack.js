@@ -11,6 +11,7 @@ let _currentShelf = null;
 let _currentBook = null;
 let _currentPage = null;
 let _searchQuery = '';
+let _bookstackUrl = '';
 
 // ---- API ----
 
@@ -60,6 +61,27 @@ async function _exportPage(pageId) {
   } catch (e) {
     return null;
   }
+}
+
+async function _loadBookstackUrl() {
+  if (_bookstackUrl) return _bookstackUrl;
+  try {
+    const res = await fetch(`${API_BASE}/config`, { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      _bookstackUrl = (data.url || '').replace(/\/+$/, '');
+    }
+  } catch (e) {}
+  return _bookstackUrl;
+}
+
+function _rewriteImageUrls(html) {
+  if (!_bookstackUrl || !html) return html;
+  // Rewrite relative image src URLs to absolute BookStack URLs
+  return html.replace(
+    /(<img[^>]*\ssrc=["'])(\/[^"']+)(["'])/gi,
+    (match, prefix, path, suffix) => `${prefix}${_bookstackUrl}${path}${suffix}`
+  );
 }
 
 // ---- UI Rendering ----
@@ -248,6 +270,9 @@ async function _showPage(pageId) {
 
   main.innerHTML = `<div class="bs-loading">${_t('bookstack.loading', 'Loading...')}</div>`;
 
+  // Load BookStack URL for image rewriting
+  await _loadBookstackUrl();
+
   const data = await _getPage(pageId);
   if (!data) {
     main.innerHTML = `<div class="bs-empty">${_t('bookstack.error', 'Error loading page')}</div>`;
@@ -256,7 +281,10 @@ async function _showPage(pageId) {
 
   _currentPage = { id: data.id, name: data.name };
 
-  const content = data.html || data.markdown || '';
+  let content = data.html || data.markdown || '';
+  // Rewrite relative image URLs to absolute BookStack URLs
+  content = _rewriteImageUrls(content);
+
   main.innerHTML = `
     <div class="bs-page-header">
       <h3>${_esc(data.name)}</h3>
