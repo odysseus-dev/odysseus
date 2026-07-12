@@ -278,6 +278,14 @@ def test_set_oidc_user_admin_demotes(tmp_path):
     assert privs["can_use_bash"] is False
 
 
+def test_set_oidc_user_admin_refuses_last_admin_demotion(tmp_path):
+    mgr = _make_manager(tmp_path)
+    mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
+                          is_admin=True)
+    assert not mgr.set_oidc_user_admin("alice", False)
+    assert mgr.is_admin("alice")
+
+
 def test_set_oidc_user_admin_noop_when_unchanged(tmp_path):
     mgr = _make_manager(tmp_path)
     mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
