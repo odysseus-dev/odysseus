@@ -46,11 +46,14 @@ Until the upstream PR is merged, clone this branch (it already includes the harn
 git clone -b desktop/windows-native-harness https://github.com/whoxllm/odysseus.git
 cd odysseus
 python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python setup.py install
+venv\Scripts\python.exe -m pip install -r requirements.txt
+venv\Scripts\python.exe setup.py install
 venv\Scripts\python.exe odysseus-desktop.py
 ```
+
+> **Always call `venv\Scripts\python.exe` directly** rather than running `venv\Scripts\activate` and then bare `python`/`pip`. On systems with multiple Python installs (Windows Store stubs, other venvs on PATH, etc.), `activate` doesn't always win the PATH race, and bare `python` silently runs the wrong interpreter — install succeeds against one Python, then the app fails to import against another. Calling `venv\Scripts\python.exe` explicitly for every step (`-m pip install`, `setup.py install`, and the final launch) sidesteps this entirely.
+>
+> To verify you're on the right interpreter: `venv\Scripts\python.exe -c "import sys; print(sys.executable)"` should print a path inside your `odysseus\venv\` folder. If it doesn't, delete `venv\` and recreate it with `python -m venv venv`.
 
 After the PR merges into upstream `dev`/`main`, the same commands work with:
 
