@@ -636,11 +636,40 @@ def setup_factory_routes() -> APIRouter:
         else:
             target = f"http://localhost:{port}/{path}"
         try:
+            # Request UNCOMPRESSED responses — avoids decompression mismatches
+            # that cause NS_ERROR_CORRUPTED_CONTENT in Firefox.
             async with _httpx.AsyncClient(follow_redirects=True) as client:
-                resp = await client.get(target, params=query, timeout=10)
-                excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
-                headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+                resp = await client.get(
+                    target, params=query, timeout=10,
+                    headers={"Accept-Encoding": "identity"},
+                )
+                # Strip hop-by-hop headers + content-type (we set it via media_type only)
+                excluded = {"transfer-encoding", "connection", "content-encoding",
+                            "content-length", "content-type"}
+                headers = {k: v for k, v in resp.headers.items()
+                           if k.lower() not in excluded}
+
+                # Determine content-type — use the dev server's, or guess from extension
                 content_type = resp.headers.get("content-type", "")
+                if not content_type:
+                    import mimetypes as _mt
+                    # Guess from the file path extension
+                    guessed = _mt.guess_type(path)[0]
+                    if guessed:
+                        content_type = guessed
+                    # JS/JSX/TS/TSX modules — Firefox REQUIRES a JS MIME type
+                    # for <script type="module"> tags. Vite sometimes omits it.
+                    low_path = path.lower()
+                    if low_path.endswith(('.js', '.mjs')):
+                        content_type = "text/javascript"
+                    elif low_path.endswith(('.jsx', '.tsx')):
+                        content_type = "text/javascript"
+                    elif low_path.endswith('.ts'):
+                        content_type = "application/javascript"
+                    elif low_path.endswith('.css') and not content_type:
+                        content_type = "text/css"
+                    elif low_path.endswith('.json') and not content_type:
+                        content_type = "application/json"
 
                 # For HTML responses: rewrite absolute paths to go through the proxy.
                 # Vite handles this via --base, but CRA/Next.js/other frameworks
@@ -661,8 +690,12 @@ def setup_factory_routes() -> APIRouter:
                     content = text.encode("utf-8")
 
                 from fastapi.responses import Response
-                return Response(content=content, status_code=resp.status_code,
-                                headers=headers, media_type=content_type)
+                return Response(
+                    content=content,
+                    status_code=resp.status_code,
+                    headers=headers,
+                    media_type=content_type or "application/octet-stream",
+                )
         except _httpx.ConnectError:
             raise HTTPException(502, "Dev server not responding")
         except Exception as e:
