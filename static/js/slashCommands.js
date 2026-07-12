@@ -6149,8 +6149,18 @@ const COMMANDS = {
   ping:    { alias: ['pong'], category: 'Utility', hidden: true, help: 'Check if model endpoints are alive', handler: _cmdPing, usage: '/ping' },
   probe:   { alias: ['test-models'], category: 'Utility', hidden: true, help: 'Test which models actually respond', handler: _cmdProbe, usage: '/probe [endpoint]' },
   color:   { alias: ['colour'],     hidden: true, handler: _cmdColor,   usage: '/color [hex]' },
-  // Agent commands are handled by the backend (chat_handler.py)
-  // They pass through to the agent as regular messages
+  // ── Agent commands (handled by backend chat_handler.py) ──
+  goal:     { alias: [], category: 'Agent', help: 'Set a stopping condition', handler: () => false, noUserBubble: false, usage: '/goal <condition>' },
+  dream:    { alias: [], category: 'Agent', help: 'Extract knowledge to memory', handler: () => false, noUserBubble: false, usage: '/dream' },
+  status:   { alias: [], category: 'Agent', help: 'Show session status', handler: () => false, noUserBubble: false, usage: '/status' },
+  'task':   { alias: ['tasks'], category: 'Agent', help: 'Manage tasks', default: 'list', handler: () => false, noUserBubble: false, usage: '/task [add|done|status]',
+    subs: {
+      'add':    { handler: () => false, help: 'Add a new task',        usage: '/task add <description>' },
+      'done':   { handler: () => false, help: 'Mark task as done',    usage: '/task done <id>' },
+      'status': { handler: () => false, help: 'Show task summary',    usage: '/task status' },
+      'list':   { handler: () => false, help: 'List all tasks',       usage: '/task list' },
+    }
+  },
 };
 
 // ── Legacy aliases ────────────────────────────────────────────────
@@ -6194,7 +6204,7 @@ export const LEGACY_ALIASES = {
   'stat':        { parent: 'chats', sub: 'info' },
   'tar':         { parent: 'chats', sub: 'archive' },
   'mkdir':       { parent: 'chats', sub: 'new' },
-  'status':      { parent: 'toggle', sub: '_show' }
+  // 'status':      { parent: 'toggle', sub: '_show' }  // Removed: conflicts with /status agent command
 };
 
 // ── Dispatch helpers ──────────────────────────────────────────────
