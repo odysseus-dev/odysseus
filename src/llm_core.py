@@ -1342,6 +1342,7 @@ async def llm_call_async(
     max_retries: int = LLMConfig.MAX_RETRIES,
     prompt_type: Optional[str] = None,
     session_id: Optional[str] = None,
+    allow_reasoning_fallback: bool = True,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -1361,7 +1362,9 @@ async def llm_call_async(
         messages_copy = non_sys
 
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
-    cached_response = _get_cached_response(cache_key)
+    # A cached legacy reasoning fallback is indistinguishable from answer text.
+    # Callers that must not expose reasoning therefore bypass this string cache.
+    cached_response = _get_cached_response(cache_key) if allow_reasoning_fallback else None
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
@@ -1476,7 +1479,9 @@ async def llm_call_async(
                     response = _parse_ollama_response(data)
                 else:
                     msg = data["choices"][0]["message"]
-                    response = msg.get("content") or msg.get("reasoning_content") or ""
+                    response = msg.get("content") or ""
+                    if not response and allow_reasoning_fallback:
+                        response = msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:

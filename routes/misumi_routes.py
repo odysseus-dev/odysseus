@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
@@ -18,6 +19,9 @@ from src.misumi_observability import MisumiEventLog
 from src.misumi_policy import load_persona_policy, normalize_persona, persona_record, policy_summary
 from src.misumi_skills import installed_skill_files, security_review_files, skills_for_persona
 from src.misumi_task_router import MisumiTaskRouter
+
+
+logger = logging.getLogger(__name__)
 
 
 class MisumiRespondRequest(BaseModel):
@@ -123,9 +127,20 @@ async def _model_reply(prompt: str, persona: str) -> tuple[str, Optional[str], O
             {"role": "system", "content": system},
             {"role": "user", "content": prompt[:4000]},
         ))
-        text = await llm_call_async(url, model, messages, max_tokens=160, timeout=25)
-        return _short_text(text), str(url), str(model)
-    except Exception:
+        text = await llm_call_async(
+            url,
+            model,
+            messages,
+            max_tokens=480,
+            timeout=25,
+            allow_reasoning_fallback=False,
+        )
+        reply = _short_text(text)
+        if not reply:
+            raise RuntimeError("model returned empty content (reasoning-only)")
+        return reply, str(url), str(model)
+    except Exception as exc:
+        logger.exception("Misumi model reply failed: %s", exc)
         return "Odysseus is available, but no working model backend is configured for this request.", None, None
 
 
