@@ -1330,3 +1330,190 @@ class TestAppKeyAtomicCreation:
         f = Fernet(key_bytes)
         token = f.encrypt(b"test")
         assert f.decrypt(token) == b"test"
+
+
+# ---------------------------------------------------------------------------
+# Regression coverage for UserInfo, NumericDate claims, and max_age
+# ---------------------------------------------------------------------------
+
+
+def _new_security_test_manager(max_age=None):
+    """Construct a manager with discovery/JWKS mocked for claim tests."""
+    import core.oidc as mod
+
+    jwks, _ = _make_test_jwks_and_key()
+    with patch.object(mod.httpx, "get") as mock_get:
+        mock_get.side_effect = [
+            _mock_discovery_response(),
+            _mock_jwks_response(jwks),
+        ]
+        mgr = mod.OidcManager(
+            issuer=FAKE_ISSUER,
+            client_id=FAKE_CLIENT_ID,
+            client_secret=FAKE_CLIENT_SECRET,
+            max_age=max_age,
+        )
+    # Direct claim tests still exercise authlib signature verification while
+    # avoiding another HTTP request for the already-known test key.
+    mgr._jwks_cache = {"test-key-1": jwks["keys"][0]}
+    mgr._fetch_jwks = MagicMock(return_value=jwks)
+    return mgr
+
+
+def _make_claim_test_token(sub, nonce, *, auth_time="__unset__", iat="current"):
+    """Sign a token with selectively controlled auth_time and iat claims."""
+    from authlib.jose import jwt
+
+    _, jwk = _make_test_jwks_and_key()
+    payload = {
+        "iss": FAKE_ISSUER,
+        "sub": sub,
+        "aud": FAKE_CLIENT_ID,
+        "exp": int(time.time()) + 3600,
+        "nonce": nonce,
+    }
+    if auth_time != "__unset__":
+        payload["auth_time"] = auth_time
+    if iat == "current":
+        payload["iat"] = int(time.time())
+    elif iat is not None:
+        payload["iat"] = iat
+    return jwt.encode(
+        {"alg": "RS256", "kid": "test-key-1"}, payload, jwk,
+    ).decode()
+
+
+def _exchange_with_userinfo(userinfo):
+    """Run exchange_code with a verified id-token and controlled UserInfo."""
+    import core.oidc as mod
+
+    mgr = _new_security_test_manager()
+    nonce = "u" * 64
+    state = mod._encode_state(nonce, "https://app.example.com/callback")
+    mgr._token_request = MagicMock(return_value={
+        "access_token": "access-token",
+        "id_token": "unused-in-this-unit-test",
+    })
+    mgr._verify_id_token = MagicMock(return_value={
+        "sub": "user123",
+        "email": "alice@example.com",
+    })
+    mgr._fetch_userinfo = MagicMock(return_value=userinfo)
+    return mgr.exchange_code(
+        "code", state, "https://app.example.com/callback",
+    )
+
+
+class TestUserInfoClaimBinding:
+    def test_userinfo_missing_sub_discarded(self):
+        claims = _exchange_with_userinfo({
+            "groups": ["odysseus-admins"],
+            "email": "alice@example.com",
+        })
+        assert "groups" not in claims
+        assert claims["_userinfo_available"] is False
+
+    def test_userinfo_non_dict_discarded(self):
+        claims = _exchange_with_userinfo(["bad", "data"])
+        assert claims["_userinfo_available"] is False
+        assert claims["email"] == "alice@example.com"
+
+    def test_userinfo_empty_sub_discarded(self):
+        claims = _exchange_with_userinfo({
+            "sub": "",
+            "groups": ["odysseus-admins"],
+        })
+        assert "groups" not in claims
+        assert claims["_userinfo_available"] is False
+
+
+class TestNumericDateClaimValidation:
+    def test_auth_time_expired_rejected(self):
+        import core.oidc as mod
+        mgr = _new_security_test_manager(max_age=3600)
+        token = _make_claim_test_token("user123", "a" * 64, auth_time=100)
+        with pytest.raises(mod.OidcError):
+            mgr._verify_id_token(token, "a" * 64)
+
+    def test_auth_time_future_rejected(self):
+        mgr = _new_security_test_manager(max_age=3600)
+        token = _make_claim_test_token(
+            "user123", "b" * 64, auth_time=time.time() + 120,
+        )
+        import core.oidc as mod
+        with pytest.raises(mod.OidcError):
+            mgr._verify_id_token(token, "b" * 64)
+
+    def test_auth_time_missing_rejected(self):
+        mgr = _new_security_test_manager(max_age=3600)
+        token = _make_claim_test_token("user123", "c" * 64)
+        import core.oidc as mod
+        with pytest.raises(mod.OidcError):
+            mgr._verify_id_token(token, "c" * 64)
+
+    def test_auth_time_valid_accepted(self):
+        mgr = _new_security_test_manager(max_age=3600)
+        token = _make_claim_test_token(
+            "user123", "d" * 64, auth_time=time.time() - 10,
+        )
+        mgr._verify_id_token(token, "d" * 64)
+
+    def test_iat_future_rejected(self):
+        mgr = _new_security_test_manager()
+        token = _make_claim_test_token(
+            "user123", "e" * 64, iat=time.time() + 120,
+        )
+        import core.oidc as mod
+        with pytest.raises(mod.OidcError):
+            mgr._verify_id_token(token, "e" * 64)
+
+    def test_iat_nonnumeric_rejected(self):
+        mgr = _new_security_test_manager()
+        token = _make_claim_test_token(
+            "user123", "f" * 64, iat="not-a-number",
+        )
+        import core.oidc as mod
+        with pytest.raises(mod.OidcError):
+            mgr._verify_id_token(token, "f" * 64)
+
+    def test_iat_none_accepted(self):
+        mgr = _new_security_test_manager()
+        token = _make_claim_test_token("user123", "g" * 64, iat=None)
+        mgr._verify_id_token(token, "g" * 64)
+
+    def test_iat_valid_accepted(self):
+        mgr = _new_security_test_manager()
+        token = _make_claim_test_token(
+            "user123", "h" * 64, iat=time.time() - 10,
+        )
+        mgr._verify_id_token(token, "h" * 64)
+
+
+class TestMaxAgeConfiguration:
+    def test_max_age_added_to_auth_url(self):
+        mgr = _new_security_test_manager(max_age=3600)
+        url, _, _ = mgr.get_authorization_url("https://app.example.com/callback")
+        from urllib.parse import parse_qs, urlparse
+        assert parse_qs(urlparse(url).query)["max_age"] == ["3600"]
+
+    def test_max_age_unset_not_in_url(self):
+        mgr = _new_security_test_manager()
+        url, _, _ = mgr.get_authorization_url("https://app.example.com/callback")
+        from urllib.parse import parse_qs, urlparse
+        assert "max_age" not in parse_qs(urlparse(url).query)
+
+    def test_parse_max_age_valid(self, monkeypatch):
+        import core.oidc as mod
+        monkeypatch.setenv("OIDC_MAX_AGE", "3600")
+        assert mod._parse_max_age() == 3600
+        monkeypatch.setenv("OIDC_MAX_AGE", "0")
+        assert mod._parse_max_age() == 0
+        monkeypatch.delenv("OIDC_MAX_AGE", raising=False)
+        assert mod._parse_max_age() is None
+
+    def test_parse_max_age_invalid(self, monkeypatch):
+        import core.oidc as mod
+        for value in ("not-int", "-1"):
+            monkeypatch.setenv("OIDC_MAX_AGE", value)
+            with pytest.raises(mod.OidcError):
+                mod._parse_max_age()

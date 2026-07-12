@@ -368,9 +368,9 @@
 
   const rememberToggle = document.getElementById('rememberToggle');
 
-  // Surface OIDC callback errors from the URL query string so the user
-  // sees a human-readable message instead of a blank login form.
-  (function showOidcError() {
+  // Preserve a human-readable OIDC callback error until initial auth setup
+  // completes, since setMode() clears the error display.
+  const oidcErrorMessage = (() => {
     const errCode = new URLSearchParams(window.location.search).get('error') || '';
     const msgs = {
       oidc_failed: 'Sign-in failed. Please try again.',
@@ -379,11 +379,7 @@
       oidc_invalid: 'Invalid sign-in request.',
       oidc_config: 'SSO is not configured.',
     };
-    const msg = msgs[errCode] || (errCode.startsWith('oidc_') ? 'Sign-in error. Please try again.' : '');
-    if (msg) {
-      errEl.textContent = msg;
-      errEl.style.display = 'block';
-    }
+    return msgs[errCode] || (errCode.startsWith('oidc_') ? 'Sign-in error. Please try again.' : '');
   })();
 
   function setMode(m) {
@@ -437,6 +433,11 @@
     }
   } catch (e) {
     setMode('login');
+  }
+
+  if (oidcErrorMessage) {
+    errEl.textContent = oidcErrorMessage;
+    errEl.style.display = 'block';
   }
 
   toggleLink.addEventListener('click', (e) => {

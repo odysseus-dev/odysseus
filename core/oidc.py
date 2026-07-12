@@ -10,6 +10,10 @@ Configuration (env vars):
                                        header). If unset, derived from the inbound
                                        request at /login and /callback time.
     OIDC_SCOPES=openid profile email — space-separated scope list
+    OIDC_MAX_AGE=3600                — optional maximum authentication age in
+                                       seconds.  When set, the IdP is asked to
+                                       re-authenticate the user and the
+                                       ``auth_time`` claim is verified.
 
 State is carried inside a Fernet-encrypted token embedded in the OIDC
 ``state`` parameter, so no server-side storage is needed — callbacks are
@@ -24,6 +28,7 @@ JWKS keys are cached after first fetch and refreshed only when an unknown
 
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -98,6 +103,21 @@ def _decode_state(state: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _is_numericdate(value) -> bool:
+    """Return True when *value* is a finite int/float that is not bool.
+
+    Python's json module parses NaN/Inf by default, and isinstance(True,
+    int) is True.  This helper rejects booleans, NaN, ±Inf, and non-
+    numeric types so numeric claim checks don't silently pass on bogus
+    input.
+    """
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
 class OidcError(Exception):
     """Raised for OIDC configuration or flow errors."""
 
@@ -116,11 +136,15 @@ class OidcManager:
         client_id: str,
         client_secret: str,
         scopes: str = "openid profile email",
+        max_age: Optional[int] = None,
     ):
         self.issuer = issuer.rstrip("/")
         self.client_id = client_id
         self.client_secret = client_secret
         self.scopes = scopes
+        # Immutable — set once at init so concurrent callbacks sharing the
+        # singleton manager see the same value (gpt-5.6-sol gap #1).
+        self.max_age = max_age
         self._provider_name: Optional[str] = None
         self._config: Dict[str, Any] = {}
         # JWKS cache: kid → key dict, populated on first verification and
@@ -228,6 +252,10 @@ class OidcManager:
             "state": state,
             "nonce": nonce,
         }
+        # Request forced re-authentication when OIDC_MAX_AGE is configured.
+        # The claim is later verified in _verify_id_token against auth_time.
+        if self.max_age is not None:
+            params["max_age"] = str(self.max_age)
         auth_url = f"{self._config['authorization_endpoint']}?{urlencode(params)}"
         return auth_url, state, nonce
 
@@ -272,39 +300,61 @@ class OidcManager:
         # Per OIDC spec, userinfo is authoritative for profile claims (name,
         # email, picture, etc.) but MUST NOT overwrite verified identity
         # claims from the id_token (sub, iss, aud, exp, iat, nonce, azp).
+        #
+        # SECURITY: a UserInfo response without a ``sub`` is not bound to
+        # the authenticated subject.  Any endpoint can return arbitrary
+        # groups/roles/permissions data; refusing to merge or mark available
+        # prevents unbound claims from driving local authorisation decisions.
         access_token = token_data.get("access_token")
         userinfo_available = False
+        userinfo = {}  # ensure defined even if _fetch_userinfo raises
         if access_token:
             try:
                 userinfo = self._fetch_userinfo(access_token)
-                # _fetch_userinfo returns None when discovery has no
-                # userinfo_endpoint (rather than an empty dict, which
-                # would be ambiguous).  Only mark userinfo_available
-                # when we actually made a request to a live endpoint.
-                if userinfo is not None:
-                    userinfo_available = True
-                else:
+                if userinfo is None:
+                    # No userinfo_endpoint in discovery — not an error.
                     userinfo = {}
-                # Reject mismatched sub — the subject in UserInfo must match
-                # the already-verified id_token subject.
-                ui_sub = userinfo.get("sub")
-                if ui_sub and ui_sub != claims.get("sub"):
-                    raise OidcError(
-                        f"UserInfo sub mismatch: id_token={claims.get('sub')!r} "
-                        f"userinfo={ui_sub!r}"
+                elif not isinstance(userinfo, dict):
+                    # Malformed response (list, string, null, …) — log and
+                    # treat as unavailable.  Do not merge any claims.
+                    logger.warning(
+                        "UserInfo endpoint returned non-dict type %s — "
+                        "treating as unavailable",
+                        type(userinfo).__name__,
                     )
-                # Merge only safe profile claims — never overwrite verified
-                # identity/security fields.
-                _IDENTITY_CLAIMS = frozenset({
-                    "sub", "iss", "aud", "exp", "iat", "nonce", "azp",
-                })
-                for k, v in userinfo.items():
-                    if k not in _IDENTITY_CLAIMS:
-                        claims[k] = v
+                    userinfo = {}
+                else:
+                    # Require a non-empty sub that matches the verified
+                    # id_token subject before trusting any UserInfo claims.
+                    ui_sub = (userinfo.get("sub") or "").strip()
+                    if not ui_sub:
+                        logger.warning(
+                            "UserInfo response missing sub claim — "
+                            "discarding entire response to prevent "
+                            "unbound claim injection"
+                        )
+                        userinfo = {}
+                    elif ui_sub != (claims.get("sub") or ""):
+                        raise OidcError(
+                            f"UserInfo sub mismatch: id_token={claims.get('sub')!r} "
+                            f"userinfo={ui_sub!r}"
+                        )
+                    else:
+                        # Sub present and matches — safe to merge.
+                        userinfo_available = True
+                        # Merge only safe profile claims — never overwrite
+                        # verified identity/security fields.
+                        _IDENTITY_CLAIMS = frozenset({
+                            "sub", "iss", "aud", "exp", "iat", "nonce", "azp",
+                        })
+                        for k, v in userinfo.items():
+                            if k not in _IDENTITY_CLAIMS:
+                                claims[k] = v
             except OidcError:
                 raise
             except Exception as exc:
                 logger.warning("Failed to fetch userinfo: %s", exc)
+                userinfo = {}
 
         # Let the callback know whether UserInfo was successfully fetched.
         # When UserInfo is unavailable, group membership claims may be
@@ -467,12 +517,44 @@ class OidcManager:
                 )
 
         exp = claims.get("exp", 0)
-        if time.time() > exp:
+        if not _is_numericdate(exp) or time.time() > exp:
             raise OidcError(f"id_token expired at {exp}")
 
         # Verify nonce
         if claims.get("nonce") != nonce:
             raise OidcError("id_token nonce mismatch")
+
+        # Verify auth_time when max_age was requested.
+        # Validate NumericDate strictly — reject non-numeric,
+        # boolean, NaN/infinite, missing, or future values.
+        if self.max_age is not None:
+            auth_time = claims.get("auth_time")
+            if not _is_numericdate(auth_time):
+                raise OidcError(
+                    f"id_token missing or non-numeric auth_time claim "
+                    f"(required when OIDC_MAX_AGE={self.max_age})"
+                )
+            now = time.time()
+            if auth_time > now + 60:
+                raise OidcError(
+                    f"id_token auth_time {auth_time} is more than 60 s in "
+                    f"the future (clock skew?)"
+                )
+            if now - auth_time > self.max_age + 60:
+                raise OidcError(
+                    f"id_token auth_time {auth_time} exceeds max_age "
+                    f"{self.max_age} s (now={now:.0f}, age={now - auth_time:.0f} s)"
+                )
+
+        # Verify iat (issued-at) is not in the far future.
+        iat = claims.get("iat")
+        if iat is not None:
+            if not _is_numericdate(iat):
+                raise OidcError(f"id_token iat claim is non-numeric: {iat!r}")
+            if iat > time.time() + 60:
+                raise OidcError(
+                    f"id_token iat {iat} is more than 60 s in the future"
+                )
 
         return claims
 
@@ -534,6 +616,7 @@ def init_oidc_manager() -> Optional[OidcManager]:
     client_id = os.getenv("OIDC_CLIENT_ID", "").strip()
     client_secret = os.getenv("OIDC_CLIENT_SECRET", "").strip()
     scopes = os.getenv("OIDC_SCOPES", "openid profile email").strip()
+    max_age = _parse_max_age()
 
     if not issuer or not client_id or not client_secret:
         _oidc_init_error = (
@@ -549,6 +632,7 @@ def init_oidc_manager() -> Optional[OidcManager]:
             client_id=client_id,
             client_secret=client_secret,
             scopes=scopes,
+            max_age=max_age,
         )
     except OidcError as exc:
         _oidc_init_error = str(exc)
@@ -556,6 +640,25 @@ def init_oidc_manager() -> Optional[OidcManager]:
         return None
 
     return _oidc_manager
+
+
+def _parse_max_age() -> Optional[int]:
+    """Parse OIDC_MAX_AGE into an integer or None.  Returns None when
+    unset/empty, raises OidcError on invalid values."""
+    raw = os.getenv("OIDC_MAX_AGE", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise OidcError(
+            f"OIDC_MAX_AGE must be an integer, got {raw!r}"
+        ) from None
+    if value < 0:
+        raise OidcError(
+            f"OIDC_MAX_AGE must be >= 0, got {value}"
+        )
+    return value
 
 
 def get_oidc_manager() -> Optional[OidcManager]:
