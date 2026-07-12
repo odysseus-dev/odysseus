@@ -93,6 +93,10 @@ class _FakeClient:
     def calendar(self, url=None):
         return _FakeCalendar(url)
 
+    def close(self):
+        # Mirror the real DAVClient: sync now closes the client on every path.
+        self.closed = True
+
 
 def _install_fake_caldav(monkeypatch):
     fake = types.ModuleType("caldav")

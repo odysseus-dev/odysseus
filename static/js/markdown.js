@@ -661,8 +661,11 @@ export function mdToHtml(src, opts) {
         return placeholder;
       } catch (e) { return match; }
     });
-    // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
-    s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
+    // Inline math: $...$ — single line only, and Pandoc-style delimiter rules so
+    // currency doesn't render as math ("$5 to $10"): the opening $ must be
+    // immediately followed by a non-space, the closing $ must be immediately
+    // preceded by a non-space and not followed by a digit.
+    s = s.replace(/(?<![\$\d])\$(?!\$)(?=\S)([^\$\n]+?)(?<=\S)\$(?!\$|\d)/g, (match, math) => {
       try {
         const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;

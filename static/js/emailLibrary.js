@@ -954,8 +954,20 @@ function _libCachePut(key, value) {
   }
 }
 
+function _resetBulkSelectionForContextChange({ rerender = false } = {}) {
+  const hadSelection = !!(state._selectedUids && state._selectedUids.size);
+  const wasSelectMode = !!state._selectMode;
+  if (state._selectedUids) state._selectedUids.clear();
+  state._selectMode = false;
+  if (hadSelection || wasSelectMode) {
+    _updateBulkBar();
+    if (rerender) _renderGrid();
+  }
+}
+
 function _resetEmailListForFreshLoad() {
   _exitEmailReaderModeForList();
+  _resetBulkSelectionForContextChange();
   state._libOffset = 0;
   state._libEmails = [];
   state._libTotal = 0;
@@ -2509,6 +2521,7 @@ function _clearFilterPillSideEffect() {
 
 function _addSearchPill(pill) {
   if (!pill) return;
+  _resetBulkSelectionForContextChange({ rerender: true });
   if (!Array.isArray(state._libSearchPills)) state._libSearchPills = [];
   // Dedup by email (contact), text (text pill), or filter value.
   if (pill.type === 'contact') {
@@ -2543,6 +2556,7 @@ function _searchQueryFromPills() {
 
 function _removeSearchPillAt(idx) {
   if (!Array.isArray(state._libSearchPills)) return;
+  _resetBulkSelectionForContextChange({ rerender: true });
   const removed = state._libSearchPills[idx];
   state._libSearchPills.splice(idx, 1);
   if (removed && removed.type === 'filter') _clearFilterPillSideEffect();
@@ -2720,6 +2734,7 @@ async function _initEmailSearchChipBar() {
   // directly.
   let _libSearchTypingTimer = null;
   input.addEventListener('input', async () => {
+    _resetBulkSelectionForContextChange({ rerender: true });
     state._libSearchDraft = input.value;
     await _refreshSuggestions();
     if (_libSearchTypingTimer) clearTimeout(_libSearchTypingTimer);
@@ -2855,6 +2870,7 @@ window.addEventListener('click', (e) => {
 
 async function _doSearch() {
   _exitEmailReaderModeForList();
+  _resetBulkSelectionForContextChange({ rerender: true });
   const seq = ++_libSearchSeq;
   const derived = _deriveSearchScope(state._libSearch);
   const q = derived.q;
