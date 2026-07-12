@@ -5749,7 +5749,7 @@ async function _cmdHelp(args, ctx) {
 async function _cmdGoal(args, ctx) {
   const goal = args.join(' ');
   if (!goal) {
-    ctx.slashReply(
+    slashReply(
       '## 🎯 Goal Mode\n\n' +
       '**Usage:** `/goal <stopping condition>`\n\n' +
       'Sets a condition that must be met before the agent can stop.\n\n' +
@@ -5760,55 +5760,55 @@ async function _cmdGoal(args, ctx) {
     );
     return true;
   }
-  ctx.slashReply(`⏳ Setting goal: "${goal}"...`);
+  slashReply(`⏳ Setting goal: "${goal}"...`);
   return false;
 }
 
 async function _cmdDream(args, ctx) {
-  ctx.slashReply('⏳ Scanning session and extracting knowledge...');
+  slashReply('⏳ Scanning session and extracting knowledge...');
   return false;
 }
 
 async function _cmdStatus(args, ctx) {
-  ctx.slashReply('⏳ Loading session status...');
+  slashReply('⏳ Loading session status...');
   return false;
 }
 
 async function _cmdTask(args, ctx) {
   if (args.length === 0) {
-    ctx.slashReply('⏳ Loading tasks...');
+    slashReply('⏳ Loading tasks...');
     return false;
   }
   return false;
 }
 
 async function _cmdTaskList(args, ctx) {
-  ctx.slashReply('⏳ Loading tasks...');
+  slashReply('⏳ Loading tasks...');
   return false;
 }
 
 async function _cmdTaskAdd(args, ctx) {
   const desc = args.join(' ');
   if (!desc) {
-    ctx.slashReply('❌ Usage: `/task add <description>`');
+    slashReply('❌ Usage: `/task add <description>`');
     return true;
   }
-  ctx.slashReply(`⏳ Adding task: "${desc}"...`);
+  slashReply(`⏳ Adding task: "${desc}"...`);
   return false;
 }
 
 async function _cmdTaskDone(args, ctx) {
   const taskId = args[0];
   if (!taskId) {
-    ctx.slashReply('❌ Usage: `/task done <id>`');
+    slashReply('❌ Usage: `/task done <id>`');
     return true;
   }
-  ctx.slashReply(`⏳ Marking task ${taskId} as done...`);
+  slashReply(`⏳ Marking task ${taskId} as done...`);
   return false;
 }
 
 async function _cmdTaskStatus(args, ctx) {
-  ctx.slashReply('⏳ Loading task status...');
+  slashReply('⏳ Loading task status...');
   return false;
 }
 
