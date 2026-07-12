@@ -3841,11 +3841,13 @@ async function _checkServeReachability() {
             badge.textContent = 'unreachable';
             badge.className = 'cookbook-task-status cookbook-task-error';
             badge.title = pr.error || 'Server not responding — it may have crashed';
-          } else if (badge.textContent === 'unreachable') {
+            badge.dataset.unreachable = '1';
+          } else if (badge.dataset.unreachable) {
             // Recovered — restore the normal running label.
             badge.textContent = _statusLabel('running', task.type);
             badge.className = 'cookbook-task-status cookbook-task-running';
             badge.title = '';
+            delete badge.dataset.unreachable;
           }
         }
       }

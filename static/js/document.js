@@ -1869,7 +1869,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     pill.style.display = p.txt ? '' : 'none';
     if (status === 'saved') {
       setTimeout(() => {
-        if (pill.textContent === 'Saved') _setPdfSaveStatus('idle');
+        if (pill.textContent === p.txt) _setPdfSaveStatus('idle');
       }, 1200);
     }
   }
