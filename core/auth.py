@@ -486,6 +486,20 @@ class AuthManager:
                 return False  # not an OIDC user (or removed) — don't touch
             if user.get("is_admin") == is_admin:
                 return True   # no change needed
+            # Refuse to demote the only remaining administrator. Group
+            # membership changes must not silently make the instance
+            # unadministrable; password admins count as recovery admins.
+            if user.get("is_admin") and not is_admin:
+                admin_count = sum(
+                    1 for data in self._config.get("users", {}).values()
+                    if data.get("is_admin")
+                )
+                if admin_count <= 1:
+                    logger.warning(
+                        "Refusing to demote last admin '%s' during OIDC sync",
+                        username,
+                    )
+                    return False
             self._config["users"][username]["is_admin"] = is_admin
             if is_admin:
                 self._config["users"][username]["privileges"] = dict(ADMIN_PRIVILEGES)

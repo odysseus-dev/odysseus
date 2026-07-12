@@ -12,6 +12,15 @@ from fastapi import APIRouter
 
 def _setup_oidc_routes(auth_manager, oidc_manager):
     """Import and call setup_oidc_routes, returning the router."""
+    # MagicMock methods are truthy by default; explicitly model the normal
+    # OIDC-user case so the defense-in-depth TOTP refusal does not alter every
+    # unrelated route test.
+    if isinstance(auth_manager, MagicMock):
+        # Preserve an explicit test override (e.g. return_value=True in the
+        # refusal-path test), but make bare MagicMock auth managers behave
+        # like normal OIDC users.
+        if isinstance(auth_manager.check_oidc_totp.return_value, MagicMock):
+            auth_manager.check_oidc_totp.return_value = False
     from routes.oidc_routes import setup_oidc_routes
     return setup_oidc_routes(auth_manager, oidc_manager)
 

@@ -57,8 +57,10 @@ def setup_oidc_routes(
         """
         from core.oidc import get_oidc_init_error
         if oidc_manager is None or not oidc_manager.configured:
-            error = get_oidc_init_error()
-            return {"enabled": False, "error": error or "OIDC not configured"}
+            init_error = get_oidc_init_error()
+            if init_error:
+                logger.warning("OIDC config endpoint: %s", init_error)
+            return {"enabled": False, "error": "OIDC not configured"}
         return {
             "enabled": True,
             "provider_name": oidc_manager.provider_name,
@@ -160,18 +162,53 @@ def setup_oidc_routes(
         email = claims.get("email", "")
         preferred_username = claims.get("preferred_username", "")
         name = claims.get("name", "")
+        groups_claim_present = "groups" in claims
         groups = claims.get("groups", [])
+        id_token_groups_valid = groups_claim_present and isinstance(groups, list)
+
+        # Validate claim types before use — malformed IdP claims must not
+        # cause 500s or unsafe persistence operations.
+        if not isinstance(sub, str) or not sub.strip():
+            logger.error("OIDC id_token sub is not a non-empty string: %r", sub)
+            return _build_oidc_error_redirect("oidc_failed")
+        sub = sub.strip()
+        if len(sub) > 512:
+            logger.error("OIDC id_token sub exceeds maximum length")
+            return _build_oidc_error_redirect("oidc_failed")
+        if not isinstance(email, str) or len(email) > 512:
+            email = ""
+        if not isinstance(preferred_username, str) or len(preferred_username) > 256:
+            preferred_username = ""
+        if not isinstance(name, str) or len(name) > 512:
+            name = ""
+        if not isinstance(groups, list):
+            groups = []
+        else:
+            clean_groups = []
+            for group in groups:
+                if isinstance(group, str):
+                    if len(group) <= 256:
+                        clean_groups.append(group)
+                    else:
+                        logger.warning("OIDC groups claim element exceeds maximum length")
+                else:
+                    logger.warning(
+                        "OIDC groups claim contained non-string element %r — coerced",
+                        group,
+                    )
+                    normalized_group = str(group)
+                    if len(normalized_group) <= 256:
+                        clean_groups.append(normalized_group)
+            groups = clean_groups
 
         # Was UserInfo successfully fetched?  When UserInfo is unavailable
         # and the id_token does not carry a groups claim, we do not have
         # authoritative group-membership evidence — existing admins must
         # not be demoted based on missing data.
         userinfo_available = claims.pop("_userinfo_available", False)
-        id_token_has_groups = "groups" in claims
-
-        if not sub:
-            logger.error("OIDC id_token missing sub claim")
-            return _build_oidc_error_redirect("oidc_failed")
+        # A malformed non-list groups claim is not authoritative evidence and
+        # must not demote an existing administrator.
+        id_token_has_groups = id_token_groups_valid
 
         # Determine admin status from IdP group membership.
         # OIDC_ADMIN_GROUPS is a comma-separated list; the user gets
@@ -283,6 +320,11 @@ def _is_secure_context(request: Request) -> bool:
         return True
     if explicit in ("false", "0", "no"):
         return False
-    # Not explicitly set — derive from the request
-    scheme = request.headers.get("x-forwarded-proto", "") or request.url.scheme or "http"
+    # Not explicitly set — derive from the request. Forwarded headers are
+    # trusted only when the deployment explicitly opts into proxy headers;
+    # otherwise a client cannot influence the cookie policy via a header.
+    forwarded = ""
+    if os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in ("true", "1", "yes"):
+        forwarded = request.headers.get("x-forwarded-proto", "")
+    scheme = forwarded or request.url.scheme or "http"
     return scheme == "https"

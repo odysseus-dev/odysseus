@@ -93,7 +93,19 @@ def _decode_state(state: str) -> Optional[Dict[str, Any]]:
         data = json.loads(plain)
     except Exception:
         return None
-    if time.time() - data.get("created", 0) > _STATE_TTL:
+    if not isinstance(data, dict):
+        return None
+    nonce = data.get("nonce")
+    redirect_uri = data.get("redirect_uri")
+    created = data.get("created")
+    if not isinstance(nonce, str) or not nonce:
+        return None
+    if not isinstance(redirect_uri, str):
+        return None
+    if not _is_numericdate(created):
+        return None
+    now = time.time()
+    if created > now + 60 or now - created > _STATE_TTL:
         return None
     return data
 
@@ -191,6 +203,19 @@ class OidcManager:
                 f"OIDC issuer mismatch: configured {self.issuer!r}, "
                 f"discovery doc returned {doc_issuer!r}"
             )
+
+        # Client credentials and bearer tokens must never be sent over
+        # cleartext transport. Authorization is browser-facing and is not
+        # included because it does not carry those secrets.
+        for name in ("token_endpoint", "jwks_uri", "userinfo_endpoint"):
+            url = self._config.get(name)
+            if url and not isinstance(url, str):
+                raise OidcError(f"OIDC {name} must be a URL string")
+            if url and not url.startswith("https://"):
+                raise OidcError(
+                    f"OIDC {name} must use HTTPS, got {url!r}. "
+                    "Configure the IdP with TLS or set OIDC_ENABLED=false."
+                )
 
         # Pin signing algorithms to those the provider supports.
         # Restrict to RS256/ES256 to avoid algorithm confusion attacks;
@@ -441,7 +466,17 @@ class OidcManager:
         from authlib.jose.errors import JoseError
 
         header = self._peek_jwt_header(id_token)
+        alg = header.get("alg", "")
         kid = header.get("kid", "")
+
+        # Reject disallowed algorithms before importing keys or verifying the
+        # signature. This keeps the JOSE policy independent of Authlib's
+        # decoded-claims header API.
+        if not alg or (self._allowed_algs and alg not in self._allowed_algs):
+            raise OidcError(
+                f"id_token signed with disallowed algorithm {alg!r} "
+                f"(allowed: {self._allowed_algs!r})"
+            )
 
         # Fetch or refresh JWKS
         jwks = self._fetch_jwks()
@@ -449,18 +484,27 @@ class OidcManager:
         # If the kid from the token header is unknown, refresh the cache.
         # Guarded by a cooldown so an attacker can't drive unbounded
         # outbound fetches by sending random kid values to the callback.
-        if kid and kid not in self._jwks_cache:
-            now = time.time()
-            last_refresh = getattr(self, "_last_jwks_refresh", 0)
-            if now - last_refresh >= 60:
-                logger.info("OIDC JWKS cache miss for kid=%r — refreshing", kid)
-                self._last_jwks_refresh = now  # record attempt before refresh so failed fetches are also throttled
-                jwks = self._refresh_jwks()
-            else:
-                logger.warning(
-                    "OIDC JWKS cache miss for kid=%r but refresh on cooldown "
-                    "(%.0fs remaining)", kid, 60 - (now - last_refresh),
-                )
+        refresh_jwks = False
+        if kid:
+            with self._jwks_cache_lock:
+                if kid not in self._jwks_cache:
+                    now = time.time()
+                    last_refresh = getattr(self, "_last_jwks_refresh", 0)
+                    if now - last_refresh >= 60:
+                        logger.info("OIDC JWKS cache miss for kid=%r — refreshing", kid)
+                        # Record the attempt before I/O so failed refreshes
+                        # are throttled too. The lock protects this marker
+                        # against concurrent callback threads.
+                        self._last_jwks_refresh = now
+                        refresh_jwks = True
+                    else:
+                        logger.warning(
+                            "OIDC JWKS cache miss for kid=%r but refresh on cooldown "
+                            "(%.0fs remaining)",
+                            kid, 60 - (now - last_refresh),
+                        )
+        if refresh_jwks:
+            jwks = self._refresh_jwks()
 
         # authlib needs a key set in the format it expects
         try:
@@ -473,15 +517,6 @@ class OidcManager:
             claims = jwt.decode(id_token, key_set)
         except JoseError as exc:
             raise OidcError(f"id_token signature verification failed: {exc}") from exc
-
-        # Verify the algorithm is in our allow-list
-        claims_header = getattr(claims, "header", {}) if hasattr(claims, "header") else {}
-        alg = claims_header.get("alg", "")
-        if alg and self._allowed_algs and alg not in self._allowed_algs:
-            raise OidcError(
-                f"id_token signed with disallowed algorithm {alg!r} "
-                f"(allowed: {self._allowed_algs!r})"
-            )
 
         claims = dict(claims)
 
@@ -504,24 +539,26 @@ class OidcManager:
             raise OidcError(
                 f"id_token aud mismatch: client_id {self.client_id!r} not in aud {aud!r}"
             )
-        if len(aud_list) > 1:
-            azp = claims.get("azp")
-            if not azp:
-                raise OidcError(
-                    "id_token has multiple audiences but no azp claim "
-                    "(required by OIDC Core 1.0 § 2)"
-                )
-            if azp != self.client_id:
-                raise OidcError(
-                    f"id_token azp mismatch: expected {self.client_id!r}, got {azp!r}"
-                )
+        if len(aud_list) > 1 and not claims.get("azp"):
+            raise OidcError(
+                "id_token has multiple audiences but no azp claim "
+                "(required by OIDC Core 1.0 § 2)"
+            )
+        # OIDC Core § 2: whenever azp is present, it must identify this RP,
+        # including single-audience tokens.
+        azp = claims.get("azp")
+        if azp is not None and azp != self.client_id:
+            raise OidcError(
+                f"id_token azp mismatch: expected {self.client_id!r}, got {azp!r}"
+            )
 
         exp = claims.get("exp", 0)
         if not _is_numericdate(exp) or time.time() > exp:
             raise OidcError(f"id_token expired at {exp}")
 
-        # Verify nonce
-        if claims.get("nonce") != nonce:
+        # Verify nonce with constant-time comparison.
+        token_nonce = claims.get("nonce", "")
+        if not isinstance(token_nonce, str) or not secrets.compare_digest(token_nonce, nonce):
             raise OidcError("id_token nonce mismatch")
 
         # Verify auth_time when max_age was requested.
@@ -568,7 +605,8 @@ class OidcManager:
                 # Pad to a multiple of 4 (base64url)
                 pad_len = (-len(parts[0])) % 4
                 padded = parts[0] + ("=" * pad_len)
-                return json.loads(base64.urlsafe_b64decode(padded))
+                header = json.loads(base64.urlsafe_b64decode(padded))
+                return header if isinstance(header, dict) else {}
         except Exception:
             pass
         return {}
@@ -616,7 +654,10 @@ def init_oidc_manager() -> Optional[OidcManager]:
     client_id = os.getenv("OIDC_CLIENT_ID", "").strip()
     client_secret = os.getenv("OIDC_CLIENT_SECRET", "").strip()
     scopes = os.getenv("OIDC_SCOPES", "openid profile email").strip()
-    max_age = _parse_max_age()
+    scope_list = [s for s in scopes.split() if s]
+    if "openid" not in scope_list:
+        scope_list.insert(0, "openid")
+    scopes = " ".join(scope_list)
 
     if not issuer or not client_id or not client_secret:
         _oidc_init_error = (
@@ -627,6 +668,7 @@ def init_oidc_manager() -> Optional[OidcManager]:
         return None
 
     try:
+        max_age = _parse_max_age()
         _oidc_manager = OidcManager(
             issuer=issuer,
             client_id=client_id,
