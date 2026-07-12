@@ -739,20 +739,25 @@ async def iterate_project(project_id: int, prompt: str, owner: str = "default") 
         return False
 
     existing_nodes = _service.get_nodes(project_id)
-    existing_summary = _build_project_context(project_id)
 
     # Re-open the project if it was completed
     if project.get("status") == "completed":
         _service.set_project_status(project_id, "running")
 
-    # Build the iteration planner prompt
+    # Build the iteration planner prompt — include file CONTENT so the
+    # planner can see what exists and plan MODIFICATIONS, not duplicates.
+    file_context = _build_project_context_with_content(project_id)
+
     user_prompt = (
         f"Original project: {project.get('description', '')}\n\n"
-        f"Files already built:\n{existing_summary}\n\n"
+        f"Files already built (with content):\n{file_context}\n\n"
         f"New request from user: {prompt}\n\n"
-        f"Plan ONLY the new tasks needed to fulfil this request. "
-        f"Do NOT recreate existing files — they are already working. "
-        f"New tasks may depend on existing completed tasks."
+        f"Plan the tasks needed to fulfil this request.\n"
+        f"- To UPDATE an existing file, set the SAME filename — the producer will "
+        f"receive the current version and modify it.\n"
+        f"- Do NOT create duplicate files with slightly different names.\n"
+        f"- New tasks may depend on existing completed tasks.\n"
+        f"- Return ONLY JSON with tasks array."
     )
 
     logger.info(f"Factory: iterating project {project_id} — {prompt[:60]}...")
@@ -819,6 +824,36 @@ def _build_project_context(project_id: int) -> str:
     return "\n".join(lines) if lines else "  (no files yet)"
 
 
+def _build_project_context_with_content(project_id: int, max_chars_per_file: int = 4000) -> str:
+    """Build a summary of all completed files INCLUDING their content.
+
+    Deduplicates by filename — only the latest version of each file is shown.
+    Used by the iterate planner so it knows what exists and can plan
+    modifications instead of creating duplicates.
+    """
+    nodes = _service.get_nodes(project_id)
+    completed = [n for n in nodes if n.get("status") == "completed" and n.get("filename")]
+    if not completed:
+        return "  (no files yet)"
+
+    # Group by filename — latest version wins
+    by_filename: Dict[str, Dict] = {}
+    for n in completed:
+        fname = n["filename"]
+        if fname not in by_filename or n.get("id", 0) > by_filename[fname].get("id", 0):
+            by_filename[fname] = n
+
+    lines = []
+    for fname, n in sorted(by_filename.items()):
+        output = _extract_output(n.get("result")) or ""
+        truncated = output[:max_chars_per_file]
+        if len(output) > max_chars_per_file:
+            truncated += f"\n[...{len(output) - max_chars_per_file} more chars omitted]"
+        lines.append(f"  --- {fname} ({len(output)} chars) ---\n{truncated}")
+
+    return "\n\n".join(lines)
+
+
 def _get_dependency_code(project_id: int, task: Dict) -> str:
     """Get full output from completed tasks this task depends on."""
     deps = task.get("dependencies") or []
@@ -836,6 +871,29 @@ def _get_dependency_code(project_id: int, task: Dict) -> str:
         if output:
             parts.append(f"--- {fname} (existing code, dependency) ---\n{output[:3000]}")
     return "\n\n".join(parts)
+
+
+def _get_existing_file_content(project_id: int, filename: str, exclude_task_id: int = 0) -> str:
+    """Get content of the most recent completed task with this filename.
+
+    Used by _produce to pass the EXISTING version to the producer when a
+    task targets a file that already exists (e.g., updating index.html
+    during iteration). exclude_task_id prevents returning the current task.
+    """
+    if not filename:
+        return ""
+    nodes = _service.get_nodes(project_id)
+    candidates = [
+        n for n in nodes
+        if n.get("status") == "completed"
+        and n.get("id") != exclude_task_id
+        and (n.get("filename") or "").lower() == filename.lower()
+    ]
+    if not candidates:
+        return ""
+    # Most recent (highest id) = latest version
+    candidates.sort(key=lambda n: n.get("id", 0), reverse=True)
+    return _extract_output(candidates[0].get("result")) or ""
 
 
 def _get_feedback_code(project_id: int, feedback: str) -> str:
@@ -885,6 +943,28 @@ async def _produce(agent_key: str, task: Dict, feedback: str,
         dep_code = _get_dependency_code(project_id, task)
         if dep_code:
             prompt += f"\n\nExisting dependency code:\n{dep_code}\n"
+
+    # If this task targets a file that already exists (iteration/update),
+    # include the CURRENT version so the producer MODIFIES it instead of
+    # creating a new file from scratch. This is the key fix for "Build more"
+    # producing broken duplicates.
+    if fname and project_id:
+        existing_content = _get_existing_file_content(project_id, fname, exclude_task_id=task.get("id", 0))
+        if existing_content:
+            prompt += (
+                f"\n\n=== EXISTING VERSION of {fname} — MODIFY THIS FILE ===\n"
+                f"The file {fname} already exists. Below is its COMPLETE current content.\n"
+                f"You MUST produce the UPDATED version of this file that incorporates the "
+                f"changes described in the task. Do NOT create a new file from scratch.\n"
+                f"Preserve all existing working code and add/modify only what is needed.\n\n"
+            )
+            max_existing = 10000
+            if len(existing_content) > max_existing:
+                prompt += existing_content[:max_existing]
+                prompt += f"\n[...{len(existing_content) - max_existing} more chars omitted — preserve them all]\n"
+            else:
+                prompt += existing_content
+            prompt += "\n"
 
     prompt += (
         "\n\n=== OUTPUT FORMAT — CRITICAL ===\n"
@@ -1292,6 +1372,18 @@ def compile_delivery(project_id: int) -> Optional[str]:
 
     nodes = _service.get_nodes(project_id)
     completed = [n for n in nodes if n.get("status") == "completed"]
+
+    # Deduplicate by filename — keep only the LATEST version (highest task id).
+    # When iteration updates a file, the older task's output is superseded.
+    latest_by_filename: Dict[str, Dict] = {}
+    for n in completed:
+        fname = (n.get("filename") or "").strip()
+        if not fname:
+            continue
+        if fname not in latest_by_filename or n.get("id", 0) > latest_by_filename[fname].get("id", 0):
+            latest_by_filename[fname] = n
+    completed = list(latest_by_filename.values())
+
     if not completed:
         return None
 

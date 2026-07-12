@@ -1445,7 +1445,7 @@ function _fileTypeLabel(fname) {
  */
 function _getProjectFiles(project) {
   const tasks = project.tasks || [];
-  return tasks
+  const all = tasks
     .filter(t => t.status === 'completed' && t.filename)
     .map(t => ({
       filename: t.filename,
@@ -1455,8 +1455,17 @@ function _getProjectFiles(project) {
       language: _detectLanguage(t.filename),
       typeLabel: _fileTypeLabel(t.filename),
     }))
-    .filter(f => f.content)
-    .sort((a, b) => a.filename.localeCompare(b.filename));
+    .filter(f => f.content);
+
+  // Deduplicate by filename — keep latest version (highest taskId).
+  // When iteration updates a file, the older version is superseded.
+  const byName = {};
+  all.forEach(f => {
+    if (!byName[f.filename] || byName[f.filename].taskId < f.taskId) {
+      byName[f.filename] = f;
+    }
+  });
+  return Object.values(byName).sort((a, b) => a.filename.localeCompare(b.filename));
 }
 
 // ── Public API ─────────────────────────────────────────────────
