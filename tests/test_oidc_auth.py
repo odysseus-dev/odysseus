@@ -267,6 +267,9 @@ def test_set_oidc_user_admin_demotes(tmp_path):
     mgr = _make_manager(tmp_path)
     mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
                           is_admin=True)
+    # A second administrator must exist before group sync can demote alice;
+    # otherwise the last-admin guard preserves recoverability.
+    mgr.create_user("recovery", "password123", is_admin=True)
     assert mgr.is_admin("alice")
     assert mgr.set_oidc_user_admin("alice", False)
     assert not mgr.is_admin("alice")
@@ -605,8 +608,10 @@ class TestInterprocessFirstAdminSerialisation:
         assert alice == "alice"
         bob = mgr_a.create_user_oidc("bob", "sub-b", "https://idp.example.com")
         assert bob == "bob"
-        # Make alice an admin so the no-op short-circuit doesn't trigger
+        # Make both OIDC users admins so demoting alice does not trigger the
+        # last-admin guard, and the no-op short-circuit doesn't trigger.
         mgr_a._config["users"]["alice"]["is_admin"] = True
+        mgr_a._config["users"]["bob"]["is_admin"] = True
         mgr_a._save()
 
         # Manager B: loaded from disk but now we make its in-memory state
@@ -713,12 +718,14 @@ class TestInterprocessFirstAdminSerialisation:
         auth_path = str(tmp_path / "auth.json")
 
         # Manager A: create an OIDC user (alice) then make her admin so the
-        # no-op short-circuit in set_oidc_user_admin doesn't trigger.
+        # no-op short-circuit in set_oidc_user_admin doesn't trigger. A
+        # recovery admin ensures concurrent demotion is permitted.
         mgr_a = AuthManager(auth_path)
         alice = mgr_a.create_user_oidc("alice", "sub-a", "https://idp.example.com")
         assert alice == "alice"
         mgr_a._config["users"]["alice"]["is_admin"] = True
         mgr_a._save()
+        assert mgr_a.create_user("recovery", "password123", is_admin=True)
 
         # Manager B: a separate instance with the same auth file.
         mgr_b = AuthManager(auth_path)
