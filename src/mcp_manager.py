@@ -194,57 +194,65 @@ class McpManager:
             )
 
             stack = AsyncExitStack()
+            registered = False
+
             try:
                 transport = await stack.enter_async_context(stdio_client(server_params))
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
                 await session.initialize()
-
-                # Discover tools
                 tools_result = await session.list_tools()
-            except Exception:
-                await stack.aclose()
-                raise
-            tools = []
-            for tool in tools_result.tools:
-                tools.append({
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
-                    # MCP tool annotations (readOnlyHint / destructiveHint) drive
-                    # plan-mode read-only gating. Absent on many servers, so we
-                    # fall back to a name heuristic in mcp_tool_is_readonly().
-                    "annotations": getattr(tool, 'annotations', None),
-                })
 
-            self._sessions[server_id] = session
-            self._stacks[server_id] = stack
-            self._tools[server_id] = tools
-            # Extract identity hints from env vars (e.g. email address, API name)
-            # so tool descriptions can distinguish between multiple instances of
-            # the same MCP server (e.g. two email accounts).
-            identity_hints = []
-            for k, v in (env or {}).items():
-                k_lower = k.lower()
-                if any(x in k_lower for x in ['email_address', 'account', 'user', 'username']):
-                    identity_hints.append(v)
-            identity = ", ".join(identity_hints) if identity_hints else ""
+                tools = []
+                for tool in tools_result.tools:
+                    tools.append({
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                        # MCP tool annotations (readOnlyHint / destructiveHint) drive
+                        # plan-mode read-only gating. Absent on many servers, so we
+                        # fall back to a name heuristic in mcp_tool_is_readonly().
+                        "annotations": getattr(tool, "annotations", None),
+                    })
 
-            self._connections[server_id] = {
-                "status": "connected",
-                "name": name,
-                "transport": "stdio",
-                "tool_count": len(tools),
-                "identity": identity,
-            }
+                # Extract identity hints from env vars (e.g. email address, API name)
+                # so tool descriptions can distinguish between multiple instances of
+                # the same MCP server (e.g. two email accounts).
+                identity_hints = []
+                for k, v in (env or {}).items():
+                    k_lower = k.lower()
+                    if any(x in k_lower for x in ["email_address", "account", "user", "username"]):
+                        identity_hints.append(v)
+                identity = ", ".join(identity_hints) if identity_hints else ""
+
+                self._sessions[server_id] = session
+                self._stacks[server_id] = stack
+                self._tools[server_id] = tools
+                self._connections[server_id] = {
+                    "status": "connected",
+                    "name": name,
+                    "transport": "stdio",
+                    "tool_count": len(tools),
+                    "identity": identity,
+                }
+
+                registered = True
+
+            finally:
+                if not registered:
+                    await stack.aclose()
 
             logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via stdio")
             return True
 
         except ImportError:
             logger.warning("MCP package not installed. Install with: pip install mcp")
-            self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
+            self._connections[server_id] = {
+                "status": "error",
+                "error": "mcp package not installed",
+                "name": name,
+            }
             return False
 
     async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
@@ -255,42 +263,46 @@ class McpManager:
             from contextlib import AsyncExitStack
 
             stack = AsyncExitStack()
+            registered = False
+
             try:
                 transport = await stack.enter_async_context(sse_client(url))
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
                 await session.initialize()
-
-                # Discover tools
                 tools_result = await session.list_tools()
-            except Exception:
-                await stack.aclose()
-                raise
-            tools = []
-            for tool in tools_result.tools:
-                tools.append({
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
-                    # MCP tool annotations (readOnlyHint / destructiveHint) drive
-                    # plan-mode read-only gating. Absent on many servers, so we
-                    # fall back to a name heuristic in mcp_tool_is_readonly().
-                    "annotations": getattr(tool, 'annotations', None),
-                })
 
-            self._sessions[server_id] = session
-            self._stacks[server_id] = stack
-            self._tools[server_id] = tools
-            self._connections[server_id] = {
-                "status": "connected",
-                "name": name,
-                "transport": "sse",
-                "tool_count": len(tools),
-            }
+                tools = []
+                for tool in tools_result.tools:
+                    tools.append({
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                        # MCP tool annotations (readOnlyHint / destructiveHint) drive
+                        # plan-mode read-only gating. Absent on many servers, so we
+                        # fall back to a name heuristic in mcp_tool_is_readonly().
+                        "annotations": getattr(tool, 'annotations', None),
+                    })
 
-            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via SSE")
-            return True
+                self._sessions[server_id] = session
+                self._stacks[server_id] = stack
+                self._tools[server_id] = tools
+                self._connections[server_id] = {
+                    "status": "connected",
+                    "name": name,
+                    "transport": "sse",
+                    "tool_count": len(tools),
+                }
+
+                registered = True
+
+                logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via SSE")
+                return True
+
+            finally:
+                if not registered:
+                    await stack.aclose()
 
         except ImportError:
             logger.warning("MCP package not installed. Install with: pip install mcp")
@@ -446,6 +458,11 @@ class McpManager:
             )
         except asyncio.TimeoutError:
             logger.warning("Timed out connecting to %s", srv.name)
+            self._connections[srv.id] = {
+                "status": "timeout",
+                "error": f"Timed out after 20 seconds",
+                "name": srv.name,
+            }
 
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
