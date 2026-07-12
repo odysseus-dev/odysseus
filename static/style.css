@@ -422,6 +422,11 @@ body.bg-pattern-sparkles {
     }
     .sidebar {
       width: 240px;
+      /* At high browser zoom levels (200%+ desktop, 125%+ mobile), a fixed
+         240px sidebar consumes too much of the shrunken CSS viewport and
+         permanently hides the chat. Cap it at 40% of the viewport so the
+         layout reflows instead of overflowing. (#4709) */
+      max-width: 40vw;
       background: var(--sidebar-bg, var(--panel));
       border-right: 1px solid var(--border);
       transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
