@@ -231,6 +231,7 @@ _AGENT_RULES = """\
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
+- When a new fact updates something already stored ("I moved to X", "call me Y now"), search memories and EDIT the existing entry instead of adding a near-duplicate.
 """
 
 _API_AGENT_RULES = """\
@@ -244,6 +245,7 @@ _API_AGENT_RULES = """\
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
+- When a new fact updates something already stored ("I moved to X", "call me Y now"), search memories and EDIT the existing entry instead of adding a near-duplicate.
 """
 
 _LINK_RULES = """\

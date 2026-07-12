@@ -392,7 +392,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_memory",
-            "description": "Manage the user's memory system: list, add, edit, delete, or search memories. Memories persist across sessions.",
+            "description": "Manage the user's memory system: list, add, edit, delete, or search memories. Memories persist across sessions. Adding text identical to an existing memory is rejected with a pointer to that entry — when a fact changes (moved city, new nickname), search and use action=edit on the existing memory instead of adding a duplicate.",
             "parameters": {
                 "type": "object",
                 "properties": {

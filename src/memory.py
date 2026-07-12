@@ -248,9 +248,31 @@ class MemoryManager:
         """Find duplicate memory entries based on text content."""
         if entries is None:
             entries = self.load()
-            
+
         text_lower = text.strip().lower()
         return [entry for entry in entries if entry["text"].lower() == text_lower]
+
+    def dedup_check(self, text: str, entries: List[Dict], similar_threshold: float = 0.6,
+                    max_similar: int = 3):
+        """Pre-add duplicate check against *entries* (pass an owner-scoped list).
+
+        Returns (exact, similar): `exact` is the first entry whose text matches
+        case-insensitively (or None), `similar` is up to *max_similar* entries
+        whose Jaccard similarity to *text* is >= *similar_threshold*, scored
+        descending. Exact matches are excluded from `similar`.
+        """
+        dups = self.find_duplicates(text, entries)
+        exact = dups[0] if dups else None
+        dup_ids = {d.get("id") for d in dups}
+        scored = []
+        for entry in entries:
+            if entry.get("id") in dup_ids:
+                continue
+            score = get_text_similarity(text, entry.get("text", ""))
+            if score >= similar_threshold:
+                scored.append((score, entry))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return exact, [entry for _, entry in scored[:max_similar]]
             
     def categorize_memory_by_relevance(self, message: str, memories: list):
         """Categorize memories by type and relevance"""

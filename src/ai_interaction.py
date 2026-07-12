@@ -342,6 +342,18 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if not text:
             return {"error": "Memory text cannot be empty"}
 
+        # Dedup: an identical memory is never worth storing twice — refuse and
+        # point at the existing entry so the agent edits it instead. Near-dups
+        # still add (they may be genuinely distinct) but are surfaced below.
+        exact, similar = (None, [])
+        if hasattr(_memory_manager, "dedup_check"):
+            exact, similar = _memory_manager.dedup_check(text, _memory_manager.load(owner=owner))
+        if exact:
+            return {"action": "add", "memory_id": exact.get("id"),
+                    "results": (f"Not added — an identical memory already exists: "
+                                f"[{exact.get('category', 'fact')}] `{exact.get('id', '?')[:8]}` — {exact.get('text', '')}\n"
+                                f"Use action=edit with that memory_id to change it, or delete it first.")}
+
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
         memories = _memory_manager.load_all()
         memories.append(entry)
@@ -359,8 +371,17 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
 
-        return {"action": "add", "memory_id": entry["id"],
-                "results": f"Memory added: [{category}] {text}"}
+        results = f"Memory added: [{category}] {text}"
+        if similar:
+            sim_lines = []
+            for m in similar:
+                sim_text = m.get("text", "")
+                if len(sim_text) > 100:
+                    sim_text = sim_text[:100] + "..."
+                sim_lines.append(f"- [{m.get('category', 'fact')}] `{m.get('id', '?')[:8]}` — {sim_text}")
+            results += ("\nSimilar existing memories — if one covers the same fact, "
+                        "consolidate with action=edit or action=delete:\n" + "\n".join(sim_lines))
+        return {"action": "add", "memory_id": entry["id"], "results": results}
 
     elif action == "edit":
         if len(lines) < 3:

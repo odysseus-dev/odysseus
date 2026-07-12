@@ -161,9 +161,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         category = arguments.get("category", "fact")
         if not text:
             return _text_result("Error: Memory text cannot be empty")
-        owner, memories, _visible, scope_error = _scope_entries()
+        owner, memories, visible, scope_error = _scope_entries()
         if scope_error:
             return _text_result(scope_error)
+        # Dedup against the owner's visible memories: identical text is refused
+        # with a pointer to edit; near-duplicates still add but are surfaced.
+        exact, similar = (None, [])
+        if hasattr(_memory_manager, "dedup_check"):
+            exact, similar = _memory_manager.dedup_check(text, visible)
+        if exact:
+            return _text_result(
+                f"Not added — an identical memory already exists: "
+                f"[{exact.get('category', 'fact')}] `{exact.get('id', '?')[:8]}` — {exact.get('text', '')}\n"
+                f"Use action=edit with that memory_id to change it, or delete it first."
+            )
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
         memories.append(entry)
         _memory_manager.save(memories)
@@ -172,7 +183,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 _memory_vector.add(entry["id"], text)
             except Exception:
                 pass
-        return _text_result(f"Memory added: [{category}] {text} (id: {entry['id'][:8]})")
+        result = f"Memory added: [{category}] {text} (id: {entry['id'][:8]})"
+        if similar:
+            sim_lines = []
+            for m in similar:
+                sim_text = m.get("text", "")
+                if len(sim_text) > 100:
+                    sim_text = sim_text[:100] + "..."
+                sim_lines.append(f"- [{m.get('category', 'fact')}] `{m.get('id', '?')[:8]}` — {sim_text}")
+            result += ("\nSimilar existing memories — if one covers the same fact, "
+                       "consolidate with action=edit or action=delete:\n" + "\n".join(sim_lines))
+        return _text_result(result)
 
     elif action == "edit":
         memory_id = arguments.get("memory_id", "")
