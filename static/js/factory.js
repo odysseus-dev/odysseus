@@ -51,11 +51,17 @@ async function iterateProject(pid, prompt) {
   });
 }
 async function getFactorySettings() { return _fetchJSON(`${_API}/settings`); }
-async function saveFactorySettings(agentModels, agentPrompts, agentMaxTokens) {
+async function saveFactorySettings(agentModels, agentPrompts, agentMaxTokens, concurrentTasks, produceMaxTokens) {
   return _fetchJSON(`${_API}/settings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_models: agentModels, agent_prompts: agentPrompts || {}, agent_max_tokens: agentMaxTokens || {} }),
+    body: JSON.stringify({
+      agent_models: agentModels,
+      agent_prompts: agentPrompts || {},
+      agent_max_tokens: agentMaxTokens || {},
+      concurrent_tasks: concurrentTasks || 3,
+      produce_max_tokens: produceMaxTokens || 16384,
+    }),
   });
 }
 
@@ -253,7 +259,7 @@ async function _openSettings() {
 }
 
 function _renderSettings(container, data) {
-  const { agents, agent_models, agent_prompts, agent_max_tokens, default_max_tokens, produce_max_tokens, endpoints } = data;
+  const { agents, agent_models, agent_prompts, agent_max_tokens, default_max_tokens, produce_max_tokens, concurrent_tasks, endpoints } = data;
   const currentModels = agent_models || {};
   const currentPrompts = agent_prompts || {};
   const currentMaxTokens = agent_max_tokens || {};
@@ -290,6 +296,18 @@ function _renderSettings(container, data) {
                style="width:90px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#333);background:transparent;color:inherit;font-size:13px;" />
         <button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-bulk-tokens-apply" type="button">Set All</button>
         <span style="font-size:11px;opacity:0.6;margin-left:4px;">Applies to every agent below</span>
+      </div>
+      <div class="factory-settings-bulk" style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border,#333);border-radius:6px;">
+        <label for="factory-concurrent-tasks" style="font-size:12px;font-weight:600;white-space:nowrap;">Max concurrent tasks:</label>
+        <input type="number" id="factory-concurrent-tasks" value="${concurrent_tasks || 3}" min="1" max="10"
+               style="width:60px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#333);background:transparent;color:inherit;font-size:13px;" />
+        <span style="font-size:11px;opacity:0.6;">Independent tasks run in parallel (higher = faster, but may hit API rate limits)</span>
+      </div>
+      <div class="factory-settings-bulk" style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border,#333);border-radius:6px;">
+        <label for="factory-produce-max-tokens" style="font-size:12px;font-weight:600;white-space:nowrap;">Produce token budget:</label>
+        <input type="number" id="factory-produce-max-tokens" value="${produce_max_tokens || 16384}" min="2048" max="65536" step="1024"
+               style="width:90px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#333);background:transparent;color:inherit;font-size:13px;" />
+        <span style="font-size:11px;opacity:0.6;">Max output tokens per produce call (higher = less truncation, slower responses)</span>
       </div>
       ${agents.map(a => {
         const cfg = currentModels[a.key] || {};
@@ -421,10 +439,14 @@ function _renderSettings(container, data) {
       }
     });
 
+    // Collect performance settings
+    const concurrentTasks = parseInt(container.querySelector('#factory-concurrent-tasks')?.value) || 3;
+    const produceMaxTokens = parseInt(container.querySelector('#factory-produce-max-tokens')?.value) || 16384;
+
     btn.disabled = true;
     btn.innerHTML = `${ICONS.spinner} Saving...`;
     try {
-      await saveFactorySettings(newModels, newPrompts, newMaxTokens);
+      await saveFactorySettings(newModels, newPrompts, newMaxTokens, concurrentTasks, produceMaxTokens);
       btn.innerHTML = 'Saved!';
       setTimeout(() => { btn.disabled = false; btn.innerHTML = 'Save settings'; }, 1500);
     } catch (err) {

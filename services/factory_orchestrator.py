@@ -977,6 +977,18 @@ def _get_produce_max_tokens() -> int:
     return 16384
 
 
+def _get_concurrent_tasks() -> int:
+    """Max concurrent task processing. Override via factory_concurrent_tasks setting."""
+    try:
+        from src.settings import get_setting
+        v = get_setting("factory_concurrent_tasks", None)
+        if v is not None:
+            return max(1, min(10, int(v)))
+    except Exception:
+        pass
+    return MAX_CONCURRENT_TASKS
+
+
 # ═══════════════════════════════════════════════════════════════
 # Auto-split support
 # ═══════════════════════════════════════════════════════════════
@@ -1442,7 +1454,7 @@ async def _orchestrator_loop(project_id: int, owner: str,
         # config all produce at the same time instead of sequentially.
         # Tasks WITH dependencies are never concurrent (they can't be "ready"
         # until all their deps are completed).
-        sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+        sem = asyncio.Semaphore(_get_concurrent_tasks())
 
         async def _safe_process(task):
             async with sem:

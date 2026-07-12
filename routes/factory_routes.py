@@ -223,6 +223,11 @@ def setup_factory_routes() -> APIRouter:
                 "is_custom": bool(custom_prompts.get(k)),
             })
 
+        from src.settings import get_setting as _gs2
+        _concurrent = _gs2("factory_concurrent_tasks", None)
+        if not _concurrent:
+            _concurrent = 3
+
         _produce_max = get_setting("factory_produce_max_tokens", None)
         if not _produce_max:
             _produce_max = 16384
@@ -231,6 +236,7 @@ def setup_factory_routes() -> APIRouter:
                 "agent_prompts": custom_prompts,
                 "agent_max_tokens": agent_max_tokens,
                 "default_max_tokens": 16384,
+                "concurrent_tasks": int(_concurrent),
                 "produce_max_tokens": int(_produce_max),
                 "endpoints": endpoints}
 
@@ -264,6 +270,22 @@ def setup_factory_routes() -> APIRouter:
                 except (ValueError, TypeError):
                     pass
             settings["factory_agent_max_tokens"] = cleaned
+
+        if "concurrent_tasks" in body:
+            try:
+                val = int(body["concurrent_tasks"])
+                if 1 <= val <= 10:
+                    settings["factory_concurrent_tasks"] = val
+            except (ValueError, TypeError):
+                pass
+
+        if "produce_max_tokens" in body:
+            try:
+                val = int(body["produce_max_tokens"])
+                if 1024 <= val <= 65536:
+                    settings["factory_produce_max_tokens"] = val
+            except (ValueError, TypeError):
+                pass
 
         save_settings(settings)
         return {"ok": True}
