@@ -379,16 +379,22 @@ class ChatHandler:
 
     async def _handle_goal_command(self, sess, goal_text: str) -> str:
         """Handle /goal <condition> — set a stopping condition for the session."""
+        from src.user_time import get_user_language
+        lang = get_user_language() or "en"
+
+        # Load translations
+        try:
+            import importlib
+            locale_mod = importlib.import_module(f"static.locales.{lang}")
+            t = getattr(locale_mod, "default", {})
+        except Exception:
+            t = {}
+
         if not goal_text:
             return (
-                "## Goal Mode\n\n"
-                "Usage: `/goal <stopping condition>`\n\n"
-                "Sets a condition that must be met before the agent can stop. "
-                "An independent evaluation checks whether the goal is truly satisfied.\n\n"
-                "Examples:\n"
-                "- `/goal All tests pass and code is committed`\n"
-                "- `/goal The bug is fixed and verified in production`\n"
-                "- `/goal Documentation is complete with examples`"
+                f"## {t.get('slash.goal.help', 'Goal Mode')}\n\n"
+                f"{t.get('slash.goal.usage', 'Usage: /goal <stopping condition>')}\n\n"
+                f"{t.get('slash.goal.examples', 'Examples:\\n• /goal All tests pass\\n• /goal Bug is fixed')}"
             )
 
         # Store goal in session metadata
@@ -398,10 +404,9 @@ class ChatHandler:
         sess.metadata["goal_set_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
 
         return (
-            f"## Goal Set\n\n"
+            f"## {t.get('slash.goal.set', 'Goal Set').replace('{goal}', goal_text)}\n\n"
             f"**Condition:** {goal_text}\n\n"
-            f"The agent will not stop until this goal is evaluated as satisfied. "
-            f"Use `/goal` without arguments to see the current goal."
+            f"{t.get('slash.goal.noGoal', 'The agent will not stop until this goal is satisfied.')}"
         )
 
     async def _handle_dream_command(self, sess) -> str:
