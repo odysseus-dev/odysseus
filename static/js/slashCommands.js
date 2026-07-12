@@ -5683,81 +5683,6 @@ async function _cmdColor(args, ctx) {
   return true;
 }
 
-// ── Agent commands (MiMo-Code inspired) ──
-
-async function _cmdCompact(args, ctx) {
-  ctx.slashReply('⏳ Compacting context and saving checkpoint...');
-  // Send as regular message to trigger backend handler
-  return false; // let it pass through to the agent
-}
-
-async function _cmdGoal(args, ctx) {
-  const goal = args.join(' ');
-  if (!goal) {
-    ctx.slashReply(
-      '## 🎯 Goal Mode\n\n' +
-      '**Usage:** `/goal <stopping condition>`\n\n' +
-      'Sets a condition that must be met before the agent can stop.\n\n' +
-      '**Examples:**\n' +
-      '- `/goal All tests pass and code is committed`\n' +
-      '- `/goal The bug is fixed and verified in production`\n' +
-      '- `/goal Documentation is complete with examples`'
-    );
-    return true;
-  }
-  ctx.slashReply(`⏳ Setting goal: "${goal}"...`);
-  return false; // let it pass through to the agent
-}
-
-async function _cmdDream(args, ctx) {
-  ctx.slashReply('⏳ Scanning session and extracting knowledge...');
-  return false; // let it pass through to the agent
-}
-
-async function _cmdStatus(args, ctx) {
-  ctx.slashReply('⏳ Loading session status...');
-  return false; // let it pass through to the agent
-}
-
-async function _cmdTask(args, ctx) {
-  // Default to list if no args
-  if (args.length === 0) {
-    ctx.slashReply('⏳ Loading tasks...');
-    return false;
-  }
-  return false; // let it pass through to the agent
-}
-
-async function _cmdTaskList(args, ctx) {
-  ctx.slashReply('⏳ Loading tasks...');
-  return false;
-}
-
-async function _cmdTaskAdd(args, ctx) {
-  const desc = args.join(' ');
-  if (!desc) {
-    ctx.slashReply('❌ Usage: `/task add <description>`');
-    return true;
-  }
-  ctx.slashReply(`⏳ Adding task: "${desc}"...`);
-  return false;
-}
-
-async function _cmdTaskDone(args, ctx) {
-  const taskId = args[0];
-  if (!taskId) {
-    ctx.slashReply('❌ Usage: `/task done <id>`');
-    return true;
-  }
-  ctx.slashReply(`⏳ Marking task ${taskId} as done...`);
-  return false;
-}
-
-async function _cmdTaskStatus(args, ctx) {
-  ctx.slashReply('⏳ Loading task status...');
-  return false;
-}
-
 // ── Help (generated dynamically from COMMANDS) ──
 
 async function _cmdHelp(args, ctx) {
@@ -6174,8 +6099,8 @@ const COMMANDS = {
   },
   compact: {
     alias: [],
-    category: 'Utility',
-    help: 'Compact older chat messages',
+    category: 'Agent',
+    help: 'Compact context and save checkpoint',
     handler: _cmdCompact,
     usage: '/compact'
   },
@@ -6224,53 +6149,6 @@ const COMMANDS = {
   ping:    { alias: ['pong'], category: 'Utility', hidden: true, help: 'Check if model endpoints are alive', handler: _cmdPing, usage: '/ping' },
   probe:   { alias: ['test-models'], category: 'Utility', hidden: true, help: 'Test which models actually respond', handler: _cmdProbe, usage: '/probe [endpoint]' },
   color:   { alias: ['colour'],     hidden: true, handler: _cmdColor,   usage: '/color [hex]' },
-  // ── Agent commands (MiMo-Code inspired) ──────────────────────────
-  compact: {
-    alias: [],
-    category: 'Agent',
-    help: 'Compact context and save checkpoint',
-    handler: _cmdCompact,
-    noUserBubble: false,
-    usage: '/compact',
-  },
-  goal: {
-    alias: [],
-    category: 'Agent',
-    help: 'Set a stopping condition for the session',
-    handler: _cmdGoal,
-    noUserBubble: false,
-    usage: '/goal <condition>',
-  },
-  dream: {
-    alias: [],
-    category: 'Agent',
-    help: 'Extract knowledge from session to memory',
-    handler: _cmdDream,
-    noUserBubble: false,
-    usage: '/dream',
-  },
-  status: {
-    alias: [],
-    category: 'Agent',
-    help: 'Show session status, goal, context size',
-    handler: _cmdStatus,
-    noUserBubble: false,
-    usage: '/status',
-  },
-  task: {
-    alias: ['tasks'],
-    category: 'Agent',
-    help: 'Manage tasks (list, add, done, status)',
-    default: 'list',
-    handler: _cmdTask,
-    noUserBubble: false,
-    subs: {
-      'list':   { handler: _cmdTaskList,   alias: ['ls'],      help: 'List all tasks',        usage: '/task list' },
-      'add':    { handler: _cmdTaskAdd,    alias: ['create'],  help: 'Add a new task',        usage: '/task add <description>' },
-      'done':   { handler: _cmdTaskDone,   alias: ['complete'],help: 'Mark task as done',      usage: '/task done <id>' },
-      'status': { handler: _cmdTaskStatus, alias: ['stat'],    help: 'Show task summary',      usage: '/task status' },
-    },
-  },
 };
 
 // ── Legacy aliases ────────────────────────────────────────────────
