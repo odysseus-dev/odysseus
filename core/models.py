@@ -74,10 +74,13 @@ class Session:
     owner: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
+    extra_data: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.headers is None:
             self.headers = {}
+        if self.extra_data is None:
+            self.extra_data = {}
         # Ensure each session gets its OWN list (not the shared dataclass default)
         if self.history is None:
             self.history = []
