@@ -193,10 +193,16 @@ def _read_accounts_from_db() -> list:
         columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
         owner_select = "owner" if "owner" in columns else "NULL AS owner"
         smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
+        # OAuth columns may be absent on older DBs that predate the migration.
+        oauth_provider_select = "oauth_provider" if "oauth_provider" in columns else "NULL AS oauth_provider"
+        oauth_access_token_select = "oauth_access_token" if "oauth_access_token" in columns else "NULL AS oauth_access_token"
+        oauth_refresh_token_select = "oauth_refresh_token" if "oauth_refresh_token" in columns else "NULL AS oauth_refresh_token"
+        oauth_token_expiry_select = "oauth_token_expiry" if "oauth_token_expiry" in columns else "NULL AS oauth_token_expiry"
         rows = conn.execute(f"""
             SELECT id, {owner_select}, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
-                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
+                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address,
+                   {oauth_provider_select}, {oauth_access_token_select}, {oauth_refresh_token_select}, {oauth_token_expiry_select}
             FROM email_accounts WHERE enabled = 1
             ORDER BY is_default DESC, created_at ASC
         """).fetchall()
@@ -330,6 +336,14 @@ def _load_config(account: str | None = None) -> dict:
         cfg["smtp_user"] = row["smtp_user"] or cfg["smtp_user"]
         cfg["smtp_password"] = _decrypt(row["smtp_password"]) if row["smtp_password"] else cfg["smtp_password"]
         cfg["from_address"] = row["from_address"] or row["imap_user"] or cfg["from_address"]
+        # OAuth fields — loaded so _imap_connect / _smtp_connect can use
+        # XOAUTH2 when the account was set up via Google OAuth instead of an
+        # app password. The MCP email server previously ignored OAuth entirely,
+        # making Gmail Workspace OAuth accounts inaccessible to the agent. (#4992)
+        cfg["oauth_provider"] = row.get("oauth_provider") or ""
+        cfg["oauth_access_token"] = _decrypt(row["oauth_access_token"]) if row.get("oauth_access_token") else ""
+        cfg["oauth_refresh_token"] = _decrypt(row.get("oauth_refresh_token")) if row.get("oauth_refresh_token") else ""
+        cfg["oauth_token_expiry"] = row.get("oauth_token_expiry") or ""
     else:
         # Legacy fallback: settings.json flat keys
         try:
@@ -385,7 +399,20 @@ def _imap_connect(account: str | None = None):
     if getattr(conn, "sock", None):
         conn.sock.settimeout(EMAIL_SOCKET_TIMEOUT)
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        if cfg.get("oauth_provider") == "google":
+            # XOAUTH2 for Gmail Workspace OAuth accounts. Reuses the token
+            # refresh logic from email_helpers so the MCP server and the UI
+            # routes share the same OAuth path. (#4992)
+            from routes.email_helpers import _get_valid_google_token, _xoauth2_bytes
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError(
+                    "Google OAuth token unavailable — reconnect the account "
+                    "in Settings → Integrations"
+                )
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        else:
+            conn.login(cfg["imap_user"], cfg["imap_password"])
     except Exception:
         # A failed login otherwise orphans the connected socket; close it
         # before propagating (shutdown() is the pre-auth low-level close). (#3174)
@@ -1048,6 +1075,10 @@ def _read_email_across_accounts(uid=None, message_id=None, folder="INBOX"):
 
 
 def _smtp_ready(cfg: dict) -> bool:
+    # OAuth accounts don't need an SMTP password — XOAUTH2 uses the access
+    # token instead. Only require host + user. (#4992)
+    if cfg.get("oauth_provider") == "google":
+        return bool(cfg.get("smtp_host") and cfg.get("smtp_user"))
     return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
 
 
@@ -1102,7 +1133,25 @@ def _smtp_connect(account=None, cfg=None):
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
-    if cfg["smtp_user"] and cfg["smtp_password"]:
+    if cfg.get("oauth_provider") == "google":
+        # XOAUTH2 for Gmail Workspace OAuth accounts — mirror the IMAP path. (#4992)
+        from routes.email_helpers import _get_valid_google_token, _xoauth2_raw
+        token = _get_valid_google_token(cfg.get("account_id"), cfg)
+        if not token:
+            raise RuntimeError(
+                "Google OAuth token unavailable — reconnect the account "
+                "in Settings → Integrations"
+            )
+        user = cfg.get("smtp_user") or cfg.get("imap_user")
+        try:
+            conn.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
+    elif cfg["smtp_user"] and cfg["smtp_password"]:
         try:
             conn.login(cfg["smtp_user"], cfg["smtp_password"])
         except Exception:
