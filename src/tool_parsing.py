@@ -734,8 +734,41 @@ def _raw_openai_tool_call_to_block(value) -> Optional[ToolBlock]:
     return ToolBlock(tool_type, str(content or ""))
 
 
+def _raw_local_tool_call_to_block(value) -> Optional[ToolBlock]:
+    """Parse local model format: {"tool_call": {"name": "...", "arguments": {...}}}"""
+    if not isinstance(value, dict):
+        return None
+    tc = value.get("tool_call")
+    if not isinstance(tc, dict):
+        # Try direct format: {"name": "...", "arguments": {...}}
+        name = str(value.get("name") or "").strip()
+        if not name:
+            return None
+        tool_type = _TOOL_NAME_MAP.get(name, name)
+        raw_args = value.get("arguments") or {}
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        return ToolBlock(tool_type, json.dumps(args) if args else "{}")
+    name = str(tc.get("name") or "").strip()
+    if not name:
+        return None
+    tool_type = _TOOL_NAME_MAP.get(name, name)
+    raw_args = tc.get("arguments") or {}
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+    except (json.JSONDecodeError, TypeError):
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    return ToolBlock(tool_type, json.dumps(args) if args else "{}")
+
+
 def _parse_raw_openai_tool_call_json(text: str) -> Optional[ToolBlock]:
-    if not isinstance(text, str) or '"function"' not in text:
+    if not isinstance(text, str) or ('"function"' not in text and '"tool_call"' not in text and '"name"' not in text):
         return None
     decoder = json.JSONDecoder()
     for match in re.finditer(r"[\[{]", text):
@@ -743,7 +776,12 @@ def _parse_raw_openai_tool_call_json(text: str) -> Optional[ToolBlock]:
             parsed, _end = decoder.raw_decode(text[match.start():])
         except json.JSONDecodeError:
             continue
+        # Try OpenAI format first
         block = _raw_openai_tool_call_to_block(parsed)
+        if block:
+            return block
+        # Try local model format
+        block = _raw_local_tool_call_to_block(parsed)
         if block:
             return block
     return None

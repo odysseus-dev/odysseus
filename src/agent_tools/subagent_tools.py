@@ -15,6 +15,32 @@ logger = logging.getLogger(__name__)
 # Max rounds for subagent execution
 _SUBAGENT_MAX_ROUNDS = 20
 
+# All available tools (from TOOL_TAGS)
+_ALL_TOOLS = {
+    "bash", "python", "read_file", "write_file", "edit_file",
+    "web_search", "web_fetch", "grep", "glob", "ls",
+    "create_document", "update_document", "edit_document", "suggest_document",
+    "manage_documents", "get_workspace", "ask_user", "update_plan",
+    "chat_with_model", "ask_teacher", "list_models", "manage_bg_jobs",
+    "create_session", "list_sessions", "send_to_session", "manage_session",
+    "manage_memory", "manage_tasks", "manage_skills",
+    "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens",
+    "manage_settings", "manage_notes", "manage_calendar",
+    "ui_control", "generate_image", "api_call",
+    "spawn_subagent", "wait_actor", "list_actors",
+}
+
+
+def _compute_disabled_tools(tool_allowlist: set = None) -> set:
+    """Compute which tools should be disabled based on the allowlist.
+    
+    If tool_allowlist is provided, all tools NOT in the allowlist are disabled.
+    If tool_allowlist is None, no tools are disabled.
+    """
+    if not tool_allowlist:
+        return set()
+    return _ALL_TOOLS - tool_allowlist
+
 
 async def _run_subagent_loop(
     actor_id: str,
@@ -48,7 +74,7 @@ async def _run_subagent_loop(
             session_id=session_id,
             max_rounds=_SUBAGENT_MAX_ROUNDS,
             owner=owner,
-            disabled_tools=None if not tool_allowlist else None,
+            disabled_tools=_compute_disabled_tools(tool_allowlist),
             relevant_tools=tool_allowlist,
         ):
             if not chunk.startswith("data: "):
