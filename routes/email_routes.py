@@ -923,29 +923,32 @@ def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict
 
 
 def _store_email_flag(conn, uid: str, flag: str, add: bool = True) -> bool:
+    # imaplib's plain store() takes a message SEQUENCE NUMBER, not a UID, so the
+    # old `else` fallback flagged whichever message happened to occupy sequence
+    # position == the UID value. When the UID isn't present, fail safe (callers
+    # surface "Email not found") rather than touch an unrelated message.
+    if not _uid_exists(conn, uid):
+        return False
     op = "+FLAGS" if add else "-FLAGS"
-    if _uid_exists(conn, uid):
-        status, _ = conn.uid("STORE", _uid_bytes(uid), op, flag)
-    else:
-        status, _ = conn.store(_uid_bytes(uid), op, flag)
+    status, _ = conn.uid("STORE", _uid_bytes(uid), op, flag)
     return status == "OK"
 
 
 def _move_email_message(conn, uid: str, dest: str, role: str = "") -> bool:
     dest = _resolve_mail_folder(conn, dest, role or _folder_role_from_name(dest))
-    if _uid_exists(conn, uid):
-        status, _ = conn.uid("MOVE", _uid_bytes(uid), _q(dest))
-        if status == "OK":
-            return True
-        status, _ = conn.uid("COPY", _uid_bytes(uid), _q(dest))
-        if status != "OK":
-            return False
-        status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
-    else:
-        status, _ = conn.copy(_uid_bytes(uid), _q(dest))
-        if status != "OK":
-            return False
-        status, _ = conn.store(_uid_bytes(uid), "+FLAGS", "\\Deleted")
+    # copy()/store() are SEQUENCE-NUMBER commands; using them with a UID (the old
+    # `else` branch) copied + \Deleted-flagged the wrong message and then
+    # expunge() permanently removed it. There is no valid case where treating a
+    # UID as a sequence number is correct, so fail safe when the UID is absent.
+    if not _uid_exists(conn, uid):
+        return False
+    status, _ = conn.uid("MOVE", _uid_bytes(uid), _q(dest))
+    if status == "OK":
+        return True
+    status, _ = conn.uid("COPY", _uid_bytes(uid), _q(dest))
+    if status != "OK":
+        return False
+    status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
     if status == "OK":
         conn.expunge()
         return True

@@ -2,9 +2,15 @@ from typing import Any, Dict, List, Optional
 import logging
 import re
 from src.constants import MAX_READ_CHARS
-from src.tool_utils import _parse_tool_args
+from src.tool_utils import _parse_tool_args, get_upload_handler
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
+
+
+def _missing_document_upload(owner: Optional[str], content: Any) -> Optional[str]:
+    """Reserve explicit upload URLs before an agent persists document text."""
+    return reserve_upload_references(get_upload_handler(), owner, content)
 
 # ---------------------------------------------------------------------------
 # Active document state
@@ -384,6 +390,13 @@ class CreateDocumentTool:
                 return {"error": "Cannot create document in another user's session"}
             _owner = _sess.owner if _sess else None
 
+            missing_id = _missing_document_upload(_owner, content)
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
+
             doc = Document(
                 id=doc_id,
                 session_id=session_id,
@@ -454,6 +467,13 @@ class UpdateDocumentTool:
             new_content = _coerce_email_document_content(doc.current_content or "", content) if is_email_doc else content.strip()
             if is_email_doc:
                 doc.language = "email"
+
+            missing_id = _missing_document_upload(owner, new_content)
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
 
             if not is_email_doc and _pdf_source_upload_id(doc.current_content or ""):
                 return _create_pdf_text_derivative(
@@ -532,6 +552,12 @@ class EditDocumentTool:
                     applied = 1
                     skipped = max(0, len(edits) - 1)
                     doc.language = "email"
+                    missing_id = _missing_document_upload(owner, updated_content)
+                    if missing_id:
+                        return {
+                            "error": f"Referenced upload is no longer available: {missing_id}",
+                            "exit_code": 1,
+                        }
                     new_ver = doc.version_count + 1
                     ver = DocumentVersion(
                         id=str(uuid.uuid4()),
@@ -583,6 +609,13 @@ class EditDocumentTool:
 
             if applied == 0:
                 return {"error": f"No edits applied — none of the FIND blocks matched the document content (skipped {skipped})"}
+
+            missing_id = _missing_document_upload(owner, updated_content)
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
 
             if _pdf_source_upload_id(doc.current_content or ""):
                 return _create_pdf_text_derivative(
