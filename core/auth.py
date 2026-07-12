@@ -498,6 +498,27 @@ class AuthManager:
         )
         return True
 
+    def check_oidc_totp(self, username: str) -> bool:
+        """Return True when *username* has TOTP enabled AND is an OIDC user.
+
+        Reloads auth.json from disk under the inter-process lock so a
+        manually-edited or externally-mutated config is visible.
+        Callers must invoke this via ``asyncio.to_thread()`` — file
+        locking inside the critical section blocks the calling thread.
+
+        This is defense-in-depth: normal OIDC users cannot enable local
+        TOTP (route guards prevent it), but an externally-edited auth.json or
+        a pre-OIDC legacy account could have both ``oidc_sub`` and
+        ``totp_enabled`` set.
+        """
+        username = username.strip().lower()
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
+            user = self._config.get("users", {}).get(username, {})
+            if not user.get("oidc_sub"):
+                return False  # not an OIDC user
+            return bool(user.get("totp_enabled"))
+
     def delete_user(self, username: str, requesting_user: str) -> bool:
         """Delete a user. Only admins can delete, and can't delete themselves.
 

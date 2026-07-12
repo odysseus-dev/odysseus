@@ -756,3 +756,33 @@ class TestInterprocessFirstAdminSerialisation:
         assert "alice" in users_a
         assert "alice" in users_b
         assert not users_a["alice"].get("is_admin"), "alice must be demoted"
+
+
+# ---------------------------------------------------------------------------
+# OIDC/TOTP defense-in-depth
+# ---------------------------------------------------------------------------
+
+
+def test_check_oidc_totp_returns_false_for_normal_user(tmp_path):
+    mgr = _make_manager(tmp_path)
+    mgr.create_user("alice", "password123")
+    assert mgr.check_oidc_totp("alice") is False
+
+
+def test_check_oidc_totp_returns_true_for_oidc_user_with_totp(tmp_path):
+    mgr = _make_manager(tmp_path)
+    mgr.create_user_oidc("alice", sub="abc123", issuer="https://idp.example.com")
+    mgr._config["users"]["alice"]["totp_enabled"] = True
+    mgr._save()
+
+    # check_oidc_totp reloads auth.json, so this reflects an externally
+    # persisted mutation rather than only the in-memory dictionary.
+    assert mgr.check_oidc_totp("alice") is True
+
+
+def test_check_oidc_totp_returns_false_for_non_oidc_user_with_totp(tmp_path):
+    mgr = _make_manager(tmp_path)
+    mgr.create_user("alice", "password123")
+    mgr._config["users"]["alice"]["totp_enabled"] = True
+    mgr._save()
+    assert mgr.check_oidc_totp("alice") is False

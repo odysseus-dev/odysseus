@@ -144,6 +144,7 @@ class TestOidcCallback:
         }
 
         auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
         auth.get_user_by_oidc.return_value = None  # new user
         auth.create_user_oidc.return_value = "alice"
         auth.create_session_trusted.return_value = "session-token-abc"
@@ -186,6 +187,7 @@ class TestOidcCallback:
         }
 
         auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
         auth.get_user_by_oidc.return_value = "bob"
         auth.create_session_trusted.return_value = "session-token-xyz"
 
@@ -942,3 +944,86 @@ class TestAdminDemotionProtection:
         # _userinfo_available is False, and the id_token has no groups.
         # An existing admin must not be demoted on missing evidence.
         auth.set_oidc_user_admin.assert_not_called()
+
+
+class TestOidcCallbackSecurityFailures:
+    def _run_callback(self, auth, mgr, params, cookies=None):
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        import asyncio
+        return asyncio.run(
+            ep(
+                _fake_request_with_params(params, cookies=cookies),
+                SimpleNamespace(),
+            )
+        )
+
+    def test_callback_rejects_oidc_totp_user(self):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = {"sub": "user123", "email": "alice@example.com"}
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "alice"
+        auth.check_oidc_totp.return_value = True
+        auth.create_session_trusted.return_value = "must-not-be-issued"
+
+        result = self._run_callback(
+            auth, mgr, {"code": "code", "state": "state"},
+            cookies={"odysseus_oidc_csrf": "state"},
+        )
+        assert "error=oidc_failed" in result.headers["location"]
+        auth.create_session_trusted.assert_not_called()
+        assert "odysseus_oidc_csrf" in result.headers.get("set-cookie", "")
+
+    def test_callback_handles_none_session_token(self):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = {"sub": "user123", "email": "alice@example.com"}
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "alice"
+        auth.check_oidc_totp.return_value = False
+        auth.create_session_trusted.return_value = None
+
+        result = self._run_callback(
+            auth, mgr, {"code": "code", "state": "state"},
+            cookies={"odysseus_oidc_csrf": "state"},
+        )
+        assert "error=oidc_failed" in result.headers["location"]
+        assert "odysseus_oidc_csrf" in result.headers.get("set-cookie", "")
+
+    def test_callback_clears_csrf_on_each_error(self):
+        from core.oidc import OidcError
+
+        cases = [
+            ({"error": "access_denied", "state": "state"}, {}, "oidc_denied"),
+            ({"state": "state"}, {}, "oidc_invalid"),
+            (
+                {"code": "code", "state": "state"},
+                {"odysseus_oidc_csrf": "wrong-state"},
+                "oidc_csrf",
+            ),
+            (
+                {"code": "code", "state": "state"},
+                {"odysseus_oidc_csrf": "state"},
+                "oidc_failed",
+            ),
+        ]
+        for params, cookies, error_code in cases:
+            mgr = MagicMock()
+            mgr.configured = True
+            mgr.redirect_uri_override = None
+            mgr.exchange_code.side_effect = OidcError("exchange failed")
+            auth = MagicMock()
+            auth.check_oidc_totp.return_value = False
+
+            result = self._run_callback(auth, mgr, params, cookies=cookies)
+            assert f"error={error_code}" in result.headers["location"]
+            assert "odysseus_oidc_csrf" in result.headers.get("set-cookie", ""), (
+                f"CSRF cookie was not cleared for {error_code}"
+            )
