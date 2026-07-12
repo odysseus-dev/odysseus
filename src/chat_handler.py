@@ -391,17 +391,32 @@ class ChatHandler:
             t = {}
 
         if not goal_text:
+            # Show current goal if set
+            current_goal = getattr(sess, "extra_data", {}).get("goal") if hasattr(sess, "extra_data") else None
+            if current_goal:
+                return (
+                    f"## {t.get('slash.goal.help', 'Current Goal')}\n\n"
+                    f"**Condition:** {current_goal}\n\n"
+                    f"{t.get('slash.goal.noGoal', 'Use /goal <new condition> to change it.')}"
+                )
             return (
                 f"## {t.get('slash.goal.help', 'Goal Mode')}\n\n"
                 f"{t.get('slash.goal.usage', 'Usage: /goal <stopping condition>')}\n\n"
                 f"{t.get('slash.goal.examples', 'Examples:\\n• /goal All tests pass\\n• /goal Bug is fixed')}"
             )
 
-        # Store goal in session metadata
-        if not hasattr(sess, "metadata"):
-            sess.metadata = {}
-        sess.metadata["goal"] = goal_text
-        sess.metadata["goal_set_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        # Store goal in session extra_data
+        if not hasattr(sess, "extra_data") or sess.extra_data is None:
+            sess.extra_data = {}
+        sess.extra_data["goal"] = goal_text
+        sess.extra_data["goal_set_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+
+        # Persist to database
+        if self.session_manager and hasattr(sess, "id"):
+            try:
+                self.session_manager.update_session_metadata(sess.id, sess.extra_data)
+            except Exception as e:
+                logger.warning(f"Failed to persist goal to database: {e}")
 
         return (
             f"## {t.get('slash.goal.set', 'Goal Set').replace('{goal}', goal_text)}\n\n"

@@ -126,6 +126,9 @@ class Session(TimestampMixin, Base):
     # Headers stored as JSON
     headers = Column(JSON, default=dict)
     
+    # Session extra data (JSON) - stores goal, settings, etc.
+    extra_data = Column(JSON, default=dict)
+    
     # Timestamps are provided by TimestampMixin
     last_accessed = Column(DateTime, default=func.now(), onupdate=func.now())
     # Timestamp of the last actual MESSAGE in this session. Set explicitly

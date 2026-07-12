@@ -120,6 +120,15 @@ class SessionManager:
                 headers = json.loads(headers)
             except json.JSONDecodeError:
                 headers = {}
+        
+        # Load extra_data (goal, settings, etc.)
+        extra_data = getattr(db_session, "extra_data", None) or {}
+        if isinstance(extra_data, str):
+            try:
+                extra_data = json.loads(extra_data)
+            except json.JSONDecodeError:
+                extra_data = {}
+        
         session = Session(
             id=db_session.id,
             name=db_session.name,
@@ -133,6 +142,7 @@ class SessionManager:
             is_important=getattr(db_session, "is_important", False) or False,
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
+        session.extra_data = extra_data
         return session
 
     def _db_to_session(self, db_session: DbSession, db) -> Optional[Session]:
@@ -571,6 +581,26 @@ class SessionManager:
         except Exception as e:
             db.rollback()
             logger.error(f"Error updating session name: {e}")
+            raise
+        finally:
+            db.close()
+
+    def update_session_metadata(self, session_id: str, metadata: dict):
+        """Update session extra_data (goal, settings, etc.)."""
+        if session_id not in self.sessions:
+            return
+
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session:
+                db_session.extra_data = metadata
+                db_session.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                self.sessions[session_id].extra_data = metadata
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error updating session metadata: {e}")
             raise
         finally:
             db.close()
