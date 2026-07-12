@@ -856,7 +856,10 @@ def _ollama_model_names(data: Any) -> List[str]:
 
 
 def _is_google_api_base(base_url: str) -> bool:
-    return _host_match(base_url, "googleapis.com")
+    try:
+        return (urlparse(base_url).hostname or "").lower() == "generativelanguage.googleapis.com"
+    except Exception:
+        return False
 
 
 def _normalize_endpoint_refresh_mode(value: Any, endpoint_kind: str = "auto", base_url: str = "") -> str:
@@ -895,6 +898,17 @@ def _google_model_id_from_item(item: Any) -> str:
     return str(value or "").strip().removeprefix("models/")
 
 
+def _google_model_supports_chat(item: Any) -> bool:
+    """Return whether a native Google Model resource supports chat generation."""
+    if not isinstance(item, dict):
+        return False
+    methods = item.get("supportedGenerationMethods")
+    if not isinstance(methods, list):
+        return False
+    chat_methods = {"generateContent", "generateMessage", "generateText", "generateAnswer"}
+    return any(method in chat_methods for method in methods)
+
+
 def _probe_google_models(base_url: str, api_key: str = None, timeout: int = 5, page_size: int = 1000) -> List[str]:
     """Read Google's native paginated Models API.
 
@@ -907,10 +921,10 @@ def _probe_google_models(base_url: str, api_key: str = None, timeout: int = 5, p
         page_size = min(max(int(page_size or 1000), 1), 1000)
     except Exception:
         page_size = 1000
-    params: Dict[str, Any] = {"pageSize": page_size}
-    if api_key:
-        params["key"] = api_key
     headers = {"Accept": "application/json"}
+    if api_key:
+        headers["x-goog-api-key"] = api_key
+    params: Dict[str, Any] = {"pageSize": page_size}
     models: List[str] = []
     seen = set()
     page_token = ""
@@ -922,6 +936,8 @@ def _probe_google_models(base_url: str, api_key: str = None, timeout: int = 5, p
         r.raise_for_status()
         data = r.json()
         for item in data.get("models") or []:
+            if not _google_model_supports_chat(item):
+                continue
             model_id = _google_model_id_from_item(item)
             if model_id and model_id not in seen:
                 seen.add(model_id)
