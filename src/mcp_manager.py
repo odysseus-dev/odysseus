@@ -5,6 +5,7 @@ Manages connections to MCP (Model Context Protocol) tool servers.
 Each server exposes tools that are made available to the agent loop.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -324,6 +325,7 @@ class McpManager:
 
     async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
         """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+        stack = None
         try:
             from mcp import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
@@ -372,6 +374,18 @@ class McpManager:
             logger.warning("MCP package not installed. Install with: pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
+        except asyncio.CancelledError:
+            # This task is being cancelled (usually by disconnect_server).
+            # Clean up the AsyncExitStack here — from the owning task — so the
+            # anyio cancel scopes inside streamablehttp_client are exited
+            # correctly. disconnect_server can't close it from another task.
+            if stack is not None:
+                self._stacks.pop(server_id, None)
+                try:
+                    await stack.aclose()
+                except Exception:
+                    pass
+            raise
         except Exception as e:
             logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {e}")
             self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
@@ -384,6 +398,15 @@ class McpManager:
         task = self._connect_tasks.pop(server_id, None)
         if task is not None and not task.done():
             task.cancel()
+            # Await the cancelled task so it cleans up its own AsyncExitStack
+            # and cancel scopes. streamablehttp_client uses anyio task groups
+            # whose cancel scopes can only be exited from the owning task —
+            # calling stack.aclose() from this (different) task would raise
+            # "Attempted to exit cancel scope in a different task". (#3877)
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
         try:
             from src.mcp_oauth import clear_auth_url
             clear_auth_url(server_id)
@@ -394,6 +417,13 @@ class McpManager:
         if stack:
             try:
                 await stack.aclose()
+            except RuntimeError as e:
+                # Suppress the cross-task cancel-scope error for HTTP servers
+                # whose background task already cleaned up on cancellation.
+                if "cancel scope" in str(e).lower():
+                    logger.debug(f"MCP server {server_id} stack already cleaned up by task: {e}")
+                else:
+                    logger.warning(f"Error closing MCP server {server_id}: {e}")
             except Exception as e:
                 logger.warning(f"Error closing MCP server {server_id}: {e}")
 
