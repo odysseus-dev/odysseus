@@ -73,6 +73,7 @@ let _activeStatus = null;
 let _lastFingerprint = '';
 let _autoMode = false;
 let _produceMaxTokens = 16384; // fetched from settings, used for token estimation badges
+let _activeView = 'tasks'; // 'tasks' (kanban) or 'files' (file browser)
 
 // ── SVG icons (compact) ───────────────────────────────────────
 
@@ -514,6 +515,7 @@ async function _openProjectStatus(projectId) {
   _activeProjectId = projectId;
   _lastFingerprint = '';
   _autoMode = false;
+  _activeView = 'tasks';
   if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
 
   const body = document.getElementById('factory-body');
@@ -559,6 +561,68 @@ async function _refreshStatus(projectId) {
   if (content) _renderKanban(content);
 }
 
+/**
+ * Render the Files tab: file list + source code viewer.
+ */
+function _renderFilesView(container, project) {
+  const files = _getProjectFiles(project);
+  if (files.length === 0) {
+    container.innerHTML = `<p style="opacity:0.6;text-align:center;padding:40px;">No completed files yet.</p>`;
+    return;
+  }
+
+  let _selectedIdx = 0;
+
+  function _renderViewer() {
+    const viewer = container.querySelector('#factory-file-viewer');
+    if (!viewer) return;
+    const f = files[_selectedIdx];
+    if (!f) return;
+    let highlighted;
+    try {
+      if (window.hljs && f.language !== 'plaintext') {
+        highlighted = window.hljs.highlight(f.content, { language: f.language }).value;
+      } else {
+        highlighted = _esc(f.content);
+      }
+    } catch (_) {
+      highlighted = _esc(f.content);
+    }
+    viewer.innerHTML = `
+      <div class="factory-file-toolbar">
+        <span class="factory-file-toolbar-name">${_esc(f.filename)}</span>
+        <span class="factory-file-toolbar-meta">T${f.taskId} · ${_esc(f.taskType)} · ${f.content.length.toLocaleString()} chars</span>
+      </div>
+      <pre class="factory-file-code"><code class="language-${f.language}">${highlighted}</code></pre>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="factory-files-view">
+      <div class="factory-files-list" id="factory-files-list">
+        ${files.map((f, i) => `
+          <div class="factory-file-item${i === 0 ? ' active' : ''}" data-idx="${i}">
+            <span class="factory-file-badge factory-file-badge-${f.typeLabel.toLowerCase()}">${f.typeLabel}</span>
+            <span class="factory-file-name">${_esc(f.filename)}</span>
+          </div>
+        `).join('')}
+      </div>
+      <div class="factory-file-viewer" id="factory-file-viewer"></div>
+    </div>
+  `;
+
+  _renderViewer();
+
+  container.querySelectorAll('.factory-file-item').forEach(item => {
+    item.addEventListener('click', () => {
+      container.querySelectorAll('.factory-file-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      _selectedIdx = parseInt(item.dataset.idx) || 0;
+      _renderViewer();
+    });
+  });
+}
+
 function _renderKanban(container) {
   if (!container) return;
   const p = _activeStatus;
@@ -576,7 +640,7 @@ function _renderKanban(container) {
   // ── Smart rebuild: skip if nothing changed ──
   const fingerprint = tasks.map(t =>
     `${t.id}:${t.status}:${t.error || ''}:${t.result ? '1' : '0'}`
-  ).join('|') + `:${p.status}:${info.pct}`;
+  ).join('|') + `:${p.status}:${info.pct}:${_activeView}`;
 
   if (fingerprint === _lastFingerprint) return;
   _lastFingerprint = fingerprint;
@@ -695,6 +759,56 @@ function _renderKanban(container) {
   }
 
   _renderProjectActions(container.querySelector('#factory-project-actions'), p);
+
+  // ── Tab bar ──
+  const fileCount = tasks.filter(t => t.status === 'completed' && t.filename).length;
+  if (fileCount > 0) {
+    const projInfo = container.querySelector('.factory-project-info');
+    if (projInfo) {
+      let tabBar = container.querySelector('.factory-tabs');
+      if (!tabBar) {
+        tabBar = document.createElement('div');
+        tabBar.className = 'factory-tabs';
+        projInfo.insertAdjacentElement('afterend', tabBar);
+      }
+      tabBar.innerHTML = `
+        <button class="factory-tab${_activeView === 'tasks' ? ' active' : ''}" data-view="tasks">Tasks</button>
+        <button class="factory-tab${_activeView === 'files' ? ' active' : ''}" data-view="files">Files (${fileCount})</button>
+      `;
+      tabBar.querySelectorAll('.factory-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          _activeView = tab.dataset.view;
+          _lastFingerprint = ''; // force re-render
+          _renderKanban(container);
+        });
+      });
+    }
+  }
+
+  // ── Files view ──
+  if (_activeView === 'files' && fileCount > 0) {
+    const kanban = container.querySelector('#factory-kanban');
+    if (kanban) kanban.style.display = 'none';
+    const iterateSection = container.querySelector('.factory-iterate');
+    if (iterateSection) iterateSection.style.display = 'none';
+
+    let fileContainer = container.querySelector('#factory-files-container');
+    if (!fileContainer) {
+      fileContainer = document.createElement('div');
+      fileContainer.id = 'factory-files-container';
+      const refEl = container.querySelector('#factory-kanban') || container.querySelector('.factory-project-info');
+      if (refEl) refEl.insertAdjacentElement('afterend', fileContainer);
+      else container.appendChild(fileContainer);
+    }
+    _renderFilesView(fileContainer, p);
+  } else if (_activeView === 'tasks') {
+    const kanban = container.querySelector('#factory-kanban');
+    if (kanban) kanban.style.display = '';
+    const iterateSection = container.querySelector('.factory-iterate');
+    if (iterateSection) iterateSection.style.display = '';
+    const fileContainer = container.querySelector('#factory-files-container');
+    if (fileContainer) fileContainer.remove();
+  }
 
   container.querySelectorAll('.factory-task-retry-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -1282,6 +1396,67 @@ function _tokenBadge(task) {
     : `Estimated ~${est.toLocaleString()} tokens (budget ${budget.toLocaleString()}).`;
 
   return `<span class="factory-token-badge ${cls}" title="${_esc(titleText)}">~${estK}/${budK}</span>`;
+}
+
+/**
+ * Detect the highlight.js language name from a filename.
+ */
+function _detectLanguage(fname) {
+  const ext = (fname.split('.').pop() || '').toLowerCase();
+  const map = {
+    html: 'html', htm: 'html',
+    css: 'css', scss: 'scss', less: 'less',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    ts: 'typescript', tsx: 'tsx', jsx: 'jsx',
+    py: 'python', pyw: 'python',
+    json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'ini',
+    md: 'markdown', markdown: 'markdown',
+    sh: 'bash', bash: 'bash', zsh: 'bash',
+    sql: 'sql',
+    xml: 'xml', svg: 'xml',
+    go: 'go', rs: 'rust', java: 'java', kt: 'kotlin',
+    c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
+    rb: 'ruby', php: 'php', dart: 'dart', swift: 'swift',
+    vue: 'xml', svelte: 'xml',
+    dockerfile: 'dockerfile',
+  };
+  return map[ext] || 'plaintext';
+}
+
+/**
+ * Get a short label for a file type (shown as a colored badge).
+ */
+function _fileTypeLabel(fname) {
+  const ext = (fname.split('.').pop() || '').toLowerCase();
+  const colors = {
+    html: 'HTML', htm: 'HTML',
+    css: 'CSS', scss: 'SCSS',
+    js: 'JS', mjs: 'JS', cjs: 'JS',
+    ts: 'TS', tsx: 'TSX',
+    py: 'PY', json: 'JSON', yaml: 'YML', yml: 'YML',
+    md: 'MD', sh: 'SH', sql: 'SQL', go: 'GO', rs: 'RS',
+    xml: 'XML', svg: 'SVG', vue: 'VUE',
+  };
+  return colors[ext] || ext.toUpperCase().slice(0, 4);
+}
+
+/**
+ * Extract completed files from a project's task list.
+ */
+function _getProjectFiles(project) {
+  const tasks = project.tasks || [];
+  return tasks
+    .filter(t => t.status === 'completed' && t.filename)
+    .map(t => ({
+      filename: t.filename,
+      content: _getOutput(t.result),
+      taskId: t.id,
+      taskType: t.task_type || '',
+      language: _detectLanguage(t.filename),
+      typeLabel: _fileTypeLabel(t.filename),
+    }))
+    .filter(f => f.content)
+    .sort((a, b) => a.filename.localeCompare(b.filename));
 }
 
 // ── Public API ─────────────────────────────────────────────────
