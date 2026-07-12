@@ -55,7 +55,8 @@ def _extract_output(result):
 
 import asyncio as _asyncio
 
-# Running dev servers: {project_id: (proc, port)}
+# Running dev servers: {project_id: (proc, port, base_path)}
+# base_path is "" for non-Vite, "/api/factory/projects/{id}/proxy/" for Vite
 _running_servers: dict = {}
 
 # Ephemeral token→files cache for project-delivery previews. Stores ALL
@@ -433,7 +434,8 @@ def setup_factory_routes() -> APIRouter:
         # Stop any existing server for this project
         existing = _running_servers.get(project_id)
         if existing:
-            proc, port = existing
+            proc = existing[0]
+            port = existing[1]
             try:
                 _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
             except Exception:
@@ -553,16 +555,17 @@ def setup_factory_routes() -> APIRouter:
         except Exception as e:
             raise HTTPException(500, f"Failed to start dev server: {e}")
 
-        _running_servers[project_id] = (proc, port)
+        _running_servers[project_id] = (proc, port, proxy_base if is_vite else "")
 
         # Wait a moment for the server to start, then verify it's reachable
         await _asyncio.sleep(3)
         import httpx as _httpx
+        health_path = proxy_base if is_vite else "/"
         reachable = False
         for attempt in range(10):
             try:
                 async with _httpx.AsyncClient(follow_redirects=True) as client:
-                    resp = await client.get(f"http://localhost:{port}/", timeout=2)
+                    resp = await client.get(f"http://localhost:{port}{health_path}", timeout=2)
                     if resp.status_code < 500:
                         reachable = True
                         break
@@ -602,7 +605,8 @@ def setup_factory_routes() -> APIRouter:
         existing = _running_servers.get(project_id)
         if not existing:
             return {"status": "not_running"}
-        proc, port = existing
+        proc = existing[0]  # may be 2-tuple (old) or 3-tuple (new)
+        port = existing[1]
         try:
             _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
         except Exception:
@@ -621,12 +625,18 @@ def setup_factory_routes() -> APIRouter:
         existing = _running_servers.get(project_id)
         if not existing:
             raise HTTPException(404, "Dev server not running")
-        _, port = existing
+        port = existing[1]
+        base_path = existing[2] if len(existing) > 2 else ""
         # Forward query params
         query = dict(request.query_params)
-        target = f"http://localhost:{port}/{path}"
+        # Build target: if Vite with --base, include the base prefix so Vite
+        # routes correctly. Non-Vite projects serve at root (base_path="").
+        if base_path:
+            target = f"http://localhost:{port}{base_path}{path}"
+        else:
+            target = f"http://localhost:{port}/{path}"
         try:
-            async with _httpx.AsyncClient(follow_redirects=False) as client:
+            async with _httpx.AsyncClient(follow_redirects=True) as client:
                 resp = await client.get(target, params=query, timeout=10)
                 excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
                 headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
