@@ -410,6 +410,13 @@ def _imap_connect(account: str | None = None):
                     "Google OAuth token unavailable — reconnect the account "
                     "in Settings → Integrations"
                 )
+            # Write the refreshed token + expiry back into the cached cfg so
+            # subsequent IMAP/SMTP connects within the same long-lived stdio
+            # process see the fresh values without re-hitting the token
+            # endpoint every operation. (#4992 review feedback)
+            import time as _time
+            cfg["oauth_access_token"] = cfg.get("oauth_access_token") or ""
+            cfg["oauth_token_expiry"] = str(int(_time.time()) + 3500)
             conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
         else:
             conn.login(cfg["imap_user"], cfg["imap_password"])
@@ -1142,6 +1149,11 @@ def _smtp_connect(account=None, cfg=None):
                 "Google OAuth token unavailable — reconnect the account "
                 "in Settings → Integrations"
             )
+        # Write the refreshed token + expiry back into the cached cfg so
+        # subsequent SMTP connects see the fresh values. (#4992 review feedback)
+        import time as _time
+        cfg["oauth_access_token"] = cfg.get("oauth_access_token") or ""
+        cfg["oauth_token_expiry"] = str(int(_time.time()) + 3500)
         user = cfg.get("smtp_user") or cfg.get("imap_user")
         try:
             conn.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
