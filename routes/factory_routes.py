@@ -527,9 +527,17 @@ def setup_factory_routes() -> APIRouter:
 
         # Try building the project first — static output is more reliable
         # than proxying a dev server (no base-path/HMR/MIME issues).
+
+        # Detect framework + build base paths
+        is_vite = "vite" in (pkg.get("devDependencies", {}) or {}) or "vite" in (pkg.get("dependencies", {}) or {})
+        static_base = f"/api/factory/projects/{project_id}/static/"
+        proxy_base = f"/api/factory/projects/{project_id}/proxy/"
+
         build_scripts = pkg.get("scripts", {})
         build_cmd = None
-        if "build" in build_scripts:
+        if is_vite and "build" in build_scripts:
+            build_cmd = f"npx vite build --base {static_base}"
+        elif "build" in build_scripts:
             build_cmd = "npm run build"
         elif "preview" in build_scripts:
             # Some projects only have preview (e.g. Vite with build step)
@@ -580,13 +588,6 @@ def setup_factory_routes() -> APIRouter:
         env = dict(_os.environ)
         env["PORT"] = str(port)
         env["HOST"] = "0.0.0.0"
-        # Vite-specific: set the port via flag if vite is the runner
-        is_vite = "vite" in (pkg.get("devDependencies", {}) or {}) or "vite" in (pkg.get("dependencies", {}) or {})
-
-        # Base path for the proxy — all asset URLs must go through the proxy
-        # to avoid hitting Odysseus's root (which returns JSON 404s).
-        proxy_base = f"/api/factory/projects/{project_id}/proxy/"
-
         if is_vite:
             # Vite --base makes ALL generated URLs include the prefix:
             # <script src="/@vite/client"> → <script src="/api/factory/projects/{id}/proxy/@vite/client">
@@ -810,7 +811,23 @@ def setup_factory_routes() -> APIRouter:
             else:
                 mimetype = "application/octet-stream"
 
-        return _FR(file_path, media_type=mimetype)
+        # For HTML files: rewrite absolute paths to go through the static endpoint.
+        # Vite's --base handles this during build, but for non-Vite projects
+        # (CRA, Next.js) that don't support --base, we rewrite here as a safety net.
+        if mimetype == "text/html" or file_path.endswith('.html'):
+            import re as _re2
+            with _os2.open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                html_content = f.read()
+            proxy_prefix = f"/api/factory/projects/{project_id}/static"
+            html_content = _re2.sub(
+                r'((?:src|href)\s*=\s*["\'])/(?!/|api/factory)',
+                rf'\1{proxy_prefix}/',
+                html_content
+            )
+            from fastapi.responses import Response as _Resp
+            return _Resp(content=html_content, media_type="text/html")
+        else:
+            return _FR(file_path, media_type=mimetype)
 
     @router.get("/projects/{project_id}/static/")
     async def serve_static_root(project_id: int):
