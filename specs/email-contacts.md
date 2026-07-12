@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -69,7 +69,7 @@ Email owner semantics are route-local and compatibility-sensitive:
 - compose upload, draft/send, `wait_for_delivery`, Sent append, and source `\Answered` marking;
 - schedule/list/delete scheduled emails;
 - pending agent-draft approval/cancel flows;
-- mark read/unread/answered, spam flags, move, archive, and delete. IMAP move/delete/archive operations must use UID commands for message identity; sequence-number commands can mutate the wrong visible message after mailbox state changes.
+- mark read/unread/answered, spam flags, move, archive, and delete. IMAP move/delete/archive operations use UID commands for message identity and fail safe when the requested UID no longer exists; they never reinterpret a missing UID as a sequence number, which could mutate or expunge an unrelated message.
 
 Google OAuth behavior is account-owned:
 
@@ -79,7 +79,7 @@ Google OAuth behavior is account-owned:
 - SMTP and IMAP use XOAUTH2 when `oauth_provider == "google"`; OAuth accounts are send-capable without an SMTP password when host and user are configured;
 - outbound mail formats the `From` header with `display_name` when present.
 
-MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs.
+MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs. Built-in signature-learning and daily-brief actions also use UID SEARCH/FETCH rather than sequence-number commands.
 
 IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messages, close sockets after connect/login failures, and preserve Gmail FETCH attributes that follow header literals so unread flag state is not lost. Browser list routes offload blocking IMAP work from async handlers; browser search runs in FastAPI's threadpool, rejects CRLF query input, tokenizes quoted phrases/terms, searches FROM/TO/CC/SUBJECT/TEXT, can search Gmail All Mail when an INBOX query should include archived or labelled messages, and supports `scope=folder` when callers intentionally want the selected folder only. The local index fallback can return indexed results when IMAP returns empty or fails.
 
@@ -87,7 +87,7 @@ IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messa
 
 Scheduled email rows live in `data/scheduled_emails.db` and are owner-scoped. Scheduled send times are normalized before storage.
 
-`routes.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Background email automation can also consult the foreground activity gate so auto actions do not compete with active browser/model work. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
+`routes.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Before SMTP work, each poller atomically claims a due row with a conditional `pending` to `sending` update; concurrent in-process/CLI pollers that lose the claim skip the row instead of sending a duplicate. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Background email automation can also consult the foreground activity gate so auto actions do not compete with active browser/model work. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
 
 Transport degraded behavior:
 
@@ -113,7 +113,7 @@ Email bodies and attachments are untrusted model context.
 
 ## Threading And Rendering
 
-`src.email_thread_parser` owns splitting plaintext/HTML email threads into quoted conversation parts. Frontend email library modules own reply-recipient logic, signature folding, local state, and rendering behavior. `static/js/emailShared.js` owns shared email UI helpers used across inbox/library surfaces.
+`src.email_thread_parser` owns splitting plaintext/HTML email threads into quoted conversation parts. Frontend email library modules own reply-recipient logic, signature folding, local state, and rendering behavior. Bulk selections are cleared when folder/account loads, search text, search pills, or result scope changes so actions cannot carry stale UIDs into a different visible context. `static/js/emailShared.js` owns shared email UI helpers used across inbox/library surfaces.
 
 Remote inbound email HTML is sanitized by frontend email-library utilities before `innerHTML` insertion. Server-side email routes sanitize composed/generated outbound HTML with an allowlist before draft/send, dropping scripts/styles and unsafe attributes. Both sides are part of the rendering invariant.
 
@@ -180,7 +180,7 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, Google OAuth state/callback/token-refresh/XOAUTH2 behavior, OAuth account token non-disclosure, UID-based IMAP move/delete behavior, iCloud-compatible MCP full-message fetch shape, owner scope, ownerless account mailbox-match guards, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, active-email reply guard behavior, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP owner-account scope, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
+Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, Google OAuth state/callback/token-refresh/XOAUTH2 behavior, OAuth account token non-disclosure, UID-only IMAP move/flag/fetch behavior, concurrent scheduled-email claim behavior, iCloud-compatible MCP full-message fetch shape, owner scope, ownerless account mailbox-match guards, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, active-email reply guard behavior, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP owner-account scope, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, bulk-selection reset, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security outside the OAuth path, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 

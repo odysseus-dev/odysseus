@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -31,6 +31,10 @@ This spec covers current app runtime wiring in:
 `src/app_initializer.initialize_managers()` owns shared manager construction. It creates memory, skills, sessions, uploads, personal docs, API keys, presets, chat processor/handler, research handler, model discovery, and optional memory vector store. Route modules receive these dependencies from `app.py`; they should not recreate manager singletons.
 
 `app.py` separately owns runtime singletons and integration hooks for auth, vector RAG, TTS/STT, webhooks, scheduled tasks, MCP, assistant log globals, event bus wiring, AI interaction globals, API-token cache invalidation, and foreground activity tracking. `src.runtime_paths` owns source-versus-frozen app/data path resolution; `src.constants` derives `DATA_DIR` from `ODYSSEUS_DATA_DIR` or that runtime default. `core/constants.py` and `src/constants.py` are both live import paths and are not fully identical today, so new constants need explicit placement/compatibility decisions.
+
+The shared upload handler is also installed on the session manager and tool
+helper, and `app.py` injects it into attachment-bearing route factories so
+durable writers and cleanup use one lifecycle owner.
 
 ## Routes And Static Serving
 
@@ -73,6 +77,9 @@ Generated-image path resolution fails closed for invalid names, path escape, and
 - `routes.workspace_routes` lets the browser choose a server directory for agent turns; execution confinement is enforced below the route layer by tool execution.
 
 ## Lifespan Startup
+
+Upload cleanup first snapshots durable chat, document, gallery, note, and
+calendar references and aborts on scan or upload-index integrity failure.
 
 Startup purges leftover incognito sessions, reconciles default scheduled tasks before the task runner starts, and backfills legacy skill owners when possible.
 

@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -11,6 +11,8 @@ This spec covers model-context construction in:
 - `routes/chat_helpers.py` and context injection in `routes/chat_routes.py`;
 - `src/agent_loop.py`;
 - `src/tool_execution.py`;
+- `src/attachment_refs.py` and uploaded-file manifest construction in
+  `routes/chat_helpers.py`;
 - `src/tool_policy.py`;
 - `src/prompt_security.py`;
 - URL fetchers in `src/search/content.py` and `services/search/content.py`;
@@ -50,6 +52,13 @@ Current untrusted context sources include:
 - emails and attachments;
 - tool output from external/user-controlled data.
 
+Live multimodal provider blocks can contain data URLs, but persisted and
+tool-facing context uses stable attachment references. Tool manifests carry an
+`odysseus://attachment/<id>` URI and owner-checked read policy; local paths are
+compatibility data added only after owner and root-confinement checks. Persisted
+chat context keeps readable text/reference lines rather than reinserting raw
+media bytes into later turns or search state.
+
 ## URL, Search, And Tool-Derived Context
 
 Chat URL prefetch and agent `web_fetch` are different paths. Chat prefetch happens before the model call; `web_fetch` is a tool the model may choose later. Both should converge on the same intent: enrich context when content is available, represent unavailable content when it is not, and let the model interpret the user request.
@@ -88,6 +97,7 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 - `ChatHandler.preprocess_message()` and the canonical `services.youtube.youtube_handler` import path for YouTube fetch/format, then `routes/chat_helpers.py` for wrapping prefetched search/Youtube context;
 - `routes/chat_routes.py` research context injection;
 - `src.agent_loop` for active editor document, skill context, and tool-result reinsertion;
+- uploaded-file manifest/reference context for agent tools and later chat turns;
 - `src.tool_execution` for `web_search`, `web_fetch`, file, shell, MCP, and other tool outputs;
 - `src.deep_research` and research handlers for search/fetch/extract flows used by research jobs, with fetched webpage text wrapped before extraction and analyzed URLs tracked separately from source snippets.
 

@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -158,7 +158,9 @@ and can degrade to empty, unknown-size, partial, or malformed-result behavior.
 `refresh_catalog=1` refreshes API-backed collection caches for MLX community
 and selected HF organization collections, with a 24-hour freshness guard and
 bundled JSON fallbacks when the network/cache is unavailable. HW Fit tolerates
-non-numeric `gpu_count` values from callers. Catalog drift and dynamic
+non-numeric `gpu_count` values from callers. Model normalization also treats
+non-string `parameter_count` and quantization fields as unknown rather than
+calling string methods and aborting the ranking pass. Catalog drift and dynamic
 latest-model metadata are separate sources of recommendation drift.
 
 ## Security Policy
@@ -177,7 +179,7 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 
 ## Testing Coverage
 
-Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, and selected frontend progress regressions.
+Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, non-string model catalog fields, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
 

@@ -1,6 +1,6 @@
 # Frontend
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -101,11 +101,11 @@ Coordinator ownership:
 - `static/js/storage.js` owns shared key constants and safe JSON helpers;
 - feature modules own feature state where possible.
 
-`static/js/MODULE_SUMMARY.md` is historical and explicitly not authoritative. Use the current `static/js/` tree and script tags as truth.
+`static/js/MODULE_SUMMARY.md` is a refreshed ownership/navigation map for the no-build frontend. The current `static/js/` tree, `static/app.js`, `static/index.html`, and executable behavior remain the authority when the summary drifts.
 
-Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, `static/js/modalSnap.js` for reusable desktop modal edge docking, `static/js/toolWindowZOrder.js` for shared portal/window z-index allocation, and `static/js/emailShared.js` for common email UI helpers.
+Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, `static/js/keyboard-shortcuts.js` for rejecting empty or non-string persisted keybinds before combo parsing, `static/js/modalSnap.js` for reusable desktop modal edge docking, `static/js/toolWindowZOrder.js` for shared portal/window z-index allocation, and `static/js/emailShared.js` for common email UI helpers.
 
-Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, queued prompts preserving mobile composer behavior during active streams, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, native document tool results opening/updating the editor even if a later stream event is missed, chat rendering that hides raw leaked tool JSON/document fences, notes search reset on reopen, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, Google Workspace/.edu email OAuth controls in both email account forms, gallery editor AI edit command routing, OpenDyslexic/text-size accessibility preferences, admin promote/demote buttons, admin diagnostics log polling, and dismissible toasts that do not block pointer interaction longer than intended.
+Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, queued prompts preserving mobile composer behavior during active streams, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, user-message edit textareas expanding the bubble to the normal 85% editing width, native document tool results opening/updating the editor even if a later stream event is missed, chat rendering that hides raw leaked tool JSON/document fences and displays explicit agent loop/intent guard stops, Markdown inline-math delimiter rules that leave currency ranges such as `$5 to $10` as text, notes search reset on reopen, email bulk-selection reset across folder/account/search context changes, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, Google Workspace/.edu email OAuth controls in both email account forms, gallery editor AI edit command routing, OpenDyslexic/text-size accessibility preferences, admin promote/demote buttons, admin diagnostics log polling, and dismissible toasts that do not block pointer interaction longer than intended.
 
 ## UI Policy
 
@@ -129,7 +129,7 @@ Recent browser behavior contracts include mobile chat Enter inserting newlines w
 
 Existing frontend coverage is a mix of Node-executed helper tests, `.mjs` tests, static DOM/CSS/source-shape tests, browser exploration specs, and app/static tests. Many tests are useful source-shape regressions but do not replace browser/module-graph execution.
 
-Recent focused coverage includes model-key matching under Node, document-library counter source-shape checks, chat resend/delete/mobile Enter and queued prompt behavior, notes search reset, calendar week-start preference, modal snap zones, manifest icon existence, admin log fetching, Markdown DOM XSS helpers, and CardDAV unchanged-password handling.
+Recent focused coverage includes model-key matching under Node, document-library counter source-shape checks, chat resend/delete/mobile Enter, agent guard events, editable message width, and queued prompt behavior, malformed keybind handling, currency-safe inline math, email bulk-selection reset, notes search reset, calendar week-start preference, modal snap zones, manifest icon existence, admin log fetching, Markdown DOM XSS helpers, and CardDAV unchanged-password handling.
 
 Missing coverage includes:
 

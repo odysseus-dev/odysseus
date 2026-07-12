@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -13,6 +13,8 @@ This spec covers durable state in:
 - `core/models.py`;
 - `core/session_manager.py`;
 - `core/atomic_io.py`;
+- `src/attachment_refs.py`, `src/upload_handler.py`, and
+  `routes/upload_routes.py` for durable upload references and retention;
 - JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, canonical `routes/contacts/contacts_routes.py` plus its shim, `routes/vault_routes.py`, `routes/cookbook_routes.py`, and memory/skills managers;
 - `routes/email_helpers.py` scheduled-email storage;
 - `routes/backup_routes.py` and `scripts/odysseus-backup`;
@@ -23,6 +25,14 @@ This spec covers durable state in:
 `core/database.py` owns SQLAlchemy models and startup migrations. `src/database.py` is a compatibility re-export for legacy imports. Route and service code commonly owns its own `SessionLocal()` lifecycle instead of using one central unit-of-work wrapper.
 
 The default database is SQLite at `DATA_DIR/app.db`. `src.runtime_paths` and `src.constants` own the data-dir default: source runs use the repository `data/` directory, frozen builds default to `~/.odysseus/data`, and `ODYSSEUS_DATA_DIR` overrides both. SQLAlchemy can point at a non-SQLite `DATABASE_URL`, but current startup migrations/backfills are SQLite-first and often use `sqlite3`, `PRAGMA`, or SQLite catalog queries. External DBs are not fully migration-compatible unless those helpers are made backend-neutral.
+
+After `Base.metadata.create_all()`, `init_db()` resolves file-backed SQLite
+paths from SQLAlchemy's parsed engine URL and attempts to restrict the main
+database plus existing `-journal`, `-wal`, and `-shm` sidecars to `0600` on
+POSIX. Driver-qualified, query-tagged, and local `file:` URI forms are covered;
+non-SQLite, in-memory SQLite, and Windows paths are skipped. A failed POSIX
+chmod is logged because the database and sidecars can contain password/token
+hashes and encrypted provider material.
 
 Timestamp defaults use `utcnow_naive()` so existing naive `DateTime` columns stay UTC without the deprecated `datetime.utcnow()` default.
 
@@ -36,6 +46,12 @@ Current model families include:
 - API tokens, admin-global webhooks, user tools/tool data, integrations;
 - crew members, scheduled tasks, task runs, notes;
 - memory rows, calendar calendars, and calendar events.
+
+Chat persistence stores model-readable text plus compact attachment-reference
+lines in `chat_messages.content`, while structured references remain in message
+metadata. Provider data URLs used by the live turn are not duplicated into the
+durable transcript. The FTS migration recreates insert/update triggers to omit
+inline media and scrubs legacy indexed rows that still contain data URLs.
 
 Current calendar/task persistence includes CalDAV remote identity columns (`CalendarCal.remote_href`, `CalendarCal.remote_etag`, `CalendarEvent.remote_href`, `CalendarEvent.remote_etag`), `CalendarEvent.caldav_sync_pending` for retryable writeback state, and `ScheduledTask.character_id` for built-in task persona selection.
 
@@ -74,7 +90,7 @@ There is no single anonymous/local owner value today. SQL `NULL` and missing JSO
 
 `ProviderAuthSession` rows hold OAuth/device-flow credential state for providers such as ChatGPT Subscription. Endpoints can reference those rows through `provider_auth_id`; deletion/cleanup must preserve auth rows still referenced by another endpoint and remove orphaned provider-auth rows only after the last endpoint reference is gone.
 
-`McpServer` includes stdio/SSE/HTTP transport config, plaintext env JSON, OAuth config, disabled tool names, and encrypted generic OAuth token/client state in `oauth_tokens`.
+`McpServer` includes stdio/SSE/HTTP transport config, plaintext env JSON, OAuth config, disabled tool names, and encrypted generic OAuth token/client state in `oauth_tokens`. Generic MCP token storage treats valid non-object JSON as empty state on reads and replaces it with an object on the next write instead of crashing callers.
 
 `CalendarCal.account_id` links synced local calendars back to one saved CalDAV account so multi-account sync/writeback can round-trip remote calendar identity. Remote href/etag columns on calendars and events preserve CalDAV server identity across pull/push cycles, while `caldav_sync_pending` marks local create/update/delete work that still needs remote writeback.
 
@@ -89,7 +105,7 @@ Current JSON/local stores include:
 
 Cookbook state lives under the shared `DATA_DIR` path through the `COOKBOOK_STATE_FILE` constant. Search cache/analytics, FastEmbed cache fallback, uploads, generated media, logs, and auxiliary SQLite stores also resolve from shared data-dir constants and must work with source, Docker, and frozen data-dir defaults.
 
-`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Memory and user prefs use temp-and-rename. API keys preserve encrypted values when saving one provider, presets persist atomically, and settings/feature loads degrade to defaults when the store is unreadable.
+`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Attachment-bearing chat/session, document, note, and calendar writers take owner-checked upload reservations before their durable writes; reservations share the upload-index lock with cleanup and refresh access time. Cleanup receives a complete reference snapshot from chat content/metadata, document current/version content, gallery rows, notes, and calendar rows, and removes only expired uploads proven unreferenced with coherent index state. Missing/incomplete scans fail closed, and index rows are restored when byte deletion fails. Memory and user prefs use temp-and-rename. API keys preserve encrypted values when saving one provider, presets persist atomically, and settings/feature loads degrade to defaults when the store is unreadable.
 
 Persisted memories, skills, documents, email, RAG chunks, notes, and other user-editable data are untrusted when reintroduced to model context. Route and processor code must pass them through the untrusted-context contract described in `context-building.md` and `auth-security.md`.
 
@@ -97,7 +113,7 @@ Persisted memories, skills, documents, email, RAG chunks, notes, and other user-
 
 `routes/backup_routes.py` owns narrow admin HTTP JSON export/import for memories, presets, skills, settings, features, and prefs. Skill import writes through the disk-backed skills manager API. This is not a full system restore path.
 
-`scripts/odysseus-backup` owns local `data/` snapshot/restore, with some large/runtime subtrees such as deep research and mail attachments behind flags. It uses SQLite backup APIs, includes secret-bearing key files and stores, and validates restore archives against path escapes and link entries. Backup artifacts should be treated as sensitive.
+`scripts/odysseus-backup` owns local `data/` snapshot/restore, with some large/runtime subtrees such as deep research and mail attachments behind flags. It uses SQLite backup APIs, includes secret-bearing key files and stores, validates restore archives against path escapes and link entries, and skips list entries that disappear or become unstatable during directory iteration. Backup artifacts should be treated as sensitive.
 
 ## Transitional Notes
 

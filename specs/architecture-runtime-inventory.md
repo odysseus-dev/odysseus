@@ -1,6 +1,6 @@
 # Architecture Runtime Inventory
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 > Purpose: current runtime/module inventory for codebase readability work
 > originally discussed around #4071/#4082. This is a source snapshot, not a
@@ -40,7 +40,7 @@ odysseus/
 
 | Directory | Flat `.py` Files | Subdirectories | Current Concern |
 |-----------|------------------|----------------|-----------------|
-| `src/` | 98 | `agent_tools/`, `search/`, `tools/` | Still broad, but tool handlers and do_* implementations now have packages. |
+| `src/` | 99 | `agent_tools/`, `search/`, `tools/` | Still broad, but tool handlers and do_* implementations now have packages. |
 | `routes/` | 54 | `contacts/`, `gallery/`, `history/`, `memory/`, `research/` | Route grouping has started; most domains remain flat top-level route files. |
 | `core/` | 10 | none | Manageable count, but `database.py` remains oversized and highly imported. |
 
@@ -50,18 +50,18 @@ odysseus/
 
 | File | Lines | Notes |
 |------|-------|-------|
-| `routes/email_routes.py` | 5,223 | Largest HTTP domain; route, cache, compose, OAuth, and mutation behavior. |
-| `src/agent_loop.py` | 4,475 | Agent orchestration, tool rounds, prompt/context assembly, recovery. |
+| `routes/email_routes.py` | 5,226 | Largest HTTP domain; route, cache, compose, OAuth, and mutation behavior. |
+| `src/agent_loop.py` | 4,529 | Agent orchestration, tool rounds, prompt/context assembly, recovery. |
 | `routes/cookbook_routes.py` | 4,386 | Cookbook setup/download/serve/state flows. |
 | `src/builtin_actions.py` | 2,776 | Scheduler/background built-in action helpers. |
-| `src/llm_core.py` | 2,804 | Provider payloads, streaming, fallbacks, provider quirks. |
+| `src/llm_core.py` | 2,834 | Provider payloads, streaming, fallbacks, provider quirks. |
 | `src/task_scheduler.py` | 2,627 | Task runner, runs, chained/event/webhook execution. |
 | `routes/model_routes.py` | 2,545 | Endpoint CRUD, probing, catalog cache, provider auth links. |
-| `core/database.py` | 2,405 | SQLAlchemy models plus manual SQLite migrations. |
+| `core/database.py` | 2,562 | SQLAlchemy models plus manual SQLite migrations. |
 | `routes/gallery/gallery_routes.py` | 1,966 | Canonical gallery/media route package. |
 | `routes/contacts/contacts_routes.py` | 916 | Canonical contacts/CardDAV route package. |
 | `routes/research/research_routes.py` | 783 | Canonical research route package. |
-| `routes/history/history_routes.py` | 768 | Canonical chat history route package. |
+| `routes/history/history_routes.py` | 794 | Canonical chat history route package. |
 | `routes/memory/memory_routes.py` | 552 | Canonical memory route package. |
 | `src/tool_implementations.py` | 115 | Compatibility facade over `src/tools/*` and admin tool handlers. |
 
@@ -69,22 +69,22 @@ odysseus/
 
 | File | Lines | Notes |
 |------|-------|-------|
-| `static/style.css` | 40,450 | App-wide CSS remains the largest frontend risk. |
+| `static/style.css` | 40,453 | App-wide CSS remains the largest frontend risk. |
 | `static/js/document.js` | 11,038 | Large document editor/library coordinator. |
-| `static/js/emailLibrary.js` | 7,768 | Email library UI and cache behavior. |
+| `static/js/emailLibrary.js` | 7,784 | Email library UI and cache behavior. |
 | `static/js/settings.js` | 5,795 | Settings modal and provider/admin-adjacent wiring. |
-| `static/js/chat.js` | 5,441 | Main chat streaming/UI coordinator. |
+| `static/js/chat.js` | 5,457 | Main chat streaming/UI coordinator. |
 | `static/app.js` | 4,389 | SPA orchestration and compatibility bridges. |
 
 ## Import Dependency Snapshot
 
 | Relationship | Count | Notes |
 |--------------|-------|-------|
-| `core.database` importers | 114 | Highest-risk split target; routes, services, tests, and helpers depend on it. |
+| `core.database` importers | 118 | Highest-risk split target; routes, services, tests, and helpers depend on it. |
 | `src.tool_implementations` importers | 22 | Still a live facade even after the tool split. |
-| `src.agent_loop` importers | 31 | Agent loop is an orchestration hub. |
+| `src.agent_loop` importers | 32 | Agent loop is an orchestration hub. |
 | `src/` import lines referencing `routes` | 36 | Mostly function-local compatibility/runtime coupling. |
-| `routes/` import lines referencing `src` | 383 | Expected route-to-service direction. |
+| `routes/` import lines referencing `src` | 391 | Expected route-to-service direction. |
 | `routes/` import lines referencing `core` | 139 | Expected DB/auth/session dependencies. |
 
 Recompute examples:

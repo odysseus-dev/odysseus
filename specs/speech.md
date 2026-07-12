@@ -1,6 +1,6 @@
 # Speech
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -65,6 +65,8 @@ Provider runtime:
 - `browser` is client-side only through `speechSynthesis`;
 - `local` currently means Kokoro and requires `torch`, `kokoro`, and CUDA/import availability;
 - `endpoint:<id>` resolves a `ModelEndpoint` and posts to `/audio/speech`.
+- unknown or non-string `tts_provider` values are treated as unavailable rather
+  than being parsed as endpoint strings.
 
 Route behavior:
 
@@ -113,7 +115,7 @@ TTS cached audio can contain sensitive assistant text rendered as speech. The ca
 
 ## Testing Coverage
 
-Existing coverage includes `test_speech_service_toggles`, `test_tts_speed_malformed`, `test_tts_cache_stats`, `test_stt_leak`, `test_direct_upload_limits`, `test_model_routes`, and settings scrub coverage. A focused audit run of those relevant tests passed.
+Existing coverage includes `test_speech_service_toggles`, malformed/non-string TTS provider and speed handling, `test_tts_cache_stats`, `test_stt_leak`, `test_direct_upload_limits`, `test_model_routes`, and settings scrub coverage. A focused audit run of those relevant tests passed.
 
 Missing coverage includes route-level STT/TTS success and failure shapes, auth/API-token behavior, endpoint owner isolation, STT type/magic rejection, TTS request-size/no-store/cache privacy behavior, degraded optional dependency paths, and frontend recorder/TTS fallback states.
 

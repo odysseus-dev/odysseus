@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -37,7 +37,7 @@ Activated-venv `python -m pytest <test path>` is equivalent. System/global `pyte
 
 `tests/conftest.py` inserts the repo root on `sys.path` and conditionally stubs missing heavy/runtime dependencies such as SQLAlchemy, FastAPI, Starlette, Pydantic, httpx, bcrypt, and pyotp. Tests that need real dependencies use explicit imports/skips. Tests that stub `sys.modules`, environment variables, globals, or parent packages must restore them with `monkeypatch` or an equivalent cleanup pattern.
 
-The suite currently contains roughly 712 `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
+The suite currently contains roughly 728 `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
 
 Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, OAuth/token custody, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
 

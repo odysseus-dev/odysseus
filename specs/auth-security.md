@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -18,6 +18,8 @@ This spec covers current security and trust-boundary behavior in:
 - `src/prompt_security.py`;
 - `src/url_safety.py` and `src/url_security.py`;
 - `src/host_docker_access.py`;
+- `src/attachment_refs.py` and upload lifecycle enforcement in
+  `src/upload_handler.py` / `routes/upload_routes.py`;
 - `src/secret_storage.py`;
 - `src/api_key_manager.py`;
 - `src/integrations.py`;
@@ -73,6 +75,11 @@ Missing-owner values are state-dependent and are not one canonical identity:
 - SQL `NULL`/JSON missing owners remain legacy/shared compatibility data, not the same thing as a logged-out authenticated caller.
 - `"api"` and `"internal-tool"` are request sentinels. They must not be persisted as normal storage owners unless a route explicitly defines that behavior.
 
+Authenticated `manage_tasks` mutations require an exact stored task-owner
+match and reject both cross-owner and legacy null-owner rows. The `owner=None`
+agent path keeps deliberate auth-disabled single-user compatibility, including
+unscoped list/create/mutation behavior.
+
 Owner-scoped route code should use `require_user()` or equivalent policy before querying per-owner data. Current note CRUD/reorder/reminder routes do this so an auth-enabled request that reaches the route without identity returns `401` instead of falling into single-user/null-owner compatibility behavior.
 
 ## API Tokens And Scoped Integrations
@@ -118,6 +125,14 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
   resolved addresses, and pins the HTTP connection to the validated public IP
   while preserving original URL/SNI/Host semantics.
 - Path-based tools, upload/document/gallery/signature/generated-image routes, embedding cache paths, and research JSON helpers must stay confined to allowed roots and owner-scoped files. Native file/code-navigation tools also apply a case-insensitive sensitive-path denylist so `grep`, `glob`, `ls`, direct reads, and writes cannot reveal `.env`, SSH/GPG material, private-key filenames, or similar secret paths.
+- Durable upload references are owner-reserved before chat/session, document,
+  note, or calendar writes. Cleanup scans every current durable reference
+  surface and fails closed on incomplete discovery or inconsistent upload-index
+  state rather than deleting a possibly live upload.
+- File-backed SQLite startup restricts `app.db` and existing rollback/WAL/SHM
+  sidecars to `0600` on POSIX after resolving the real path from the parsed
+  engine URL. Windows, in-memory, and non-SQLite databases are excluded, and
+  failed POSIX restriction is logged as a secret-file warning.
 - Secret-like DB columns use `EncryptedText` or `src.secret_storage`. Email passwords and Google OAuth mail tokens are encrypted manually in `EmailAccount` string columns; Google OAuth state is HMAC-signed and callback writes are owner-checked before token storage. `src.api_key_manager` keeps provider API keys encrypted in `data/api_keys.json`, writes by loading the raw encrypted dict so saving one provider does not rewrite other providers' keys as plaintext, and restricts local key-file permissions where the platform supports chmod. Vault state in `data/vault.json` is a chmod-restricted JSON secret store, not Fernet-encrypted DB storage. Do not log or return decrypted secrets except for intentional admin vault retrieval flows with audit/reason checks.
 - `.env` files are secrets-only inputs and should not be read or printed during agent work.
 

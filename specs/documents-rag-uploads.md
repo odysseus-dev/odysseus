@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -9,7 +9,9 @@ This spec covers file/document context, document storage, and vector retrieval i
 - `app.py` and `src/app_initializer.py` route/manager wiring;
 - `routes/upload_routes.py`, `routes/personal_routes.py`, `routes/embedding_routes.py`, `routes/document_routes.py`, and `routes/document_helpers.py`;
 - chat attachment paths in `routes/chat_routes.py`, `routes/chat_helpers.py`, `src/chat_handler.py`, and `src/chat_processor.py`;
-- `src/upload_handler.py` and `src/upload_limits.py`;
+- `core/session_manager.py`, `src/attachment_refs.py`, `src/upload_handler.py`,
+  `src/upload_limits.py`, and the public reference contract in
+  `docs/attachments.md`;
 - `src/document_processor.py`, `src/document_actions.py`, `src/personal_docs.py`, and `src/markitdown_runtime.py`;
 - `src/rag_singleton.py`, `src/rag_vector.py`, `src/rag_manager.py`, `src/chroma_client.py`, `src/embeddings.py`, and `src/embedding_lanes.py`;
 - PDF/form helpers in `src/pdf_runtime.py`, `src/pdf_forms.py`, and `src/pdf_form_doc.py`;
@@ -19,7 +21,7 @@ This spec covers file/document context, document storage, and vector retrieval i
 
 ## Runtime Integration
 
-`app.py` registers upload, personal-doc/RAG, embedding, document, diagnostics, and Codex document routes. `src.app_initializer.initialize_managers()` creates `UploadHandler` and `PersonalDocsManager`, and startup attempts to initialize the RAG singleton.
+`app.py` registers upload, personal-doc/RAG, embedding, document, diagnostics, and Codex document routes. `src.app_initializer.initialize_managers()` creates `UploadHandler` and `PersonalDocsManager`, installs the upload handler on `SessionManager` and the shared tool helper, and startup attempts to initialize the RAG singleton. App route wiring passes that same handler to session/history, document, note, and calendar writers that can persist upload references.
 
 `src.rag_singleton.get_rag_manager()` returns the live `VectorRAG` instance when Chroma/embedding dependencies are reachable. Personal routes can retry the singleton and return explicit 503s when unavailable. Chat RAG uses the `PersonalDocsManager.rag_manager` captured during app initialization and can silently skip RAG if that manager is absent.
 
@@ -32,7 +34,7 @@ This spec covers file/document context, document storage, and vector retrieval i
 `routes/upload_routes.py` owns:
 
 - `POST /api/upload`, returning uploaded file metadata;
-- admin upload cleanup and stats;
+- reference-aware admin upload cleanup and stats;
 - `GET /api/upload/{file_id}`;
 - `GET/PUT /api/upload/{file_id}/vision` for editable OCR/vision cache;
 - thumbnail and masked owner/admin access behavior.
@@ -55,6 +57,41 @@ the detected MIME type, so `image/png` and `audio/mpeg` uploads do not become
 invalid `data:image/;base64` or `data:audio/;base64` blocks when the filename
 has no extension.
 
+## Durable References And Cleanup
+
+`src.attachment_refs` owns the stable `attachment_ref` shape used outside raw
+upload storage: attachment id, name, MIME type, size, and optional checksum,
+creation time, dimensions, vision text/model, and gallery id. Live provider
+calls may still receive multimodal data URLs for the current turn, but durable
+chat content is normalized to readable text plus compact reference lines.
+Structured references remain in message attachment metadata, and chat FTS
+triggers omit inline media while startup migration scrubs legacy indexed data
+URLs.
+
+Agent/tool manifests expose `odysseus://attachment/<id>` with
+`read_policy: "owner_checked_upload"`. A compatibility filesystem path is
+included only after owner-aware upload resolution, upload-root confinement, and
+tool-readable-root checks; the stable contract for external tools is the URI
+and attachment id, not host layout.
+
+Writers reserve referenced uploads before committing durable state. This
+includes session message append/replace and history rewrites, document
+create/update and native document edits, note route/tool create/update,
+calendar/event route/tool create/update, and attachment-bearing session
+updates. A missing or wrong-owner reference aborts before destructive
+replacement and surfaces a route conflict or tool error. Reservations serialize
+with cleanup through the upload-index lock and refresh access time.
+
+Admin cleanup first scans chat content and attachment metadata, current and
+versioned documents including PDF markers, gallery filenames/hashes, note
+image/color/content/checklist fields, and calendar color/description/location
+fields. Reference discovery or index-integrity failure aborts cleanup; the
+lower-level API removes nothing without both completed id and hash snapshots.
+Only expired, unreferenced files with coherent id/path/owner/checksum/timestamp
+metadata are candidates. Matching index rows are persisted away before byte
+deletion and restored if deletion fails. This lock is process-local, so the
+documented race protection assumes the current single-worker deployment.
+
 ## Living Documents And PDF
 
 `routes/document_routes.py` owns the HTTP document API: create/read/update/archive/delete, library listing, import/export, version history, tidy/AI tidy, PDF rendering/export, PDF form helpers, and email-attachment reply preparation.
@@ -63,7 +100,7 @@ has no extension.
 
 `static/js/document.js` owns the browser document editor and markdown preview. Preview rendering applies code highlighting when highlight.js is present, renders Mermaid diagrams when the Mermaid runtime is available, refreshes after AI edits, and discards pending AI diffs before switching the active document.
 
-Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. Native document tool outputs include metadata that the browser can use to open/update the editor if a later stream update is missed. Those callers must preserve document owner and version semantics.
+Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. HTTP and native-agent document writers owner-reserve any internal upload/PDF references before persisting new current content or versions. Native document tool outputs include metadata that the browser can use to open/update the editor if a later stream update is missed. Those callers must preserve document owner, attachment, and version semantics.
 
 Email draft documents are a first-class document language. Create/update paths
 detect the `To`/`Subject`/header shape, coerce language to `email`, and preserve
@@ -136,6 +173,8 @@ Uploaded files, documents, RAG chunks, extracted attachment text, OCR/vision tex
 Concrete enforcement points include:
 
 - `UploadHandler.resolve_upload()` for upload ID validation, owner/admin access, and upload-dir confinement;
+- owner-checked write reservations before durable attachment references are
+  stored, sharing the upload-index lock with reference-aware cleanup;
 - PDF marker ownership checks before resolving source uploads;
 - personal-directory and personal-upload confinement helpers, including symlink/realpath checks before deleting uploaded files or removing indexed directories;
 - owner-filtered `VectorRAG.search(owner=...)`;
@@ -147,7 +186,7 @@ Bearer-token callers are not a scoped document/upload API surface today. Routes 
 
 ## Testing Coverage
 
-Existing useful coverage includes upload owner scope, upload IDs, upload atomicity, attachment budgets, `.nix` text upload handling, upload/PDF security regressions, Docker `libmagic`/`python-magic` upload detection, RAG owner fallback, Chroma fast-fail, MarkItDown runtime, PDF runtime, document-library counter updates, and selected document helper behavior.
+Existing useful coverage includes upload owner scope, upload IDs, upload atomicity, durable attachment reference normalization, message/document/note/calendar write reservations, fail-closed reference-aware cleanup, attachment budgets, `.nix` text upload handling, upload/PDF security regressions, Docker `libmagic`/`python-magic` upload detection, RAG owner fallback, Chroma fast-fail, MarkItDown runtime, PDF runtime, document-library counter updates, and selected document helper behavior.
 
 Route-level coverage is thinner for document CRUD, PDF import/render/export/fill, direct RAG upload, embedding admin/security behavior, and RAG unavailable states.
 

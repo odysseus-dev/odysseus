@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -90,7 +90,11 @@ Python stdio built-ins:
 
 The optional browser built-in uses `npx -y @playwright/mcp@latest --headless --caps vision`. It is cache-gated by checking npm's `_npx` cache for the requested package and falling back to `npx --no-install`; uncached/missing browser MCP is logged with install guidance and skipped rather than blocking startup or downloading packages at boot. Python built-ins are omitted from OpenAI function schemas because native/code-block paths already describe those capabilities; the browser built-in is exposed through MCP function schemas when connected.
 
-Built-in Python servers can be reconnected once on tool-call failure. User-configured MCP servers return the call failure instead of automatic reconnect.
+Built-in Python servers prepend the app root to inherited `PYTHONPATH` rather
+than replacing the environment, so container/dev site-packages remain visible
+on initial connect and automatic reconnect. They can be reconnected once on
+tool-call failure. User-configured MCP servers return the call failure instead
+of automatic reconnect.
 
 The built-in email MCP server is owner-aware when an owner is supplied by the
 caller or configured through `ODYSSEUS_MCP_EMAIL_OWNER` /
@@ -122,7 +126,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 - Missing or uncached browser NPX package is optional and log-only during built-in startup; startup should not perform an implicit package download.
 - Windows does not support POSIX PTY/tmux paths; streaming falls back to pipes or detached logfile behavior.
 - Docker images include selected shell dependencies and the Docker CLI, but host Docker socket access from inside the app container remains unavailable unless the operator explicitly enables `docker/host-docker.yml`/`ODYSSEUS_ENABLE_HOST_DOCKER=true` and mounts a real socket.
-- OAuth supports Google `installed` or `web` key shapes, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Google and generic MCP OAuth share `src.mcp_oauth.REDIRECT_URI`, built from `OAUTH_REDIRECT_BASE_URL`, `APP_PUBLIC_URL`, or `http://localhost:7000` plus `/api/mcp/oauth/callback`; `APP_PORT` is intentionally not part of this redirect calculation.
+- OAuth supports Google `installed` or `web` key shapes, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Valid JSON values that are not objects are treated as empty token state and replaced by an object on the next write. Google and generic MCP OAuth share `src.mcp_oauth.REDIRECT_URI`, built from `OAUTH_REDIRECT_BASE_URL`, `APP_PUBLIC_URL`, or `http://localhost:7000` plus `/api/mcp/oauth/callback`; `APP_PORT` is intentionally not part of this redirect calculation.
 - `services.shell.service` remains a transitional/simple facade separate from route-level compatibility behavior.
 
 ## Security And Provenance
@@ -142,7 +146,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 
 ## Testing Notes
 
-Current targeted coverage includes Windows PTY import degradation, PTY unsupported stream events, the cross-site helper, `ShellService` stream deadline behavior, background store/monitor basics, MCP manager cache/reconnect args, MCP CLI JSON/env serialization, MCP common truncation helper, action intent shell verbs, and public blocked-tool fail-closed behavior.
+Current targeted coverage includes Windows PTY import degradation, PTY unsupported stream events, the cross-site helper, `ShellService` stream deadline behavior, background store/monitor basics, MCP manager cache/reconnect args, built-in `PYTHONPATH` preservation, non-object generic OAuth-token storage recovery, MCP CLI JSON/env serialization, MCP common truncation helper, action intent shell verbs, and public blocked-tool fail-closed behavior.
 
 The shell/MCP audit ran the targeted venv subset with 78 passing tests and one warning.
 

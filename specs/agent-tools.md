@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -14,6 +14,8 @@ This spec covers agent/tool behavior in:
 - `src/tool_index.py`;
 - `src/tool_parsing.py`;
 - `src/tool_security.py`;
+- `src/attachment_refs.py` and shared upload lifecycle helpers in
+  `src/upload_handler.py` / `src/tool_utils.py`;
 - `src/tool_implementations.py`;
 - `src/tools/*.py`;
 - `src/builtin_actions.py`;
@@ -65,7 +67,7 @@ When adding, removing, or renaming a tool, update the registry chain, execution 
 
 `src.tool_index.ToolIndex` owns candidate retrieval using embeddings/keywords and cached index data. Security filtering is not its hard boundary: `agent_loop` hides unavailable schemas, and `tool_execution` blocks disabled, admin-only, and public-restricted calls before dispatch.
 
-`src.tool_execution` owns built-in tool execution, MCP dispatch, path confinement, background markers, output truncation, internal HTTP loopback, owner/admin checks, policy-blocked execution results, and formatting tool results for the model/UI. File tools support exact edit diffs, full-file writes, read line ranges, and workspace confinement. Code-navigation tools (`grep`, `glob`, `ls`) prefer `rg`/structured filesystem traversal over ad hoc shell commands. Shared truncation and MCP manager compatibility helpers live in `src.tool_utils`.
+`src.tool_execution` owns built-in tool execution, MCP dispatch, path confinement, background markers, output truncation, internal HTTP loopback, owner/admin checks, policy-blocked execution results, and formatting tool results for the model/UI. File tools support exact edit diffs, full-file writes, read line ranges, and workspace confinement. Code-navigation tools (`grep`, `glob`, `ls`) prefer `rg`/structured filesystem traversal over ad hoc shell commands. Uploaded-file context uses stable `attachment_ref` manifests and owner-checked URIs; a compatibility local path is exposed only after upload-root and tool-root confinement. Shared truncation, upload-handler registration, and MCP manager compatibility helpers live in `src.tool_utils`.
 
 Tool retrieval has domain-specific hooks beyond generic similarity: contact queries can surface `resolve_contact`/`manage_contact`; matched skills can add `manage_skills` and their required toolsets to the relevant tool set; explicit admin intents can include admin schemas so prompt text and native schema emission match.
 
@@ -91,11 +93,11 @@ Current call sites include:
 
 ## Streaming And Continuations
 
-Agent streaming emits normal content plus tool progress/output, document stream/update, ask-user choices, plan updates, budget, metrics, teacher escalation, research anchor, and finish/error events. Frontend chat stream code and detached replay depend on stable event names.
+Agent streaming emits normal content plus tool progress/output, document stream/update, ask-user choices, plan updates, budget, round exhaustion, loop-breaker, intent-nudge exhaustion, metrics, teacher escalation, research anchor, and finish/error events. Frontend chat stream code and detached replay depend on stable event names. If the stream generator closes while awaiting an in-flight tool, the loop cancels and awaits that tool task so subprocess-backed work is not left orphaned.
 
 Long-running bash jobs can be detached with background markers. `src.bg_jobs` owns persistent job state/result files; `src.bg_monitor` owns auto-continuation when jobs finish. Detached chat runs are in-memory and do not survive server restart, while background job state is disk-backed.
 
-Loop-breaker final-answer rounds, optional verifier retries, and teacher escalation are recovery behavior owned by `agent_loop` and `src.teacher_escalation`.
+Loop-breaker final-answer rounds, explicit repeated-tool/intent-nudge guard events, round-cap continuation signals, optional verifier retries, and teacher escalation are recovery behavior owned by `agent_loop` and `src.teacher_escalation`.
 
 ## Security And Policy
 
@@ -106,6 +108,9 @@ Loop-breaker final-answer rounds, optional verifier retries, and teacher escalat
 - Path-based tools must remain confined to allowed roots and reject sensitive paths. Sensitive-path checks are case-insensitive and apply to direct file tools and code-navigation tools; `grep`/`glob`/`ls` must not become existence or content oracles for `.env`, SSH/GPG material, `id_rsa`, and similar denylisted paths.
 - Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
+- Attachment-bearing document, note, and calendar tools owner-reserve internal
+  upload references before durable writes and fail without mutation when the
+  referenced upload is unavailable.
 - Guide-only/no-tools mode blocks tools before prompt assembly, before execution, and in chat preprocessing paths that would otherwise fetch context or start tool-backed research.
 - Plan mode is policy, not prompt advice: mutating native tools are disabled through schema-derived detection plus a static backstop, and write/unknown MCP tools are hidden and runtime-blocked for that turn.
 
@@ -145,4 +150,8 @@ When an email reader is active, browser chat passes active email metadata and th
 - MCP disabled-tool changes can stale-cache tool retrieval because disabled maps are not always an index generation input.
 - External MCP output truncation and tool-result prompt-injection wrapping need stronger guarantees.
 - Auth-disabled/no-login owner propagation is inconsistent between route dependencies and chat/agent execution, so tool-security and native tool storage behavior need dedicated regression coverage.
-- Agent tests mostly cover helpers and targeted regressions, not an end-to-end fake-LLM `stream_agent_loop` path with retrieval, native schemas, prompted blocks, disabled/admin hiding, MCP tools, plan/workspace state, user-time context, and tool-result SSE.
+- Agent tests mostly cover helpers and targeted regressions, including round-cap
+  and disconnect cancellation paths, but not an end-to-end fake-LLM
+  `stream_agent_loop` path with retrieval, native schemas, prompted blocks,
+  disabled/admin hiding, MCP tools, plan/workspace state, user-time context, and
+  tool-result SSE.

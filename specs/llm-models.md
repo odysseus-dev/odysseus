@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -28,6 +28,11 @@ This spec covers model/provider behavior in:
 `src.llm_core` owns provider-call mechanics. It handles OpenAI-compatible calls, Ollama normalization, Anthropic payload conversion, GitHub Copilot and ChatGPT Subscription provider detection/header injection, NVIDIA provider routing, streaming, fallback calls, upstream error formatting, async/streaming host liveness caching, configured model-list cache reads, tool-call sanitization, reasoning/thinking stream routing, and provider-specific parameter rules. GitHub Copilot OAuth/device-flow orchestration lives in `routes/copilot_routes.py` and `src/copilot.py`; ChatGPT Subscription device flow uses `routes/chatgpt_subscription_routes.py`, shared device-flow helpers, and `ProviderAuthSession` rows.
 
 `llm_core` owns payload shape. Route files and chat/agent code should request a call; they should not duplicate provider-specific payload quirks.
+
+Kimi Code User-Agent discovery has both sync and async implementations. Async
+post and stream paths probe `/models` through their existing async client and
+await each candidate, so header negotiation does not block the event loop; both
+paths share the accepted-value cache and 403 fallback policy.
 
 Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit `temperature` where required, reasoning models omit or clamp unsupported temperature values, and self-hosted compatible endpoints keep normal OpenAI-compatible parameters unless detected otherwise. Mistral/Moonshot/Kimi reasoning content, `gpt-oss` harmony channel output, and native/OpenAI-compatible Ollama thinking formats are normalized so hidden reasoning and visible text stay separated where the provider exposes that structure. Copilot request metadata is treated defensively; malformed/non-dict `request_flags` in the last message must not crash payload construction.
 

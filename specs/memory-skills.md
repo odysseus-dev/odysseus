@@ -1,6 +1,6 @@
 # Memory And Skills
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -58,6 +58,10 @@ Agent skill behavior:
 
 Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`, and route-side manual add validates the source session owner before attaching session-derived memories. `mcp_servers/memory_server.py` lazy-initializes `src` managers and exposes list/add/edit/delete/search. It can scope to `ODYSSEUS_MCP_MEMORY_OWNER` or `ODYSSEUS_MEMORY_OWNER`; if the JSON store contains owner-bearing entries and no owner env is configured, it returns an owner-scope error instead of listing or mutating across owners. Ownerless stores remain ownerless compatibility mode.
 
+The direct `odysseus-memory add` CLI tolerates non-object legacy/corrupt rows
+when checking whether its newly added entry is already present; it ignores
+those rows instead of calling mapping methods on them and crashing the add.
+
 `/api/export` owner-filters memories and skills. `/api/import` imports skills through current disk-backed `SkillsManager` APIs, stamping missing owners to the importer and preserving supported skill metadata. Full data snapshots through `scripts/odysseus-backup` preserve on-disk skill trees, memory JSON, and caches differently from JSON import/export.
 
 ## Compatibility State
@@ -96,7 +100,7 @@ User rename flows update skill frontmatter owner fields and `_usage.json` owner 
 
 ## Testing Coverage
 
-Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape and owner-scope behavior, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, CLI row handling, and selected route owner checks.
+Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape and owner-scope behavior, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, CLI non-object row handling, and selected route owner checks.
 
 Route-level memory CRUD/security, skills route security, MCP memory behavior, vector degraded writes, compatibility facade owner behavior, backup skill import, admin vector cleanup, and frontend endpoint wiring need broader coverage.
 

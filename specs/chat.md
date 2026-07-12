@@ -1,6 +1,6 @@
 # Chat
 
-Last updated: dev@d88c8cb | 2026-07-09
+Last updated: dev@df2fad2 | 2026-07-12
 
 ## Scope
 
@@ -13,6 +13,8 @@ This spec covers current chat behavior in:
 - `src/agent_runs.py`;
 - `src/chat_handler.py` and `src/chat_processor.py`;
 - `core/session_manager.py` and `core/models.py`;
+- `src/attachment_refs.py` and `src/upload_handler.py` for durable attachment
+  references and write reservations;
 - `src/context_budget.py`, `src/context_compactor.py`, and `src/topic_analyzer.py`;
 - `routes/workspace_routes.py` for workspace selection support;
 - frontend modules `static/js/chat.js`, `static/js/chatStream.js`, `static/js/chatRenderer.js`, `static/js/sessions.js`, `static/js/search-chat.js`, `static/js/compare/stream.js`, `static/js/workspace.js`, `static/js/composerArrowUpRecall.js`, `static/js/streamingSegmenter.js`, `static/js/group.js`, and `static/js/notes.js`;
@@ -38,9 +40,14 @@ Runtime behavior:
 - stream callbacks can outlive a deleted session, so persistence must fail closed instead of recreating orphan messages;
 - message metadata carries timestamps, metrics, tool events, sources, hidden
   thinking/reasoning text when providers expose it separately, context-trim
-  metrics, and related UI state;
+  metrics, structured attachment references, and related UI state;
 - metadata preserves both requested and actual reply models when provider streams or fallbacks report them, and stable session ids are kept available so prompt/sequence-memory and KV-cache paths can address the same conversation consistently;
-- multimodal content can be a list of content blocks, not just a string.
+- multimodal content can be a list of content blocks for the live provider call,
+  while persistence collapses raw media into readable text and stable
+  attachment-reference lines;
+- agent streams forward explicit round-cap, tool-budget, repeated-tool-loop,
+  and intent-without-action guard events so the frontend can distinguish a
+  controlled stop from a stalled response.
 
 `src.agent_runs` owns detached in-memory stream runs, replay buffers, replacement cancellation, resume subscribers, explicit stop, and terminal-buffer eviction. Closing the SSE connection does not necessarily stop generation. `static/js/chat.js` can live-resume a still-running detached stream through `/api/chat/resume/{session_id}`; rich responses reload from DB for canonical rendering. Detached runs are process-local and do not survive server restart.
 
@@ -96,9 +103,9 @@ available.
 
 ## Attachments
 
-`src.chat_handler.ChatHandler.preprocess_message()` owns owner-scoped upload-id resolution, attachment metadata, YouTube transcript/comment preprocessing, image/VL behavior, and enhanced text used by chat. `src.document_processor.build_user_content()` owns conversion of uploaded/chat-attached files into model-ready text or multimodal blocks. `static/js/fileHandler.js` owns frontend pending-file state.
+`src.chat_handler.ChatHandler.preprocess_message()` owns owner-scoped upload-id resolution, attachment metadata, YouTube transcript/comment preprocessing, image/VL behavior, and enhanced text used by chat. `src.document_processor.build_user_content()` owns conversion of uploaded/chat-attached files into model-ready text or multimodal blocks. `src.attachment_refs` owns persisted text/reference normalization, and `SessionManager` owner-reserves attachment ids before appending or replacing durable message rows. `static/js/fileHandler.js` owns frontend pending-file state.
 
-Attachment-only sends are valid. Missing or unauthorized upload ids are skipped, upload failures keep pending files for retry, unsupported media can degrade to text markers, optional Office/PDF/VL dependencies can emit extraction banners, Office attachments can create markdown documents when extracted server-side, and fillable-PDF auto-document failures fall back to normal PDF extraction. Chat does not own durable document storage; it requests document/upload behavior from those subsystems.
+Attachment-only sends are valid. Missing or unauthorized ids are skipped during preprocessing, while a missing/wrong-owner durable reference aborts a message/history replacement before existing transcript rows are removed. Upload failures keep pending files for retry, unsupported media can degrade to text markers, optional Office/PDF/VL dependencies can emit extraction banners, Office attachments can create markdown documents when extracted server-side, and fillable-PDF auto-document failures fall back to normal PDF extraction. `chat_messages.content` and FTS do not retain provider data URLs; structured references stay in metadata for reloads. Chat does not own upload bytes or durable document storage; it requests document/upload behavior from those subsystems.
 
 Frontend chat distinguishes normal resend from regenerate-from-here: normal resend appends a fresh user copy and carries upload IDs where available, while regeneration truncates from the selected point. AI-message delete prompts before removing the AI response plus preceding user turn. Desktop Enter submits; mobile Enter inserts a newline unless another platform-specific send control is used.
 
@@ -109,7 +116,7 @@ document fences from normal transcript text.
 
 ## Security And Provenance
 
-`/api/chat` and `/api/chat_stream` verify session ownership before loading the session. Chat privilege gates enforce allowed models and daily message caps before LLM work. Active document injection, session auth/header recovery, endpoint repair, upload-id resolution, memory/RAG retrieval, and post-response work must stay owner-scoped.
+`/api/chat` and `/api/chat_stream` verify session ownership before loading the session. Chat privilege gates enforce allowed models and daily message caps before LLM work. Active document injection, session auth/header recovery, endpoint repair, upload-id resolution and reservation, memory/RAG retrieval, and post-response work must stay owner-scoped.
 
 The scoped API-token chat surface is `/api/v1/chat`. Browser chat routes can receive bearer-auth state from middleware, but route code must not assume `"api"` is a durable owner; API-token support requires explicit scope checks and token-owner attribution.
 
