@@ -228,6 +228,8 @@ class TrayController:
                 pystray.MenuItem("Start Backend", self._action_start),
                 pystray.MenuItem("Stop Backend", self._action_stop),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Reset Account (First-Run Setup)", self._action_reset_auth),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Quit", self._action_quit),
             ),
         )
@@ -274,6 +276,32 @@ class TrayController:
         if pywebview.windows:
             pywebview.windows[0].destroy()
         os._exit(0)
+
+    def _action_reset_auth(self, icon, item) -> None:
+        """Delete the stored admin account and restart the backend so the
+        web UI falls back to first-run setup (create-admin-account screen)
+        on next load. Does not touch sessions, chats, or other data."""
+        def _run():
+            self.backend.stop()
+            auth_path = REPO_ROOT / "data" / "auth.json"
+            try:
+                if auth_path.exists():
+                    auth_path.unlink()
+                    log.info(f"Removed {auth_path} — next launch will show first-run setup")
+            except Exception as e:
+                log.error(f"Failed to remove {auth_path}: {e}")
+            self.backend.start()
+            self._update_tray_state()
+            self._action_open(icon, item)
+            # Force the webview to reload — the DOM is still showing the
+            # pre-reset page (e.g. the chat UI) otherwise.
+            try:
+                import pywebview
+                if pywebview.windows:
+                    pywebview.windows[0].load_url(BACKEND_URL)
+            except Exception as e:
+                log.error(f"Failed to reload webview after reset: {e}")
+        threading.Thread(target=_run, daemon=True).start()
 
     def _update_tray_state(self) -> None:
         """Update tray title to reflect backend state."""
