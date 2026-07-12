@@ -189,6 +189,12 @@ function _initHoverCardSpaceToggle() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
+    // If the user is actively typing in a text field, the spacebar must
+    // insert a space — never activate a hovered button/card/window.
+    // Without this guard, spacebar closes email tabs and modals when the
+    // mouse happens to hover over them during text entry. (#4856)
+    const _activeEl = document.activeElement;
+    if (_activeEl && _isTextEditingTarget(_activeEl)) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
       if (_spaceIsBlocked(e, hoveredToggleCard)) return;
       e.preventDefault();
