@@ -58,8 +58,38 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     xml: 'html', html: 'html', css: 'css', markdown: 'markdown',
     json: 'json', yaml: 'yaml', bash: 'bash', shell: 'bash',
     sql: 'sql', rust: 'rust', go: 'go', java: 'java', c: 'c', cpp: 'cpp',
-    csv: 'csv',
+    csv: 'csv', nushell: 'nushell',
   };
+
+  // Register a minimal Nushell language grammar with highlight.js so code
+  // blocks tagged `nushell` get basic keyword/string/comment highlighting.
+  // The bundled highlight.min.js doesn't include nushell. (#4904)
+  if (window.hljs && !window.hljs.getLanguage('nushell')) {
+    window.hljs.registerLanguage('nushell', () => ({
+      name: 'Nushell',
+      keywords: {
+        keyword: 'let mut def if else for while loop in not and or true false null def-env export use overlay source env config' +
+          ' alias module use hide try catch error return break continue' +
+          ' where sort-by select insert update upsert merge flatten each par-each get first last skip take' +
+          ' range str int float bool list record table closure',
+        built_in: 'print echo ls cd pwd cp mv rm mkdir touch open save touch which version' +
+          ' detect columns split-by group-by count sum avg min max length' +
+          ' describe encode decode from to into format parse',
+        literal: 'true false null',
+      },
+      contains: [
+        { className: 'string', variants: [
+          { begin: '"', end: '"', contains: [{ begin: '\\\\.' }] },
+          { begin: "'", end: "'", contains: [{ begin: '\\\\.' }] },
+          { begin: '`', end: '`' },
+        ]},
+        { className: 'comment', begin: '#', end: '$' },
+        { className: 'number', begin: '\\b\\d+(\\.\\d+)?\\b' },
+        { className: 'variable', begin: '\\$', end: '\\W' },
+        { className: 'type', begin: '\\b([A-Z][a-zA-Z0-9]*)\\b' },
+      ],
+    }));
+  }
 
   // Languages rendered in the sandboxed preview iframe. SVG and XML markup
   // render as inline content in an HTML document, so they share the HTML
@@ -76,7 +106,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       'csv', 'python', 'javascript', 'typescript', 'bash', 'sh', 'shell',
       'php', 'ruby', 'sql', 'java', 'go', 'rust',
       'c', 'cpp', 'c++', 'csharp', 'c#',
-      'yaml', 'json', 'css',
+      'yaml', 'json', 'css', 'nushell',
       'ini', 'toml',
     ].includes(lang) || _isRenderLang(lang);
   };
@@ -4860,6 +4890,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <option value="ini">ini</option>
           <option value="ruby">ruby</option>
           <option value="php">php</option>
+          <option value="nushell">nushell</option>
           <option value="csv">csv</option>
           <option value="email">email</option>
           <option value="pdf">pdf</option>
