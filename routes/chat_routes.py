@@ -1017,6 +1017,20 @@ def setup_chat_routes(
             research_sources = None
             web_sources = ctx.web_sources
 
+            # Direct reply from slash command — return immediately without LLM
+            if ctx.is_direct_reply:
+                for msg in ctx.messages:
+                    if msg.get("role") == "assistant":
+                        yield f"data: {json.dumps({'delta': msg.get('content', '')})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        # Save to session history
+                        if not incognito:
+                            sess.add_message(ChatMessage("user", message))
+                            sess.add_message(ChatMessage("assistant", msg.get("content", "")))
+                            session_manager.save_sessions()
+                        _active_streams.pop(session, None)
+                        return
+
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
 

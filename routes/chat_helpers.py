@@ -114,6 +114,8 @@ class ChatContext:
     # Uploads attached to this user turn, resolved and owner-checked for the
     # agent's private context. This is not emitted to the browser.
     uploaded_files: list = field(default_factory=list)
+    # Direct reply from slash command — skip LLM, return messages directly
+    is_direct_reply: bool = False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────── #
@@ -682,6 +684,7 @@ async def build_chat_context(
             user=None,
             uprefs={},
             preprocessed=preprocessed,
+            is_direct_reply=True,
         )
 
     # Add user message to history
