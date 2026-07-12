@@ -78,10 +78,30 @@ async function _loadBookstackUrl() {
 function _rewriteImageUrls(html) {
   if (!_bookstackUrl || !html) return html;
   // Rewrite relative image src URLs to absolute BookStack URLs
-  return html.replace(
+  // Also rewrite absolute URLs that point to the wrong BookStack server
+  let result = html.replace(
     /(<img[^>]*\ssrc=["'])(\/[^"']+)(["'])/gi,
     (match, prefix, path, suffix) => `${prefix}${_bookstackUrl}${path}${suffix}`
   );
+  // Rewrite absolute URLs that don't match the current BookStack URL
+  if (_bookstackUrl) {
+    const currentHost = new URL(_bookstackUrl).host;
+    result = result.replace(
+      /(<img[^>]*\ssrc=["'])(https?:\/\/[^"']+)(["'])/gi,
+      (match, prefix, url, suffix) => {
+        try {
+          const imgHost = new URL(url).host;
+          if (imgHost !== currentHost) {
+            // Replace with the correct BookStack URL
+            const imgPath = new URL(url).pathname;
+            return `${prefix}${_bookstackUrl}${imgPath}${suffix}`;
+          }
+        } catch (e) {}
+        return match;
+      }
+    );
+  }
+  return result;
 }
 
 // ---- UI Rendering ----
