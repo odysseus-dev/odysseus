@@ -116,11 +116,14 @@ function _projectStatusInfo(p) {
 
 function _renderProjectList(container) {
   const stats = _el('factory-stats');
-  if (stats) stats.textContent = _projects.length ? `${_projects.length} project${_projects.length !== 1 ? 's' : ''}` : '';
+  const _activeCount = _projects.filter(p => p.status === 'planning' || p.status === 'running').length;
+  const _activeLabel = _activeCount > 0 ? ` \u00b7 ${_activeCount} active` : '';
+  const _statsText = _projects.length ? `${_projects.length} project${_projects.length !== 1 ? 's' : ''}${_activeLabel}` : '';
+  if (stats) stats.textContent = _statsText;
 
   container.innerHTML = `
     <div class="factory-subheader">
-      <span class="factory-count">${_projects.length} project${_projects.length !== 1 ? 's' : ''}</span>
+      <span class="factory-count">${_statsText}</span>
       <div style="display:flex;gap:6px;">
         <button id="factory-settings-btn" class="factory-btn factory-btn-ghost" title="Agent settings">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -178,6 +181,40 @@ function _renderProjectList(container) {
     card.addEventListener('click', () => _openProjectStatus(p.id));
     list.appendChild(card);
   });
+
+  // Refresh project list periodically while there are active projects
+  if (_projects.some(p => p.status === 'planning' || p.status === 'running')) {
+    if (!container._listPollTimer) {
+      container._listPollTimer = setInterval(async () => {
+        // Stop if the container is no longer in the DOM
+        if (!document.body.contains(container)) {
+          clearInterval(container._listPollTimer);
+          container._listPollTimer = null;
+          return;
+        }
+        // Stop if navigating to status view
+        if (_activeProjectId) {
+          clearInterval(container._listPollTimer);
+          container._listPollTimer = null;
+          return;
+        }
+        await _refreshProjects();
+        // Re-render just the stats text + project list without full innerHTML rebuild
+        const statsEl = _el('factory-stats');
+        if (statsEl) {
+          const ac = _projects.filter(p => p.status === 'planning' || p.status === 'running').length;
+          const al = ac > 0 ? ` \u00b7 ${ac} active` : '';
+          statsEl.textContent = _projects.length ? `${_projects.length} project${_projects.length !== 1 ? 's' : ''}${al}` : '';
+        }
+        // If no more active projects, stop polling
+        if (!_projects.some(p => p.status === 'planning' || p.status === 'running')) {
+          clearInterval(container._listPollTimer);
+          container._listPollTimer = null;
+          _renderProjectList(container); // Final full re-render
+        }
+      }, 5000);
+    }
+  }
 }
 
 // ── Render: Agent Settings View ──────────────────────────────
@@ -508,6 +545,12 @@ function _renderKanban(container) {
   const info = _projectStatusInfo(p);
   const tasks = p.tasks || [];
 
+  // ── Planning indicator ──
+  // When the project is in 'planning' status with no tasks yet, the planner
+  // LLM is decomposing the project. Show a clear indicator instead of an
+  // empty board so the user knows work is in progress.
+  const isPlanning = p.status === 'planning' && tasks.length === 0;
+
   // ── Smart rebuild: skip if nothing changed ──
   const fingerprint = tasks.map(t =>
     `${t.id}:${t.status}:${t.error || ''}:${t.result ? '1' : '0'}`
@@ -542,17 +585,27 @@ function _renderKanban(container) {
         <div class="factory-project-actions" id="factory-project-actions"></div>
       </div>
     </div>
-    <div class="factory-kanban" id="factory-kanban">
-      ${columns.map(col => `
-        <div class="factory-kanban-col" data-status="${col.key}">
-          <div class="factory-kanban-col-header">
-            <span class="factory-kanban-col-label" style="color:${STATUS_COLORS[col.key]}">${col.label}</span>
-            <span class="factory-kanban-col-count">${tasks.filter(t => t.status === col.key).length}</span>
-          </div>
-          <div class="factory-kanban-col-body" data-status="${col.key}"></div>
+    ${isPlanning ? `
+      <div class="factory-planning-indicator">
+        <div class="factory-planning-spinner">${ICONS.spinner}</div>
+        <div class="factory-planning-text">
+          <strong>Planning tasks...</strong>
+          <p>The planner agent is decomposing your project into tasks. This typically takes 10-30 seconds.</p>
         </div>
-      `).join('')}
-    </div>
+      </div>
+    ` : `
+      <div class="factory-kanban" id="factory-kanban">
+        ${columns.map(col => `
+          <div class="factory-kanban-col" data-status="${col.key}">
+            <div class="factory-kanban-col-header">
+              <span class="factory-kanban-col-label" style="color:${STATUS_COLORS[col.key]}">${col.label}</span>
+              <span class="factory-kanban-col-count">${tasks.filter(t => t.status === col.key).length}</span>
+            </div>
+            <div class="factory-kanban-col-body" data-status="${col.key}"></div>
+          </div>
+        `).join('')}
+      </div>
+    `}
     ${(p.status === 'completed' || p.status === 'running' || p.status === 'paused') ? `
       <div class="factory-iterate">
         <textarea id="factory-iterate-input" placeholder="Describe what to add or change..." rows="2"></textarea>
@@ -561,7 +614,8 @@ function _renderKanban(container) {
     ` : ''}
   `;
 
-  columns.forEach(col => {
+  if (!isPlanning) {
+    columns.forEach(col => {
     const body = container.querySelector(`.factory-kanban-col-body[data-status="${col.key}"]`);
     if (!body) return;
     const colTasks = tasks.filter(t => t.status === col.key);
@@ -616,6 +670,7 @@ function _renderKanban(container) {
       body.appendChild(card);
     });
   });
+  }
 
   _renderProjectActions(container.querySelector('#factory-project-actions'), p);
 

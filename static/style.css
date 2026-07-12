@@ -40767,6 +40767,32 @@ body.factory-panel-view .factory-divider { display:none; }
   gap: 6px;
 }
 
+/* ── Planning indicator ────────────────────────────────────────── */
+
+.factory-planning-indicator {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 24px;
+  text-align: left;
+}
+.factory-planning-spinner svg, .factory-planning-spinner img {
+  width: 32px;
+  height: 32px;
+  animation: factory-spin 1s linear infinite;
+}
+.factory-planning-text strong {
+  font-size: 15px;
+  display: block;
+  margin-bottom: 4px;
+}
+.factory-planning-text p {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.6;
+  max-width: 400px;
+}
+
 /* ── Task cards ─────────────────────────────────────────────── */
 
 .factory-task-card {
