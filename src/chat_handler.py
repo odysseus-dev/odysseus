@@ -138,12 +138,16 @@ class ChatHandler:
         new doc so the caller can announce it to the frontend before streaming.
         """
         # ── Slash commands ────────────────────────────────────────────────
-        # Handle /compact and /goal before normal preprocessing
+        # Handle slash commands before normal preprocessing
         if message.strip().startswith("/compact"):
             return await self._handle_compact_command(sess), "", "", [], []
         if message.strip().startswith("/goal"):
             goal_text = message.strip()[5:].strip()
             return await self._handle_goal_command(sess, goal_text), "", "", [], []
+        if message.strip().startswith("/dream"):
+            return await self._handle_dream_command(sess), "", "", [], []
+        if message.strip().startswith("/status"):
+            return await self._handle_status_command(sess), "", "", [], []
 
         enhanced_message = message
         attachment_meta: List[Dict[str, Any]] = []
@@ -396,6 +400,218 @@ class ChatHandler:
             f"The agent will not stop until this goal is evaluated as satisfied. "
             f"Use `/goal` without arguments to see the current goal."
         )
+
+    async def _handle_dream_command(self, sess) -> str:
+        """Handle /dream — scan session traces, extract knowledge to MEMORY.md."""
+        try:
+            import os
+            from src.agent.memory_persist import MemoryStore, NotesStore
+
+            session_id = getattr(sess, "id", "")
+            data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            base_dir = os.path.join(data_dir, "memory", session_id)
+            memory = MemoryStore(base_dir)
+            notes = NotesStore(base_dir)
+
+            # Read current state
+            current_memory = memory.read()
+            current_notes = notes.read()
+
+            # Extract knowledge from session history
+            messages = getattr(sess, "history", [])
+            if not messages:
+                return "📭 No session history to analyze."
+
+            # Collect key patterns from conversation
+            user_msgs = []
+            assistant_msgs = []
+            tool_results = []
+            for msg in messages:
+                if isinstance(msg, dict):
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                elif hasattr(msg, "role"):
+                    role = msg.role
+                    content = getattr(msg, "content", "")
+                else:
+                    continue
+
+                if role == "user" and content:
+                    user_msgs.append(content[:200])
+                elif role == "assistant" and content:
+                    assistant_msgs.append(content[:200])
+                elif role == "tool" and content:
+                    tool_results.append(content[:100])
+
+            # Extract durable knowledge patterns
+            knowledge_items = []
+
+            # Pattern 1: User preferences (from repeated requests)
+            if len(user_msgs) > 3:
+                # Simple heuristic: look for repeated action verbs
+                actions = {}
+                for msg in user_msgs:
+                    words = msg.lower().split()
+                    if words:
+                        actions[words[0]] = actions.get(words[0], 0) + 1
+                common = [w for w, c in actions.items() if c >= 2 and len(w) > 3]
+                if common:
+                    knowledge_items.append(f"User frequently requests: {', '.join(common[:5])}")
+
+            # Pattern 2: Tools used successfully
+            tools_used = set()
+            for result in tool_results:
+                if "exit_code\": 0" in result or "success" in result.lower():
+                    # Extract tool name from result
+                    pass
+            if tools_used:
+                knowledge_items.append(f"Tools successfully used: {', '.join(tools_used)}")
+
+            # Pattern 3: Topics discussed
+            topics = set()
+            for msg in user_msgs:
+                # Simple keyword extraction
+                words = msg.lower().split()
+                for w in words:
+                    if len(w) > 5 and w not in ("about", "these", "those", "their", "there", "what", "when", "where", "which", "while", "would", "could", "should"):
+                        topics.add(w)
+            if topics:
+                knowledge_items.append(f"Topics discussed: {', '.join(list(topics)[:10])}")
+
+            # Update MEMORY.md with extracted knowledge
+            if knowledge_items:
+                new_section = "\n\n## Discovered from session\n" + "\n".join(f"- {item}" for item in knowledge_items)
+
+                # Check if section already exists
+                if "## Discovered from session" in current_memory:
+                    # Replace existing section
+                    import re
+                    current_memory = re.sub(
+                        r"\n## Discovered from session\n.*?(?=\n## |\Z)",
+                        new_section,
+                        current_memory,
+                        flags=re.DOTALL,
+                    )
+                else:
+                    current_memory += new_section
+
+                memory.write(current_memory)
+
+            # Clear processed notes
+            if current_notes.strip():
+                notes.write("# Session notes\n_Cleared by /dream command._\n")
+
+            # Build response
+            lines = ["## ✅ Dream Complete\n"]
+            lines.append(f"**Session analyzed:** {len(messages)} messages")
+            lines.append(f"**Knowledge extracted:** {len(knowledge_items)} items")
+
+            if knowledge_items:
+                lines.append("\n### Extracted Knowledge")
+                for item in knowledge_items:
+                    lines.append(f"- {item}")
+
+            lines.append(f"\n**Memory updated:** `{base_dir}/MEMORY.md`")
+            if current_notes.strip():
+                lines.append(f"**Notes cleared:** `{base_dir}/notes.md`")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"❌ Dream failed: {e}"
+
+    async def _handle_status_command(self, sess) -> str:
+        """Handle /status — show session status, goal, context size, actors."""
+        try:
+            import os
+            from src.agent.memory_persist import CheckpointStore, MemoryStore, NotesStore
+            from src.agent.actor import ActorRegistry
+            from src.agent_loop import estimate_tokens
+
+            session_id = getattr(sess, "id", "")
+            data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            base_dir = os.path.join(data_dir, "memory", session_id)
+
+            lines = ["## 📊 Session Status\n"]
+
+            # Session info
+            lines.append(f"**Session ID:** `{session_id[:16]}...`")
+            lines.append(f"**Model:** {getattr(sess, 'model', 'unknown')}")
+            lines.append(f"**Messages:** {len(getattr(sess, 'history', []))}")
+
+            # Context size
+            messages = getattr(sess, "history", [])
+            if messages:
+                tokens = estimate_tokens(messages)
+                lines.append(f"**Context size:** ~{tokens} tokens")
+
+            # Goal
+            metadata = getattr(sess, "metadata", {}) or {}
+            goal = metadata.get("goal")
+            if goal:
+                lines.append(f"\n### 🎯 Active Goal")
+                lines.append(f"**Condition:** {goal}")
+                set_at = metadata.get("goal_set_at", "unknown")
+                lines.append(f"**Set at:** {set_at}")
+            else:
+                lines.append(f"\n### 🎯 Goal")
+                lines.append("_No goal set. Use `/goal <condition>` to set one._")
+
+            # Checkpoint status
+            try:
+                cs = CheckpointStore(base_dir)
+                checkpoint_content = cs.read()
+                if checkpoint_content.strip():
+                    lines.append(f"\n### 💾 Checkpoint")
+                    lines.append(f"**Active intent:** {cs.get_section('active_intent')[:100] or 'empty'}")
+                    lines.append(f"**Next action:** {cs.get_section('next_action')[:100] or 'empty'}")
+                else:
+                    lines.append(f"\n### 💾 Checkpoint")
+                    lines.append("_No checkpoint saved yet._")
+            except Exception:
+                pass
+
+            # Memory status
+            try:
+                ms = MemoryStore(base_dir)
+                memory_content = ms.read()
+                if memory_content.strip():
+                    lines.append(f"\n### 🧠 Memory")
+                    # Count sections
+                    sections = memory_content.count("## ")
+                    lines.append(f"**Sections:** {sections}")
+                    lines.append(f"**Size:** {len(memory_content)} chars")
+            except Exception:
+                pass
+
+            # Notes status
+            try:
+                ns = NotesStore(base_dir)
+                notes_content = ns.read()
+                if notes_content.strip():
+                    lines.append(f"\n### 📝 Notes")
+                    entries = notes_content.count("## [turn")
+                    lines.append(f"**Entries:** {entries}")
+            except Exception:
+                pass
+
+            # Active actors
+            try:
+                registry = ActorRegistry.get_instance()
+                active = registry.list_active()
+                if active:
+                    lines.append(f"\n### 🤖 Active Actors")
+                    for a in active:
+                        status = a.status.value
+                        outcome = f" ({a.outcome.value})" if a.outcome else ""
+                        lines.append(f"- `{a.id}` — {a.mode.value}, {status}{outcome}")
+            except Exception:
+                pass
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"❌ Status failed: {e}"
 
     def update_session_name_if_needed(self, session, message: str):
         if not session.name:
