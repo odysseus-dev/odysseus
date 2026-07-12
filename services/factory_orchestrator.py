@@ -766,11 +766,32 @@ async def iterate_project(project_id: int, prompt: str, owner: str = "default") 
         raw = await _call_agent("fredrix", user_prompt, owner, timeout=120)
     except Exception as e:
         logger.error(f"Factory: iterate planner failed for project {project_id}: {e}")
+        # Reset status — the route handler set it to "running" before launching us.
+        # If all tasks are already completed, revert to "completed".
+        try:
+            nodes = _service.get_nodes(project_id)
+            if all(n.get("status") in ("completed", "skipped") for n in nodes):
+                _service.set_project_status(project_id, "completed")
+            _service._log_event_safe(project_id, None,
+                                     f"Iteration failed: {e}",
+                                     event_type="iteration_failed")
+        except Exception:
+            pass
         return False
 
     plan = _extract_json(raw)
     if not plan or not isinstance(plan.get("tasks"), list) or not plan["tasks"]:
         logger.error(f"Factory: iterate returned invalid plan:\n{raw[:300]}")
+        # Same reset as above
+        try:
+            nodes = _service.get_nodes(project_id)
+            if all(n.get("status") in ("completed", "skipped") for n in nodes):
+                _service.set_project_status(project_id, "completed")
+            _service._log_event_safe(project_id, None,
+                                     "Iteration produced no tasks — planner returned invalid plan",
+                                     event_type="iteration_failed")
+        except Exception:
+            pass
         return False
 
     # Map old node ids for dependency edges
@@ -1517,6 +1538,16 @@ async def _orchestrator_loop(project_id: int, owner: str,
                         break
                 else:
                     logger.info(f"Factory: project {project_id} — all tasks done")
+                    # If the project is still "running" (e.g., iteration planner failed
+                    # after setting status to running), mark it completed so it doesn't
+                    # stay stuck forever.
+                    try:
+                        final_proj = _service.get_project(project_id)
+                        if final_proj and final_proj.get("status") == "running":
+                            _service.set_project_status(project_id, "completed")
+                            logger.info(f"Factory: project {project_id} auto-completed (was stuck in running with no pending tasks)")
+                    except Exception:
+                        pass  # state machine might reject — not critical
                     break
             # No ready tasks but work remains. DON'T exit — keep polling so
             # that when a blocked task is retried from the UI (human_intervention
