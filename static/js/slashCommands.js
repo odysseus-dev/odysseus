@@ -5744,74 +5744,6 @@ async function _cmdHelp(args, ctx) {
 // directly; grouped commands use `subs`.  `default` is the sub run
 // when the command is invoked bare (e.g. `/chats` -> info).
 
-// ── Agent commands (MiMo-Code inspired) ──
-
-async function _cmdGoal(args, ctx) {
-  const goal = args.join(' ');
-  if (!goal) {
-    slashReply(
-      '## 🎯 Goal Mode\n\n' +
-      '**Usage:** `/goal <stopping condition>`\n\n' +
-      'Sets a condition that must be met before the agent can stop.\n\n' +
-      '**Examples:**\n' +
-      '- `/goal All tests pass and code is committed`\n' +
-      '- `/goal The bug is fixed and verified in production`\n' +
-      '- `/goal Documentation is complete with examples`'
-    );
-    return true;
-  }
-  slashReply(`⏳ Setting goal: "${goal}"...`);
-  return false;
-}
-
-async function _cmdDream(args, ctx) {
-  slashReply('⏳ Scanning session and extracting knowledge...');
-  return false;
-}
-
-async function _cmdStatus(args, ctx) {
-  slashReply('⏳ Loading session status...');
-  return false;
-}
-
-async function _cmdTask(args, ctx) {
-  if (args.length === 0) {
-    slashReply('⏳ Loading tasks...');
-    return false;
-  }
-  return false;
-}
-
-async function _cmdTaskList(args, ctx) {
-  slashReply('⏳ Loading tasks...');
-  return false;
-}
-
-async function _cmdTaskAdd(args, ctx) {
-  const desc = args.join(' ');
-  if (!desc) {
-    slashReply('❌ Usage: `/task add <description>`');
-    return true;
-  }
-  slashReply(`⏳ Adding task: "${desc}"...`);
-  return false;
-}
-
-async function _cmdTaskDone(args, ctx) {
-  const taskId = args[0];
-  if (!taskId) {
-    slashReply('❌ Usage: `/task done <id>`');
-    return true;
-  }
-  slashReply(`⏳ Marking task ${taskId} as done...`);
-  return false;
-}
-
-async function _cmdTaskStatus(args, ctx) {
-  slashReply('⏳ Loading task status...');
-  return false;
-}
-
 const COMMANDS = {
   chats: {
     alias: ['chat', 'session', 'sessions', 's'],
@@ -6217,45 +6149,8 @@ const COMMANDS = {
   ping:    { alias: ['pong'], category: 'Utility', hidden: true, help: 'Check if model endpoints are alive', handler: _cmdPing, usage: '/ping' },
   probe:   { alias: ['test-models'], category: 'Utility', hidden: true, help: 'Test which models actually respond', handler: _cmdProbe, usage: '/probe [endpoint]' },
   color:   { alias: ['colour'],     hidden: true, handler: _cmdColor,   usage: '/color [hex]' },
-  // ── Agent commands (MiMo-Code inspired) ──────────────────────────
-  goal: {
-    alias: [],
-    category: 'Agent',
-    help: 'Set a stopping condition for the session',
-    handler: _cmdGoal,
-    noUserBubble: false,
-    usage: '/goal <condition>',
-  },
-  dream: {
-    alias: [],
-    category: 'Agent',
-    help: 'Extract knowledge from session to memory',
-    handler: _cmdDream,
-    noUserBubble: false,
-    usage: '/dream',
-  },
-  status: {
-    alias: [],
-    category: 'Agent',
-    help: 'Show session status, goal, context size',
-    handler: _cmdStatus,
-    noUserBubble: false,
-    usage: '/status',
-  },
-  task: {
-    alias: ['tasks'],
-    category: 'Agent',
-    help: 'Manage tasks (list, add, done, status)',
-    default: 'list',
-    handler: _cmdTask,
-    noUserBubble: false,
-    subs: {
-      'list':   { handler: _cmdTaskList,   alias: ['ls'],      help: 'List all tasks',        usage: '/task list' },
-      'add':    { handler: _cmdTaskAdd,    alias: ['create'],  help: 'Add a new task',        usage: '/task add <description>' },
-      'done':   { handler: _cmdTaskDone,   alias: ['complete'],help: 'Mark task as done',      usage: '/task done <id>' },
-      'status': { handler: _cmdTaskStatus, alias: ['stat'],    help: 'Show task summary',      usage: '/task status' },
-    },
-  },
+  // Agent commands are handled by the backend (chat_handler.py)
+  // They pass through to the agent as regular messages
 };
 
 // ── Legacy aliases ────────────────────────────────────────────────
