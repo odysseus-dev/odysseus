@@ -66,6 +66,48 @@ def _get_headers():
     return headers
 
 
+@router.get("/config")
+async def get_config(request: Request):
+    """Get BookStack configuration (URL only, no token)."""
+    base_url, _ = _get_bookstack_config()
+    return {"url": base_url or ""}
+
+
+@router.get("/test")
+async def test_connection(request: Request):
+    """Test BookStack connection and return system info."""
+    _require_admin(request)
+
+    base_url, token = _get_bookstack_config()
+    if not base_url:
+        return {"ok": False, "error": "BookStack URL not configured"}
+
+    if not token:
+        return {"ok": False, "error": "BookStack API token not configured"}
+
+    if ":" not in token:
+        return {
+            "ok": False,
+            "error": "Invalid token format. Expected 'token_id:secret'"
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{base_url}/api/system",
+                headers=_get_headers(),
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return {"ok": True, "version": data.get("version", "unknown")}
+            elif resp.status_code == 401:
+                return {"ok": False, "error": "Authentication failed. Check your API token."}
+            else:
+                return {"ok": False, "error": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy_bookstack(path: str, request: Request):
     """Proxy all /api/bookstack/* requests to the BookStack instance."""
@@ -121,49 +163,6 @@ async def proxy_bookstack(path: str, request: Request):
                 status_code=502,
                 media_type="application/json",
             )
-
-
-@router.get("/test")
-async def test_connection(request: Request):
-    """Test BookStack connection and return system info."""
-    _require_admin(request)
-
-    base_url, token = _get_bookstack_config()
-    if not base_url:
-        return {"ok": False, "error": "BookStack URL not configured"}
-
-    if not token:
-        return {"ok": False, "error": "BookStack API token not configured"}
-
-    if ":" not in token:
-        return {
-            "ok": False,
-            "error": "Invalid token format. Expected 'token_id:secret'"
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{base_url}/api/system",
-                headers=_get_headers(),
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return {"ok": True, "version": data.get("version", "unknown")}
-            elif resp.status_code == 401:
-                return {"ok": False, "error": "Authentication failed. Check your API token."}
-            else:
-                return {"ok": False, "error": f"HTTP {resp.status_code}"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@router.get("/config")
-async def get_config(request: Request):
-    """Get BookStack configuration (URL only, no token)."""
-    _require_admin(request)
-    base_url, _ = _get_bookstack_config()
-    return {"url": base_url or ""}
 
 
 def setup_bookstack_routes() -> APIRouter:

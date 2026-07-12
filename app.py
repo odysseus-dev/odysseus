@@ -265,6 +265,7 @@ if AUTH_ENABLED:
         "/api/auth/integrations/presets",
         "/api/health",
         "/api/version",
+        "/api/bookstack/config",
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
