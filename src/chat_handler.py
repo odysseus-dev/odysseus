@@ -148,6 +148,9 @@ class ChatHandler:
             return await self._handle_dream_command(sess), "", "", [], []
         if message.strip().startswith("/status"):
             return await self._handle_status_command(sess), "", "", [], []
+        if message.strip().startswith("/task"):
+            task_args = message.strip()[5:].strip()
+            return await self._handle_task_command(sess, task_args), "", "", [], []
 
         enhanced_message = message
         attachment_meta: List[Dict[str, Any]] = []
@@ -612,6 +615,156 @@ class ChatHandler:
 
         except Exception as e:
             return f"❌ Status failed: {e}"
+
+    async def _handle_task_command(self, sess, args: str) -> str:
+        """Handle /task — manage tasks with subcommands.
+
+        Usage:
+            /task          — list all tasks
+            /task add <description> — add a new task
+            /task done <id> — mark task as done
+            /task status   — show task summary
+        """
+        try:
+            import os
+            import json
+            from src.agent.memory_persist import TaskProgressStore
+
+            session_id = getattr(sess, "id", "")
+            data_dir = os.environ.get("APP_DATA_DIR", "/app/data")
+            base_dir = os.path.join(data_dir, "memory", session_id)
+            task_store = TaskProgressStore(base_dir)
+
+            # Parse subcommand
+            parts = args.split(maxsplit=1) if args else []
+            subcmd = parts[0].lower() if parts else "list"
+            detail = parts[1] if len(parts) > 1 else ""
+
+            if subcmd == "list" or subcmd == "":
+                # List all tasks
+                tasks = task_store.list_tasks()
+                if not tasks:
+                    return (
+                        "## 📋 Tasks\n\n"
+                        "_No tasks yet._\n\n"
+                        "**Usage:**\n"
+                        "- `/task add <description>` — add a new task\n"
+                        "- `/task done <id>` — mark task as done\n"
+                        "- `/task status` — show summary"
+                    )
+
+                lines = ["## 📋 Tasks\n"]
+                for task_id in sorted(tasks):
+                    progress = task_store.read_progress(task_id)
+                    # Extract status from progress
+                    status = "⏳ in progress"
+                    if "Status: completed" in progress:
+                        status = "✅ completed"
+                    elif "Status: failed" in progress:
+                        status = "❌ failed"
+
+                    # Extract first line as summary
+                    summary = ""
+                    for line in progress.split("\n"):
+                        if line.startswith("Task:"):
+                            summary = line[5:].strip()[:80]
+                            break
+                    if not summary:
+                        summary = progress.split("\n")[0][:80] if progress else "(no details)"
+
+                    lines.append(f"- `{task_id}` {status} — {summary}")
+
+                lines.append(f"\n**Total:** {len(tasks)} tasks")
+                return "\n".join(lines)
+
+            elif subcmd == "add":
+                if not detail:
+                    return "❌ Usage: `/task add <description>`"
+
+                # Generate task ID
+                existing = task_store.list_tasks()
+                task_num = len(existing) + 1
+                task_id = f"T{task_num}"
+
+                # Write task
+                task_store.write_progress(
+                    task_id,
+                    f"Status: in progress\nTask: {detail}\nCreated: {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+                )
+
+                return (
+                    f"## ✅ Task Created\n\n"
+                    f"**ID:** `{task_id}`\n"
+                    f"**Description:** {detail}\n"
+                    f"**Status:** in progress\n\n"
+                    f"Use `/task done {task_id}` when complete."
+                )
+
+            elif subcmd == "done":
+                if not detail:
+                    return "❌ Usage: `/task done <id>`"
+
+                task_id = detail.strip()
+                progress = task_store.read_progress(task_id)
+                if not progress:
+                    return f"❌ Task `{task_id}` not found."
+
+                # Mark as completed
+                progress = progress.replace("Status: in progress", "Status: completed")
+                if "Status:" not in progress:
+                    progress = f"Status: completed\n{progress}"
+                task_store.write_progress(task_id, progress)
+
+                return f"## ✅ Task `{task_id}` marked as completed"
+
+            elif subcmd == "status":
+                tasks = task_store.list_tasks()
+                if not tasks:
+                    return "## 📊 Task Status\n\n_No tasks yet._"
+
+                completed = 0
+                in_progress = 0
+                failed = 0
+                for task_id in tasks:
+                    progress = task_store.read_progress(task_id)
+                    if "Status: completed" in progress:
+                        completed += 1
+                    elif "Status: failed" in progress:
+                        failed += 1
+                    else:
+                        in_progress += 1
+
+                total = len(tasks)
+                pct = round(completed / total * 100) if total else 0
+
+                lines = [
+                    "## 📊 Task Status\n",
+                    f"**Total:** {total}",
+                    f"**Completed:** {completed} ✅",
+                    f"**In Progress:** {in_progress} ⏳",
+                    f"**Failed:** {failed} ❌",
+                    f"**Progress:** {pct}%",
+                ]
+
+                # Progress bar
+                filled = "█" * (pct // 10)
+                empty = "░" * (10 - pct // 10)
+                lines.append(f"**{filled}{empty}** {pct}%")
+
+                return "\n".join(lines)
+
+            else:
+                return (
+                    f"❌ Unknown subcommand: `{subcmd}`\n\n"
+                    "**Available commands:**\n"
+                    "- `/task` — list all tasks\n"
+                    "- `/task add <description>` — add a new task\n"
+                    "- `/task done <id>` — mark task as done\n"
+                    "- `/task status` — show summary"
+                )
+
+        except Exception as e:
+            return f"❌ Task command failed: {e}"
 
     def update_session_name_if_needed(self, session, message: str):
         if not session.name:
