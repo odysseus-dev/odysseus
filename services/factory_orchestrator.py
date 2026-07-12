@@ -1355,13 +1355,15 @@ def _resolve_filename(node: Dict, used: set) -> str:
 
 def _extract_output(result) -> str:
     """Extract the text output from a node's result JSON."""
+    from services.factory_continuation import strip_code_fences
     if not result:
         return ""
     if isinstance(result, str):
-        return result
+        return strip_code_fences(result)
     if isinstance(result, dict):
-        return result.get("output") or result.get("text") or ""
-    return str(result)
+        val = result.get("output") or result.get("text") or ""
+        return strip_code_fences(val) if val else ""
+    return strip_code_fences(str(result))
 
 
 def compile_delivery(project_id: int) -> Optional[str]:

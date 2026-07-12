@@ -1508,6 +1508,25 @@ async function _refreshProjects() {
 // ── Utility ───────────────────────────────────────────────────
 
 /**
+ * Strip markdown code fences from output (```lang\n...\n```).
+ * Models often wrap file content in fences despite instructions not to.
+ */
+function _stripFences(text) {
+  if (!text) return text;
+  const s = text.trimStart();
+  if (!s.startsWith('```')) return text;
+  const lines = s.split('\n');
+  if (lines.length < 2) return text;
+  // First line is ```lang — strip it
+  if (!lines[0].trim().startsWith('```')) return text;
+  // Find last non-empty line
+  let lastIdx = lines.length - 1;
+  while (lastIdx > 0 && !lines[lastIdx].trim()) lastIdx--;
+  if (lines[lastIdx].trim() !== '```') return text; // no closing fence
+  return lines.slice(1, lastIdx).join('\n');
+}
+
+/**
  * Extract the output text from a task's result, which may be either an
  * object ({output: "...", ...}) or a JSON string that needs parsing.
  * Returns the actual content string (HTML, code, etc.) or empty string.
@@ -1523,22 +1542,22 @@ function _getOutput(result) {
       if (parsed && typeof parsed === 'object') {
         const val = parsed.output;
         if (val !== undefined && val !== null) {
-          if (typeof val === 'string') return val;
+          if (typeof val === 'string') return _stripFences(val);
           if (typeof val === 'object') return JSON.stringify(val);
-          return String(val);
+          return _stripFences(String(val));
         }
       }
     } catch (_) { /* not JSON — use the string as-is */ }
-    return result;
+    return _stripFences(result);
   }
 
   // Object — extract .output field
   if (typeof result === 'object') {
     const val = result.output;
     if (val !== undefined && val !== null) {
-      if (typeof val === 'string') return val;
+      if (typeof val === 'string') return _stripFences(val);
       if (typeof val === 'object') return JSON.stringify(val);
-      return String(val);
+      return _stripFences(String(val));
     }
     return '';
   }

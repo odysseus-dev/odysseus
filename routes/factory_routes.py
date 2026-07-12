@@ -14,6 +14,7 @@ from collections import OrderedDict
 from fastapi import APIRouter, HTTPException, Request
 
 from services.factory_service import FactoryService
+from services.factory_continuation import strip_code_fences
 from services.factory_orchestrator import plan_project, iterate_project, launch_iteration, launch_planning, launch, relaunch, stop as stop_orchestrator, compile_delivery
 
 logger = logging.getLogger(__name__)
@@ -40,16 +41,16 @@ def _extract_output(result):
             if isinstance(parsed, dict):
                 val = parsed.get('output')
             else:
-                return result  # valid JSON but not an object — use raw string
+                return strip_code_fences(result)  # valid JSON but not an object — use raw string
         except Exception:
-            return result  # not JSON — use raw string
+            return strip_code_fences(result)  # not JSON — use raw string
     else:
         return ''
     if val is None:
         return ''
     if isinstance(val, (dict, list)):
         return _json.dumps(val)
-    return str(val)
+    return strip_code_fences(str(val))
 
 
 import asyncio as _asyncio
