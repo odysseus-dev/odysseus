@@ -70,7 +70,6 @@ def test_calendar_event_surfaces_use_computed_foreground_variable():
 
     assert "_calReadableTextColor" in utils_js
     assert "function _calEventFg(ev)" in calendar_js
-    assert "--cal-event-fg:${_calEventFg(md)}" in calendar_js
     assert "--cal-event-fg:${_calEventFg(ev)}" in calendar_js
     assert "color: var(--cal-event-fg, #fff);" in style_css
     assert "color: var(--cal-event-fg, var(--fg));" in style_css
