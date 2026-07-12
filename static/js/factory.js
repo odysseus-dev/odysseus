@@ -670,6 +670,12 @@ function _renderKanban(container) {
         <span class="factory-progress-text">${info.done}/${info.total} tasks (${info.pct}%)</span>
         <div class="factory-project-actions" id="factory-project-actions"></div>
       </div>
+      ${(p.status === 'completed' || p.status === 'running' || p.status === 'paused') ? `
+        <div class="factory-iterate">
+          <textarea id="factory-iterate-input" placeholder="Describe what to add or change..." rows="2"></textarea>
+          <button id="factory-iterate-btn" class="factory-btn factory-btn-primary">Build more</button>
+        </div>
+      ` : ''}
     </div>
     ${isPlanning ? `
       <div class="factory-planning-indicator">
@@ -692,12 +698,6 @@ function _renderKanban(container) {
         `).join('')}
       </div>
     `}
-    ${(p.status === 'completed' || p.status === 'running' || p.status === 'paused') ? `
-      <div class="factory-iterate">
-        <textarea id="factory-iterate-input" placeholder="Describe what to add or change..." rows="2"></textarea>
-        <button id="factory-iterate-btn" class="factory-btn factory-btn-primary">Build more</button>
-      </div>
-    ` : ''}
   `;
 
   if (!isPlanning) {
