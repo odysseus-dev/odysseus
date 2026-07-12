@@ -55,12 +55,6 @@ venv\Scripts\python.exe odysseus-desktop.py
 >
 > To verify you're on the right interpreter: `venv\Scripts\python.exe -c "import sys; print(sys.executable)"` should print a path inside your `odysseus\venv\` folder. If it doesn't, delete `venv\` and recreate it with `python -m venv venv`.
 
-After the PR merges into upstream `dev`/`main`, the same commands work with:
-
-```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
-```
-
 `pip install -r requirements.txt` pulls `pywebview`, `pystray`, and `pillow` automatically — the harness needs all three.
 
 **What it does:**
