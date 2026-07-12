@@ -406,13 +406,15 @@ class ChatHandler:
             )
 
         # Store goal in session extra_data
+        if sess is None:
+            sess = type('obj', (object,), {'extra_data': {}, 'id': None})()
         if not hasattr(sess, "extra_data") or sess.extra_data is None:
             sess.extra_data = {}
         sess.extra_data["goal"] = goal_text
         sess.extra_data["goal_set_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
 
         # Persist to database
-        if self.session_manager and hasattr(sess, "id"):
+        if self.session_manager and hasattr(sess, "id") and sess.id:
             try:
                 self.session_manager.update_session_metadata(sess.id, sess.extra_data)
             except Exception as e:
