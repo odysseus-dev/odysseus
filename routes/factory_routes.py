@@ -14,7 +14,7 @@ from collections import OrderedDict
 from fastapi import APIRouter, HTTPException, Request
 
 from services.factory_service import FactoryService
-from services.factory_orchestrator import plan_project, iterate_project, launch_iteration, launch, relaunch, stop as stop_orchestrator, compile_delivery
+from services.factory_orchestrator import plan_project, iterate_project, launch_iteration, launch_planning, launch, relaunch, stop as stop_orchestrator, compile_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,13 @@ def setup_factory_routes() -> APIRouter:
 
     @router.post("/projects")
     async def create_project(request: Request):
-        """Create a new Factory project and plan tasks via LLM (synchronous)."""
+        """Create a new Factory project and launch planning as a background task.
+
+        Returns immediately with the project in 'planning' status. The planner
+        LLM call runs as a non-blocking asyncio task (launch_planning). The
+        frontend polls for status and picks up tasks when planning completes
+        (typically 10-30s later).
+        """
         body = await request.json()
         description = body.get("description")
         if not description:
@@ -142,18 +148,15 @@ def setup_factory_routes() -> APIRouter:
             logger.exception("create_project failed")
             raise HTTPException(500, str(e))
 
-        # Run planning synchronously so tasks exist when the response returns.
-        # Typically takes 10-30s. The orchestrator (task execution) launches
-        # as a background task inside plan_project.
+        # Launch planning as a background task — returns immediately.
+        # The planner LLM call can take 10-30s; blocking on it risks 504
+        # from reverse proxies. The frontend's polling picks up tasks
+        # when planning completes.
         pid = project["id"]
-        try:
-            await plan_project(pid, owner=owner)
-        except Exception as e:
-            logger.exception(f"Factory: planning failed for project {pid}: {e}")
+        launch_planning(pid, owner=owner)
 
-        # Return the project with tasks populated
-        result = svc.get_project(pid)
-        return result or project
+        # Return the project immediately (status='planning', no tasks yet)
+        return svc.get_project(pid) or project
 
     @router.get("/projects")
     async def list_projects(owner: str = "default"):
