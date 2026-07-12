@@ -38,7 +38,7 @@ Open `http://localhost:7000` when the containers are healthy. The first admin pa
 
 ### Windows Desktop
 
-For a native desktop experience with system tray, taskbar icon, and no browser tabs:
+For a native desktop experience with system tray, taskbar icon, and no browser tabs, use the included `odysseus-desktop.py` harness (requires Python 3.11+ and Git for Windows):
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
@@ -50,7 +50,22 @@ python setup.py install
 venv\Scripts\python.exe odysseus-desktop.py
 ```
 
-The web UI opens in its own window. Close minimizes to tray; quit from the tray menu. Depends on `pywebview`, `pystray`, and `pillow` (all in `requirements.txt`).
+`pip install -r requirements.txt` pulls `pywebview`, `pystray`, and `pillow` automatically — the harness needs all three.
+
+**What it does:**
+- Starts the uvicorn backend as a managed subprocess (auto-restarts on crash, up to 5 retries)
+- Opens the web UI in a native pywebview window — no browser needed
+- System tray icon (boat logo) with Start/Stop/Open/Quit controls
+- Close button minimizes to tray instead of quitting
+- Taskbar icon set to the Odysseus boat logo
+
+**PyInstaller packaging** (optional, builds a standalone `.exe`):
+```bash
+venv\Scripts\python.exe -m PyInstaller odysseus-desktop.spec
+```
+Output: `dist\Odysseus Desktop.exe`
+
+For local models, point Odysseus to `http://localhost:11434/v1` (Ollama) in Settings after launch.
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
