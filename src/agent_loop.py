@@ -318,6 +318,11 @@ _DOMAIN_RULES = {
 ## Integration/API rules
 - To query or control a configured service integration (Home Assistant, Miniflux, Gitea, Linkding, Jellyfin, or any other registered service), use `api_call` with the integration name, HTTP method, path, and optional JSON body.
 - Do not use shell, curl, or `app_api` to reach a user's connected integration when `api_call` is available.""",
+    "memory": """\
+## Memory rules
+- Persistent facts/preferences about the user are stored with `manage_memory` (action=add|list|search|edit|delete).
+- NEVER claim a memory was saved, updated, or deleted without a successful manage_memory tool result.
+- When a new fact updates a stored one, search and edit the existing memory instead of adding a duplicate.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -332,6 +337,7 @@ _DOMAIN_TOOL_MAP = {
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
+    "memory": {"manage_memory"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -1076,6 +1082,16 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     if has(r"\bapi[ _]call\b", r"\bintegrations?\b",
            r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
         domains.add("integrations")
+    # Memory intent — storing/recalling/updating facts about the user via
+    # manage_memory. Without this, "store this fact in memory" / "remember that
+    # I ..." matches no domain, classifies as low-signal, and takes the direct
+    # no-tools chat path — where the model *claims* it saved a memory although
+    # no tool ran (same failure class as the api_call case above). Detect it
+    # explicitly so the "memory" domain defeats the low-signal check and seeds
+    # manage_memory deterministically (see _DOMAIN_TOOL_MAP).
+    if has(r"\bmemor(?:y|ies|ize|ized)\b", r"\bremember\b",
+           r"\bforget (?:that|this|about|my|what)\b", r"\bmanage_memory\b"):
+        domains.add("memory")
 
     low_signal = not continuation and not domains
     return {
