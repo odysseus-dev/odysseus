@@ -52,6 +52,11 @@ def _extract_output(result):
     return str(val)
 
 
+import asyncio as _asyncio
+
+# Running dev servers: {project_id: (proc, port)}
+_running_servers: dict = {}
+
 # Ephemeral token→files cache for project-delivery previews. Stores ALL
 # project files (JS, CSS, images, HTML) keyed by filename, so the catch-all
 # route can serve individual files with correct MIME types — the browser
@@ -404,6 +409,224 @@ def setup_factory_routes() -> APIRouter:
                 "exit_code": -1,
                 "workspace": workspace,
             }
+
+    # ── Node.js project serve / preview ────────────────────────
+
+    @router.post("/projects/{project_id}/serve")
+    async def serve_project(project_id: int, request: Request):
+        """Start a dev server for a Node.js project (npm install + npm run dev).
+
+        Extracts files, runs npm install if needed, starts the dev server
+        on port 4200+project_id. Returns a proxy URL for the iframe.
+        """
+        import json as _json
+        import os as _os
+        import signal as _signal
+        from src.constants import DATA_DIR
+
+        project = svc.get_project(project_id)
+        if not project:
+            raise HTTPException(404, f"Project {project_id} not found")
+
+        # Stop any existing server for this project
+        existing = _running_servers.get(project_id)
+        if existing:
+            proc, port = existing
+            try:
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
+            except Exception:
+                pass
+            _running_servers.pop(project_id, None)
+
+        # Extract files to workspace (same as exec)
+        workspace = _os.path.join(DATA_DIR, "factory", "workspace", str(project_id))
+        _os.makedirs(workspace, exist_ok=True)
+
+        nodes = svc.get_nodes(project_id)
+        completed = [n for n in nodes if n.get("status") == "completed" and n.get("filename")]
+        by_filename = {}
+        for n in completed:
+            fname = n["filename"]
+            if fname not in by_filename or n.get("id", 0) > by_filename[fname].get("id", 0):
+                by_filename[fname] = n
+
+        for fname, n in by_filename.items():
+            output = _extract_output(n.get("result"))
+            if not output:
+                continue
+            file_path = _os.path.normpath(_os.path.join(workspace, fname))
+            if not file_path.startswith(workspace + _os.sep) and file_path != workspace:
+                continue
+            _os.makedirs(_os.path.dirname(file_path), exist_ok=True)
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(output)
+            except Exception:
+                pass
+
+        # Check for package.json
+        pkg_json_path = _os.path.join(workspace, "package.json")
+        if not _os.path.exists(pkg_json_path):
+            raise HTTPException(400, "No package.json found — this is not a Node.js project")
+
+        try:
+            with open(pkg_json_path, "r") as f:
+                pkg = _json.load(f)
+        except Exception:
+            raise HTTPException(400, "Invalid package.json")
+
+        scripts = pkg.get("scripts", {})
+        # Priority: dev > start > preview
+        run_script = None
+        for candidate in ("dev", "start", "preview", "serve"):
+            if candidate in scripts:
+                run_script = candidate
+                break
+        if not run_script:
+            raise HTTPException(400, "No dev/start/preview script found in package.json")
+
+        # Determine port
+        port = 4200 + project_id
+
+        # Run npm install (if node_modules doesn't exist)
+        node_modules = _os.path.join(workspace, "node_modules")
+        install_log = ""
+        if not _os.path.exists(node_modules):
+            try:
+                install_proc = await _asyncio.create_subprocess_shell(
+                    "npm install",
+                    cwd=workspace,
+                    stdout=_asyncio.subprocess.PIPE,
+                    stderr=_asyncio.subprocess.STDOUT,
+                )
+                try:
+                    stdout_b, _ = await _asyncio.wait_for(install_proc.communicate(), timeout=300)
+                    install_log = stdout_b.decode("utf-8", errors="replace")[-3000:]
+                except _asyncio.TimeoutExpired:
+                    install_proc.kill()
+                    await install_proc.wait()
+                    raise HTTPException(500, "npm install timed out after 300s")
+            except FileNotFoundError:
+                raise HTTPException(500, "npm not found — Node.js is not installed on the server")
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, f"npm install failed: {e}")
+
+        # Start the dev server as a background process
+        env = dict(_os.environ)
+        env["PORT"] = str(port)
+        env["HOST"] = "0.0.0.0"
+        # Vite-specific: set the port via flag if vite is the runner
+        is_vite = "vite" in (pkg.get("devDependencies", {}) or {}) or "vite" in (pkg.get("dependencies", {}) or {})
+
+        if is_vite:
+            cmd = f"npx vite --port {port} --host 0.0.0.0"
+        else:
+            cmd = f"npm run {run_script}"
+
+        try:
+            proc = await _asyncio.create_subprocess_shell(
+                cmd,
+                cwd=workspace,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+                env=env,
+                preexec_fn=_os.setsid if hasattr(_os, 'setsid') else None,
+            )
+        except Exception as e:
+            raise HTTPException(500, f"Failed to start dev server: {e}")
+
+        _running_servers[project_id] = (proc, port)
+
+        # Wait a moment for the server to start, then verify it's reachable
+        await _asyncio.sleep(3)
+        import httpx as _httpx
+        reachable = False
+        for attempt in range(10):
+            try:
+                async with _httpx.AsyncClient() as client:
+                    resp = await client.get(f"http://localhost:{port}/", timeout=2)
+                    if resp.status_code < 500:
+                        reachable = True
+                        break
+            except Exception:
+                pass
+            await _asyncio.sleep(2)
+
+        if not reachable:
+            # Server didn't start — read stderr for diagnostics
+            try:
+                stderr_b = await _asyncio.wait_for(proc.stderr.read(2000), timeout=2)
+                err_msg = stderr_b.decode("utf-8", errors="replace")
+            except Exception:
+                err_msg = "(no output)"
+            try:
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
+            except Exception:
+                pass
+            _running_servers.pop(project_id, None)
+            raise HTTPException(500, f"Dev server failed to start. Output: {err_msg[:500]}")
+
+        logger.info(f"Factory: dev server started for project {project_id} on port {port}")
+
+        return {
+            "url": f"/api/factory/projects/{project_id}/proxy/",
+            "port": port,
+            "script": run_script,
+            "install_log": install_log[-500:] if install_log else None,
+            "status": "running",
+        }
+
+    @router.post("/projects/{project_id}/serve/stop")
+    async def stop_serve_project(project_id: int):
+        """Stop the dev server for a project."""
+        import os as _os
+        import signal as _signal
+        existing = _running_servers.get(project_id)
+        if not existing:
+            return {"status": "not_running"}
+        proc, port = existing
+        try:
+            _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        _running_servers.pop(project_id, None)
+        logger.info(f"Factory: dev server stopped for project {project_id}")
+        return {"status": "stopped"}
+
+    @router.get("/projects/{project_id}/proxy/{path:path}")
+    async def proxy_project(project_id: int, path: str, request: Request):
+        """Proxy HTTP requests to the project's dev server."""
+        import httpx as _httpx
+        existing = _running_servers.get(project_id)
+        if not existing:
+            raise HTTPException(404, "Dev server not running")
+        _, port = existing
+        # Forward query params
+        query = dict(request.query_params)
+        target = f"http://localhost:{port}/{path}"
+        try:
+            async with _httpx.AsyncClient() as client:
+                resp = await client.get(target, params=query, timeout=10, follow_redirects=False)
+                # Forward the response — strip hop-by-hop headers
+                excluded = {"transfer-encoding", "connection", "content-encoding"}
+                headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+                from fastapi.responses import Response
+                return Response(content=resp.content, status_code=resp.status_code,
+                                headers=headers, media_type=resp.headers.get("content-type"))
+        except _httpx.ConnectError:
+            raise HTTPException(502, "Dev server not responding")
+        except Exception as e:
+            raise HTTPException(502, f"Proxy error: {e}")
+
+    @router.get("/projects/{project_id}/proxy/")
+    async def proxy_project_root(project_id: int, request: Request):
+        """Proxy root path to the dev server."""
+        return await proxy_project(project_id, "", request)
 
     @router.put("/projects/{project_id}")
     async def update_project(project_id: int, request: Request):

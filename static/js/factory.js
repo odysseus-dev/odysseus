@@ -1178,6 +1178,92 @@ async function _postPreviewFiles(files, mainFile) {
 }
 
 /**
+ * Start a dev server for a Node.js project and show it in a preview overlay.
+ */
+async function _serveNodeProject(project) {
+  // Remove any existing preview overlay
+  const existing = document.getElementById('factory-project-preview');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'factory-project-preview';
+  overlay.className = 'factory-project-preview-overlay';
+  overlay.innerHTML = `
+    <div class="factory-project-preview-toolbar">
+      <span class="factory-project-preview-title">Starting ${_esc(project.title || 'project')}...</span>
+      <div class="factory-project-preview-actions">
+        <button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-preview-close-btn" title="Close">✕ Close</button>
+      </div>
+    </div>
+    <div class="factory-serve-loading" id="factory-serve-loading">
+      <div class="factory-serve-spinner">${ICONS.spinner}</div>
+      <div class="factory-serve-status" id="factory-serve-status">Installing dependencies...</div>
+      <div class="factory-serve-log" id="factory-serve-log"></div>
+    </div>
+    <div class="factory-project-preview-frame-wrap" style="display:none;" id="factory-serve-frame-wrap">
+      <iframe id="factory-project-preview-iframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" src="about:blank"></iframe>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const statusEl = overlay.querySelector('#factory-serve-status');
+  const logEl = overlay.querySelector('#factory-serve-log');
+  const loadingEl = overlay.querySelector('#factory-serve-loading');
+  const frameWrap = overlay.querySelector('#factory-serve-frame-wrap');
+  const iframe = overlay.querySelector('#factory-project-preview-iframe');
+
+  // Close handler — stop the server
+  function _close() {
+    overlay.remove();
+    // Fire and forget — stop the dev server
+    fetch(`${_API}/projects/${project.id}/serve/stop`, { method: 'POST' }).catch(() => {});
+  }
+  overlay.querySelector('#factory-preview-close-btn')?.addEventListener('click', _close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) _close(); });
+  const escHandler = (e) => { if (e.key === 'Escape') { _close(); document.removeEventListener('keydown', escHandler); } };
+  document.addEventListener('keydown', escHandler);
+
+  // Start the server
+  try {
+    statusEl.textContent = 'Installing dependencies (npm install)...';
+    const res = await fetch(`${_API}/projects/${project.id}/serve`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Server error (${res.status_code})`);
+    }
+    const result = await res.json();
+
+    if (result.install_log) {
+      logEl.textContent = result.install_log;
+    }
+
+    statusEl.textContent = `Server running on port ${result.port} (npm run ${result.script})`;
+
+    // Switch from loading to iframe
+    await new Promise(r => setTimeout(r, 500)); // brief transition
+    loadingEl.style.display = 'none';
+    frameWrap.style.display = '';
+
+    // Load the proxy URL — this serves the dev server's output
+    iframe.src = result.url;
+
+    // Update title
+    overlay.querySelector('.factory-project-preview-title').textContent =
+      `${_esc(project.title || 'Project')} — running on :${result.port}`;
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    logEl.textContent = '';
+    // Add a close button since the server didn't start
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'factory-btn factory-btn-sm factory-btn-warn';
+    retryBtn.textContent = 'Close';
+    retryBtn.style.marginTop = '12px';
+    retryBtn.addEventListener('click', _close);
+    loadingEl.appendChild(retryBtn);
+  }
+}
+
+/**
  * Assemble all completed task files into a full project preview.
  * Files are served individually so the browser resolves relative URLs
  * (<script src="js/main.js">, <link href="css/style.css">) naturally.
@@ -1352,8 +1438,10 @@ function _renderProjectActions(container, project) {
   }
   buttons += `<button class="factory-btn factory-btn-sm factory-btn-ghost" id="factory-restart-btn">${ICONS.refresh} Restart</button>`;
   const hasHTMLTasks = (project.tasks || []).some(t => t.status === 'completed' && ((t.filename || '').toLowerCase().endsWith('.html') || (t.task_type || '').toLowerCase() === 'frontend'));
-  if (hasHTMLTasks) {
-    buttons += `<button class="factory-btn factory-btn-sm factory-btn-primary" id="factory-preview-project-btn" title="Preview the assembled project">▶ Preview</button>`;
+  const hasNodeProject = _isNodeProject(project);
+  if (hasHTMLTasks || hasNodeProject) {
+    const previewLabel = hasNodeProject && !hasHTMLTasks ? '▶ Run Server' : '▶ Preview';
+    buttons += `<button class="factory-btn factory-btn-sm factory-btn-primary" id="factory-preview-project-btn" title="${hasNodeProject ? 'Install deps and start dev server' : 'Preview the assembled project'}">${previewLabel}</button>`;
   }
   if (project.status === 'running') {
     buttons += `<button class="factory-btn factory-btn-sm ${_autoMode ? 'factory-btn-primary' : 'factory-btn-ghost'}" id="factory-auto-btn" title="Toggle autonomous mode">🤖 Auto</button>`;
@@ -1377,7 +1465,11 @@ function _renderProjectActions(container, project) {
     catch (err) { alert('Restart failed: ' + err.message); }
   });
   _el('factory-preview-project-btn')?.addEventListener('click', () => {
-    _previewProject(project);
+    if (_isNodeProject(project)) {
+      _serveNodeProject(project);
+    } else {
+      _previewProject(project);
+    }
   });
   _el('factory-auto-btn')?.addEventListener('click', async () => {
     const btn = _el('factory-auto-btn');
@@ -1460,6 +1552,16 @@ function _esc(str) {
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML;
+}
+
+/**
+ * Check if a project has a package.json (Node.js project).
+ */
+function _isNodeProject(project) {
+  return (project.tasks || []).some(t =>
+    t.status === 'completed' &&
+    (t.filename || '').toLowerCase() === 'package.json'
+  );
 }
 
 function _isPreviewable(task) {

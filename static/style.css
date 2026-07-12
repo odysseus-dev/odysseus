@@ -41581,6 +41581,36 @@ body.factory-panel-view .factory-divider { display:none; }
   border: none;
 }
 
+/* ── Factory serve loading ── */
+.factory-serve-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  gap: 12px;
+  flex: 1;
+}
+.factory-serve-spinner svg, .factory-serve-spinner img {
+  width: 28px;
+  height: 28px;
+  animation: factory-spin 1s linear infinite;
+}
+.factory-serve-status {
+  font-size: 14px;
+  font-weight: 600;
+}
+.factory-serve-log {
+  font-family: var(--mono, 'Fira Code', monospace);
+  font-size: 11px;
+  opacity: 0.6;
+  max-width: 600px;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
 /* ── Preview tabs ──────────────────────────────────────────── */
 
 .factory-project-preview-tabs {
