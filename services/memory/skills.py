@@ -22,8 +22,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .skill_format import Skill, slugify
 
@@ -52,6 +53,67 @@ def _to_float(x, default: float = 0.0) -> float:
         return float(x)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_procedure_text(value: str) -> List[str]:
+    """Normalize a plain-text procedure into list entries.
+
+    A top-level Markdown bullet or numbered item starts a new entry; indented
+    continuation lines stay with that entry. If the text is not a Markdown list,
+    blank-line-separated blocks become entries. This keeps multiline Markdown
+    ordered and stable without ever treating the string as an iterable of chars.
+    """
+    text = value.strip("\n")
+    if not text.strip():
+        return []
+
+    marker_re = re.compile(r"^(?:[-*]|\d+[.)])\s+(.*)$")
+    has_top_level_markers = any(
+        line == line.lstrip() and marker_re.match(line.strip())
+        for line in text.splitlines()
+    )
+
+    if not has_top_level_markers:
+        blocks = re.split(r"\n\s*\n", text)
+        return [block.strip() for block in blocks if block.strip()]
+
+    items: List[List[str]] = []
+    current: List[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        marker = marker_re.match(stripped) if line == line.lstrip() else None
+        if marker:
+            if current:
+                items.append(current)
+            current = [marker.group(1).rstrip()]
+        elif current:
+            current.append(stripped)
+        else:
+            current = [stripped]
+    if current:
+        items.append(current)
+    return ["\n".join(lines).strip() for lines in items if "\n".join(lines).strip()]
+
+
+def _normalize_string_list_field(
+    field: str,
+    value: Any,
+    *,
+    allow_procedure_string: bool = False,
+) -> List[str]:
+    if value is None:
+        return []
+    if allow_procedure_string and isinstance(value, str):
+        return _normalize_procedure_text(value)
+    if not isinstance(value, list):
+        if allow_procedure_string:
+            raise ValueError(f"{field} must be a list of strings or a string")
+        raise ValueError(f"{field} must be a list of strings")
+    if not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{field} must be a list of strings")
+    return list(value)
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +380,26 @@ class SkillsManager:
     ) -> Dict:
         # Normalize name
         nm = slugify(name or title or description or "skill")
+        steps_norm = _normalize_string_list_field("steps", steps) if steps is not None else []
+        if procedure is not None:
+            proc = _normalize_string_list_field("procedure", procedure, allow_procedure_string=True)
+        else:
+            proc = steps_norm
+        tag_list = _normalize_string_list_field("tags", tags if tags is not None else [])
+        platform_list = _normalize_string_list_field("platforms", platforms if platforms is not None else [])
+        requires_toolset_list = _normalize_string_list_field(
+            "requires_toolsets",
+            requires_toolsets if requires_toolsets is not None else [],
+        )
+        fallback_toolset_list = _normalize_string_list_field(
+            "fallback_for_toolsets",
+            fallback_for_toolsets if fallback_for_toolsets is not None else [],
+        )
+        pitfall_list = _normalize_string_list_field("pitfalls", pitfalls if pitfalls is not None else [])
+        verification_list = _normalize_string_list_field(
+            "verification",
+            verification if verification is not None else [],
+        )
 
         # Free dedup-at-creation (always, no API): for LLM-authored skills,
         # skip if a near-identical skill already exists (Jaccard over
@@ -330,7 +412,7 @@ class SkillsManager:
             cand = _tokenize(" ".join([
                 nm, (description or title or ""),
                 (when_to_use if when_to_use is not None else (problem or "")),
-                " ".join(procedure if procedure is not None else (steps or [])),
+                " ".join(proc),
             ]))
             if cand:
                 for s in _dedup_pool:
@@ -362,20 +444,20 @@ class SkillsManager:
             description=(description or title or "").strip(),
             version=version,
             category=category or "general",
-            tags=list(tags or []),
-            platforms=list(platforms or []),
-            requires_toolsets=list(requires_toolsets or []),
-            fallback_for_toolsets=list(fallback_for_toolsets or []),
+            tags=tag_list,
+            platforms=platform_list,
+            requires_toolsets=requires_toolset_list,
+            fallback_for_toolsets=fallback_toolset_list,
             status=status or "draft",
             confidence=float(confidence),
             source=source,
             teacher_model=teacher_model,
             owner=owner,
             when_to_use=(when_to_use if when_to_use is not None else (problem or "")),
-            procedure=list(procedure if procedure is not None else (steps or [])),
-            pitfalls=list(pitfalls or []),
-            verification=list(verification or []),
-            body_extra=(solution if solution and not procedure else ""),
+            procedure=proc,
+            pitfalls=pitfall_list,
+            verification=verification_list,
+            body_extra=(solution if solution and not proc else ""),
         )
         self._write_skill(sk)
 
@@ -465,7 +547,11 @@ class SkillsManager:
                          "platforms", "requires_toolsets", "fallback_for_toolsets")
             for k in list_keys:
                 if k in updates:
-                    setattr(sk, k, list(updates[k] or []))
+                    setattr(sk, k, _normalize_string_list_field(
+                        k,
+                        updates[k],
+                        allow_procedure_string=(k == "procedure"),
+                    ))
 
             # Old-schema field aliases
             if "title" in updates and "description" not in updates:
@@ -475,7 +561,7 @@ class SkillsManager:
             if "solution" in updates and "body_extra" not in updates and not sk.procedure:
                 sk.body_extra = updates["solution"]
             if "steps" in updates and "procedure" not in updates:
-                sk.procedure = list(updates["steps"] or [])
+                sk.procedure = _normalize_string_list_field("steps", updates["steps"])
 
             # Rename
             new_name = slugify(updates.get("name") or sk.name)

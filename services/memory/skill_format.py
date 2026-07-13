@@ -186,12 +186,14 @@ def _emit_scalar(v: Any) -> str:
     return s
 
 
-def _as_list(v: Any) -> List[str]:
+def _as_string_list(v: Any, field_name: str) -> List[str]:
     if v is None:
         return []
     if isinstance(v, list):
-        return [str(x) for x in v if x not in (None, "")]
-    return [str(v)]
+        if not all(isinstance(x, str) for x in v):
+            raise ValueError(f"{field_name} must be a list of strings")
+        return [x for x in v if x != ""]
+    raise ValueError(f"{field_name} must be a list of strings")
 
 
 def _as_float(v: Any, default: float = 0.8) -> float:
@@ -284,10 +286,19 @@ def _parse_list_lines(text: str) -> List[str]:
             items.append(m.group(1).strip())
         elif items:
             # continuation of previous bullet
-            items[-1] = items[-1] + " " + s
+            items[-1] = items[-1] + "\n" + s
         else:
             items.append(s)
     return items
+
+
+def _emit_list_item(prefix: str, item: Any) -> str:
+    lines = str(item).splitlines() or [""]
+    first, rest = lines[0], lines[1:]
+    if not rest:
+        return f"{prefix} {first}"
+    continuation = "\n".join(f"   {line}" if line else "" for line in rest)
+    return f"{prefix} {first}\n{continuation}"
 
 
 def emit_body(sections: Dict[str, Any]) -> str:
@@ -301,9 +312,9 @@ def emit_body(sections: Dict[str, Any]) -> str:
             continue
         heading = _KEY_TO_HEADING[key]
         if key == "procedure":
-            body = "\n".join(f"{i + 1}. {x}" for i, x in enumerate(items))
+            body = "\n".join(_emit_list_item(f"{i + 1}.", x) for i, x in enumerate(items))
         else:
-            body = "\n".join(f"- {x}" for x in items)
+            body = "\n".join(_emit_list_item("-", x) for x in items)
         parts.append(f"## {heading}\n\n{body}")
     extra = (sections.get("body_extra") or "").strip()
     if extra:
@@ -410,10 +421,10 @@ class Skill:
             description=str(fm.get("description", "") or ""),
             version=str(fm.get("version", "1.0.0") or "1.0.0"),
             category=str(fm.get("category", "general") or "general"),
-            tags=_as_list(fm.get("tags")),
-            platforms=_as_list(fm.get("platforms")),
-            requires_toolsets=_as_list(fm.get("requires_toolsets")),
-            fallback_for_toolsets=_as_list(fm.get("fallback_for_toolsets")),
+            tags=_as_string_list(fm.get("tags"), "tags"),
+            platforms=_as_string_list(fm.get("platforms"), "platforms"),
+            requires_toolsets=_as_string_list(fm.get("requires_toolsets"), "requires_toolsets"),
+            fallback_for_toolsets=_as_string_list(fm.get("fallback_for_toolsets"), "fallback_for_toolsets"),
             status=str(fm.get("status", "draft") or "draft"),
             confidence=_as_float(fm.get("confidence", 0.8), 0.8),
             source=str(fm.get("source", "learned") or "learned"),

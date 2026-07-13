@@ -97,10 +97,13 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
                 "error": "name is required for add. Provide the exact slug the user should see, then report the returned name.",
                 "exit_code": 1,
             }
-        proc = args.get("procedure")
-        if proc is None:
-            proc = args.get("steps") or []
-        if not proc and not args.get("body_extra") and not args.get("solution"):
+        if "procedure" in args:
+            proc = args.get("procedure")
+        elif "steps" in args:
+            proc = args.get("steps")
+        else:
+            proc = []
+        if proc in (None, [], "") and not args.get("body_extra") and not args.get("solution"):
             return {"error": "procedure (or solution body) is required", "exit_code": 1}
         # Same auto-publish gate as the extractor path — when the user
         # has auto_approve_skills on and the caller didn't pin an explicit
@@ -113,30 +116,33 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
                 _status_arg = "published" if _prefs.get("auto_approve_skills", True) else "draft"
             except Exception:
                 _status_arg = "draft"
-        entry = sm.add_skill(
-            name=args.get("name"),
-            description=(args.get("description") or args.get("title") or "").strip(),
-            category=args.get("category") or "general",
-            tags=args.get("tags") or [],
-            platforms=args.get("platforms") or [],
-            requires_toolsets=args.get("requires_toolsets") or [],
-            fallback_for_toolsets=args.get("fallback_for_toolsets") or [],
-            when_to_use=(args.get("when_to_use") if args.get("when_to_use") is not None
-                         else args.get("problem", "")),
-            procedure=proc,
-            pitfalls=args.get("pitfalls") or [],
-            verification=args.get("verification") or [],
-            status=_status_arg,
-            version=args.get("version") or "1.0.0",
-            confidence=args.get("confidence", 0.8),
-            source=args.get("source", "learned"),
-            teacher_model=args.get("teacher_model"),
-            owner=owner,
-            title=args.get("title", ""),
-            problem=args.get("problem", ""),
-            solution=args.get("solution", ""),
-            steps=args.get("steps") or [],
-        )
+        try:
+            entry = sm.add_skill(
+                name=args.get("name"),
+                description=(args.get("description") or args.get("title") or "").strip(),
+                category=args.get("category") or "general",
+                tags=args["tags"] if "tags" in args else [],
+                platforms=args["platforms"] if "platforms" in args else [],
+                requires_toolsets=args["requires_toolsets"] if "requires_toolsets" in args else [],
+                fallback_for_toolsets=args["fallback_for_toolsets"] if "fallback_for_toolsets" in args else [],
+                when_to_use=(args.get("when_to_use") if args.get("when_to_use") is not None
+                             else args.get("problem", "")),
+                procedure=proc,
+                pitfalls=args["pitfalls"] if "pitfalls" in args else [],
+                verification=args["verification"] if "verification" in args else [],
+                status=_status_arg,
+                version=args.get("version") or "1.0.0",
+                confidence=args.get("confidence", 0.8),
+                source=args.get("source", "learned"),
+                teacher_model=args.get("teacher_model"),
+                owner=owner,
+                title=args.get("title", ""),
+                problem=args.get("problem", ""),
+                solution=args.get("solution", ""),
+                steps=args["steps"] if "steps" in args else None,
+            )
+        except ValueError as e:
+            return {"error": str(e), "exit_code": 1}
         if entry.get("_deduped"):
             return {"results": (
                 f"A near-identical skill already exists: `{entry['name']}` — not creating "
@@ -172,7 +178,10 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         if not sk_new.owner:
             sk_new.owner = match.get("owner") or owner
-        ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
+        try:
+            ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
+        except ValueError as e:
+            return {"error": str(e), "exit_code": 1}
         return {"results": f"Edited skill `{sk_new.name}`."} if ok else {"error": "Update failed", "exit_code": 1}
 
     if action == "patch":
@@ -196,7 +205,10 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         except Exception as e:
             return {"error": f"Patched content is not valid SKILL.md: {e}", "exit_code": 1}
         sk_new.name = slugify(sk_new.name or name)
-        ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
+        try:
+            ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
+        except ValueError as e:
+            return {"error": str(e), "exit_code": 1}
         return {"results": f"Patched skill `{sk_new.name}`."} if ok else {"error": "Patch update failed", "exit_code": 1}
 
     if action == "publish":
