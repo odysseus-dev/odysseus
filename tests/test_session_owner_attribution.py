@@ -104,7 +104,7 @@ _MISSING = object()
 
 def test_bearer_owner_A_cannot_verify_owner_B_session(monkeypatch):
     monkeypatch.setattr(SR, "SessionLocal", _session_local_returning("bob"))
-    req = _req(api_token=True, api_token_owner="alice", current_user="api")
+    req = _req(api_token=True, api_token_owner="alice", current_user="api", api_token_scopes=["chat"])
     with pytest.raises(HTTPException) as exc:
         SR._verify_session_owner(req, "sid-owned-by-bob")
     assert exc.value.status_code == 404
@@ -112,7 +112,7 @@ def test_bearer_owner_A_cannot_verify_owner_B_session(monkeypatch):
 
 def test_owner_can_verify_their_own_session(monkeypatch):
     monkeypatch.setattr(SR, "SessionLocal", _session_local_returning("alice"))
-    req = _req(api_token=True, api_token_owner="alice", current_user="api")
+    req = _req(api_token=True, api_token_owner="alice", current_user="api", api_token_scopes=["chat"])
     # Should not raise.
     SR._verify_session_owner(req, "sid-owned-by-alice")
 
