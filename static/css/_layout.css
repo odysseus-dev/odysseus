@@ -364,6 +364,33 @@
     }
     .sidebar-hamburger {
       display: none !important; /* external #hamburger-btn is the only toggle */
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--hamburger-color, var(--fg));
+      cursor: pointer;
+      opacity: 0.72;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .sidebar-hamburger:hover,
+    .sidebar-hamburger:active {
+      opacity: 1;
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+    /* The native Android WebView can use a touch landscape layout wider than
+       the phone breakpoint. Keep the in-drawer close control available there. */
+    html.android-webview .sidebar-hamburger {
+      display: flex !important;
+    }
+    html.android-webview body:not(.sidebar-collapsed) > .hamburger-btn {
+      opacity: 0;
+      pointer-events: none;
     }
     .sidebar-inner {
       flex: 1;
@@ -900,9 +927,12 @@
     .minimized-dock-chip:active { cursor: grabbing; }
     .minimized-dock-chip.dragging {
       cursor: grabbing; z-index: 1000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.55),
+                  0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent),
+                  0 0 48px color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
       transition: none;
       opacity: 0.95;
+      filter: brightness(1.08);
     }
     /* Whole-dock drag (grabbed an edge chip) */
     #minimized-dock.dock-dragging { cursor: grabbing; }
@@ -948,6 +978,45 @@
                   0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
     }
     .minimized-dock-chip.chip-compact-touch.chip-active svg { opacity: 1; }
+
+    #minimized-dock.dock-chip-snap-hover {
+      min-width: 48px;
+      min-height: 48px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent, var(--red)) 18%, var(--panel, var(--bg)));
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 72%, transparent),
+        0 0 28px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+      opacity: 1;
+    }
+    .minimized-dock-chip.chip-origin-snap {
+      border-color: var(--accent, var(--red)) !important;
+      box-shadow:
+        0 8px 22px rgba(0,0,0,0.55),
+        0 0 0 5px color-mix(in srgb, var(--accent, var(--red)) 28%, transparent) !important;
+      filter: brightness(1.12);
+    }
+    .minimized-dock-chip.chip-edge-snap {
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 88%, #fff 12%) !important;
+      box-shadow:
+        0 10px 28px rgba(0,0,0,0.58),
+        0 0 0 5px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent),
+        0 0 38px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent) !important;
+      filter: brightness(1.14);
+    }
+    .minimized-dock-chip.chip-pair-snap {
+      border-color: color-mix(in srgb, #7dd3fc 66%, var(--accent, var(--red))) !important;
+      box-shadow:
+        0 8px 22px rgba(0,0,0,0.52),
+        0 0 0 4px color-mix(in srgb, #7dd3fc 24%, transparent) !important;
+      filter: brightness(1.1);
+    }
+    .minimized-dock-chip[data-chip-dock-edge="left"],
+    .minimized-dock-chip[data-chip-dock-edge="right"],
+    .minimized-dock-chip[data-chip-dock-edge="top"],
+    .minimized-dock-chip[data-chip-dock-edge="bottom"] {
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 52%, var(--border));
+    }
 
     /* Long-press feedback for compact touch chips (all touch devices,
        including landscape >768px where the @media block below doesn't apply). */
@@ -1169,6 +1238,29 @@
       margin-left: 3px;
     }
     .minimized-dock-x:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 12%, transparent); }
+
+    /* ── Artsy dismiss animations ── */
+
+    /* X-button dissolve: shrink + fade + slight blur → feels like it melts away */
+    .minimized-dock-chip.chip-dissolving {
+      pointer-events: none !important;
+      transition: transform 0.34s cubic-bezier(0.4, 0, 0.2, 1),
+                  opacity 0.28s ease-in,
+                  filter 0.30s ease-in,
+                  box-shadow 0.30s ease-in;
+      transform: scale(0.45) translateY(-6px);
+      opacity: 0;
+      filter: blur(8px) brightness(1.4);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent),
+                  0 0 36px color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+    }
+
+    /* Swipe-to-dismiss: slide-out already set inline; this keeps it clean */
+    .minimized-dock-chip.chip-swiping {
+      pointer-events: none !important;
+      z-index: 10040 !important;
+    }
+
     @keyframes dock-chip-in {
       from { opacity: 0; transform: translateY(20px) scale(0.85); }
       to   { opacity: 1; transform: translateY(0)   scale(1); }
@@ -4783,6 +4875,25 @@
         padding: 18px 12px 8px 12px;
         min-height: 44px;
       }
+      /* Override desktop right-side header padding — on mobile the
+         external hamburger is hidden when the sidebar is open, so the
+         40 px clearance is dead space that shifts logo + clock left. */
+      .sidebar.right-side .sidebar-header {
+        padding: 18px 12px 8px 12px;
+      }
+      .sidebar.right-side .sidebar-brand {
+        padding: 0;
+      }
+      .sidebar.right-side .sidebar-brand-title {
+        margin-left: 0;
+      }
+      .sidebar-hamburger {
+        display: flex !important;
+      }
+      body:not(.sidebar-collapsed) > .hamburger-btn {
+        opacity: 0;
+        pointer-events: none;
+      }
       .sidebar-brand-title {
         font-size: 1.2rem;
         left: 0 !important;
@@ -5545,6 +5656,10 @@
     }
     #mobile-backdrop, #mobile-menu-btn { display:none !important; }
     #sidebar-backdrop { display:none !important; }
+    @media (max-width: 768px) {
+      #sidebar-backdrop { display:block !important; }
+    }
+    html.android-webview #sidebar-backdrop { display:block !important; }
     /* ----- Loading spinner ----- */
     @keyframes spin {
       to { transform: rotate(360deg); }

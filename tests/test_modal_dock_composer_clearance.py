@@ -383,8 +383,6 @@ def test_all_four_tile_snap_edges_delegate_to_reserved_edge_docks():
     assert "if (dockSize) {" in TILE_MANAGER_JS
     assert "return;" in TILE_MANAGER_JS
     assert "case 'right-half':     r = _rightDockPreviewRect(safe); break;" in TILE_MANAGER_JS
-    assert "const previewModal = document.getElementById(chip.dataset.modalId);" in MODAL_MANAGER_JS
-    assert "previewZoneAt(e.clientX, e.clientY, previewModal);" in MODAL_MANAGER_JS
 
 
 def test_edge_dock_preview_paints_the_full_consumed_rectangle():

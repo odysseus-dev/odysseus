@@ -212,7 +212,7 @@ export function initSidebarLayout(Storage, opts) {
     // own the screen and stray gestures (swipe, dragging a dock chip to the X)
     // were popping it open. Blocking the open helper covers every path.
     const cc = document.getElementById('chat-container');
-    if (window.innerWidth < 768 && cc && cc.classList.contains('compare-active')) return;
+    if (isMobileSidebarViewport() && cc && cc.classList.contains('compare-active')) return;
     markMobileSidebarOpen();
     // Optionally place the sidebar on a specific edge (the swipe gesture passes
     // the direction). Persist it + re-anchor the doc panel.
@@ -228,9 +228,9 @@ export function initSidebarLayout(Storage, opts) {
       }
     }
     const backdrop = document.getElementById('sidebar-backdrop');
-    if (window.innerWidth < 768 && iconRail) { iconRail.classList.remove('mobile-mini'); iconRail.style.cssText = ''; }
+    if (isMobileSidebarViewport() && iconRail) { iconRail.classList.remove('mobile-mini'); iconRail.style.cssText = ''; }
     sidebar.classList.remove('hidden');
-    if (backdrop && window.innerWidth < 768) backdrop.classList.add('visible');
+    if (backdrop && isMobileSidebarViewport()) backdrop.classList.add('visible');
     syncRailSide();
   };
 
@@ -255,7 +255,7 @@ export function initSidebarLayout(Storage, opts) {
       _userToggledSidebar = true;
       const isSidebarVisible = !sidebar.classList.contains('hidden');
 
-      if (window.innerWidth < 768) {
+      if (isMobileSidebarViewport()) {
         // Mobile: full sidebar ↔ hidden — simple toggle, no mini rail
         const backdrop = document.getElementById('sidebar-backdrop');
         if (iconRail) { iconRail.classList.remove('mobile-mini'); iconRail.style.cssText = ''; }
@@ -402,7 +402,7 @@ export function initSidebarLayout(Storage, opts) {
   document.body.appendChild(mobileBackdrop);
 
   function updateMobileBackdrop() {
-    if (window.innerWidth >= 768) { mobileBackdrop.classList.remove('visible'); return; }
+    if (!isMobileSidebarViewport()) { mobileBackdrop.classList.remove('visible'); return; }
     const sb = document.getElementById('sidebar');
     const rail = document.getElementById('icon-rail');
     const sidebarOpen = sb && !sb.classList.contains('hidden');
@@ -439,6 +439,7 @@ export function initSidebarLayout(Storage, opts) {
   const _origSyncRailSideCore = _syncRailSideCore;
   _syncRailSideFn = function() { _origSyncRailSideCore(); updateMobileBackdrop(); };
   window.syncRailSide = syncRailSide;
+  updateMobileBackdrop();
 
   // Swipe sidebar toward edge to close
   const sidebar = document.getElementById('sidebar');
@@ -470,7 +471,7 @@ export function initSidebarLayout(Storage, opts) {
 
   // ── Click outside sidebar / icon rail to close (mobile only) ──
   document.addEventListener('click', (e) => {
-    if (window.innerWidth >= 700) return; // desktop keeps sidebar open
+    if (!isMobileSidebarViewport()) return; // desktop keeps sidebar open
     const sb = document.getElementById('sidebar');
     const rail = document.getElementById('icon-rail');
     // Ignore clicks on elements removed from DOM (e.g. session list re-render during folder toggle)
@@ -513,7 +514,7 @@ export function initSidebarLayout(Storage, opts) {
   let _sidebarWasOpenBeforeTool = false;
   let _railWasOpenBeforeTool = false;
   document.addEventListener('click', (e) => {
-    if (window.innerWidth >= 700) return;
+    if (!isMobileSidebarViewport()) return;
     const btn = e.target.closest('[id^="tool-"], [id^="rail-"]');
     if (!btn) return;
     setTimeout(() => {
@@ -552,7 +553,7 @@ export function initSidebarLayout(Storage, opts) {
   // whatever state it was in before the tool was opened. ──
   // We watch every .modal for the .hidden class going on, and if our
   // remembered "sidebar-was-open" flag is set, undo the auto-close.
-  if (window.innerWidth < 700) {
+  if (isMobileSidebarViewport()) {
     const _restoreSidebar = () => {
       const sb = document.getElementById('sidebar');
       const rail = document.getElementById('icon-rail');

@@ -26,8 +26,6 @@
  */
 
 import {
-  previewZoneAt,
-  clearPreview,
   snapModalToZone,
   restoreModalSnap,
   fullscreenWorkspaceRect,
@@ -544,9 +542,12 @@ function _ensureDock() {
 
 // Manual order users can rearrange via drag.
 let _dockOrder = [];
-// Per-chip free-floating position (mobile only). When set, the chip renders
-// at this absolute viewport position instead of inside the dock flex layout.
+// Per-chip free-floating position. Android and desktop chips use these
+// independently; legacy mobile-browser layouts keep their grouped chain.
 const _chipPositions = new Map(); // modalId -> { left, top }
+// Optional viewport edge that owns a free chip. Keeping the edge separately
+// from its pixel position lets right/bottom-docked chips follow window resizes.
+const _chipDockEdges = new Map(); // modalId -> 'left' | 'right' | 'top' | 'bottom'
 // User-dragged position of the dock pad itself (both desktop and mobile).
 // Remembered across minimize→restore→minimize cycles so the dock reappears
 // where the user last parked it instead of snapping back to bottom-center.
@@ -596,10 +597,9 @@ function _syncDockLayout() {
 }
 
 function _saveDockState() {
-  // The dock-pad position is remembered on every platform. The per-chip
-  // free-float positions are still a mobile-only gesture, so we only have
-  // entries to persist there on touch layouts — but writing the (empty)
-  // map on desktop is harmless.
+  // The dock-pad position and independent chip positions are remembered on
+  // every platform. Edge ownership is stored separately so responsive window
+  // changes do not detach a chip from the side where the user parked it.
   try {
     _syncDockLayout();
     _pruneFallbackChipPositions();
@@ -613,6 +613,7 @@ function _saveDockState() {
       dockPos: _dockPos,
       dockPosByLayout: _dockPosByLayout,
       chips: Object.fromEntries(_chipPositions),
+      chipEdges: Object.fromEntries(_chipDockEdges),
     };
     localStorage.setItem(_DOCK_STORAGE_KEY, JSON.stringify(state));
   } catch {}
@@ -636,6 +637,13 @@ function _loadDockState() {
         }
       }
     }
+    if (state.chipEdges && typeof state.chipEdges === 'object') {
+      for (const [id, edge] of Object.entries(state.chipEdges)) {
+        if (_chipPositions.has(id) && ['left', 'right', 'top', 'bottom'].includes(edge)) {
+          _chipDockEdges.set(id, edge);
+        }
+      }
+    }
     if (state.dockPosByLayout && typeof state.dockPosByLayout === 'object') {
       _dockPosByLayout = { ...state.dockPosByLayout };
     }
@@ -644,6 +652,13 @@ function _loadDockState() {
     // dockPos values are ignored so portrait/landscape fall back to the
     // dynamic above-chat default instead of inheriting the other layout.
     _dockPos = _clampStoredDockPos(_dockPosByLayout[_dockLayout]);
+    // The Android app now moves chips individually, so the dock itself is a
+    // fixed home above the composer. Discard positions saved by the older
+    // whole-chain drag behavior while preserving every per-chip position.
+    if (_isOdysseusAndroidApp()) {
+      _dockPos = null;
+      _dockPosByLayout = {};
+    }
   } catch {}
 }
 
@@ -852,6 +867,52 @@ function _isDefaultDockDrop(dock, left, top, width, height) {
     || _isInDefaultDockHomeBand(dock, left, top, width, height);
 }
 
+function _usesIndependentChipPositions() {
+  // The native Android app and every PC layout (mouse, touch-screen, narrow
+  // circular chips, or wide pills) move one chip at a time. Mobile browsers
+  // retain their existing grouped-chain gesture.
+  return _isOdysseusAndroidApp() || !_isMobileDevice();
+}
+
+function _androidChipDockSnapPosition(dock, width = 40, height = 40) {
+  const dockedChip = dock?.querySelector?.('.minimized-dock-chip');
+  const dockRect = dock?.getBoundingClientRect?.();
+  if (dockedChip && dockRect?.width > 0 && dockRect?.height > 0) {
+    return _clampChipPosition(
+      dockRect.left + (dockRect.width - width) / 2,
+      dockRect.top + (dockRect.height - height) / 2,
+      width,
+      height,
+    );
+  }
+  const bounds = _dockWorkspaceBounds();
+  const clearance = _readRootPx('--composer-clearance');
+  const top = clearance > 0
+    ? window.innerHeight - clearance - height
+    : _aboveComposerTop(height);
+  return _clampChipPosition(
+    Math.round((bounds.left + bounds.right - width) / 2),
+    top,
+    width,
+    height,
+  );
+}
+
+function _isAndroidChipDockOriginHit(dock, left, top, width, height) {
+  if (!_isOdysseusAndroidApp()) return false;
+  if (_isDefaultDockDrop(dock, left, top, width, height)) return true;
+  return _nearDock({ left, top, width, height }, dock);
+}
+
+function _isIndependentChipDockOriginHit(dock, left, top, width, height) {
+  if (!_usesIndependentChipPositions()) return false;
+  if (_isOdysseusAndroidApp()) {
+    return _isAndroidChipDockOriginHit(dock, left, top, width, height);
+  }
+  if (_isDefaultDockDrop(dock, left, top, width, height)) return true;
+  return _nearDock({ left, top, width, height }, dock);
+}
+
 function _isTopLeftFallbackPosition(pos) {
   if (!pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return false;
   const bounds = _dockWorkspaceBounds();
@@ -864,6 +925,7 @@ function _pruneFallbackChipPositions() {
   for (const [id, pos] of _chipPositions) {
     if (_isTopLeftFallbackPosition(pos)) {
       _chipPositions.delete(id);
+      _chipDockEdges.delete(id);
       pruned = true;
     }
   }
@@ -1081,6 +1143,100 @@ function _clampChipPosition(left, top, width = 44, height = 44) {
   };
 }
 
+const CHIP_EDGE_CAPTURE = 38;
+const CHIP_PAIR_SNAP_DISTANCE = 50;
+const CHIP_PAIR_GAP = 6;
+
+function _chipPositionForStoredEdge(id, pos, width = 44, height = 44) {
+  const next = _clampChipPosition(pos.left, pos.top, width, height);
+  const edge = _chipDockEdges.get(id);
+  if (!edge) return next;
+  const bounds = _dockWorkspaceBounds();
+  if (edge === 'left') next.left = bounds.left + 4;
+  if (edge === 'right') next.left = Math.max(bounds.left + 4, bounds.right - width - 4);
+  if (edge === 'top') next.top = 4;
+  if (edge === 'bottom') next.top = _aboveComposerTop(height);
+  return _clampChipPosition(next.left, next.top, width, height);
+}
+
+function _desktopChipEdgeSnapPosition(pointerX, pointerY, width = 44, height = 44) {
+  if (_isMobileDevice()) return null;
+  const bounds = _dockWorkspaceBounds();
+  const composerTop = _composerTop();
+  const candidates = [];
+  if (pointerX <= bounds.left + CHIP_EDGE_CAPTURE) {
+    candidates.push({ edge: 'left', distance: Math.max(0, pointerX - bounds.left) });
+  }
+  if (pointerX >= bounds.right - CHIP_EDGE_CAPTURE) {
+    candidates.push({ edge: 'right', distance: Math.max(0, bounds.right - pointerX) });
+  }
+  if (pointerY <= CHIP_EDGE_CAPTURE) {
+    candidates.push({ edge: 'top', distance: Math.max(0, pointerY) });
+  }
+  if (pointerY >= composerTop - CHIP_EDGE_CAPTURE) {
+    candidates.push({ edge: 'bottom', distance: Math.max(0, composerTop - pointerY) });
+  }
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => a.distance - b.distance);
+  const edge = candidates[0].edge;
+  const next = _clampChipPosition(
+    pointerX - width / 2,
+    pointerY - height / 2,
+    width,
+    height,
+  );
+  if (edge === 'left') next.left = bounds.left + 4;
+  if (edge === 'right') next.left = Math.max(bounds.left + 4, bounds.right - width - 4);
+  if (edge === 'top') next.top = 4;
+  if (edge === 'bottom') next.top = _aboveComposerTop(height);
+  return { ..._clampChipPosition(next.left, next.top, width, height), edge };
+}
+
+function _nearestFloatingChipSnap(chip, rect, maxDistance = CHIP_PAIR_SNAP_DISTANCE) {
+  let best = null;
+  document.querySelectorAll('body > .minimized-dock-chip').forEach(other => {
+    if (other === chip) return;
+    const target = other.getBoundingClientRect();
+    const options = [
+      { axis: 'x', left: target.right + CHIP_PAIR_GAP, top: target.top },
+      { axis: 'x', left: target.left - rect.width - CHIP_PAIR_GAP, top: target.top },
+      { axis: 'y', left: target.left, top: target.bottom + CHIP_PAIR_GAP },
+      { axis: 'y', left: target.left, top: target.top - rect.height - CHIP_PAIR_GAP },
+    ];
+    for (const option of options) {
+      const clamped = _clampChipPosition(option.left, option.top, rect.width, rect.height);
+      const overlapsTarget = clamped.left < target.right
+        && clamped.left + rect.width > target.left
+        && clamped.top < target.bottom
+        && clamped.top + rect.height > target.top;
+      if (overlapsTarget) continue;
+      const distance = Math.hypot(clamped.left - rect.left, clamped.top - rect.top);
+      if (distance <= maxDistance && (!best || distance < best.distance)) {
+        best = { ...clamped, axis: option.axis, distance, target };
+      }
+    }
+  });
+  if (!best) return null;
+  return best;
+}
+
+function _applyFreeChipPositions() {
+  document.querySelectorAll('body > .minimized-dock-chip').forEach(chip => {
+    const id = chip.dataset.modalId;
+    const pos = _chipPositions.get(id);
+    if (!pos) return;
+    const next = _chipPositionForStoredEdge(
+      id,
+      pos,
+      chip.offsetWidth || 44,
+      chip.offsetHeight || 44,
+    );
+    chip.style.setProperty('left', `${next.left}px`, 'important');
+    chip.style.setProperty('top', `${next.top}px`, 'important');
+  });
+}
+
 function _applyDockPos(dock) {
   _syncDockLayout();
   const bounds = _dockWorkspaceBounds();
@@ -1140,6 +1296,7 @@ function _wireDockPlacement(dock) {
       const current = document.getElementById('minimized-dock');
       if (!current || current.style.display === 'none') return;
       _applyDockPos(current);
+      _applyFreeChipPositions();
       const hasChips = !!current.querySelector('.minimized-dock-chip');
       const hasPagedStructure = !!current.querySelector('.minimized-dock-page');
       const wantsPagedStructure = current.classList.contains('dock-paged-row');
@@ -1241,7 +1398,9 @@ function _renderDock() {
     if (!id) return;
     const data = {};
     for (const a of c.attributes) {
-      if (a.name.startsWith('data-') && a.name !== 'data-modal-id') {
+      if (a.name.startsWith('data-')
+          && a.name !== 'data-modal-id'
+          && !a.name.startsWith('data-chip-')) {
         data[a.name] = a.value;
       }
     }
@@ -1263,11 +1422,12 @@ function _renderDock() {
   // If a brand-new chip is joining and the existing chips are already
   // free-positioned at body level (e.g. previously chain-dropped), the
   // new chip would land in the dock by itself — visually unlinking the
-  // group. Collapse everyone back into the dock so the chain stays
-  // together as a single group at the new size.
+  // group. Legacy mobile-browser layouts keep the grouped chain. Native
+  // Android and PC layouts intentionally keep every chip independent.
   const newIds = renderIds.filter(id => !_renderedChipIds.has(id));
-  if (newIds.length && _chipPositions.size) {
+  if (newIds.length && _chipPositions.size && !_usesIndependentChipPositions()) {
     _chipPositions.clear();
+    _chipDockEdges.clear();
     _saveDockState();
   }
   if (!renderIds.length) {
@@ -1337,7 +1497,10 @@ function _renderDock() {
       if (chip._wasDragging) { chip._wasDragging = false; return; }
       if (e.target.classList.contains('minimized-dock-x')) {
         e.stopPropagation();
-        close(id);
+        const chipEl = e.currentTarget;
+        chipEl.classList.add('chip-dissolving');
+        chipEl.style.pointerEvents = 'none';
+        setTimeout(() => close(id), 360);
         return;
       }
       // Tap toggles: if the modal is currently minimized, restore it. If
@@ -1356,19 +1519,27 @@ function _renderDock() {
     // visible modal.
     const st = _state.get(id);
     if (st && !st.isMinimized) chip.classList.add('chip-active');
-    // Free-positioned chips on mobile live OUTSIDE the dock so the dock's
-    // transform: translateX(-50%) doesn't shift their `position: fixed`
-    // coords. Dock-resident chips render as normal flex children.
+    // Independently positioned Android/PC chips live OUTSIDE the dock so the
+    // dock's transform/layout cannot shift their fixed viewport coordinates.
+    // Dock-resident chips continue to render as normal flex children.
     const pos = _chipPositions.get(id);
-    if (pos && isTouchChipDock) {
+    if (pos && _usesIndependentChipPositions()) {
       chip.style.setProperty('position', 'fixed', 'important');
-      chip.style.setProperty('left', `${pos.left}px`, 'important');
-      chip.style.setProperty('top', `${pos.top}px`, 'important');
+      document.body.appendChild(chip);
+      const next = _chipPositionForStoredEdge(
+        id,
+        pos,
+        chip.offsetWidth || 44,
+        chip.offsetHeight || 44,
+      );
+      chip.style.setProperty('left', `${next.left}px`, 'important');
+      chip.style.setProperty('top', `${next.top}px`, 'important');
+      chip.dataset.chipDockEdge = _chipDockEdges.get(id) || '';
       // Rest with the dock below composer popups and tool windows. Dragging
       // temporarily raises the chip via the existing drag-only z-index.
       chip.style.setProperty('z-index', '100', 'important');
-      document.body.appendChild(chip);
     } else {
+      delete chip.dataset.chipDockEdge;
       appendDockChip(chip);
     }
   }
@@ -1438,11 +1609,19 @@ function _positionTrashZoneOpposite(z, chipTop, chipHeight) {
   }
 }
 
+function _positionAndroidTrashZone(z) {
+  // Android's chip home is always above the bottom composer. Keep the close
+  // target at the top so it can never cover or steal the home snap gesture.
+  z.style.top = 'max(24px, env(safe-area-inset-top))';
+  z.style.bottom = 'auto';
+  z.dataset.side = 'top';
+}
+
 // ── Drag behavior ──
-// • Mobile dock chips → drag the entire dock as a unit; long-press peels one chip out.
+// • Odysseus Android + PC chips → direct, independent free drag; each chip can re-dock alone.
+// • Other mobile dock chips → drag the entire dock as a unit; long-press peels one chip out.
 // • Mobile free-floating chips → free-drag puck (drag UP to the trash zone to close).
-// • Desktop middle chips → reorder within the dock (FLIP magnetic slide)
-// • Desktop edge chips (or single chip) → drag the entire dock as a unit
+// • PC free chips → magnetic x/y chip pairing plus persistent viewport-edge docking.
 const LONG_PRESS_MS = 380;
 const REDOCK_RADIUS = 90;
 
@@ -1601,10 +1780,16 @@ function _wireChipDrag(chip, dock) {
   let longPressTimer = null;
   let longPressVisual = null;
   let chainState = null;
-  let chipSnapZone = null;   // desktop: snap zone under the cursor while dragging a chip
+  let chipEdgeSnap = null;   // PC: left/right/top/bottom edge under the pointer
+  let chipPairSnap = null;   // PC: x/y adjacency target near another free chip
+  let overDockHome = false;  // independent chip is magnetically over its composer dock
   let dragArmed = false;
   let movedBeforeArm = false;
   let pagedSwipeHandled = false;
+  // Swipe-to-dismiss velocity tracking
+  let lastMoveTime = 0, lastMoveX = 0, lastMoveY = 0;
+  const SWIPE_VELOCITY_THRESHOLD = 0.45; // px/ms — fast flick
+  const SWIPE_DISTANCE_MIN = 36;          // px — minimum travel before treating as dismiss
   const CAPTURE_RADIUS = 70;
 
   const suppressTrailingClick = (ms = 350) => {
@@ -1628,7 +1813,14 @@ function _wireChipDrag(chip, dock) {
   const clearDragSurface = () => {
     if (trashZone) trashZone.classList.remove('visible', 'engaged');
     overTrash = false;
+    overDockHome = false;
     dock.classList.remove('dock-dragging');
+    dock.classList.remove('dock-chip-snap-hover');
+    chip.classList.remove('chip-origin-snap', 'chip-edge-snap', 'chip-pair-snap');
+    delete chip.dataset.chipEdgeSnap;
+    delete chip.dataset.chipPairSnap;
+    chipEdgeSnap = null;
+    chipPairSnap = null;
   };
 
   const finishDragSurface = () => {
@@ -1645,7 +1837,14 @@ function _wireChipDrag(chip, dock) {
     chip.style.removeProperty('top');
     chip.style.removeProperty('pointer-events');
     chip.style.removeProperty('transition');
-    chip.classList.remove('chip-free-drag');
+    chip.classList.remove(
+      'chip-free-drag',
+      'chip-origin-snap',
+      'chip-edge-snap',
+      'chip-pair-snap',
+    );
+    delete chip.dataset.chipEdgeSnap;
+    delete chip.dataset.chipPairSnap;
   };
 
   const onPointerDown = (e) => {
@@ -1668,11 +1867,33 @@ function _wireChipDrag(chip, dock) {
     chipStartLeft = cr.left;
     chipStartTop = cr.top;
 
+    if (_usesIndependentChipPositions()) {
+      trashZone = _ensureTrashZone();
+      overTrash = false;
+      overDockHome = false;
+      chipEdgeSnap = null;
+      chipPairSnap = null;
+      dragMode = 'free';
+      dragArmed = true;
+      if (_isOdysseusAndroidApp()) {
+        _positionAndroidTrashZone(trashZone);
+      } else {
+        _positionTrashZoneOpposite(trashZone, chipStartTop, chip.offsetHeight);
+      }
+      // Listen on document because the chip is reparented to <body> as soon
+      // as movement starts; element capture can be lost during that move.
+      document.addEventListener('pointermove', onPointerMove);
+      document.addEventListener('pointerup', onPointerUp, { once: true });
+      document.addEventListener('pointercancel', onPointerUp, { once: true });
+      return;
+    }
+
     const onTouch = (e.pointerType === 'touch' || _usesCompactTouchChips());
     if (onTouch) {
       const isFree = _chipPositions.has(chip.dataset.modalId);
       trashZone = _ensureTrashZone();
       overTrash = false;
+      overDockHome = false;
       // Decide drag mode purely by chip count, not by whether this chip is
       // currently dock-resident or free. As long as there are 2+ chips, the
       // chain owns the gesture so the group stays grouped.
@@ -1782,6 +2003,10 @@ function _wireChipDrag(chip, dock) {
   const onPointerMove = (e) => {
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
+    // Track velocity for swipe-to-dismiss detection
+    lastMoveTime = e.timeStamp || performance.now();
+    lastMoveX = e.clientX;
+    lastMoveY = e.clientY;
     // Touch fingers drift a few pixels even on a "still" tap, so the touch
     // threshold is generous — otherwise a tap-to-restore reads as a drag
     // and the click gets eaten when the chain settles.
@@ -1811,6 +2036,7 @@ function _wireChipDrag(chip, dock) {
     }
     if (!dragging) {
       dragging = true;
+      suppressTrailingClick();
       cancelLongPress();
       // Reveal the trash X as soon as a drag begins so the user always
       // sees the close target, regardless of distance. The .engaged
@@ -1819,6 +2045,7 @@ function _wireChipDrag(chip, dock) {
       if (dragMode === 'reorder') {
         chip.classList.add('dragging');
       } else if (dragMode === 'free') {
+        _detachToFreeDrag(chip, dock, chipStartLeft, chipStartTop);
         chip.classList.add('chip-free-drag');
       } else if (dragMode === 'chain') {
         chainState = _initChainPhysics(chip, dock, startX, startY);
@@ -1841,23 +2068,6 @@ function _wireChipDrag(chip, dock) {
       }
     }
 
-    // Desktop: dragging a chip into a screen snap zone previews restoring the
-    // window + snapping it there (top → maximize/fullscreen, right → right
-    // dock). Releasing in the zone commits it (see onPointerUp).
-    if (e.pointerType !== 'touch' && window.innerWidth > 768) {
-      const previewModal = document.getElementById(chip.dataset.modalId);
-      const z = previewZoneAt(e.clientX, e.clientY, previewModal);
-      // Ignore the bottom zone — the dock lives at the bottom, so horizontal
-      // chip reordering must not get hijacked into a bottom-half snap.
-      chipSnapZone = (z && z.name !== 'bottom-half') ? z : null;
-      if (z && !chipSnapZone) clearPreview();
-      if (chipSnapZone) {
-        chip.style.opacity = '0.35';
-        return;  // aiming at a snap zone — suppress reorder/move-dock
-      }
-      chip.style.opacity = '';
-    }
-
     if (dragMode === 'chain' && chainState) {
       // Pointermove just updates the head's target — the RAF loop drives the
       // actual position update for both head and followers.
@@ -1875,20 +2085,62 @@ function _wireChipDrag(chip, dock) {
       const inZone = dist < CAPTURE_RADIUS;
       // Trash X stays visible for the entire drag; only .engaged tracks
       // when the chip is close enough to capture.
-      let tx = e.clientX - (chipStartLeft + chip.offsetWidth / 2);
-      let ty = e.clientY - (chipStartTop + chip.offsetHeight / 2);
+      const myW = chip.offsetWidth;
+      const myH = chip.offsetHeight;
+      const candidateLeft = e.clientX - chip.offsetWidth / 2;
+      const candidateTop = e.clientY - chip.offsetHeight / 2;
+      const candidateRect = {
+        left: candidateLeft,
+        top: candidateTop,
+        right: candidateLeft + myW,
+        bottom: candidateTop + myH,
+        width: myW,
+        height: myH,
+      };
+      const inDockHome = !inZone && _isIndependentChipDockOriginHit(
+        dock,
+        candidateLeft,
+        candidateTop,
+        myW,
+        myH,
+      );
+      const nextEdgeSnap = !inZone && !inDockHome
+        ? _desktopChipEdgeSnapPosition(e.clientX, e.clientY, myW, myH)
+        : null;
+      const nextPairSnap = !inZone && !inDockHome && !nextEdgeSnap
+        && _usesIndependentChipPositions()
+        ? _nearestFloatingChipSnap(chip, candidateRect)
+        : null;
+      let targetLeft = candidateLeft;
+      let targetTop = candidateTop;
       if (inZone) {
         const pull = 1 - (dist / CAPTURE_RADIUS);
-        const sx = tzcx - (chipStartLeft + chip.offsetWidth / 2);
-        const sy = tzcy - (chipStartTop + chip.offsetHeight / 2);
-        tx = tx * (1 - pull) + sx * pull;
-        ty = ty * (1 - pull) + sy * pull;
+        targetLeft = candidateLeft * (1 - pull) + (tzcx - myW / 2) * pull;
+        targetTop = candidateTop * (1 - pull) + (tzcy - myH / 2) * pull;
+      } else if (inDockHome) {
+        const snap = _androidChipDockSnapPosition(dock, myW, myH);
+        targetLeft = snap.left;
+        targetTop = snap.top;
+      } else if (nextEdgeSnap) {
+        targetLeft = nextEdgeSnap.left;
+        targetTop = nextEdgeSnap.top;
+      } else if (nextPairSnap) {
+        targetLeft = nextPairSnap.left;
+        targetTop = nextPairSnap.top;
       }
+      const tx = targetLeft - chipStartLeft;
+      const ty = targetTop - chipStartTop;
+      chipEdgeSnap = nextEdgeSnap;
+      chipPairSnap = nextPairSnap;
       // !important needed because the chip's class-level transform/transition
       // (the FLIP reorder animation + spring transition) outranks plain
       // inline styles set via .style on some Safari versions.
       chip.style.setProperty('transition', 'none', 'important');
-      chip.style.setProperty('transform', `translate(${tx}px, ${ty}px) scale(${inZone ? 1.12 : 1.05})`, 'important');
+      chip.style.setProperty(
+        'transform',
+        `translate(${tx}px, ${ty}px) scale(${inZone ? 1.12 : (inDockHome ? 0.96 : 1.05)})`,
+        'important',
+      );
       chip.style.setProperty('z-index', '10030', 'important');
       chip.style.setProperty('position', 'fixed', 'important');
       chip.style.setProperty('left', `${chipStartLeft}px`, 'important');
@@ -1898,6 +2150,17 @@ function _wireChipDrag(chip, dock) {
         overTrash = inZone;
         trashZone.classList.toggle('engaged', overTrash);
       }
+      if (inDockHome !== overDockHome) {
+        overDockHome = inDockHome;
+        dock.classList.toggle('dock-chip-snap-hover', overDockHome);
+        chip.classList.toggle('chip-origin-snap', overDockHome);
+      }
+      chip.classList.toggle('chip-edge-snap', !!chipEdgeSnap);
+      chip.classList.toggle('chip-pair-snap', !!chipPairSnap);
+      if (chipEdgeSnap) chip.dataset.chipEdgeSnap = chipEdgeSnap.edge;
+      else delete chip.dataset.chipEdgeSnap;
+      if (chipPairSnap) chip.dataset.chipPairSnap = chipPairSnap.axis;
+      else delete chip.dataset.chipPairSnap;
       e.preventDefault && e.preventDefault();
       return;
     }
@@ -1964,7 +2227,7 @@ function _wireChipDrag(chip, dock) {
     }
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e = {}) => {
     document.removeEventListener('pointermove', onPointerMove);
     chip.removeEventListener('pointermove', onPointerMove);
     activePointerId = null;
@@ -1976,35 +2239,35 @@ function _wireChipDrag(chip, dock) {
     // Clear the global drag flag so the chat container's edge-swipe handler
     // can resume opening the sidebar on plain swipes.
     setTimeout(() => { window._chipDragging = false; }, 0);
-    // Desktop snap-on-drop: released over a snap zone → restore the window and
-    // snap it there (instead of the normal chip reorder/dock drop).
-    if (chipSnapZone) {
-      const zone = chipSnapZone; chipSnapZone = null;
-      clearPreview();
-      chip.style.opacity = '';
-      dock.classList.remove('dock-dragging');
-      const id = chip.dataset.modalId;
-      restore(id);
-      const modal = document.getElementById(id);
-      if (modal) requestAnimationFrame(() => requestAnimationFrame(() => {
-        const edgeDockZone = zone.name === 'left-half'
-          || zone.name === 'right-half'
-          || zone.name === 'top-half'
-          || zone.name === 'bottom-half';
-        if (edgeDockZone && _isFullExpanded(modal)) {
-          const content = _modalWindowContent(modal);
-          try { restoreModalSnap(modal); } catch (_) {}
-          _clearFullExpandClasses(modal);
-          if (content) {
-            delete content._fullExpandReturnState;
-            _releaseWindowDockState(modal, content);
-          }
-          _syncExpandButton(modal.querySelector?.('.modal-expand-btn'), modal);
-        }
-        snapModalToZone(modal, zone);
-      }));
-      return;
+    // ── Swipe-to-dismiss: fast horizontal flick disposes the chip ──
+    if (!_usesIndependentChipPositions()
+        && !overDockHome
+        && dragging
+        && (dragMode === 'reorder' || dragMode === 'free')) {
+      const now = e.timeStamp || performance.now();
+      const dt = Math.max(now - lastMoveTime, 1);
+      const velX = Math.abs(lastMoveX - startX) / dt;
+      const totalDx = Math.abs(lastMoveX - startX);
+      const totalDy = Math.abs(lastMoveY - startY);
+      if (velX > SWIPE_VELOCITY_THRESHOLD && totalDx > SWIPE_DISTANCE_MIN && totalDx > totalDy * 1.4) {
+        const dir = lastMoveX - startX > 0 ? 1 : -1;
+        const chipEl = chip;
+        chipEl.classList.add('chip-swiping');
+        if (trashZone) trashZone.classList.remove('visible', 'engaged');
+        // Let go of any dragged styles and animate the slide-out
+        chipEl.style.transition = 'transform 0.26s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease-in';
+        chipEl.style.transform = `translateX(${dir * (window.innerWidth * 0.7)}px) scale(0.65)`;
+        chipEl.style.opacity = '0';
+        chipEl.style.pointerEvents = 'none';
+        const swipeId = chipEl.dataset.modalId;
+        setTimeout(() => close(swipeId), 280);
+        dragging = false;
+        dragMode = null;
+        clearDragSurface();
+        return;
+      }
     }
+
     if (dragMode === 'chain' && chainState) {
       cancelAnimationFrame(chainState.raf);
       const state = chainState;
@@ -2059,6 +2322,7 @@ function _wireChipDrag(chip, dock) {
         dock.style.opacity = '';
         if (_isDefaultDockDrop(dock, minLeft, minTop, maxRight - minLeft, maxBottom - minTop)) {
           _chipPositions.clear();
+          _chipDockEdges.clear();
           _resetDockToDefault(dock);
         } else {
           for (const i of state.order) {
@@ -2104,55 +2368,36 @@ function _wireChipDrag(chip, dock) {
         const id = chip.dataset.modalId;
         setTimeout(() => close(id), 320);
       } else {
-        // Drop wherever the finger let go — capture the current viewport
-        // position. If we land within snap-distance of another floating chip
-        // OR within REDOCK_RADIUS of the chain, magnetically align so chips
-        // collect into a tidy cluster instead of scattering.
-        const r = chip.getBoundingClientRect();
-        let dropLeft = r.left;
-        let dropTop = r.top;
-        const SNAP = 50;       // px — distance under which we snap together
-        const myW = r.width, myH = r.height;
         const myId = chip.dataset.modalId;
-
-        // Find the closest other floating chip (if any).
-        let nearest = null, nearestDist = Infinity;
-        document.querySelectorAll('body > .minimized-dock-chip').forEach(other => {
-          if (other === chip) return;
-          const or = other.getBoundingClientRect();
-          const dx2 = (or.left + or.width / 2) - (r.left + r.width / 2);
-          const dy2 = (or.top + or.height / 2) - (r.top + r.height / 2);
-          const d = Math.hypot(dx2, dy2);
-          if (d < nearestDist) { nearestDist = d; nearest = or; }
-        });
-
-        if (_isDefaultDockDrop(dock, dropLeft, dropTop, myW, myH)) {
-          _chipPositions.clear();
-          _resetDockToDefault(dock);
+        if (_usesIndependentChipPositions() && overDockHome) {
+          // Re-dock only the chip being dragged. Other chips keep their own
+          // free-floating positions or remain docked exactly where they are.
+          _chipPositions.delete(myId);
+          _chipDockEdges.delete(myId);
           clearFreeChipStyles();
           finishDragSurface();
+          _saveDockState();
           _renderDock();
           return;
         }
+        // Drop wherever the pointer let go. Home/chain re-docking wins first,
+        // followed by a PC viewport edge, x/y pairing with another chip, then
+        // an arbitrary independent position.
+        const r = chip.getBoundingClientRect();
+        let dropLeft = r.left;
+        let dropTop = r.top;
+        const myW = r.width, myH = r.height;
 
-        if (nearest && nearestDist < myW + SNAP) {
-          // Snap adjacent to the nearest chip — pick the side closest to
-          // where the finger let go so it feels like a natural collision.
-          const dx2 = (r.left + myW / 2) - (nearest.left + nearest.width / 2);
-          const dy2 = (r.top + myH / 2) - (nearest.top + nearest.height / 2);
-          const gap = 4;
-          if (Math.abs(dx2) >= Math.abs(dy2)) {
-            // Horizontal snap
-            dropLeft = dx2 >= 0 ? nearest.right + gap : nearest.left - myW - gap;
-            dropTop = nearest.top;
+        if (_isDefaultDockDrop(dock, dropLeft, dropTop, myW, myH)
+            || _nearDock(r, dock)) {
+          if (_usesIndependentChipPositions()) {
+            _chipPositions.delete(myId);
+            _chipDockEdges.delete(myId);
           } else {
-            // Vertical snap
-            dropTop = dy2 >= 0 ? nearest.bottom + gap : nearest.top - myH - gap;
-            dropLeft = nearest.left;
+            _chipPositions.clear();
+            _chipDockEdges.clear();
           }
-        } else if (_nearDock(r, dock)) {
-          // Dropped near the dock chain — re-dock.
-          _chipPositions.clear();
+          _resetDockToDefault(dock);
           clearFreeChipStyles();
           finishDragSurface();
           _saveDockState();
@@ -2160,6 +2405,28 @@ function _wireChipDrag(chip, dock) {
           return;
         }
 
+        if (_usesIndependentChipPositions() && chipEdgeSnap) {
+          _chipPositions.set(myId, {
+            left: chipEdgeSnap.left,
+            top: chipEdgeSnap.top,
+          });
+          _chipDockEdges.set(myId, chipEdgeSnap.edge);
+          clearFreeChipStyles();
+          finishDragSurface();
+          _saveDockState();
+          _renderDock();
+          return;
+        }
+
+        const pairSnap = !_isOdysseusAndroidApp()
+          ? (chipPairSnap || _nearestFloatingChipSnap(chip, r))
+          : null;
+        if (pairSnap) {
+          dropLeft = pairSnap.left;
+          dropTop = pairSnap.top;
+        }
+
+        _chipDockEdges.delete(myId);
         _chipPositions.set(myId, _clampChipPosition(dropLeft, dropTop, myW, myH));
         clearFreeChipStyles();
         _saveDockState();
@@ -2288,6 +2555,7 @@ export function unregister(id) {
   if (s) _setBadge(s.btnIds, false);
   _state.delete(id);
   _chipPositions.delete(id);
+  _chipDockEdges.delete(id);
   // Drop any per-popup _LABELS entry created at register-time.
   if (_customLabelIds.has(id)) {
     delete _LABELS[id];
@@ -2428,6 +2696,7 @@ export function close(id) {
   _setBadge(s.btnIds, false);
   _state.delete(id);
   _chipPositions.delete(id);
+  _chipDockEdges.delete(id);
   _saveDockState();
   _renderDock();
 }
