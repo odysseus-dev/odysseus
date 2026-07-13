@@ -61,6 +61,7 @@ venv\Scripts\python.exe odysseus-desktop.py
 - System tray icon (boat logo) with Start/Stop/Open/Quit controls
 - Close button minimizes to tray instead of quitting
 - Taskbar icon set to the Odysseus boat logo
+- Adds a **Start Menu** shortcut on first launch, so Odysseus is searchable/launchable like an installed app (tray → **"Add to Start Menu"** re-creates it if you move the repo)
 
 **First launch:** the web UI auto-detects there's no admin account yet and shows a "Create Admin Account" setup screen (username, password, confirm password) instead of the login form. No separate signup step needed — just fill it in and you're logged in as admin.
 

@@ -229,6 +229,7 @@ class TrayController:
                 pystray.MenuItem("Stop Backend", self._action_stop),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Reset Account (First-Run Setup)", self._action_reset_auth),
+                pystray.MenuItem("Add to Start Menu", self._action_add_shortcut),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Quit", self._action_quit),
             ),
@@ -302,6 +303,15 @@ class TrayController:
             except Exception as e:
                 log.error(f"Failed to reload webview after reset: {e}")
         threading.Thread(target=_run, daemon=True).start()
+
+    def _action_add_shortcut(self, icon, item) -> None:
+        """(Re)create the Start Menu shortcut on demand — overwrites an existing
+        one so it can be repaired after the repo has been moved or the shortcut
+        deleted."""
+        threading.Thread(
+            target=lambda: ensure_start_menu_shortcut(force=True),
+            daemon=True,
+        ).start()
 
     def _update_tray_state(self) -> None:
         """Update tray title to reflect backend state."""
@@ -380,6 +390,85 @@ class WebViewApp:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _ps_quote(value: str) -> str:
+    """Quote a string as a PowerShell single-quoted literal (doubling any
+    embedded single quotes), safe to interpolate into a -Command script."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def ensure_start_menu_shortcut(force: bool = False) -> bool:
+    """Create a Start Menu shortcut for Odysseus (Windows only).
+
+    The harness is launched straight from a cloned repo
+    (``venv\\Scripts\\python.exe odysseus-desktop.py``), so there's no MSI/EXE
+    installer to register a Start Menu entry — which is why Odysseus never
+    shows up in the Start Menu or search the way an installed app would. We
+    create the entry ourselves: a ``.lnk`` in the per-user Start Menu that
+    points a windowless Python at this script, using the boat ``.ico`` saved
+    in ``main()``.
+
+    Called with ``force=False`` on first run (idempotent — skips if a shortcut
+    already exists) and with ``force=True`` from the tray to overwrite a stale
+    shortcut, e.g. after the repo has been moved. Best-effort throughout: no-op
+    off Windows and never crashes the app if creation fails. Returns True when
+    a shortcut exists on return.
+    """
+    if sys.platform != "win32":
+        return False
+
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        log.warning("APPDATA not set — skipping Start Menu shortcut creation")
+        return False
+
+    start_menu = Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    shortcut = start_menu / "Odysseus.lnk"
+    if shortcut.exists() and not force:
+        return True
+
+    # Prefer pythonw.exe so launching from the Start Menu doesn't flash a
+    # console window; fall back to python.exe if the windowless build is absent.
+    pythonw = REPO_ROOT / "venv" / "Scripts" / "pythonw.exe"
+    launcher = pythonw if pythonw.exists() else VENV_PYTHON
+    target_script = REPO_ROOT / "odysseus-desktop.py"
+    icon_path = REPO_ROOT / "odysseus.ico"
+
+    # Build the .lnk via the WScript.Shell COM object through PowerShell so we
+    # don't take a hard dependency on pywin32 (not in requirements.txt).
+    ps_script = (
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut({shortcut});"
+        "$s.TargetPath = {target};"
+        "$s.Arguments = {args};"
+        "$s.WorkingDirectory = {workdir};"
+        "$s.IconLocation = {icon};"
+        "$s.Description = 'Odysseus AI Workspace';"
+        "$s.Save()"
+    ).format(
+        shortcut=_ps_quote(str(shortcut)),
+        target=_ps_quote(str(launcher)),
+        # Quote the script path inside the Arguments string so a repo path with
+        # spaces is passed to Python as a single argument.
+        args=_ps_quote(f'"{target_script}"'),
+        workdir=_ps_quote(str(REPO_ROOT)),
+        icon=_ps_quote(str(icon_path)),
+    )
+
+    try:
+        start_menu.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True,
+            timeout=30,
+        )
+        log.info(f"Created Start Menu shortcut: {shortcut}")
+        return True
+    except Exception as e:
+        log.warning(f"Could not create Start Menu shortcut: {e}")
+        return False
+
+
 def setup_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -403,6 +492,10 @@ def main() -> None:
     icon_path = REPO_ROOT / "odysseus.ico"
     if not icon_path.exists():
         _make_tray_icon().save(icon_path, format="ICO")
+
+    # Register a Start Menu entry so Odysseus is launchable from the Start Menu
+    # / Windows search, not just this script. First run only; safe elsewhere.
+    ensure_start_menu_shortcut()
 
     backend = BackendManager()
     tray = TrayController(backend)
