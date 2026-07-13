@@ -4403,6 +4403,11 @@ async def stream_agent_loop(
             ):
                 _ody_doc_tool_completed = True
 
+            # ASK_USER_BATCH_BARRIER: a prompt to the user terminates the
+            # current parsed tool batch after the prompt has been emitted.
+            if _pending_ask_user_event:
+                break
+
         # If budget was hit, stop the loop
         if budget_hit:
             break
