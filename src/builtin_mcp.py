@@ -104,6 +104,21 @@ def _spawn_bg(coro) -> asyncio.Task:
     return task
 
 
+def builtin_python_env(base_dir: str) -> dict[str, str]:
+    """Environment for built-in Python MCP subprocesses.
+
+    The app root must be importable so mcp_servers can import local modules, but
+    replacing PYTHONPATH entirely hides site-packages in container/dev launches
+    that rely on PYTHONPATH for their active environment.
+    """
+    existing = os.environ.get("PYTHONPATH", "")
+    parts = [base_dir]
+    for item in existing.split(os.pathsep):
+        if item and item not in parts:
+            parts.append(item)
+    return {"PYTHONPATH": os.pathsep.join(parts)}
+
+
 async def register_builtin_servers(mcp_manager):
     """Connect all built-in MCP servers to the manager."""
     if MCP_DISABLED:
@@ -121,7 +136,7 @@ async def register_builtin_servers(mcp_manager):
                 transport="stdio",
                 command=python,
                 args=[script_path],
-                env={"PYTHONPATH": base_dir},
+                env=builtin_python_env(base_dir),
             )
             if ok:
                 logger.info(f"Built-in MCP server registered: {name}")

@@ -13,6 +13,7 @@ from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.auth_helpers import effective_user, _auth_disabled, owner_filter
 from src.session_actions import is_session_recently_active
+from src.upload_handler import reserve_message_upload_references
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -203,7 +204,12 @@ def _pick_endpoint_for_sort(owner=None):
         return url, model, headers
     return None, None, None
 
-def setup_session_routes(session_manager: SessionManager, config: dict, webhook_manager=None):
+def setup_session_routes(
+    session_manager: SessionManager,
+    config: dict,
+    webhook_manager=None,
+    upload_handler=None,
+):
     """Setup session routes with the provided manager and config"""
 
     REQUEST_TIMEOUT = config.get("REQUEST_TIMEOUT", 20)
@@ -537,6 +543,22 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         body = await request.json()
         messages = body.get("messages", [])
         from core.models import ChatMessage
+        owner = effective_user(request)
+        try:
+            for message in messages:
+                missing_id = reserve_message_upload_references(
+                    upload_handler,
+                    owner,
+                    message.get("content"),
+                    message.get("metadata"),
+                )
+                if missing_id:
+                    raise HTTPException(
+                        409,
+                        f"Referenced upload is no longer available: {missing_id}",
+                    )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise HTTPException(400, "Invalid message attachment metadata") from exc
         for m in messages:
             sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
         session_manager.save_sessions()

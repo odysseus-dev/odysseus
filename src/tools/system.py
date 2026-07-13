@@ -356,7 +356,11 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            # Strict ownership: the old `task.owner and task.owner != owner`
+            # skipped the check on an owner-less task (created in no-login mode
+            # or before the legacy-owner sweep), letting any authenticated user
+            # reach it. `list` already scopes to an exact owner match.
+            if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             changed = []
@@ -402,7 +406,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
             name = task.name
             db.delete(task)
@@ -416,7 +420,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             if action == "pause":
@@ -437,7 +441,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             from src.event_bus import get_task_scheduler
