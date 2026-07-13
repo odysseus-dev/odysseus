@@ -118,7 +118,7 @@ def test_agent_loop_invokes_trimmer_on_default_budget():
     async def dummy_stream(*args, **kwargs):
         yield "hello"
         
-    with patch.object(settings, "get_setting", return_value=0), \
+    with patch.object(settings, "get_setting", return_value=-1), \
          patch("src.agent_loop.estimate_tokens", return_value=1000), \
          patch("src.context_compactor.trim_for_context", return_value=([{"role": "user", "content": "hi"}], 0, False)) as mock_trim, \
          patch("src.model_context.budget_context_for_model", return_value=128000) as mock_budget, \

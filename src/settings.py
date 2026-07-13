@@ -118,7 +118,8 @@ DEFAULT_SETTINGS = {
     # default is treated as auto because the settings-save path materializes
     # defaults, so a persisted 6000 can't be told apart from a deliberate 6000 —
     # to pin a budget near the default, use a nearby value (e.g. 5999).
-    "agent_input_token_budget": 0,
+    "agent_input_token_budget": -1,
+    "settings_version": 2,
     # Ceiling on the *auto-derived* input budget; a configurable setting since #1273
     # (the merged #1230 left it a module constant). No effect on an explicit budget
     # — a deliberate value is honoured (#1230). Default matches
@@ -230,9 +231,9 @@ def load_settings() -> dict:
     except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_SETTINGS)
 
-    # Migrate legacy "6000 means auto" to the new "0 means auto"
-    if merged.get("agent_input_token_budget") == 6000:
-        merged["agent_input_token_budget"] = 0
+    version = merged.get("settings_version", 1)
+    if version < 2:
+        merged["settings_version"] = 2
 
     _settings_cache = (now, merged)
     return merged

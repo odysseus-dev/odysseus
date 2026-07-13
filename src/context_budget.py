@@ -14,7 +14,7 @@ exactly (clamped to the window). Pure and side-effect free so it is unit-testabl
 # pathologically large prompt every agent turn. Tunable; chosen to fully cover
 # 128K models and give 1M models a large but bounded budget.
 DEFAULT_HARD_MAX = 200_000
-DEFAULT_BUDGET = 0
+DEFAULT_BUDGET = -1
 DEFAULT_FALLBACK = 6000
 DEFAULT_HEADROOM = 0.80
 
@@ -56,8 +56,14 @@ def compute_input_token_budget(
         - When the window is unknown (context_length <= 0), use the conservative
           fallback budget and do NOT scale off the fallback.
     """
-    configured = _int_or_zero(configured)
+    try:
+        configured = int(configured)
+    except (TypeError, ValueError):
+        configured = default
     context_length = _int_or_zero(context_length)
+
+    if configured == 0:
+        return 0
 
     if explicit and configured > 0:
         return min(configured, context_length) if context_length > 0 else configured
@@ -79,5 +85,8 @@ def budget_is_explicit(configured: int, *, default: int = DEFAULT_BUDGET) -> boo
     #4121 / #1230 are about). Centralised here so the materialized-default contract
     is unit-testable and can't silently regress to a presence check.
     """
-    configured = int(configured or 0)
-    return configured > 0 and configured != default
+    try:
+        configured = int(configured)
+    except (TypeError, ValueError):
+        configured = default
+    return configured >= 0 and configured != default

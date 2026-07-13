@@ -30,29 +30,16 @@ logger = logging.getLogger(__name__)
 # The set of tools deemed safe to be "always available" regardless of routing relevance.
 # High-impact mutating, shell, and admin tools should rely on RAG or keyword hints.
 SAFE_DEFAULTABLE_TOOLS = frozenset({
-    "manage_memory",
     "ask_user",
-    "update_plan",
     "ui_control",
     "chat_with_model",
     "ask_teacher",
-    "manage_session",
     "list_sessions",
     "search_chats",
     "list_models",
-    "manage_documents",
-    "manage_notes",
-    "manage_calendar",
-    "manage_tasks",
     "web_search",
     "web_fetch",
-    "create_document",
-    "edit_document",
-    "suggest_document",
-    "update_document",
     "generate_image",
-    "manage_research",
-    "trigger_research",
 })
 
 # Tools that are ALWAYS included regardless of retrieval results.

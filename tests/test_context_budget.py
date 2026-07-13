@@ -10,11 +10,11 @@ from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
 
 def test_default_scales_to_context_window():
     # Not explicit, big window -> ~80% of the window.
-    assert compute_input_token_budget(0, 128000, explicit=False) == int(128000 * 0.80)
+    assert compute_input_token_budget(-1, 128000, explicit=False) == int(128000 * 0.80)
 
 
 def test_default_capped_at_hard_max_for_huge_windows():
-    assert compute_input_token_budget(0, 1_000_000, explicit=False) == DEFAULT_HARD_MAX
+    assert compute_input_token_budget(-1, 1_000_000, explicit=False) == DEFAULT_HARD_MAX
 
 
 def test_explicit_budget_is_honoured():
@@ -30,7 +30,7 @@ def test_explicit_budget_clamped_to_window():
 
 def test_unknown_window_falls_back_to_configured():
     assert compute_input_token_budget(6000, 0, explicit=False) == 6000
-    assert compute_input_token_budget(0, 0, explicit=False) == 6000  # default fallback
+    assert compute_input_token_budget(-1, 0, explicit=False) == 6000  # default fallback
 
 
 def test_invalid_numeric_inputs_fall_back_cleanly():
@@ -62,17 +62,17 @@ def test_is_setting_overridden_reads_raw_saved_file(tmp_path, monkeypatch):
 def test_custom_hard_max_overrides_default_in_auto_branch():
     """A caller-supplied hard_max lifts the auto-derived ceiling."""
     # Without override: 1M ctx -> capped at DEFAULT_HARD_MAX (200K)
-    assert compute_input_token_budget(0, 1_000_000, explicit=False) == DEFAULT_HARD_MAX
+    assert compute_input_token_budget(-1, 1_000_000, explicit=False) == DEFAULT_HARD_MAX
     # With explicit raise: 1M ctx -> 800K (80% of 1M), under the raised ceiling
-    assert compute_input_token_budget(0, 1_000_000, explicit=False, hard_max=900_000) == int(1_000_000 * 0.80)
+    assert compute_input_token_budget(-1, 1_000_000, explicit=False, hard_max=900_000) == int(1_000_000 * 0.80)
 
 
 def test_custom_hard_max_lowers_default_for_cost_paranoid_setups():
     """A lower ceiling caps the auto-derived budget below the default."""
     # 128K ctx, default ceiling 200K -> 80% of 128K = 102400
-    assert compute_input_token_budget(0, 128_000, explicit=False) == int(128_000 * 0.80)
+    assert compute_input_token_budget(-1, 128_000, explicit=False) == int(128_000 * 0.80)
     # Same ctx, ceiling lowered to 50K -> capped at 50K instead
-    assert compute_input_token_budget(0, 128_000, explicit=False, hard_max=50_000) == 50_000
+    assert compute_input_token_budget(-1, 128_000, explicit=False, hard_max=50_000) == 50_000
 
 
 def test_hard_max_has_no_effect_on_explicit_branch():
