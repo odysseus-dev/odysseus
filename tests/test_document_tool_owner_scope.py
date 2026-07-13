@@ -154,7 +154,8 @@ def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
 
 
 def test_document_tool_dispatch_forwards_owner():
-    source = open("src/tool_execution.py", encoding="utf-8").read()
+    with open("src/tool_execution.py", encoding="utf-8") as fh:
+        source = fh.read()
 
     assert "_document_tool_dispatch(tool, content, session_id, owner)" in source
 

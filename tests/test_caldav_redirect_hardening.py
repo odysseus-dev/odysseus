@@ -60,16 +60,23 @@ def test_dav_client_does_not_follow_redirect_to_internal_host():
 
     internal = socketserver.TCPServer(("127.0.0.1", 0), _Internal)
     internal_port = internal.server_address[1]
-    public = socketserver.TCPServer(("127.0.0.1", 0), _Public)
-    public_port = public.server_address[1]
-    threading.Thread(target=internal.serve_forever, daemon=True).start()
-    threading.Thread(target=public.serve_forever, daemon=True).start()
+    public = None
+    internal_thread = threading.Thread(target=internal.serve_forever, daemon=True)
+    public_thread = None
+    client = None
+    response = None
     try:
+        public = socketserver.TCPServer(("127.0.0.1", 0), _Public)
+        public_port = public.server_address[1]
+        public_thread = threading.Thread(target=public.serve_forever, daemon=True)
+        internal_thread.start()
+        public_thread.start()
+
         public_url = f"http://127.0.0.1:{public_port}/dav"
         client = caldav_sync._build_dav_client(public_url, "u", "p")
         client.timeout = 5
         try:
-            client.request(public_url, "PROPFIND", "")
+            response = client.request(public_url, "PROPFIND", "")
         except Exception:
             # Refusing the redirect surfaces as an exception (TooManyRedirects);
             # that is the intended fail-closed behavior. The security assertion
@@ -80,8 +87,18 @@ def test_dav_client_does_not_follow_redirect_to_internal_host():
         assert public_methods == ["PROPFIND"], "the PROPFIND must reach the public server first"
         assert sink_hits == [], "redirect toward an internal host must not be followed"
     finally:
+        if response is not None and hasattr(response, "close"):
+            response.close()
+        if client is not None and hasattr(client, "session") and hasattr(client.session, "close"):
+            client.session.close()
+        if public is not None:
+            public.shutdown()
+            public.server_close()
         internal.shutdown()
-        public.shutdown()
+        internal.server_close()
+        if public_thread is not None:
+            public_thread.join()
+        internal_thread.join()
 
 
 def test_sync_and_writeback_construct_clients_through_the_helper():

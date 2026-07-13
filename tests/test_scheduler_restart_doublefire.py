@@ -100,6 +100,8 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     dispatched = []
     def _fake_create_task(coro):
         dispatched.append(coro)
+        if hasattr(coro, "close"):
+            coro.close()
         class _T:
             def cancel(self): pass
         return _T()
@@ -115,7 +117,10 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     # start() also fires the long-lived _loop and _note_pings_loop as tasks
     # (stubbed to _never here); filter those out so the test only counts
     # real per-poll task dispatches.
-    real_dispatches = [c for c in all_dispatched if c.__name__ != "_never"]
+    real_dispatches = [
+        c for c in all_dispatched
+        if getattr(getattr(c, "cr_code", None), "co_name", None) != "_never"
+    ]
     return cd, ScheduledTask, TaskRun, real_dispatches
 
 

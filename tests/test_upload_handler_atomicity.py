@@ -92,7 +92,11 @@ def test_concurrent_inserts_lose_entries(tmp_path):
 
     def insert(idx: int) -> None:
         with handler._index_lock:
-            current = json.load(open(db_path)) if os.path.exists(db_path) else {}
+            if os.path.exists(db_path):
+                with open(db_path, encoding="utf-8") as f:
+                    current = json.load(f)
+            else:
+                current = {}
             current[f"owner:hash_{idx}"] = {"id": f"file_{idx}", "owner": "owner"}
             handler._atomic_write_json(db_path, current)
 
@@ -246,7 +250,8 @@ def test_partial_write_recovery_via_bak(tmp_path):
         "Production _atomic_write_json must create a .bak sibling on subsequent writes."
     )
 
-    full = open(db_path, "rb").read()
+    with open(db_path, "rb") as f:
+        full = f.read()
     truncated_len = max(1, len(full) // 2)
     with open(db_path, "wb") as f:
         f.write(full[:truncated_len])
@@ -383,15 +388,18 @@ def test_smoke_info_lookup_after_bak_recovery(tmp_path):
         "owner_a",
     )
     # Force a .bak by writing a second time.
+    with open(db_path, encoding="utf-8") as f:
+        current = json.load(f)
     handler._atomic_write_json(
         db_path,
-        json.load(open(db_path)),
+        current,
     )
     handler._atomic_write_json(db_path, {"sentinel": True})
     assert os.path.exists(db_path + ".bak")
 
     # Truncate the live file.
-    full = open(db_path, "rb").read()
+    with open(db_path, "rb") as f:
+        full = f.read()
     with open(db_path, "wb") as f:
         f.write(full[: max(1, len(full) // 2)])
 

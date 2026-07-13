@@ -49,7 +49,13 @@ class _BrokenVectorStore:
 
 
 def _run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(
+            coro
+        )
+    finally:
+        loop.close()
 
 
 def test_extraction_persists_facts_when_vector_store_fails_at_runtime(monkeypatch):

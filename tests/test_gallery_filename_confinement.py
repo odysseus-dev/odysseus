@@ -116,12 +116,12 @@ def test_gallery_replace_rejects_symlink_escape(tmp_path, monkeypatch):
 
     app = FastAPI()
     app.include_router(gallery_routes.setup_gallery_routes())
-    client = TestClient(app)
 
-    response = client.post(
-        "/api/gallery/img-1/replace",
-        files={"image": ("replacement.png", b"replacement bytes", "image/png")},
-    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/gallery/img-1/replace",
+            files={"image": ("replacement.png", b"replacement bytes", "image/png")},
+        )
 
     assert response.status_code == 400
     assert outside.read_bytes() == b"outside image root"

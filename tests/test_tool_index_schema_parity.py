@@ -27,13 +27,15 @@ def _assigned_value(tree, name):
 
 
 def _schema_tool_names():
-    src = open(os.path.join(ROOT, "src", "tool_schemas.py"), encoding="utf-8").read()
+    with open(os.path.join(ROOT, "src", "tool_schemas.py"), encoding="utf-8") as fh:
+        src = fh.read()
     value = _assigned_value(ast.parse(src), "FUNCTION_TOOL_SCHEMAS")
     return {item["function"]["name"] for item in ast.literal_eval(value)}
 
 
 def _indexed_tool_names():
-    src = open(os.path.join(ROOT, "src", "tool_index.py"), encoding="utf-8").read()
+    with open(os.path.join(ROOT, "src", "tool_index.py"), encoding="utf-8") as fh:
+        src = fh.read()
     value = _assigned_value(ast.parse(src), "BUILTIN_TOOL_DESCRIPTIONS")
     return {ast.literal_eval(key) for key in value.keys}
 
@@ -47,7 +49,8 @@ def test_every_schema_tool_has_an_index_description():
 
 
 def test_api_call_is_indexed_with_a_real_description():
-    src = open(os.path.join(ROOT, "src", "tool_index.py"), encoding="utf-8").read()
+    with open(os.path.join(ROOT, "src", "tool_index.py"), encoding="utf-8") as fh:
+        src = fh.read()
     value = _assigned_value(ast.parse(src), "BUILTIN_TOOL_DESCRIPTIONS")
     descriptions = {
         ast.literal_eval(k): ast.literal_eval(v) for k, v in zip(value.keys, value.values)

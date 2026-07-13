@@ -34,7 +34,8 @@ def test_hint_still_tells_the_user_how_to_install():
 def test_no_runner_echo_line_uses_backticks_in_double_quotes():
     # Source-level guard: generated-script echo lines must never carry
     # backticks inside a double-quoted bash string again.
-    src = open(os.path.join(ROOT, "routes", "cookbook_routes.py"), encoding="utf-8").read()
+    with open(os.path.join(ROOT, "routes", "cookbook_routes.py"), encoding="utf-8") as fh:
+        src = fh.read()
     offenders = [
         line.strip()
         for line in src.splitlines()

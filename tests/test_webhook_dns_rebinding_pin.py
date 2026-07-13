@@ -68,6 +68,13 @@ def _serve(handler):
     return srv, port
 
 
+def _stop_server(srv):
+    try:
+        srv.shutdown()
+    finally:
+        srv.server_close()
+
+
 def test_pinned_transport_connects_to_pinned_ip():
     """A request whose URL host is a throwaway hostname is still delivered to
     the pinned loopback IP — proving the socket destination comes from the pin,
@@ -104,7 +111,7 @@ def test_pinned_transport_connects_to_pinned_ip():
         assert resp.status_code == 204
         assert hits == ["/hook"]
     finally:
-        srv.shutdown()
+        _stop_server(srv)
 
 
 def test_deliver_pins_to_validated_ip_end_to_end(monkeypatch):
@@ -153,4 +160,4 @@ def test_deliver_pins_to_validated_ip_end_to_end(monkeypatch):
         assert received.get("event") == "webhook.test"
         assert b'"ok": true' in received["body"]
     finally:
-        srv.shutdown()
+        _stop_server(srv)

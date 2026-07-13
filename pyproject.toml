@@ -1,4 +1,5 @@
 [tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 # Test-taxonomy markers added at collection time by tests/conftest.py. The
@@ -19,4 +20,7 @@ markers = [
     # taxonomy. The fast lane runs `not slow`; mark a test slow only with
     # duration evidence (see tests/run_focus.py --durations and tests/README.md).
     "slow: opt-in marker for known-slow tests; excluded by the fast lane (not slow)",
+    "asyncio: repository test taxonomy marker",
+    "parametrize: repository test taxonomy marker",
+    "skipif: repository test taxonomy marker",
 ]
