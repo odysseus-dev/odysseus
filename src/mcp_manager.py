@@ -231,6 +231,18 @@ class McpManager:
         url: Optional[str] = None,
     ) -> bool:
         """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
+        # Reusing an ID must release its prior transport stack, session, tools,
+        # and in-flight connection task before any dictionaries are replaced.
+        # Otherwise the previous process/session loses its cleanup handle.
+        if (
+            server_id in self._stacks
+            or server_id in self._sessions
+            or server_id in self._tools
+            or server_id in self._connect_tasks
+            or server_id in self._connections
+        ):
+            await self.disconnect_server(server_id)
+
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
