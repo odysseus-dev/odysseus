@@ -418,8 +418,20 @@ class McpManager:
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
         task = asyncio.create_task(self._connect_http(server_id, name, url))
         self._connect_tasks[server_id] = task
+
+        def _remove_finished_task(finished_task):
+            # A reconnect may already have installed a newer task under this
+            # ID. Only remove the task that actually completed.
+            if self._connect_tasks.get(server_id) is finished_task:
+                self._connect_tasks.pop(server_id, None)
+
+        task.add_done_callback(_remove_finished_task)
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
+            # Done callbacks are scheduled by the event loop and may not have
+            # run before this coroutine resumes, so clear immediate completion
+            # synchronously as well.
+            _remove_finished_task(task)
             try:
                 return task.result()
             except Exception as e:
