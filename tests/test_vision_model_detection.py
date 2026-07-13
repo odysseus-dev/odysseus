@@ -38,11 +38,15 @@ def test_recognizes_multimodal_families_without_vision_in_name():
         "llama4:scout", "llama4", "llama-4-maverick",
         "mistral-small3.1", "mistral-small-3.2",
         "phi-4-multimodal", "phi4-multimodal",
+        # Qwen3.6 ships a vision encoder in every bare-named checkpoint
+        # (no separate VL variant), so plain tags must pass through images.
+        "qwen3.6", "qwen3.6:27b", "qwen3.6-35b-a3b",
     ]:
         assert is_vision_model(name), f"{name!r} should be detected as vision-capable"
 
 
 def test_new_keywords_do_not_overmatch_text_models():
     # The added families must not flag their text-only siblings.
-    for name in ["gemma2:9b", "gemma:7b", "llama3.3", "mistral-small", "phi-3-mini"]:
+    for name in ["gemma2:9b", "gemma:7b", "llama3.3", "mistral-small", "phi-3-mini",
+                 "qwen3:8b", "qwen2.5:14b"]:
         assert not is_vision_model(name), f"{name!r} should not be flagged as vision"

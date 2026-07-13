@@ -61,6 +61,11 @@ _VISION_MODEL_KEYWORDS = (
     "phi-4", "phi4",
     # zhipu / glm (glm-4.5v, glm-4.6v, glm-5v-turbo, etc.)
     "glm-4.5v", "glm-4.6v", "glm-5v",
+    # Qwen3.6 is natively multimodal under its bare names: every checkpoint in
+    # the family (Qwen3.6-27B, Qwen3.6-35B-A3B) ships a vision encoder and is
+    # published as image-text-to-text; there is no separate Qwen3.6-VL line, so
+    # the qwen*-vl keywords above never match these tags.
+    "qwen3.6",
 )
 # Catches the "*-VL-*" / "*VL*" family not covered by a literal keyword above
 # (e.g. Qwen2.5-VL and various tags): a standalone "vl" token, plus "vlm".
