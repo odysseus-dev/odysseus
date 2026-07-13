@@ -21,6 +21,67 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
+
+_SUPPORTED_MCP_TRANSPORTS = frozenset({"stdio", "sse", "http"})
+
+
+def _validate_mcp_transport(raw_transport) -> str:
+    transport = str(raw_transport or "").lower()
+    if transport not in _SUPPORTED_MCP_TRANSPORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported MCP transport; expected one of: "
+                "stdio, sse, http"
+            ),
+        )
+    return transport
+
+
+def _parse_mcp_args(raw_args) -> list[str]:
+    try:
+        parsed = json.loads(raw_args)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid MCP args: expected a JSON string list",
+        ) from exc
+
+    if (
+        not isinstance(parsed, list)
+        or not all(isinstance(item, str) for item in parsed)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid MCP args: expected a JSON string list",
+        )
+
+    return parsed
+
+
+def _parse_mcp_env(raw_env) -> dict[str, str]:
+    try:
+        parsed = json.loads(raw_env)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid MCP env: expected a JSON string mapping",
+        ) from exc
+
+    if (
+        not isinstance(parsed, dict)
+        or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in parsed.items()
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid MCP env: expected a JSON string mapping",
+        )
+
+    return parsed
+
 def _mcp_oauth_base_dir() -> Path:
     """Directory that may contain OAuth files managed by Odysseus."""
     return Path(MCP_OAUTH_DIR).resolve(strict=False)
@@ -174,6 +235,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
         server_id = str(uuid.uuid4())[:8]
 
         # Validate
+        transport = _validate_mcp_transport(transport)
+
         if transport == "stdio" and not command:
             raise HTTPException(400, "command is required for stdio transport")
         if transport == "sse" and not url:
@@ -182,16 +245,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             raise HTTPException(400, "url is required for HTTP transport")
 
         # Parse JSON fields
-        try:
-            parsed_args = json.loads(args) if args else []
-        except json.JSONDecodeError:
-            parsed_args = []
-        try:
-            parsed_env = json.loads(env) if env else {}
-        except json.JSONDecodeError:
-            parsed_env = {}
-        if not isinstance(parsed_env, dict):
-            parsed_env = {}
+        parsed_args = _parse_mcp_args(args if args else "[]")
+        parsed_env = _parse_mcp_env(env if env else "{}")
 
         # Parse OAuth config
         parsed_oauth_config = None
