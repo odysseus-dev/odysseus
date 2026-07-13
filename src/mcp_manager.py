@@ -5,6 +5,7 @@ Manages connections to MCP (Model Context Protocol) tool servers.
 Each server exposes tools that are made available to the agent loop.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -505,6 +506,16 @@ class McpManager:
         task = self._connect_tasks.pop(server_id, None)
         if task is not None and not task.done():
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.debug(
+                    "MCP connect task ended during disconnect for %s: %s",
+                    server_id,
+                    sanitize_mcp_error(exc),
+                )
         try:
             from src.mcp_oauth import clear_auth_url
             clear_auth_url(server_id)
@@ -525,9 +536,15 @@ class McpManager:
         logger.info(f"MCP server disconnected: {server_id}")
 
     async def disconnect_all(self):
-        """Disconnect from all MCP servers."""
-        ids = list(self._sessions.keys())
-        for sid in ids:
+        """Disconnect every tracked server, including pending connections."""
+        ids = (
+            set(self._sessions)
+            | set(self._stacks)
+            | set(self._tools)
+            | set(self._connections)
+            | set(self._connect_tasks)
+        )
+        for sid in list(ids):
             await self.disconnect_server(sid)
 
     async def connect_all_enabled(self):
