@@ -567,6 +567,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
+        lines.append(f"scan_hf({model_dir!r})")
         lines.append(f"scan_dir({model_dir!r})")
     lines.append("print(json.dumps(models))")
     return "\n".join(lines) + "\n"
