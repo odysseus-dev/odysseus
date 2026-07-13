@@ -2820,10 +2820,13 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     pass
 
             delta = event_data.get("delta")
+            event_type = event_data.get("type")
             substantive = (
                 isinstance(delta, str) and bool(delta)
             ) or (
-                event_data.get("type") == "tool_calls"
+                event_type == "tool_call_delta"
+            ) or (
+                event_type == "tool_calls"
                 and bool(event_data.get("calls"))
             )
 

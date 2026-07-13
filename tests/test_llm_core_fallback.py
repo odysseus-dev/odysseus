@@ -144,6 +144,41 @@ def test_completed_tool_call_output_prevents_fallback(monkeypatch):
     assert not any('"fallback"' in c for c in chunks)
 
 
+def test_tool_call_delta_is_forwarded_immediately_and_prevents_fallback(monkeypatch):
+    calls = []
+    advanced_past_delta = False
+    tool_delta = 'data: {"type": "tool_call_delta", "index": 0, "arg_delta": "{\\"path\\":"}\n\n'
+    tool_calls = 'data: {"type": "tool_calls", "calls": [{"id": "c1", "name": "write_file", "arguments": "{\\"path\\":\\"x\\"}"}]}\n\n'
+
+    async def fake_stream(url, model, messages, **kw):
+        nonlocal advanced_past_delta
+        calls.append(model)
+        yield tool_delta
+        advanced_past_delta = True
+        yield tool_calls
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+
+    async def run():
+        stream = llm_core.stream_llm_with_fallback(
+            [("u1", "primary", {}), ("u2", "backup", {})],
+            [{"role": "user", "content": "hi"}],
+        )
+        first = await anext(stream)
+        assert first == tool_delta
+        assert not advanced_past_delta
+        chunks = [first]
+        async for chunk in stream:
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run())
+    assert calls == ["primary"]
+    assert tool_calls in chunks
+    assert not any('"type": "fallback"' in c for c in chunks)
+
+
 def test_empty_final_candidate_surfaces_terminal_error(monkeypatch):
     calls = []
 
