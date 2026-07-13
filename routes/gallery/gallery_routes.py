@@ -257,10 +257,15 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/{image_id}/replace")
     async def gallery_replace(request: Request, image_id: str):
         """Replace an existing gallery image file with a new one."""
-        user = get_current_user(request)
+        form = None
         db = SessionLocal()
         try:
-            img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
+            user = get_current_user(request)
+            img = (
+                db.query(GalleryImage)
+                .filter(GalleryImage.id == image_id)
+                .first()
+            )
             if not img:
                 raise HTTPException(404, "Image not found")
             if not user or img.owner != user:
@@ -268,10 +273,14 @@ def setup_gallery_routes() -> APIRouter:
 
             form = await request.form()
             file = form.get("image")
-            if not file or not hasattr(file, 'read'):
+            if not file or not hasattr(file, "read"):
                 raise HTTPException(400, "No image provided")
 
-            content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
+            content = await read_upload_limited(
+                file,
+                GALLERY_UPLOAD_MAX_BYTES,
+                "Gallery replacement",
+            )
             GALLERY_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
             img_path = _gallery_image_path(img.filename)
             img_path.write_bytes(content)
@@ -279,21 +288,31 @@ def setup_gallery_routes() -> APIRouter:
             # Refresh dimensions in case the editor resized the canvas.
             # updated_at auto-bumps via TimestampMixin's onupdate hook.
             try:
-                from PIL import Image
                 from io import BytesIO
+
+                from PIL import Image
+
                 with Image.open(BytesIO(content)) as new_im:
                     img.width = new_im.width
                     img.height = new_im.height
             except Exception:
                 pass
+
             try:
                 db.commit()
             except Exception:
                 db.rollback()
                 logger.exception("gallery_replace: DB commit failed")
                 raise HTTPException(500, "Image update failed")
-            return {"ok": True, "width": img.width, "height": img.height}
+
+            return {
+                "ok": True,
+                "width": img.width,
+                "height": img.height,
+            }
         finally:
+            if form is not None:
+                await form.close()
             db.close()
 
     # ---- POST /api/gallery/{image_id}/rename ----
