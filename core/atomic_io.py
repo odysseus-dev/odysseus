@@ -15,31 +15,80 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from typing import Any, Optional
 
 
+def _fsync_parent_directory(path: str) -> None:
+    """Best-effort durability for a completed same-directory rename."""
+    if os.name != "posix":
+        return
+
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+
+    descriptor = os.open(directory, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_write(path: str, writer, *, mode: Optional[int] = None) -> None:
+    import tempfile
+
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+
+    existing_mode = None
+    try:
+        existing_mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+    except FileNotFoundError:
+        pass
+
+    effective_mode = mode if mode is not None else existing_mode
+    descriptor, temporary = tempfile.mkstemp(
+        dir=directory,
+        prefix=f".{os.path.basename(path)}.",
+        suffix=".tmp",
+    )
+
+    try:
+        if effective_mode is not None:
+            os.fchmod(descriptor, effective_mode)
+
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            writer(stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        os.replace(temporary, path)
+        _fsync_parent_directory(path)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
-    """Atomically persist `data` as JSON at `path`.
+    def write(stream) -> None:
+        json.dump(data, stream, ensure_ascii=False, indent=indent)
 
-    The temp file uses the live PID as a suffix so two processes saving the
-    same file (e.g. unit tests) don't collide on the rename target.
-    """
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=indent)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    _atomic_write(path, write)
 
 
-def atomic_write_text(path: str, text: str) -> None:
+def atomic_write_text(path: str, text: str, *, mode: Optional[int] = None) -> None:
     if not isinstance(text, str):
         raise TypeError("atomic_write_text expects a string")
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+
+    def write(stream) -> None:
+        stream.write(text)
+
+    _atomic_write(path, write, mode=mode)
