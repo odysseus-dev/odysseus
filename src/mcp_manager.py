@@ -9,16 +9,89 @@ import json
 import logging
 import os
 import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
+
+def _mcp_connect_timeout_seconds() -> float:
+    try:
+        return max(0.1, float(os.getenv("ODYSSEUS_MCP_CONNECT_TIMEOUT_SECONDS", "15")))
+    except (TypeError, ValueError):
+        return 15.0
+
+
+MCP_CONNECT_TIMEOUT_SECONDS = _mcp_connect_timeout_seconds()
+_MCP_REDACTED = "[REDACTED]"
+_SENSITIVE_QUERY_KEYS = {
+    "access_token", "api_key", "apikey", "auth", "authorization", "client_secret",
+    "code", "key", "password", "refresh_token", "secret", "signature", "sig",
+    "token",
+}
+_SENSITIVE_QUERY_KEYS_NORMALIZED = {
+    re.sub(r"[^a-z0-9]", "", key.lower()) for key in _SENSITIVE_QUERY_KEYS
+}
+
+
+def sanitize_mcp_error(error: Any) -> str:
+    """Redact credentials from MCP-facing errors before status/API/log use."""
+    text = str(error) if error is not None else "Unknown error"
+    text = _redact_urls(text)
+    text = re.sub(
+        r"""(?ix)(["']?authorization["']?\s*[:=]\s*["']?)(?:(?:bearer|basic)\s+)?[^\s"',;}\]]+""",
+        rf"\1{_MCP_REDACTED}",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+",
+        rf"\1 {_MCP_REDACTED}",
+        text,
+    )
+    text = re.sub(
+        r"""(?ix)
+        \b([A-Za-z0-9_.-]*(?:api[_-]?key|token|password|passwd|pwd|secret)[A-Za-z0-9_.-]*)
+        (\s*[:=]\s*)
+        (?:
+            "([^"]*)"|'([^']*)'|([^\s,;&}\]]+)
+        )
+        """,
+        lambda m: f"{m.group(1)}{m.group(2)}{_MCP_REDACTED}",
+        text,
+    )
+    return text
+
+
+def _redact_urls(text: str) -> str:
+    def repl(match):
+        raw = match.group(0)
+        try:
+            parts = urlsplit(raw)
+            netloc = parts.netloc
+            if "@" in netloc:
+                netloc = f"{_MCP_REDACTED}@{netloc.rsplit('@', 1)[1]}"
+            query = urlencode([
+                (key, _MCP_REDACTED if _is_sensitive_query_key(key) else value)
+                for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            ], doseq=True)
+            return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+        except Exception:
+            return raw
+
+    return re.sub(r"https?://[^\s\"'<>]+", repl, text)
+
+
+def _is_sensitive_query_key(key: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    return key.lower() in _SENSITIVE_QUERY_KEYS or normalized in _SENSITIVE_QUERY_KEYS_NORMALIZED
+
+
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
     args = args or []
-    raw_error = str(error) if error else "Unknown error"
+    raw_error = sanitize_mcp_error(error)
     command_line = " ".join([command or "", *args]).strip()
     lower_command = command_line.lower()
 
@@ -172,13 +245,28 @@ class McpManager:
                 self._generation += 1
             return res
         except Exception as e:
-            logger.error(f"Failed to connect MCP server {name} ({server_id}): {e}")
+            safe_error = sanitize_mcp_error(e)
+            logger.error(f"Failed to connect MCP server {name} ({server_id}): {safe_error}")
             error_message = _format_mcp_connection_error(name, command or "", args or [], e)
             self._connections[server_id] = {"status": "error", "error": error_message, "name": name}
             self._generation += 1
             return False
 
     async def _connect_stdio(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:
+        """Connect to an MCP server via stdio transport."""
+        import asyncio
+        try:
+            return await asyncio.wait_for(
+                self._connect_stdio_unbounded(server_id, name, command, args, env),
+                timeout=MCP_CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            msg = f"MCP connection timed out after {MCP_CONNECT_TIMEOUT_SECONDS:g}s"
+            logger.warning(f"Failed to connect MCP server {name} ({server_id}): {msg}")
+            self._connections[server_id] = {"status": "error", "error": msg, "name": name}
+            return False
+
+    async def _connect_stdio_unbounded(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:
         """Connect to an MCP server via stdio transport."""
         try:
             from mcp import ClientSession, StdioServerParameters
@@ -201,7 +289,7 @@ class McpManager:
 
                 # Discover tools
                 tools_result = await session.list_tools()
-            except Exception:
+            except BaseException:
                 await stack.aclose()
                 raise
             tools = []
@@ -247,6 +335,20 @@ class McpManager:
 
     async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
         """Connect to an MCP server via SSE transport."""
+        import asyncio
+        try:
+            return await asyncio.wait_for(
+                self._connect_sse_unbounded(server_id, name, url),
+                timeout=MCP_CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            msg = f"MCP connection timed out after {MCP_CONNECT_TIMEOUT_SECONDS:g}s"
+            logger.warning(f"Failed to connect MCP server {name} ({server_id}): {msg}")
+            self._connections[server_id] = {"status": "error", "error": msg, "name": name}
+            return False
+
+    async def _connect_sse_unbounded(self, server_id: str, name: str, url: str) -> bool:
+        """Connect to an MCP server via SSE transport."""
         try:
             from mcp import ClientSession
             from mcp.client.sse import sse_client
@@ -262,7 +364,7 @@ class McpManager:
 
                 # Discover tools
                 tools_result = await session.list_tools()
-            except Exception:
+            except BaseException:
                 await stack.aclose()
                 raise
             tools = []
@@ -308,7 +410,9 @@ class McpManager:
             try:
                 return task.result()
             except Exception as e:
-                self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+                safe_error = sanitize_mcp_error(e)
+                logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {safe_error}")
+                self._connections[server_id] = {"status": "error", "error": safe_error, "name": name}
                 return False
         # Still running → either awaiting authorization, or discovery/DCR is
         # still in flight. If _on_redirect already published needs_auth+auth_url,
@@ -340,12 +444,16 @@ class McpManager:
 
             provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
-            read_stream, write_stream, _get_session_id = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-            await session.initialize()
+            try:
+                transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+                read_stream, write_stream, _get_session_id = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+                await session.initialize()
 
-            tools_result = await session.list_tools()
+                tools_result = await session.list_tools()
+            except BaseException:
+                await stack.aclose()
+                raise
             tools = []
             for tool in tools_result.tools:
                 tools.append({
@@ -373,8 +481,9 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
         except Exception as e:
-            logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {e}")
-            self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+            safe_error = sanitize_mcp_error(e)
+            logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {safe_error}")
+            self._connections[server_id] = {"status": "error", "error": safe_error, "name": name}
             return False
 
     async def disconnect_server(self, server_id: str):
@@ -395,7 +504,7 @@ class McpManager:
             try:
                 await stack.aclose()
             except Exception as e:
-                logger.warning(f"Error closing MCP server {server_id}: {e}")
+                logger.warning(f"Error closing MCP server {server_id}: {sanitize_mcp_error(e)}")
 
         self._sessions.pop(server_id, None)
         self._tools.pop(server_id, None)
@@ -450,9 +559,10 @@ class McpManager:
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
+            safe_error = sanitize_mcp_error(e)
             # Auto-reconnect for builtin servers whose subprocess may have died
             if self.is_builtin(server_id):
-                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
+                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {safe_error}")
                 reconnected = await self._reconnect_builtin(server_id)
                 if reconnected:
                     session = self._sessions.get(server_id)
@@ -460,16 +570,17 @@ class McpManager:
                         try:
                             result = await self._do_call(session, tool_name, arguments)
                         except Exception as e2:
-                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
-                            return {"error": str(e2), "exit_code": 1}
+                            safe_error2 = sanitize_mcp_error(e2)
+                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {safe_error2}")
+                            return {"error": safe_error2, "exit_code": 1}
                     else:
                         return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
                 else:
                     logger.error(f"MCP reconnect failed for {server_id}")
                     return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
             else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+                logger.error(f"MCP tool call failed: {qualified_name}: {safe_error}")
+                return {"error": safe_error, "exit_code": 1}
 
         return result
 
@@ -529,7 +640,7 @@ class McpManager:
                 logger.info(f"Reconnected builtin MCP server: {name}")
             return ok
         except Exception as e:
-            logger.error(f"Failed to reconnect builtin MCP server {name}: {e}")
+            logger.error(f"Failed to reconnect builtin MCP server {name}: {sanitize_mcp_error(e)}")
             return False
 
     def get_all_openai_schemas(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
