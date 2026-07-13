@@ -35,8 +35,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // timeline), we collapse them into lightweight placeholders that preserve
   // the conversation shape while freeing 95%+ of the DOM memory. The full
   // history lives on the server and is re-fetched on session switch.
-  const MAX_CHAT_DOM_NODES = 150;
-  var _unloadedMsgCount = 0; // how many messages have been offloaded from the top
+  var MAX_CHAT_DOM_NODES = 150;
+  (function _initMaxDomNodes() {
+    var box = document.getElementById('chat-history');
+    if (box) {
+      var attr = parseInt(box.getAttribute('data-max-dom-nodes'), 10);
+      if (attr > 0) MAX_CHAT_DOM_NODES = attr;
+    }
+  })();
 
   function _trimChatHistoryDOM() {
     var box = document.getElementById('chat-history');
@@ -45,16 +51,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (children.length <= MAX_CHAT_DOM_NODES) return;
     var keepFloor = Math.min(20, Math.floor(MAX_CHAT_DOM_NODES / 4));
 
-    // Phase 1: remove any existing "load older" bars from the top (they'll
-    // be recreated with an updated count).
-    var existingBar = box.querySelector('.load-older-bar');
-    if (existingBar) {
-      existingBar.remove();
-    }
-
-    // Phase 2: remove the oldest children until we're under the cap,
-    // counting how many .msg elements we offload.
-    var offloaded = 0;
+    // Remove the oldest children until we're under the cap. The scroll-based
+    // pager in sessions.js handles re-fetching older messages on demand.
     var maxIdx = Math.max(0, children.length - keepFloor);
     for (var i = 0; i < maxIdx && children.length > MAX_CHAT_DOM_NODES; i++) {
       var el = children[i];
@@ -71,75 +69,16 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       el.querySelectorAll('img[src^="data:"]').forEach(function(img) {
         img.src = '';
       });
-
-      if (el.classList.contains('msg') || el.classList.contains('agent-thread')) {
-        offloaded++;
+      // Also clear data-URI background images in inline styles
+      var bg = el.style && el.style.backgroundImage;
+      if (bg && bg.indexOf('url("data:') === 0) {
+        el.style.backgroundImage = '';
+      } else if (bg && bg.indexOf("url('data:") === 0) {
+        el.style.backgroundImage = '';
       }
+
       el.remove();
       i--; // children shifted, re-check this index
-    }
-
-    // Phase 3: insert a "Load older messages" bar at the top if we offloaded any
-    if (offloaded > 0) {
-      _unloadedMsgCount += offloaded;
-      var bar = document.createElement('div');
-      bar.className = 'load-older-bar';
-      bar.textContent = 'Show ' + _unloadedMsgCount + ' older messages';
-      bar.addEventListener('click', function() {
-        _loadOlderMessages(box, bar);
-      });
-      box.insertBefore(bar, box.firstChild);
-    }
-  }
-
-  /** Fetch and render the next page of older messages from the server. */
-  async function _loadOlderMessages(box, bar) {
-    if (bar._loading) return;
-    bar._loading = true;
-    bar.textContent = 'Loading…';
-    bar.style.pointerEvents = 'none';
-    var sessionId = null;
-    try { sessionId = sessionModule.getCurrentSessionId(); } catch (_) {}
-    if (!sessionId) { bar.textContent = 'No session'; return; }
-    try {
-      // Compute a backward-paging offset into the chronological history
-      // array.  The initial load returned the most-recent 400 messages
-      // (indices total-400 .. total-1).  Each DOM trim offloads the
-      // oldest-visible N messages from the top, and each "load older"
-      // fetch walks 50 messages further back.
-      var total = window._historyTotal || 0;
-      var offset = Math.max(0, total - 400 + _unloadedMsgCount - 50);
-      var res = await fetch(API_BASE + '/api/history/' + sessionId + '?limit=50&offset=' + offset);
-      var data = await res.json();
-      var msgs = data.history || [];
-      if (msgs.length === 0) {
-        bar.textContent = 'No older messages';
-        return;
-      }
-      // Render messages before the bar
-      var modelName = data.model || null;
-      for (var i = 0; i < msgs.length; i++) {
-        var msg = msgs[i];
-        var content = typeof msg.content === 'string' ? msg.content : '';
-        if (!content && Array.isArray(msg.content)) {
-          content = msg.content.filter(function(p) { return p.type === 'text'; }).map(function(p) { return p.text; }).join('\n').trim();
-        }
-        if (!content) continue;
-        var el = chatRenderer.addMessage(msg.role, content, modelName, msg.metadata || null);
-        if (el) box.insertBefore(el, bar);
-      }
-      _unloadedMsgCount = Math.max(0, _unloadedMsgCount - msgs.length);
-      if (_unloadedMsgCount <= 0) {
-        bar.remove();
-      } else {
-        bar.textContent = 'Show ' + _unloadedMsgCount + ' older messages';
-        bar._loading = false;
-        bar.style.pointerEvents = '';
-      }
-    } catch (e) {
-      bar.textContent = 'Failed to load — tap to retry';
-      bar._loading = false;
-      bar.style.pointerEvents = '';
     }
   }
 
@@ -378,6 +317,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let currentSpinner = null; // Track current spinner for stop cleanup
 
   // Background streaming support
+  const MAX_BACKGROUND_STREAMS = 10;
   const _backgroundStreams = new Map(); // sessionId -> { status, accumulated, sourcesHtml, abortCtrl, query, metrics }
   const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
   let _streamSessionId = null; // Session ID for the currently active reader loop
@@ -399,9 +339,27 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Release any held resources before deleting
         if (entry.abortCtrl) { entry.abortCtrl = null; }
         entry.accumulated = '';
+        entry.sourcesHtml = '';
+        entry.findingsData = null;
+        entry.metrics = null;
         _backgroundStreams.delete(sid);
       }
     });
+    // Evict oldest entries when the map exceeds the cardinality cap.
+    // This bounds memory for abandoned streams that never completed.
+    while (_backgroundStreams.size > MAX_BACKGROUND_STREAMS) {
+      var oldestKey = _backgroundStreams.keys().next().value;
+      if (oldestKey === undefined) break;
+      var oldest = _backgroundStreams.get(oldestKey);
+      if (oldest) {
+        if (oldest.abortCtrl) { try { oldest.abortCtrl.abort(); } catch (_) {} oldest.abortCtrl = null; }
+        oldest.accumulated = '';
+        oldest.sourcesHtml = '';
+        oldest.findingsData = null;
+        oldest.metrics = null;
+      }
+      _backgroundStreams.delete(oldestKey);
+    }
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -1700,6 +1658,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let _liveThinkSpinnerSlot = null;
       let _liveThinkTimerEl = null;
       let _liveThinkTokenCount = 0;
+      let _thinkRenderTimer = null;
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
@@ -1889,7 +1848,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   // Free the large accumulated text — only the status and query
                   // are needed now; checkBackgroundStream reloads from the DB.
                   bgDone.accumulated = '';
+                  bgDone.sourcesHtml = '';
                   bgDone.abortCtrl = null;
+                  _purgeStaleBackgroundStreams();
                 }
                 // CRITICAL: always mark stream complete for the sidebar dot
                 try {
@@ -2138,19 +2099,23 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   }
                 } else if (hasUnclosedThink && isThinking) {
                   if (_liveThinkInner) {
-                    // Extract raw thinking text (strip known thinking wrappers and prefixes)
-                    var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText))
-                      .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
-                      .replace(/<\|channel>thought\s*\n?/gi, '')
-                      .replace(/<\|channel>response\s*\n?/gi, '')
-                      .replace(/<channel\|>/gi, '');
-                    thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                    // Render as plain text during streaming — avoids O(n^2)
-                    // markdown-to-HTML on every token. A single rich render
-                    // happens when the thinking block closes.
-                    _liveThinkInner.textContent = thinkText;
-                    _liveThinkInner.style.whiteSpace = 'pre-wrap';
-                    _liveThinkInner.style.fontFamily = 'inherit';
+                    // Debounce expensive regex processing — O(n) per-char on
+                    // growing text. A single rich render happens when the
+                    // thinking block closes. Between ticks, raw text
+                    // accumulates without triggering the regex chain.
+                    if (!_thinkRenderTimer) {
+                      _thinkRenderTimer = setTimeout(function() {
+                        _thinkRenderTimer = null;
+                        if (!_liveThinkInner || !isThinking) return;
+                        var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText))
+                          .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
+                          .replace(/<\|channel>thought\s*\n?/gi, '')
+                          .replace(/<\|channel>response\s*\n?/gi, '')
+                          .replace(/<channel\|>/gi, '');
+                        thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+                        _liveThinkInner.textContent = thinkText;
+                      }, 200);
+                    }
                     // Keep thinking box scrolled to bottom, but let user scroll up
                     var _followThinking = true;
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
@@ -2163,6 +2128,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   if (_followThinking) uiModule.scrollHistory();
                   continue;
                 } else if (!hasUnclosedThink && isThinking) {
+                  if (_thinkRenderTimer) { clearTimeout(_thinkRenderTimer); _thinkRenderTimer = null; }
                   isThinking = false;
                   var _thinkTextLen = _liveThinkInner ? _liveThinkInner.textContent.trim().length : 0;
 

@@ -103,6 +103,13 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
     rows created while auth was previously enabled.
     """
     user = effective_user(request)
+    # API tokens must carry the 'chat' scope (or wildcard '*') to access
+    # session history and mutations.  Ownership alone is not sufficient — a
+    # token scoped for e.g. 'documents:read' must not reach chat endpoints.
+    if getattr(request.state, "api_token", False):
+        scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+        if "chat" not in scopes and "*" not in scopes:
+            raise HTTPException(403, "API token does not have chat scope")
     if not user and not _auth_disabled():
         raise HTTPException(401, "Authentication required")
     db = SessionLocal()

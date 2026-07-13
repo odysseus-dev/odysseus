@@ -1902,11 +1902,6 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
         total: data.total,
         has_more_before: !!data.has_more_before,
       };
-      // Store the total message count so the "load older" pager can
-      // compute correct offsets (the backend returns most-recent when
-      // no offset is given, so the pager needs to count backward from
-      // the end of the array).
-      window._historyTotal = data.total || 0;
       // The model returned by /api/history is the authoritative one the
       // backend will use for this session. Write it back into the cached
       // session meta and refresh the picker so the displayed model can

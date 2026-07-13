@@ -247,6 +247,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             "model": session.model,
             "endpoint_url": session.endpoint_url,
             "name": session.name,
+            "total": len(history_dict),
         }
 
     @router.post("/api/session/{session_id}/truncate")

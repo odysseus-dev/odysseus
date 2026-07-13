@@ -10317,10 +10317,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   let _streamDeltaPending = null;  // throttled content for next rAF
   export function streamDocDelta(content) {
     if (!_streamDocId) return;
-    const doc = docs.get(_streamDocId);
+    const capturedId = _streamDocId;
+    const doc = docs.get(capturedId);
     if (doc) doc.content = content;
 
-    if (_streamDocId === activeDocId) {
+    if (capturedId === activeDocId) {
       if ((doc?.language || '').toLowerCase() === 'email') {
         _syncStreamingEmailFields(doc);
         return;
@@ -10331,6 +10332,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!_streamDeltaPending) {
         _streamDeltaPending = requestAnimationFrame(function() {
           _streamDeltaPending = null;
+          // Re-check: streamDocOpen may have switched to a different document
+          if (_streamDocId !== capturedId) return;
           var latest = doc.content;
           var textarea = document.getElementById('doc-editor-textarea');
           if (textarea) {
@@ -10363,17 +10366,20 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
    *  Returns the old _streamDocId so handleDocUpdate can migrate temp→real. */
   export function streamDocFinalize() {
     const oldId = _streamDocId;
+    const capturedId = _streamDocId;
     const finishingDoc = oldId ? docs.get(oldId) : null;
     if (oldId === activeDocId && (finishingDoc?.language || '').toLowerCase() === 'email') {
       const fields = _parseEmailHeader(finishingDoc.content || '');
       _renderStreamingEmailBody(fields.body || '', { immediate: true });
     }
-    _streamDocId = null;
     // Cancel any pending throttled update and flush final content
     if (_streamDeltaPending) {
       cancelAnimationFrame(_streamDeltaPending);
       _streamDeltaPending = null;
     }
+    // Bail if streamDocOpen switched documents while we were finalizing
+    if (_streamDocId !== capturedId) return oldId;
+    _streamDocId = null;
     // Flush final content to textarea and code element
     var textarea = document.getElementById('doc-editor-textarea');
     var codeEl = document.getElementById('doc-editor-code');

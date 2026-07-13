@@ -2091,26 +2091,6 @@ body.bg-pattern-sparkles {
       overflow: hidden;
       transition: min-height 0.25s ease-out;
     }
-    /* "Load older messages" bar — click to fetch the next page from the server.
-       Replaces the old per-message collapse approach. */
-    .load-older-bar {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 8px 12px;
-      margin: 6px 0;
-      font-size: 12px;
-      color: var(--accent);
-      background: color-mix(in srgb, var(--accent) 8%, transparent);
-      border: 1px dashed color-mix(in srgb, var(--accent) 25%, transparent);
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s, opacity 0.15s;
-      user-select: none;
-    }
-    .load-older-bar:hover {
-      background: color-mix(in srgb, var(--accent) 14%, transparent);
-    }
     /* Keep old collapsed class for any legacy elements still in the DOM */
     .msg-collapsed {
       min-height: unset !important;

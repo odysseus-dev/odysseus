@@ -1,6 +1,6 @@
 """Regression guard for PR #4661 — history pagination contract.
 
-`routes/history_routes.py` paginates session history with `?limit=k` and
+`routes/history/history_routes.py` paginates session history with `?limit=k` and
 `?offset=j`.  The frontend pager (`sessions.js`, `chat.js`) relies on two
 invariants:
 
@@ -10,17 +10,26 @@ invariants:
      most-recent window without gaps or duplicates when driven by the
      frontend's `_loadOlderMessages()` offset math.
 
-This test pins those invariants against a fake session manager so the
-contract can't silently drift.
+This test pins those invariants against the canonical FastAPI endpoint.
+Limit-based tests use a temp file-backed SQLite DB via monkeypatching
+``core.database.SessionLocal``; no-limit tests exercise the in-memory
+fallback path via a fake session manager.
 """
 
-from types import SimpleNamespace
+import json
+from datetime import datetime, timezone
 
+import core.database
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routes.history_routes as history_routes
 from core.models import ChatMessage
+from core.database import (
+    Session as DbSession,
+    ChatMessage as DbChatMessage,
+)
+from tests.helpers.sqlite_db import make_temp_sqlite
 
 
 # ---------------------------------------------------------------------------
@@ -75,12 +84,70 @@ def _make_messages(count):
 
 
 # ---------------------------------------------------------------------------
+# DB seeding — uses the same temp SessionLocal that the canonical endpoint
+# will use, because monkeypatch sets it on core.database.SessionLocal.
+# ---------------------------------------------------------------------------
+
+def _seed_db(session_id, messages, SessionLocal):
+    """Insert a Session row and ChatMessage rows into the temp DB."""
+    db = SessionLocal()
+    try:
+        s = DbSession(
+            id=session_id,
+            name="pagination-test",
+            model="test-model",
+            endpoint_url="http://example.test/v1",
+            owner="test-owner",
+        )
+        db.add(s)
+
+        for i, msg in enumerate(messages):
+            role = msg.role if isinstance(msg, ChatMessage) else msg.get("role", "user")
+            content = msg.content if isinstance(msg, ChatMessage) else msg.get("content", "")
+            metadata = msg.metadata if isinstance(msg, ChatMessage) else msg.get("metadata")
+            meta_json = json.dumps(metadata) if metadata else None
+            db.add(DbChatMessage(
+                id=f"msg-{session_id}-{i}",
+                session_id=session_id,
+                role=role,
+                content=content,
+                meta_data=meta_json,
+                timestamp=datetime.now(timezone.utc),
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _setup_temp_db(monkeypatch):
+    """Create a temp file-backed SQLite DB and monkeypatch SessionLocal.
+
+    The canonical module (routes/history/history_routes.py) imports
+    ``SessionLocal`` from ``core.database`` at module level.  Patching
+    ``core.database.SessionLocal`` works for fresh imports but the
+    canonical module already holds a local reference.  We patch BOTH
+    ``core.database.SessionLocal`` AND the canonical module's attribute
+    (which, via the shim, is ``history_routes.SessionLocal``).
+
+    Returns the temp SessionLocal. The caller must keep the returned
+    (SessionLocal, engine, tmpfile) tuple alive for the test duration.
+    """
+    SessionLocal, engine, tmpfile = make_temp_sqlite(core.database.Base.metadata)
+    monkeypatch.setattr(core.database, "SessionLocal", SessionLocal)
+    monkeypatch.setattr(history_routes, "SessionLocal", SessionLocal)
+    return SessionLocal, engine, tmpfile
+
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 def test_initial_request_returns_most_recent_messages(monkeypatch):
     """`?limit=k` with no explicit offset returns the k most-recent messages."""
+    SessionLocal, _engine, _tmp = _setup_temp_db(monkeypatch)
     messages = _make_messages(10)  # msg-0 … msg-9 (chronological)
+    _seed_db("s1", messages, SessionLocal)
+
     session = _FakeSession(messages)
     session.id = "s1"
     manager, client = _build_app(monkeypatch, session)
@@ -104,7 +171,10 @@ def test_initial_request_returns_most_recent_messages(monkeypatch):
 
 def test_explicit_offset_returns_correct_slice(monkeypatch):
     """`?limit=k&offset=j` returns the exact slice from the chronological array."""
+    SessionLocal, _engine, _tmp = _setup_temp_db(monkeypatch)
     messages = _make_messages(10)
+    _seed_db("s2", messages, SessionLocal)
+
     session = _FakeSession(messages)
     session.id = "s2"
     manager, client = _build_app(monkeypatch, session)
@@ -129,7 +199,10 @@ def test_backward_paging_no_gaps_or_duplicates(monkeypatch):
     `?limit=k&offset=j+k` requests must return disjoint, contiguous slices
     that together cover exactly the full range without duplicates.
     """
+    SessionLocal, _engine, _tmp = _setup_temp_db(monkeypatch)
     messages = _make_messages(10)  # msg-0 … msg-9
+    _seed_db("s3", messages, SessionLocal)
+
     session = _FakeSession(messages)
     session.id = "s3"
     manager, client = _build_app(monkeypatch, session)
@@ -171,7 +244,10 @@ def test_most_recent_then_explicit_offset_backward(monkeypatch):
     backward via explicit offsets computed from `total`.  The two windows
     must be adjacent — no overlap and no gap.
     """
+    SessionLocal, _engine, _tmp = _setup_temp_db(monkeypatch)
     messages = _make_messages(10)
+    _seed_db("s3b", messages, SessionLocal)
+
     session = _FakeSession(messages)
     session.id = "s3b"
     manager, client = _build_app(monkeypatch, session)
