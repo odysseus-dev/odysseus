@@ -36,8 +36,20 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
+// Strict inline-image data URI: raster formats only (no SVG, which can carry
+// script), base64 payload only — no quotes, angle brackets, or nested URLs —
+// so the value is inert as an <img src>. Omni backends (e.g. Lemonade) return
+// generated images embedded in the assistant text as
+// ![generated image](data:image/png;base64,...). Same shape chatRenderer.js
+// accepts for tool screenshots and display images.
+const SAFE_DATA_IMAGE_RE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i;
+
 function imageHtml(alt, url, title) {
-  const safeUrl = safeLinkUrl(url);
+  let safeUrl = safeLinkUrl(url);
+  if (!safeUrl) {
+    const raw = String(url || '').trim();
+    if (SAFE_DATA_IMAGE_RE.test(raw)) safeUrl = raw;
+  }
   if (!safeUrl || safeUrl.startsWith('#')) return escapeHtml(alt || '');
   const safeAlt = escapeHtml(alt || '');
   const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
@@ -124,6 +136,14 @@ function _cleanAllowedHtmlOnce(htmlString) {
       // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
       // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
       if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
+        // Exception: <img src> may carry the strict base64 raster data URI
+        // that imageHtml emits for inline generated images (omni models).
+        // The anchored regex admits no SVG, no quotes/brackets, base64
+        // payload chars only, so the value stays inert across re-parses.
+        if (name === 'src' && el.tagName.toUpperCase() === 'IMG'
+            && SAFE_DATA_IMAGE_RE.test(attr.value)) {
+          continue;
+        }
         if (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value)) {
           el.removeAttribute(attr.name);
         }

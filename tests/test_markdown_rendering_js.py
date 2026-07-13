@@ -256,3 +256,56 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+# 1x1 transparent PNG — the smallest valid base64 raster payload.
+_TINY_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+    "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def test_inline_data_uri_image_renders_as_img(node_available):
+    # Omni backends (e.g. Lemonade Server) embed generated images in the
+    # assistant text as ![generated image](data:image/png;base64,...). The
+    # image pass used to reject every data: URL, so the user saw only the
+    # literal alt text "generated image" (issue #5436).
+    html = _run_markdown_case(
+        f"Here you go:\n\n![generated image](data:image/png;base64,{_TINY_PNG_B64})"
+    )
+
+    assert f'<img src="data:image/png;base64,{_TINY_PNG_B64}"' in html
+    assert 'alt="generated image"' in html
+    assert ">generated image<" not in html
+
+
+def test_svg_data_uri_image_stays_alt_text(node_available):
+    # SVG can carry script — never allowed inline, even as an image.
+    html = _run_markdown_case(
+        "![generated image](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)"
+    )
+
+    assert "<img" not in html
+    assert "generated image" in html
+
+
+def test_non_image_data_uri_stays_alt_text(node_available):
+    html = _run_markdown_case("![payload](data:text/html;base64,PHNjcmlwdD4=)")
+
+    assert "<img" not in html
+    assert "payload" in html
+
+
+def test_javascript_url_image_stays_alt_text(node_available):
+    html = _run_markdown_case("![click](javascript:alert(1))")
+
+    assert "<img" not in html
+    assert "javascript:" not in html
+    assert "click" in html
+
+
+def test_http_image_still_renders(node_available):
+    html = _run_markdown_case("![photo](https://example.com/a.png)")
+
+    assert '<img src="https://example.com/a.png"' in html
+    assert 'alt="photo"' in html
