@@ -4343,6 +4343,7 @@ async def stream_agent_loop(
             _rsid = result.get("research_session_id")
             if _rsid:
                 _anchor = f"\n\n[Open in Deep Research](#research-{_rsid})\n"
+                full_response = (full_response.rstrip() + _anchor).strip()
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
 
             # Same pattern for notes: when manage_notes creates a note
