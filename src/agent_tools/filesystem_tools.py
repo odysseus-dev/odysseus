@@ -7,6 +7,7 @@ import fnmatch
 import shutil
 from typing import Optional, Dict, Any, Tuple
 
+from core.atomic_io import atomic_write_text
 from src.constants import MAX_READ_CHARS, MAX_DIFF_LINES, MAX_OUTPUT_CHARS
 
 _CODENAV_SKIP_DIRS = frozenset({
@@ -70,6 +71,15 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
         "file": os.path.basename(path) or (path or "file"),
     }
 
+def _regular_file_mode(path: str) -> Optional[int]:
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return None
+    if not os.path.isfile(path):
+        raise IsADirectoryError(path)
+    return st.st_mode & 0o7777
+
 class EditFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
@@ -94,6 +104,7 @@ class EditFileTool:
 
         def _apply():
             """Helper function that performs the actual string replacement and file writing logic."""
+            mode = _regular_file_mode(path)
             with open(path, "r", encoding="utf-8") as f:
                 original = f.read()
             count = original.count(old)
@@ -102,8 +113,7 @@ class EditFileTool:
             if count > 1 and not replace_all:
                 return original, None, f"not_unique:{count}"
             updated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(updated)
+            atomic_write_text(path, updated, mode=mode)
             return original, updated, "ok"
 
         try:
@@ -208,16 +218,17 @@ class WriteFileTool:
         try:
             def _write():
                 old = ""
+                mode = _regular_file_mode(path)
                 try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        old = f.read()
+                    if mode is not None:
+                        with open(path, "r", encoding="utf-8") as f:
+                            old = f.read()
                 except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
                     old = ""
                 d = os.path.dirname(path)
                 if d:
                     os.makedirs(d, exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(body)
+                atomic_write_text(path, body, mode=mode)
                 return old, len(body)
             old_content, size = await asyncio.to_thread(_write)
         except PermissionError:
