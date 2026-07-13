@@ -26,11 +26,11 @@ from urllib.parse import urlparse
 ALLOWED_SCHEMES = ("http", "https")
 
 # RFC 6598 shared address space (carrier-grade NAT). It is not globally
-# routable, but CPython does not report it as ``is_private`` (it is "shared",
-# not "private"), so strict mode must reject it explicitly. ``not is_global``
-# would also catch it, but only on CPython 3.11.10+/3.12.4+/3.13+ — the CI
-# matrix runs 3.11/3.12, so an explicit reject stays correct across patch
-# levels and the 3.14 runtime image.
+# routable, but CPython does not classify it as ``is_private`` (it is "shared",
+# not "private"), so the is_private/is_loopback checks miss it. Reject the range
+# explicitly. This closes exactly the shared-space gap without coupling strict
+# mode to ``is_global``'s broader definition, which has shifted across CPython
+# versions for other special ranges.
 _SHARED_ADDRESS_SPACE_V4 = ipaddress.ip_network("100.64.0.0/10")
 
 
