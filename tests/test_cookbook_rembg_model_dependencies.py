@@ -49,6 +49,12 @@ def test_cookbook_ui_downloads_file_dependencies_without_pip():
     assert "await _installModelDep(modelName, pkgName || modelName, btn, endpoint);" in COOKBOOK_JS
 
 
+def test_cookbook_dependency_renderer_defines_system_install_allowlist():
+    """Rendering the first system row must not abort the whole package list."""
+    assert "const _systemInstallable = new Set(['tmux']);" in COOKBOOK_JS
+    assert "_systemInstallable.has(pkg.name)" in COOKBOOK_JS
+
+
 def test_cookbook_onnx_diffusion_serves_with_directml_defaults():
     assert "const isOnnxModel = /onnx/i.test" in COOKBOOK_JS
     assert "cmd += ' --backend onnx';" in COOKBOOK_JS

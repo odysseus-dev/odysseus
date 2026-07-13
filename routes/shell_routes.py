@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import importlib.metadata as importlib_metadata
 import json
 import logging
 import os
@@ -244,6 +245,33 @@ def _pip_dist_names(pkg: dict) -> list[str]:
     if isinstance(names, list) and names:
         return [str(name) for name in names if str(name).strip()]
     return [_pip_dist_name(pkg)]
+
+
+def _package_installed_without_import(pkg: dict) -> bool:
+    """Check a local Python dependency without executing its import code.
+
+    Optional image/ML packages can initialize native runtimes (ONNX, Torch,
+    CUDA) merely by being imported. Doing that in the Dependencies request
+    blocks the server event loop and can leave the whole catalog behind its
+    loading spinner for tens of seconds. A real module spec plus matching pip
+    distribution metadata is sufficient for generic dependency rows; packages
+    with capability-specific checks keep their dedicated probes below.
+    """
+    module_name = pkg.get("import_name") or pkg["name"]
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+    if spec is None:
+        return False
+
+    for dist_name in _pip_dist_names(pkg):
+        try:
+            importlib_metadata.version(dist_name)
+            return True
+        except importlib_metadata.PackageNotFoundError:
+            continue
+    return False
 
 
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
@@ -1403,7 +1431,6 @@ def setup_shell_routes() -> APIRouter:
         """
         _require_admin(request)
         _reject_cross_site(request)
-        import importlib.metadata as importlib_metadata
         import shlex
         import json as _json
         import site
@@ -1824,34 +1851,7 @@ def setup_shell_routes() -> APIRouter:
                 except Exception:
                     pkg["installed"] = False
             else:
-                try:
-                    importlib.import_module(pkg.get("import_name") or pkg["name"])
-                    found_dist = False
-                    for dist_name in _pip_dist_names(pkg):
-                        try:
-                            importlib_metadata.version(dist_name)
-                            found_dist = True
-                            break
-                        except importlib_metadata.PackageNotFoundError:
-                            pass
-                    if not found_dist:
-                        raise importlib_metadata.PackageNotFoundError
-                    pkg["installed"] = True
-                except ImportError:
-                    pkg["installed"] = False
-                except importlib_metadata.PackageNotFoundError:
-                    pkg["installed"] = False
-                except (Exception, SystemExit):
-                    # Installed but crashes on import — e.g. a CUDA build of
-                    # llama-cpp-python raising FileNotFoundError when the CUDA
-                    # toolkit dir is absent, or rembg calling sys.exit(1) when no
-                    # onnxruntime backend can be loaded. SystemExit is a
-                    # BaseException, not Exception, so without catching it here a
-                    # single sys.exit-on-import package escapes and takes down the
-                    # whole packages panel / worker (the panel hangs forever). One
-                    # broken optional package must not 500 — or hang — the entire
-                    # panel; report it as not usable.
-                    pkg["installed"] = False
+                pkg["installed"] = _package_installed_without_import(pkg)
 
             # llama_cpp partial-state probe: when the package is installed
             # but the wheel was built CPU-only AND the target has NVIDIA

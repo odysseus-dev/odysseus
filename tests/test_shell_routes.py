@@ -20,6 +20,7 @@ from routes.shell_routes import (
     _docker_row_status,
     _image_runtime_python,
     _package_installed_from_probe,
+    _package_installed_without_import,
     _package_pip_update_status,
     _probe_package_with_python,
     _package_probe_script,
@@ -344,6 +345,41 @@ class TestHostDockerAccess:
 
 class TestPackageProbeStatus:
     """Dependency rows should reflect serve readiness, not import coincidences."""
+
+    def test_generic_local_probe_does_not_execute_optional_package(self, monkeypatch):
+        class Spec:
+            loader = object()
+
+        imported = []
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: Spec())
+        monkeypatch.setattr(
+            "routes.shell_routes.importlib_metadata.version", lambda name: "1.2.3"
+        )
+        monkeypatch.setattr(
+            importlib, "import_module", lambda name: imported.append(name)
+        )
+
+        assert (
+            _package_installed_without_import({"name": "rembg", "pip": "rembg"})
+            is True
+        )
+        assert imported == []
+
+    def test_generic_local_probe_requires_matching_distribution(self, monkeypatch):
+        class Spec:
+            loader = object()
+
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: Spec())
+
+        def missing(_name):
+            raise importlib.metadata.PackageNotFoundError
+
+        monkeypatch.setattr("routes.shell_routes.importlib_metadata.version", missing)
+
+        assert (
+            _package_installed_without_import({"name": "rembg", "pip": "rembg"})
+            is False
+        )
 
     def test_vllm_namespace_without_cli_is_not_installed(self):
         probe = {

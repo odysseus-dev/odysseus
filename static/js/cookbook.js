@@ -1124,6 +1124,7 @@ async function _fetchDependencies() {
     const pkgs = data.packages;
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No dependency package manifest returned</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    const _systemInstallable = new Set(['tmux']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, isFileDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
