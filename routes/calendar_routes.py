@@ -13,8 +13,9 @@ from sqlalchemy import or_, and_
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent
-from src.auth_helpers import require_user
+from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
 
@@ -697,8 +698,17 @@ def _expand_rrule(
 
 # ── Routes ──
 
-def setup_calendar_routes() -> APIRouter:
+def setup_calendar_routes(upload_handler=None) -> APIRouter:
     router = APIRouter(prefix="/api/calendar", tags=["calendar"])
+
+    def _reserve_calendar_uploads(request: Request, *values) -> None:
+        missing_id = reserve_upload_references(
+            upload_handler,
+            effective_user(request),
+            *values,
+        )
+        if missing_id:
+            raise HTTPException(409, f"Referenced upload is no longer available: {missing_id}")
 
     # ── CalDAV multi-account helpers ─────────────────────────────────────────
 
@@ -913,7 +923,24 @@ def setup_calendar_routes() -> APIRouter:
             '</d:prop></d:propfind>'
         )
         try:
-            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False) as cx:
+            # Build an SSL context that trusts the operator's custom CA bundle
+            # (SSL_CERT_FILE / REQUESTS_CA_BUNDLE) so self-signed CalDAV servers
+            # pass the pre-flight the same way they pass the real sync.
+            # trust_env=False is kept to block proxy/auth env leakage; the CA
+            # bundle is loaded explicitly instead.
+            import ssl as _ssl
+            _ssl_ctx = _ssl.create_default_context()
+            # Disable VERIFY_X509_STRICT so certs without a keyUsage extension
+            # (common in self-signed setups) are accepted, matching the
+            # requests/urllib3 behavior used by the CalDAV sync path.
+            _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+            _ca_bundle = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE")
+            if _ca_bundle:
+                if _os.path.isfile(_ca_bundle):
+                    _ssl_ctx.load_verify_locations(_ca_bundle)
+                else:
+                    logger.warning("CalDAV test: CA bundle %s not found, using system CAs", _ca_bundle)
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
                     auth=(user, pw),
@@ -1070,6 +1097,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.post("/events")
     async def create_event(request: Request, data: EventCreate):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, data.color, data.description, data.location)
         db = SessionLocal()
         try:
             cal = None
@@ -1131,6 +1159,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.put("/events/{uid}")
     async def update_event(request: Request, uid: str, data: EventUpdate):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, data.color, data.description, data.location)
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:
@@ -1224,6 +1253,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.post("/calendars")
     async def create_calendar(request: Request, name: str = "Imported", color: str = "#5b8abf"):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, color)
         db = SessionLocal()
         try:
             cal = CalendarCal(
@@ -1246,6 +1276,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.put("/calendars/{cal_id}")
     async def update_calendar(request: Request, cal_id: str, name: str = None, color: str = None):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, color)
         db = SessionLocal()
         try:
             cal = _get_or_404_calendar(db, cal_id, owner)

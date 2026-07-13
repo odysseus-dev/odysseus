@@ -233,6 +233,10 @@ def test_build_uploaded_file_manifest_filters_and_nulls_unreadable_paths(monkeyp
         )
 
         assert [item["id"] for item in manifest] == ["good", "outside", "missing"]
+        assert manifest[0]["type"] == "attachment_ref"
+        assert manifest[0]["attachment_id"] == "good"
+        assert manifest[0]["uri"] == "odysseus://attachment/good"
+        assert manifest[0]["read_policy"] == "owner_checked_upload"
         assert os.path.realpath(manifest[0]["path"]) == os.path.realpath(good)
         assert manifest[1]["path"] is None
         assert manifest[2]["path"] is None

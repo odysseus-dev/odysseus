@@ -2,9 +2,15 @@ from typing import Any, Dict, List, Optional
 import logging
 import re
 from src.constants import MAX_READ_CHARS
-from src.tool_utils import _parse_tool_args
+from src.tool_utils import _parse_tool_args, get_upload_handler
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
+
+
+def _missing_document_upload(owner: Optional[str], content: Any) -> Optional[str]:
+    """Reserve explicit upload URLs before an agent persists document text."""
+    return reserve_upload_references(get_upload_handler(), owner, content)
 
 # ---------------------------------------------------------------------------
 # Active document state
@@ -130,15 +136,70 @@ def _looks_like_email_document(text: str = "", title: str = "") -> bool:
         return True
     return bool(_re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s))
 
+def _split_email_header_body(text: str) -> tuple[str, str]:
+    if "\n---\n" in (text or ""):
+        header, body = (text or "").split("\n---\n", 1)
+        return header.rstrip(), body.strip()
+    return (text or "").strip(), ""
+
+def _split_email_reply_history(body: str) -> tuple[str, str]:
+    """Split draft body from quoted/original email history.
+
+    Email reply docs keep the original thread below the user's new reply. Models
+    often rewrite only the fresh reply body; this helper keeps the historical
+    block from being wiped when update_document/edit_document replaces content.
+    """
+    text = body or ""
+    literal = "---------- Previous message ----------"
+    literal_idx = text.find(literal)
+    if literal_idx >= 0:
+        return text[:literal_idx].strip(), text[literal_idx:].strip()
+    patterns = [
+        r"(?m)^On .+ wrote:\s*$",
+        r"(?m)^> .+",
+    ]
+    starts = []
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            starts.append(m.start())
+    if not starts:
+        return text.strip(), ""
+    idx = min(starts)
+    return text[:idx].strip(), text[idx:].strip()
+
+def _merge_email_headers(old_header: str, new_header: str) -> str:
+    """Preserve routing/threading metadata if a model omits it."""
+    protected = (
+        "In-Reply-To", "References", "X-Source-UID", "X-Source-Folder",
+        "X-Attachments", "X-Forward-Attachments",
+    )
+    lines = [l for l in (new_header or "").splitlines() if l.strip()]
+    present = {l.split(":", 1)[0].strip().lower() for l in lines if ":" in l}
+    for old_line in (old_header or "").splitlines():
+        if ":" not in old_line:
+            continue
+        key = old_line.split(":", 1)[0].strip()
+        if key in protected and key.lower() not in present:
+            lines.append(old_line)
+            present.add(key.lower())
+    return "\n".join(lines).rstrip()
+
 def _coerce_email_document_content(existing: str, incoming: str) -> str:
     """Keep email docs in the To/Subject/---/body shape even if a model writes
     only the body or dumps header labels without the separator."""
     import re as _re
     old = existing or ""
     new = (incoming or "").strip()
+    old_header, old_body = _split_email_header_body(old)
+    _, old_history = _split_email_reply_history(old_body)
     if "\n---\n" in new:
-        return new
-    header = old.split("\n---\n", 1)[0] if "\n---\n" in old else "To: \nSubject: "
+        new_header, new_body = _split_email_header_body(new)
+        new_own, new_history = _split_email_reply_history(new_body)
+        if old_history and not new_history:
+            new_body = (new_own + "\n\n" + old_history).strip()
+        return _merge_email_headers(old_header, new_header).rstrip() + "\n---\n" + new_body
+    header = old_header if old_header else "To: \nSubject: "
     if _looks_like_email_document(new):
         lines = new.splitlines()
         last_header_idx = -1
@@ -152,6 +213,9 @@ def _coerce_email_document_content(existing: str, incoming: str) -> str:
         body = "\n".join(body_lines).strip()
     else:
         body = new
+    _, incoming_history = _split_email_reply_history(body)
+    if old_history and not incoming_history:
+        body = (body.strip() + "\n\n" + old_history).strip()
     return header.rstrip() + "\n---\n" + body
 
 def parse_edit_blocks(content: str) -> list:
@@ -326,6 +390,13 @@ class CreateDocumentTool:
                 return {"error": "Cannot create document in another user's session"}
             _owner = _sess.owner if _sess else None
 
+            missing_id = _missing_document_upload(_owner, content)
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
+
             doc = Document(
                 id=doc_id,
                 session_id=session_id,
@@ -397,6 +468,13 @@ class UpdateDocumentTool:
             if is_email_doc:
                 doc.language = "email"
 
+            missing_id = _missing_document_upload(owner, new_content)
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
+
             if not is_email_doc and _pdf_source_upload_id(doc.current_content or ""):
                 return _create_pdf_text_derivative(
                     db,
@@ -463,6 +541,48 @@ class EditDocumentTool:
             if not doc:
                 return {"error": "No documents exist to edit"}
 
+            is_email_doc = doc.language == "email" or _looks_like_email_document(doc.current_content or "", doc.title or "")
+            blank_find_edits = [e for e in edits if not (e.get("find") or "").strip()]
+            if blank_find_edits:
+                if is_email_doc:
+                    replacement_body = (blank_find_edits[0].get("replace") or "").strip()
+                    if not replacement_body:
+                        return {"error": "No edits applied — blank FIND block had no replacement text"}
+                    updated_content = _coerce_email_document_content(doc.current_content or "", replacement_body)
+                    applied = 1
+                    skipped = max(0, len(edits) - 1)
+                    doc.language = "email"
+                    missing_id = _missing_document_upload(owner, updated_content)
+                    if missing_id:
+                        return {
+                            "error": f"Referenced upload is no longer available: {missing_id}",
+                            "exit_code": 1,
+                        }
+                    new_ver = doc.version_count + 1
+                    ver = DocumentVersion(
+                        id=str(uuid.uuid4()),
+                        document_id=target_id,
+                        version_number=new_ver,
+                        content=updated_content,
+                        summary=f"Edited email body by {_active_model or 'AI'}",
+                        source="ai",
+                    )
+                    doc.current_content = updated_content
+                    doc.version_count = new_ver
+                    db.add(ver)
+                    db.commit()
+                    return {
+                        "action": "edit",
+                        "doc_id": target_id,
+                        "title": doc.title,
+                        "language": doc.language,
+                        "content": updated_content,
+                        "version": new_ver,
+                        "applied": applied,
+                        "skipped": skipped,
+                    }
+                return {"error": "No edits applied — FIND text cannot be blank"}
+
             updated_content = doc.current_content
             applied = 0
             skipped = 0
@@ -489,6 +609,13 @@ class EditDocumentTool:
 
             if applied == 0:
                 return {"error": f"No edits applied — none of the FIND blocks matched the document content (skipped {skipped})"}
+
+            missing_id = _missing_document_upload(owner, updated_content)
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
 
             if _pdf_source_upload_id(doc.current_content or ""):
                 return _create_pdf_text_derivative(

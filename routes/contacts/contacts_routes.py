@@ -394,21 +394,30 @@ def _resolve_resource_url(uid: str) -> str:
     return _lookup() or _vcard_url(uid)
 
 
-def _create_contact(name: str, email: str, address: str = "") -> bool:
+def _create_contact(name: str, email: str = "", address: str = "", phones: Optional[List[str]] = None) -> bool:
     """Add a new contact via CardDAV or local contacts."""
+    email = (email or "").strip()
+    phone_list = [str(p or "").strip() for p in (phones or []) if str(p or "").strip()]
     cfg = _get_carddav_config()
     if not _carddav_configured(cfg):
         contacts = _load_local_contacts()
-        email_l = (email or "").strip().lower()
+        email_l = email.lower()
         for c in contacts:
             if email_l and email_l in [e.lower() for e in c.get("emails", [])]:
                 return True
-        contacts.append(_normalize_contact({"name": name, "emails": [email], "address": address}))
+            if phone_list and any(p in (c.get("phones") or []) for p in phone_list):
+                return True
+        contacts.append(_normalize_contact({
+            "name": name,
+            "emails": [email] if email else [],
+            "phones": phone_list,
+            "address": address,
+        }))
         _save_local_contacts(contacts)
         return True
 
     contact_uid = str(uuid.uuid4())
-    vcard = _build_vcard(name, email, contact_uid, address=address)
+    vcard = _build_vcard(name, email, contact_uid, address=address, phones=phone_list)
     try:
         url = _carddav_base_url(cfg) + "/" + contact_uid + ".vcf"
         auth = None
@@ -759,26 +768,33 @@ def setup_contacts_routes():
         name = (data.get("name") or "").strip()
         email = (data.get("email") or "").strip()
         phone = (data.get("phone") or "").strip()
+        phones = [str(p or "").strip() for p in (data.get("phones") or []) if str(p or "").strip()]
+        if phone and phone not in phones:
+            phones.insert(0, phone)
         address = (data.get("address") or "").strip()
-        if not email:
-            return {"success": False, "error": "Email required"}
-        # Check if already exists by email
-        if email:
-            contacts = _fetch_contacts()
-            for c in contacts:
-                if email.lower() in [e.lower() for e in c["emails"]]:
-                    return {"success": True, "message": "Already exists", "contact": c}
-        if not name:
+        if not name and email:
             name = email.split("@")[0]
+        if not name and not email and not phones and not address:
+            return {"success": False, "error": "Name, email, phone, or address required"}
+        if not name:
+            name = email.split("@")[0] if email else (phones[0] if phones else "Contact")
+        contacts = _fetch_contacts()
+        for c in contacts:
+            if email and email.lower() in [e.lower() for e in c.get("emails", [])]:
+                return {"success": True, "message": "Already exists", "contact": c}
+            if phones and any(p in (c.get("phones") or []) for p in phones):
+                return {"success": True, "message": "Already exists", "contact": c}
         create_params = inspect.signature(_create_contact).parameters
-        if len(create_params) >= 3:
+        if "phones" in create_params:
+            ok = _create_contact(name, email, address, phones=phones)
+        elif len(create_params) >= 3:
             ok = _create_contact(name, email, address)
         else:
             ok = _create_contact(name, email)
         # If a phone was provided, do an immediate update to thread it
         # through (the simple _create_contact signature only takes name +
         # email + address; phones happen via update).
-        if ok and phone:
+        if ok and phones and "phones" not in create_params:
             try:
                 fresh = _fetch_contacts(force=True)
                 created = next((c for c in fresh if name == c.get("name") and (not email or email in c.get("emails", []))), None)
@@ -786,7 +802,7 @@ def setup_contacts_routes():
                     _update_contact(
                         created["uid"], name,
                         created.get("emails", []),
-                        [phone],
+                        phones,
                         address,
                     )
             except Exception:

@@ -68,3 +68,24 @@ def test_no_rounds_exhausted_on_normal_finish(monkeypatch):
     # A plain answer (no tool block) -> done-break on round 1 -> no event.
     events = _run_loop(monkeypatch, "All done, here is your answer.", max_rounds=2)
     assert not any(e.get("type") == "rounds_exhausted" for e in events), events
+
+
+def test_emits_intent_nudge_exhausted_when_cap_is_exhausted(monkeypatch):
+    _patch_common(monkeypatch)
+
+    events = _run_loop(monkeypatch, "Let me check the logs", max_rounds=5)
+
+    guard = next((e for e in events if e.get("type") == "intent_nudge_exhausted"), None)
+    assert guard is not None, events
+    assert guard["reason"] == "intent_without_action_nudge_cap"
+    assert guard["nudges"] == 2
+
+
+def test_emits_loop_breaker_triggered_when_loop_breaker_trips(monkeypatch):
+    _patch_common(monkeypatch)
+
+    events = _run_loop(monkeypatch, "```bash\necho hi\n```", max_rounds=6)
+
+    guard = next((e for e in events if e.get("type") == "loop_breaker_triggered"), None)
+    assert guard is not None, events
+    assert guard["reason"] == "loop_breaker_stall"
