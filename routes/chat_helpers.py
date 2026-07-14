@@ -17,6 +17,7 @@ from src.context_compactor import maybe_compact, trim_for_context
 from src.model_context import estimate_tokens
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
+from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -418,13 +419,16 @@ def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[
             except Exception:
                 path = None
 
-        manifest.append({
-            "id": info.get("id") or str(att_id),
-            "name": info.get("name") or info.get("original_name") or str(att_id),
-            "mime": info.get("mime", ""),
-            "size": info.get("size", 0),
+        ref = attachment_ref({**info, "id": info.get("id") or str(att_id)})
+        ref.update({
+            "id": ref["attachment_id"],
+            "uri": f"odysseus://attachment/{ref['attachment_id']}",
+            "read_policy": "owner_checked_upload",
+            # Transitional compatibility: existing built-in tools can still use
+            # this path, but only after owner, upload-root, and tool-root checks.
             "path": path,
         })
+        manifest.append(ref)
     return manifest
 
 

@@ -478,3 +478,23 @@ def test_workspace_clarification_after_inspection_is_allowed(monkeypatch):
     )
     metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
     assert "agent_workspace_clarification_recovery" not in metrics
+
+def test_emits_intent_nudge_exhausted_when_cap_is_exhausted(monkeypatch):
+    _patch_common(monkeypatch)
+
+    events = _run_loop(monkeypatch, "Let me check the logs", max_rounds=5)
+
+    guard = next((e for e in events if e.get("type") == "intent_nudge_exhausted"), None)
+    assert guard is not None, events
+    assert guard["reason"] == "intent_without_action_nudge_cap"
+    assert guard["nudges"] == 2
+
+
+def test_emits_loop_breaker_triggered_when_loop_breaker_trips(monkeypatch):
+    _patch_common(monkeypatch)
+
+    events = _run_loop(monkeypatch, "```bash\necho hi\n```", max_rounds=6)
+
+    guard = next((e for e in events if e.get("type") == "loop_breaker_triggered"), None)
+    assert guard is not None, events
+    assert guard["reason"] == "loop_breaker_stall"
