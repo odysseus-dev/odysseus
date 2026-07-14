@@ -2071,11 +2071,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 # Skip uids we couldn't fetch (no subject/from/body).
                 if not item.get("subject") and not item.get("from"):
                     continue
-                verdict = _heuristic_email_verdict(item)
-                cache.setdefault("uids", {})[item["uid"]] = verdict
-                per_uid_scores[key] = verdict
-                saved_classifications += 1
-                continue
+                # Heuristic verdict as a fallback for THIS scan's aggregation,
+                # tagging, and notify. Deliberately NOT written to `cache`: only
+                # a successful LLM classification is persisted below, so a
+                # transient LLM failure is retried on the next scan instead of
+                # sticking the heuristic verdict at the current TRIAGE_VERSION.
+                per_uid_scores[key] = _heuristic_email_verdict(item)
                 # ── LLM-classify. JSON-only response; bullet-proof parse.
                 llm_attempts += 1
                 prompt = (
@@ -2100,7 +2101,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     raw = await llm_call_async_with_fallback(
                         candidates,
                         [{"role": "user", "content": prompt}],
-                        temperature=0.1, max_tokens=220, timeout=30,
+                        temperature=0.1, max_tokens=2048, timeout=30,
                     )
                     # Tolerant JSON-parse: strip code fences if present.
                     txt = (raw or "").strip()
