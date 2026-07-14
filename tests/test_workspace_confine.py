@@ -280,6 +280,40 @@ def test_workspace_shell_guard_allows_read_only_redirect_syntax(ws, command):
 
 
 @pytest.mark.parametrize("command", [
+    "grep -E 'mv|cp' log.txt",
+    "awk '/mv|cp/' file",
+    'echo "a;cp b"',
+])
+def test_workspace_shell_guard_allows_quoted_mutation_words(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command) is None
+    finally:
+        _active_workspace.reset(token)
+
+
+@pytest.mark.parametrize("command", [
+    "cp secret.txt out.txt",
+    "touch note.txt",
+    "tee out.txt",
+    "echo ok && cp a b",
+    "(cp secret.txt out.txt)",
+    "$(mv a.txt b.txt)",
+    "`cp a b`",
+    "{ cp a b; }",
+    "sed -i 's/a/b/' file",
+    "perl -pi -e 's/a/b/' file",
+    "awk -i inplace '{print}' file",
+])
+def test_workspace_shell_guard_blocks_tokenized_mutation_commands(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command)
+    finally:
+        _active_workspace.reset(token)
+
+
+@pytest.mark.parametrize("command", [
     "printf 'x' > note.txt",
     "printf 'x' >> note.txt",
     "printf 'x' 1> note.txt",
