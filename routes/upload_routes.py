@@ -10,15 +10,139 @@ from fastapi import APIRouter, Request, File, UploadFile, HTTPException, Form
 from typing import List, Optional
 import logging
 from core.middleware import require_admin
-from core.database import SessionLocal, GalleryImage, Session as DbSession
+from core.database import (
+    SessionLocal,
+    ChatMessage as DbChatMessage,
+    CalendarCal,
+    CalendarEvent,
+    Document,
+    DocumentVersion,
+    GalleryImage,
+    Note,
+    Session as DbSession,
+)
 from src.auth_helpers import effective_user
+from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
-from src.upload_handler import count_recent_uploads
+from src.upload_handler import (
+    UploadCleanupSafetyError,
+    count_recent_uploads,
+    extract_upload_ids,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
 UPLOAD_RESPONSE_HEADERS = {"X-Content-Type-Options": "nosniff"}
+
+def _upload_ids_from_persisted_text(value: object) -> set[str]:
+    """Return canonical upload IDs embedded in persisted text.
+
+    This covers attachment reference lines/URIs and the PDF source markers
+    stored by the document editor. False positives are intentionally
+    conservative: retaining an extra upload is safer than deleting referenced
+    bytes.
+    """
+    return extract_upload_ids(value)
+
+
+def _upload_ids_from_message_metadata(raw_metadata: object) -> set[str]:
+    """Extract attachment IDs from a persisted chat metadata JSON value.
+
+    Malformed metadata raises instead of being treated as an empty reference
+    set. The admin cleanup route catches that failure and aborts cleanup.
+    """
+    if raw_metadata in (None, ""):
+        return set()
+    if isinstance(raw_metadata, str):
+        metadata = json.loads(raw_metadata)
+    else:
+        metadata = raw_metadata
+    if not isinstance(metadata, dict):
+        raise ValueError("chat message metadata must be a JSON object")
+
+    attachments = metadata.get("attachments")
+    if attachments is not None:
+        if not isinstance(attachments, list) or any(
+            not isinstance(item, dict) for item in attachments
+        ):
+            raise ValueError("chat message attachments metadata is malformed")
+
+    ids = {
+        str(ref["attachment_id"])
+        for ref in attachment_refs_from_metadata(metadata)
+        if ref.get("attachment_id")
+    }
+    # Preserve canonical IDs even in older metadata shapes not normalized by
+    # attachment_refs_from_metadata().
+    ids.update(_upload_ids_from_persisted_text(json.dumps(metadata)))
+    return ids
+
+
+def _collect_persisted_upload_references() -> tuple[set[str], set[str]]:
+    """Collect upload IDs/hashes still referenced by durable application data.
+
+    The caller must treat any exception as an incomplete scan and fail closed.
+    There is no distinct artifact table in the current schema; artifact-like
+    attachment references persisted in chat/document text are covered by the
+    canonical-ID scan.
+    """
+    referenced_ids: set[str] = set()
+    referenced_hashes: set[str] = set()
+    db = SessionLocal()
+    try:
+        for content, raw_metadata in db.query(
+            DbChatMessage.content,
+            DbChatMessage.meta_data,
+        ).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(content))
+            referenced_ids.update(_upload_ids_from_message_metadata(raw_metadata))
+
+        for (content,) in db.query(Document.current_content).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(content))
+
+        for (content,) in db.query(DocumentVersion.content).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(content))
+
+        for filename, file_hash in db.query(
+            GalleryImage.filename,
+            GalleryImage.file_hash,
+        ).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(filename))
+            if file_hash:
+                referenced_hashes.add(str(file_hash))
+
+        for image_url, color, content, items in db.query(
+            Note.image_url,
+            Note.color,
+            Note.content,
+            Note.items,
+        ).yield_per(500):
+            for value in (image_url, color, content, items):
+                referenced_ids.update(_upload_ids_from_persisted_text(value))
+
+        for (color,) in db.query(CalendarCal.color).yield_per(500):
+            referenced_ids.update(_upload_ids_from_persisted_text(color))
+
+        for color, description, location in db.query(
+            CalendarEvent.color,
+            CalendarEvent.description,
+            CalendarEvent.location,
+        ).yield_per(500):
+            for value in (color, description, location):
+                referenced_ids.update(_upload_ids_from_persisted_text(value))
+
+        return referenced_ids, referenced_hashes
+    finally:
+        db.close()
+
+
+def _run_reference_safe_cleanup(upload_handler) -> int:
+    referenced_ids, referenced_hashes = _collect_persisted_upload_references()
+    return upload_handler.cleanup_old_uploads(
+        referenced_upload_ids=referenced_ids,
+        referenced_upload_hashes=referenced_hashes,
+    )
 
 def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
@@ -172,7 +296,9 @@ def setup_upload_routes(upload_handler):
                     "mime": meta["mime"],
                     "size": meta["size"],
                     "hash": meta["hash"],
+                    "checksum_sha256": meta.get("checksum_sha256") or meta["hash"],
                     "uploaded_at": meta["uploaded_at"],
+                    "created_at": meta.get("created_at") or meta["uploaded_at"],
                     "width": meta.get("width"),
                     "height": meta.get("height"),
                     "is_duplicate": meta.get("is_duplicate", False)
@@ -195,7 +321,23 @@ def setup_upload_routes(upload_handler):
     async def manual_cleanup(request: Request):
         """Manually trigger cleanup of old uploads."""
         require_admin(request)
-        cleaned_count = upload_handler.cleanup_old_uploads()
+        try:
+            cleaned_count = await asyncio.to_thread(
+                _run_reference_safe_cleanup,
+                upload_handler,
+            )
+        except UploadCleanupSafetyError:
+            logger.exception("Upload cleanup aborted because index safety checks failed")
+            raise HTTPException(
+                503,
+                "Upload cleanup aborted because upload index integrity could not be verified",
+            )
+        except Exception:
+            logger.exception("Upload cleanup skipped because reference discovery failed")
+            raise HTTPException(
+                503,
+                "Upload cleanup skipped because persisted references could not be verified",
+            )
         return {"status": "success", "files_cleaned": cleaned_count}
 
     @router.get("/stats")
