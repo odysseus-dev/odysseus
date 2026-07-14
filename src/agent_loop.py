@@ -4447,6 +4447,12 @@ async def stream_agent_loop(
             f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
         )
 
+        # Emit a checkpoint so the route layer can save tool events on disconnect
+        if tool_events:
+            yield (
+                f'data: {json.dumps({"type": "tool_checkpoint", "tool_events": tool_events})}\n\n'
+            )
+
         # Separator in accumulated response
         full_response += "\n\n"
     else:

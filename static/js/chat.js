@@ -260,6 +260,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
   let currentAccumulated = ''; // Track accumulated text across function scope
   let currentHolder = null; // Track current message holder
+  let currentRoundHolder = null; // Track latest agent-step bubble (may differ from currentHolder in multi-step agent turns)
+  let currentCalledToolNames = []; // Track tool names called this turn so Continue can warn the model
   let currentSpinner = null; // Track current spinner for stop cleanup
 
   // Background streaming support
@@ -652,6 +654,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // turn survives a refresh instead of vanishing without a trace.
         _renderCancelledBubble(currentHolder);
         currentHolder = null;
+        currentRoundHolder = null;
         updateSubmitButton('idle', submitBtn);
         const messageInput = uiModule.el('message');
         if (messageInput) messageInput.disabled = false;
@@ -688,7 +691,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         continueBtn.className = 'continue-btn';
         continueBtn.title = 'Continue';
         continueBtn.textContent = '\u25B8';
-        const _stoppedHolder = currentHolder; // capture before it gets cleared
+        // In multi-step agent turns the visible text is in the latest round bubble,
+        // not the outer currentHolder — prefer currentRoundHolder when available.
+        const _stoppedHolder = currentRoundHolder || currentHolder;
         continueBtn.addEventListener('click', () => {
           stoppedIndicator.remove();
           _hideUserBubble = true;
@@ -696,13 +701,17 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           const cutoff = stoppedContent;
           const msgInput = uiModule.el('message');
           if (msgInput) {
-            msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+            const _uniqueTools = [...new Set(currentCalledToolNames)];
+            const _toolNote = _uniqueTools.length
+              ? '\n\nTools already called this turn (do NOT call these again): ' + _uniqueTools.join(', ') + '.'
+              : '';
+            msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + _toolNote + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
             const sb = document.querySelector('.send-btn');
             if (sb) sb.click();
           }
         });
         stoppedIndicator.appendChild(continueBtn);
-        currentHolder.querySelector('.body').appendChild(stoppedIndicator);
+        _stoppedHolder.querySelector('.body').appendChild(stoppedIndicator);
 
         // Tell server to mark this message as stopped
         const _sid = sessionModule.getCurrentSessionId();
@@ -727,6 +736,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Clear tracking variables
       currentAccumulated = '';
       currentHolder = null;
+      currentRoundHolder = null;
 
       return;
     }
@@ -893,6 +903,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Declare accumulated outside try block so it's accessible in catch
     let accumulated = '';
+    // Reset per-turn tool tracker (module-level so the stop handler's click closure can read it)
+    currentCalledToolNames = [];
     // Are we currently inside an unclosed <think> block? Toggled per think/answer
     // cycle so a multi-round agent response (one reasoning phase PER round) wraps each
     // round's reasoning in its own <think>…</think> instead of leaking rounds 2+ as text.
@@ -941,6 +953,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // Reset tracking variables at start
     currentAccumulated = '';
     currentHolder = null;
+    currentRoundHolder = null;
     
     try {
       // Re-enable auto-scroll when user sends a message
@@ -2505,6 +2518,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
                 // Track tool name for contextual spinner labels
                 _lastToolName = json.tool || '';
+                // Record each tool call so the continue message can warn not to repeat
+                if (json.tool) currentCalledToolNames.push(json.tool);
 
                 // --- Thread timeline: group tools in a thread container ---
                 const cmd = json.command || '';
@@ -2831,6 +2846,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 newWrap.appendChild(newBody);
                 box.appendChild(newWrap);
                 roundHolder = newWrap;
+                currentRoundHolder = newWrap; // keep module-level tracker in sync
                 roundText = '';
                 // Destroy any previous spinner before creating new one
                 if (spinner && spinner.element) spinner.destroy();
@@ -3338,7 +3354,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               const cutoff = accumulated;
               const msgInput = uiModule.el('message');
               if (msgInput) {
-                msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+                const _uniqueTools2 = [...new Set(currentCalledToolNames)];
+                const _toolNote2 = _uniqueTools2.length
+                  ? '\n\nTools already called this turn (do NOT call these again): ' + _uniqueTools2.join(', ') + '.'
+                  : '';
+                msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + _toolNote2 + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
                 const sb = document.querySelector('.send-btn');
                 if (sb) sb.click();
               }
@@ -3424,6 +3444,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Clear tracking variables
         currentAccumulated = '';
         currentHolder = null;
+        currentRoundHolder = null;
         currentSpinner = null;
         _researchingStreamIds.delete(streamSessionId);
         // Clear research-running highlight if no more active research
@@ -3738,6 +3759,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     isStreaming = false;
     _setForegroundChatBusy(false);
     currentHolder = null;
+    currentRoundHolder = null;
     currentAccumulated = '';
     // Reset submit button so the new chat is ready to send
     const submitBtn = document.querySelector('.send-btn');
