@@ -1,4 +1,4 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, Firecrawl, TinyFish."""
 
 import json
 import logging
@@ -25,6 +25,13 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    "firecrawl": ("Firecrawl",        True,  False),
+    # TinyFish Search: free, LLM-ready snippets, ~sub-second — best ROI for
+    # agent/voice quick lookups and research discovery (not Browser/Agent).
+    "tinyfish": ("TinyFish",          True,  False),
+    # Perplexity: LLM-synthesized answer + citations. Heavier per call than a
+    # snippet provider; used single or in the operator_research fan-out.
+    "perplexity": ("Perplexity",      True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -57,6 +64,9 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "firecrawl": "firecrawl_api_key",
+        "tinyfish": "tinyfish_api_key",
+        "perplexity": "perplexity_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -72,6 +82,9 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "GOOGLE_API_KEY",
         "tavily": "TAVILY_API_KEY",
         "serper": "SERPER_API_KEY",
+        "firecrawl": "FIRECRAWL_API_KEY",
+        "tinyfish": "TINYFISH_API_KEY",
+        "perplexity": "PERPLEXITY_API_KEY",
     }
     env_name = env_map.get(provider, "")
     return (os.environ.get(env_name) or "").strip() if env_name else ""
@@ -640,4 +653,276 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── Firecrawl ──
+
+def firecrawl_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using Firecrawl v2 API. Requires firecrawl_api_key or FIRECRAWL_API_KEY."""
+    count = count if count is not None else _get_result_count()
+    api_key = _get_provider_key("firecrawl") or os.environ.get("FIRECRAWL_API_KEY", "")
+    if not api_key:
+        logger.warning("Firecrawl: no API key configured")
+        return []
+
+    source: dict = {"type": "web"}
+    if time_filter:
+        time_map = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}
+        if time_filter in time_map:
+            source["tbs"] = time_map[time_filter]
+
+    payload = {
+        "query": query,
+        "limit": count,
+        "sources": [source],
+    }
+
+    try:
+        response = httpx.post(
+            "https://api.firecrawl.dev/v2/search",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Firecrawl rate limit hit")
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"Firecrawl search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Firecrawl returned invalid JSON: {e}")
+        return []
+
+    if not data.get("success", True):
+        logger.warning("Firecrawl search unsuccessful: %s", data.get("error", "unknown"))
+        return []
+
+    web_items = (data.get("data") or {}).get("web") or []
+    results = []
+    for item in web_items[:count]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        snippet = item.get("description") or item.get("snippet") or item.get("content") or ""
+        if isinstance(snippet, str) and len(snippet) > 500:
+            snippet = snippet[:500] + "…"
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": snippet,
+            "age": item.get("published_date", "") or item.get("age", ""),
+        })
+
+    logger.info(f"Firecrawl returned {len(results)} results")
+    return results
+
+
+# ── TinyFish Search ──
+# Strongest Odysseus ROI: free Search API for fast, structured, LLM-ready
+# results (agent web_search, voice tools, research discovery). Use Fetch/Agent
+# later for page extraction / multi-step browser work — not this provider.
+
+_TINYFISH_SEARCH_URL = "https://api.search.tinyfish.ai"
+
+_TINYFISH_RECENCY = {
+    "day": 1440,
+    "week": 10080,
+    "month": 43200,
+    "year": 525600,
+}
+
+
+def tinyfish_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using TinyFish Search API. Requires tinyfish_api_key or TINYFISH_API_KEY."""
+    count = count if count is not None else _get_result_count()
+    api_key = _get_provider_key("tinyfish") or os.environ.get("TINYFISH_API_KEY", "")
+    if not api_key:
+        logger.warning("TinyFish: no API key configured")
+        return []
+
+    params: dict = {
+        "query": query,
+        "language": "en",
+        "location": "US",
+    }
+    # Prefer news domain when the caller asked for a short freshness window —
+    # TinyFish returns publisher/date fields that help ranking and citations.
+    if time_filter in ("day", "week"):
+        params["domain_type"] = "news"
+        params["recency_minutes"] = _TINYFISH_RECENCY[time_filter]
+    elif time_filter in _TINYFISH_RECENCY:
+        params["recency_minutes"] = _TINYFISH_RECENCY[time_filter]
+
+    try:
+        response = httpx.get(
+            _TINYFISH_SEARCH_URL,
+            params=params,
+            headers={"X-API-Key": api_key, "Accept": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("TinyFish rate limit hit")
+        if response.status_code == 401:
+            logger.warning("TinyFish: invalid or missing API key")
+            return []
+        if response.status_code == 402:
+            logger.warning("TinyFish: Search API access required for this account")
+            return []
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"TinyFish search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"TinyFish returned invalid JSON: {e}")
+        return []
+
+    items = data.get("results") or []
+    results = []
+    for item in items[:count]:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url") or item.get("pdf_url") or ""
+        if not url:
+            continue
+        snippet = item.get("snippet") or ""
+        if isinstance(snippet, str) and len(snippet) > 500:
+            snippet = snippet[:500] + "…"
+        # Enrich academic hits so the LLM sees venue/citations in the snippet.
+        if item.get("venue") or item.get("cited_by_count") is not None:
+            extras = []
+            if item.get("venue"):
+                extras.append(str(item["venue"]))
+            if item.get("year"):
+                extras.append(str(item["year"]))
+            if item.get("cited_by_count") is not None:
+                extras.append(f"cited {item['cited_by_count']}")
+            if extras:
+                snippet = (snippet + " · " if snippet else "") + " · ".join(extras)
+        results.append({
+            "title": item.get("title") or "",
+            "url": url,
+            "snippet": snippet,
+            "age": item.get("date") or (str(item["year"]) if item.get("year") else ""),
+        })
+
+    logger.info(f"TinyFish returned {len(results)} results")
+    return results
+
+
+# ── Perplexity ──
+# LLM-synthesized answer + source citations via the Sonar API. Returns the
+# citation URLs as results, with the synthesized answer attached to the first
+# result's snippet so the agent gets both the sources and the summary.
+
+_PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+
+
+def _perplexity_model() -> str:
+    settings = _get_search_settings()
+    return (settings.get("perplexity_model") or os.environ.get("PERPLEXITY_MODEL") or "sonar").strip()
+
+
+def perplexity_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using the Perplexity Sonar API. Requires perplexity_api_key or PERPLEXITY_API_KEY."""
+    count = count if count is not None else _get_result_count()
+    api_key = _get_provider_key("perplexity") or os.environ.get("PERPLEXITY_API_KEY", "")
+    if not api_key:
+        logger.warning("Perplexity: no API key configured")
+        return []
+
+    payload: dict = {
+        "model": _perplexity_model(),
+        "messages": [
+            {"role": "system", "content": "Be concise. Answer with sourced facts."},
+            {"role": "user", "content": query},
+        ],
+    }
+    recency_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
+    if time_filter in recency_map:
+        payload["search_recency_filter"] = recency_map[time_filter]
+
+    try:
+        response = httpx.post(
+            _PERPLEXITY_URL,
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Perplexity rate limit hit")
+        if response.status_code == 401:
+            logger.warning("Perplexity: invalid or missing API key")
+            return []
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"Perplexity search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Perplexity returned invalid JSON: {e}")
+        return []
+
+    answer = ""
+    choices = data.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        answer = ((choices[0].get("message") or {}).get("content") or "").strip()
+
+    # Citations: newer responses use search_results[{title,url}], older ones a
+    # bare citations[url] list. Support both.
+    results: List[dict] = []
+    search_results = data.get("search_results")
+    if isinstance(search_results, list) and search_results:
+        for item in search_results[:count]:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url") or ""
+            if not url:
+                continue
+            results.append({
+                "title": item.get("title") or url,
+                "url": url,
+                "snippet": item.get("snippet") or "",
+                "age": item.get("date") or "",
+            })
+    else:
+        for url in (data.get("citations") or [])[:count]:
+            if isinstance(url, str) and url:
+                results.append({"title": url, "url": url, "snippet": "", "age": ""})
+
+    # Attach the synthesized answer so the agent sees Perplexity's summary even
+    # when it only skims the first result.
+    if answer:
+        if results:
+            results[0]["snippet"] = (
+                f"[Perplexity answer] {answer}"
+                + (f"\n\n{results[0]['snippet']}" if results[0]["snippet"] else "")
+            )[:1200]
+        else:
+            results.append({
+                "title": "Perplexity answer",
+                "url": "",
+                "snippet": answer[:1200],
+                "age": "",
+            })
+
+    logger.info(f"Perplexity returned {len(results)} results")
     return results
