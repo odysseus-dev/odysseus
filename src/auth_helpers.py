@@ -4,6 +4,8 @@ import os
 from typing import Optional
 from fastapi import Request, HTTPException
 
+from core.middleware import is_trusted_localhost_bypass_client
+
 
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
@@ -98,9 +100,10 @@ def require_user(request: Request) -> str:
     is_loopback = host in ("127.0.0.1", "::1", "localhost")
     # LOCALHOST_BYPASS=true is the dev-only "I'm on loopback, skip auth"
     # switch. Mirror the middleware so routes don't 401 the same caller
-    # the middleware just let through.
-    if is_loopback and os.getenv("LOCALHOST_BYPASS", "false").lower() == "true":
-        return ""
+    # the middleware just let through (includes Docker bridge gateway).
+    if os.getenv("LOCALHOST_BYPASS", "false").lower() == "true":
+        if is_trusted_localhost_bypass_client(request):
+            return ""
     if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
         raise HTTPException(401, "Not authenticated")
     # Unconfigured / first-run mode: only allow loopback callers.

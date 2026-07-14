@@ -230,10 +230,7 @@ def request_flags(messages) -> tuple:
     """
     msgs = messages or []
     last = msgs[-1] if msgs else None
-    # A message element can be a non-dict (clients send `"messages": ["hi"]`);
-    # the vision loop below already guards each element with isinstance, so do
-    # the same here rather than call .get() on a bare string.
-    agent = isinstance(last, dict) and last.get("role") != "user"
+    agent = bool(last) and last.get("role") != "user"
     vision = False
     for m in msgs:
         content = m.get("content") if isinstance(m, dict) else None

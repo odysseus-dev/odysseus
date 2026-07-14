@@ -1,0 +1,3316 @@
+.fugassa-main {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+  background: var(--bg, #0e0e10);
+  color: var(--fg, #e8e8ea);
+  box-shadow: none;
+  overflow: hidden;
+  font-family: var(--font-family, 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-size: calc(14px * var(--fugassa-ui-text-scale, 1));
+  line-height: 1.4;
+  letter-spacing: -0.015em;
+  --fugassa-ui-text-scale: 1;
+  --fugassa-chat-text-scale: 1;
+  --fugassa-chat-bubble-inset: 16px;
+  --fugassa-chat-bubble-radius: 10px;
+
+  /* Theme-linked tokens — follow Titan preset + custom themes via :root vars */
+  --fugassa-accent: var(--brand-color, var(--red, #e85d5d));
+  --fugassa-accent-contrast: var(--bg, #0e0e10);
+  --fugassa-accent-strong: color-mix(in srgb, var(--fugassa-accent) 88%, var(--fugassa-accent-contrast));
+  --fugassa-accent-hover: color-mix(in srgb, var(--fugassa-accent) 96%, var(--fg));
+  --fugassa-accent-a04: color-mix(in srgb, var(--fugassa-accent) 4%, transparent);
+  --fugassa-accent-a06: color-mix(in srgb, var(--fugassa-accent) 6%, transparent);
+  --fugassa-accent-a08: color-mix(in srgb, var(--fugassa-accent) 8%, transparent);
+  --fugassa-accent-a10: color-mix(in srgb, var(--fugassa-accent) 10%, transparent);
+  --fugassa-accent-a12: color-mix(in srgb, var(--fugassa-accent) 12%, transparent);
+  --fugassa-accent-a14: color-mix(in srgb, var(--fugassa-accent) 14%, transparent);
+  --fugassa-accent-a15: color-mix(in srgb, var(--fugassa-accent) 15%, transparent);
+  --fugassa-accent-a16: color-mix(in srgb, var(--fugassa-accent) 16%, transparent);
+  --fugassa-accent-a18: color-mix(in srgb, var(--fugassa-accent) 18%, transparent);
+  --fugassa-accent-a20: color-mix(in srgb, var(--fugassa-accent) 20%, transparent);
+  --fugassa-accent-a22: color-mix(in srgb, var(--fugassa-accent) 22%, transparent);
+  --fugassa-accent-a25: color-mix(in srgb, var(--fugassa-accent) 25%, transparent);
+  --fugassa-accent-a28: color-mix(in srgb, var(--fugassa-accent) 28%, transparent);
+  --fugassa-accent-a40: color-mix(in srgb, var(--fugassa-accent) 40%, transparent);
+  --fugassa-chrome-border: color-mix(in srgb, var(--border, #2a2a2a) 70%, var(--fugassa-accent) 30%);
+  --fugassa-chrome-fill: color-mix(in srgb, var(--fg) 2%, var(--panel, #141414));
+  --fugassa-gradient-accent: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fugassa-accent) 72%, var(--bg)),
+    var(--fugassa-accent)
+  );
+  --fugassa-gradient-accent-soft: linear-gradient(
+    90deg,
+    var(--fugassa-accent),
+    color-mix(in srgb, var(--fugassa-accent) 55%, var(--fg))
+  );
+  --fugassa-fg-a02: color-mix(in srgb, var(--fg) 2%, transparent);
+  --fugassa-fg-a03: color-mix(in srgb, var(--fg) 3%, transparent);
+  --fugassa-fg-a04: color-mix(in srgb, var(--fg) 4%, transparent);
+  --fugassa-fg-a05: color-mix(in srgb, var(--fg) 5%, transparent);
+  --fugassa-fg-a06: color-mix(in srgb, var(--fg) 6%, transparent);
+  --fugassa-fg-a08: color-mix(in srgb, var(--fg) 8%, transparent);
+  --fugassa-fg-a10: color-mix(in srgb, var(--fg) 10%, transparent);
+  --fugassa-fg-a15: color-mix(in srgb, var(--fg) 15%, transparent);
+  --fugassa-fg-a25: color-mix(in srgb, var(--fg) 25%, transparent);
+  --fugassa-surface: var(--fugassa-fg-a04);
+  --fugassa-surface-hover: color-mix(in srgb, var(--fg) 7%, transparent);
+  --fugassa-surface-muted: var(--fugassa-fg-a03);
+  --fugassa-raised: var(--panel, #141414);
+  --fugassa-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  --fugassa-shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.12);
+  --fugassa-radius: 8px;
+  --fugassa-radius-lg: 14px;
+  --fugassa-input-bg: color-mix(in srgb, var(--fg) 4%, var(--panel, #141414));
+  --fugassa-input-fg: var(--fg, #f7f0e7);
+  --fugassa-muted: color-mix(in srgb, var(--fg) 58%, transparent);
+  --fugassa-select-option-bg: var(--panel, #1c1822);
+  --fugassa-select-option-fg: var(--fg, #f7f0e7);
+  --fugassa-select-option-active-bg: color-mix(in srgb, var(--fugassa-accent) 24%, var(--panel, #1c1822));
+  /* Button labels — always derived from theme fg/bg so light & dark profiles stay readable */
+  --fugassa-btn-fg: var(--fg, #f7f0e7);
+  --fugassa-btn-bg: color-mix(in srgb, var(--fg) 12%, var(--panel, #141414));
+  --fugassa-btn-bg-hover: color-mix(in srgb, var(--fg) 18%, var(--panel, #141414));
+  --fugassa-btn-primary-bg: color-mix(in srgb, var(--fugassa-accent) 72%, var(--fg) 28%);
+  --fugassa-btn-primary-bg-hover: color-mix(in srgb, var(--fugassa-accent) 82%, var(--fg) 18%);
+  --fugassa-btn-primary-fg: var(--fg, #f7f0e7);
+}
+
+/* Raised panels / windows — match Titan .modal-content */
+.fugassa-panel,
+.fugassa-wizard-frame,
+.fugassa-dialog-card,
+.fugassa-settings-card {
+  background: var(--fugassa-raised);
+  border: none;
+  border-radius: var(--fugassa-radius-lg);
+  box-shadow: var(--fugassa-shadow);
+}
+
+/* Hide Titan chat chrome while Fugassa owns the chat area */
+body.fugassa-view .chat-container {
+  overflow: hidden;
+}
+
+body.fugassa-view .chat-container .chat-input-bar,
+body.fugassa-view .chat-container #welcome-screen,
+body.fugassa-view .chat-container .chat-top-bar,
+body.fugassa-view .chat-container #chat-history,
+body.fugassa-view .chat-container #attach-strip,
+body.fugassa-view #scroll-bottom-btn {
+  display: none !important;
+}
+
+.fugassa-main[hidden] {
+  display: none !important;
+}
+
+.fugassa-menu-root,
+.fugassa-wizard-shell,
+.fugassa-play-root {
+  height: 100%;
+}
+
+.fugassa-menu-stage,
+.fugassa-wizard-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.fugassa-wizard-header {
+  padding: 20px 24px 16px;
+  border: none;
+  background: transparent;
+}
+
+.fugassa-brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.fugassa-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.fugassa-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fugassa-brand-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-brand-sub {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--fugassa-muted);
+  opacity: 0.85;
+}
+
+.fugassa-brand-powered {
+  margin: 2px 0 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--fugassa-muted);
+}
+
+.fugassa-brand-titan {
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--brand-color, var(--red, #e85d5d));
+}
+
+.fugassa-menu-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 36px;
+  width: min(420px, 100%);
+}
+
+.fugassa-menu-brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  user-select: none;
+}
+
+.fugassa-menu-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.fugassa-menu-brand-mark svg {
+  width: 56px;
+  height: 56px;
+}
+
+.fugassa-menu-brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.fugassa-menu-brand-title {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-menu-brand-sub {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: var(--fugassa-muted);
+  opacity: 0.85;
+}
+
+.fugassa-menu-brand-powered {
+  margin: 2px 0 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--fugassa-muted);
+}
+
+.fugassa-menu-brand-titan {
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--brand-color, var(--red, #e85d5d));
+}
+
+.fugassa-wizard-title h2,
+.fugassa-tab-intro h3,
+.fugassa-pre-block h4 {
+  margin: 0 0 6px;
+}
+
+.fugassa-wizard-title p,
+.fugassa-tab-intro p {
+  margin: 0;
+  color: var(--fugassa-muted);
+}
+
+.fugassa-menu-body--home {
+  justify-content: center;
+}
+
+.fugassa-menu-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.fugassa-menu-body--wizard {
+  align-items: center;
+  justify-content: flex-start;
+  padding: 20px 24px 24px;
+}
+
+.fugassa-wizard-frame {
+  width: min(1180px, 100%);
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.fugassa-panel {
+  padding: 20px 22px;
+}
+
+.fugassa-menu-body--wizard > .fugassa-wizard-frame {
+  min-height: min(720px, 100%);
+}
+
+.fugassa-wizard-frame > .fugassa-wizard-shell {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.fugassa-menu-body--submenu {
+  align-items: center;
+  justify-content: center;
+  padding: 32px 28px;
+}
+
+.fugassa-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(740px, 100%);
+  margin: 0 auto;
+}
+
+.fugassa-submenu-back {
+  align-self: flex-start;
+}
+
+.fugassa-submenu .fugassa-save-list,
+.fugassa-submenu .fugassa-settings-card {
+  width: 100%;
+}
+
+.fugassa-menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(420px, 100%);
+}
+
+.fugassa-menu-actions .fugassa-btn {
+  width: 100%;
+}
+
+.fugassa-btn {
+  border: none;
+  border-radius: var(--fugassa-radius);
+  padding: 12px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  height: auto;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  color: var(--fugassa-btn-fg);
+  background: var(--fugassa-btn-bg);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+@supports (color: color-contrast(black vs white, black)) {
+  .fugassa-main {
+    --fugassa-btn-primary-fg: color-contrast(var(--fugassa-btn-primary-bg) vs var(--fg), var(--bg));
+  }
+}
+
+.fugassa-main button.fugassa-wizard-tab {
+  height: auto;
+  min-height: 0;
+  display: flex;
+}
+
+.fugassa-btn:hover:not(:disabled) {
+  background: var(--fugassa-btn-bg-hover);
+}
+
+.fugassa-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fugassa-btn--primary {
+  background: var(--fugassa-btn-primary-bg);
+  color: var(--fugassa-btn-primary-fg);
+  font-weight: 600;
+}
+
+.fugassa-btn--primary:hover:not(:disabled) {
+  background: var(--fugassa-btn-primary-bg-hover);
+}
+
+.fugassa-btn--ghost,
+.fugassa-btn--sm {
+  background: var(--fugassa-btn-bg);
+  color: var(--fugassa-btn-fg);
+}
+
+.fugassa-btn--ghost:hover:not(:disabled),
+.fugassa-btn--sm:hover:not(:disabled) {
+  background: var(--fugassa-btn-bg-hover);
+}
+
+.fugassa-btn--sm {
+  padding: 8px 12px;
+}
+
+.fugassa-dialog-card,
+.fugassa-settings-card,
+.fugassa-save-list {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+}
+
+.fugassa-dialog-card,
+.fugassa-settings-card {
+  padding: 20px 22px;
+}
+
+.fugassa-save-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: var(--fugassa-radius);
+  background: var(--fugassa-surface-muted);
+  transition: background 0.15s ease;
+}
+
+.fugassa-save-card:hover {
+  background: var(--fugassa-surface);
+}
+
+.fugassa-save-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.fugassa-save-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fugassa-save-card-info strong {
+  font-size: 1rem;
+}
+
+.fugassa-wizard-progress {
+  color: var(--fugassa-muted);
+  font-size: 0.95rem;
+}
+
+.fugassa-wizard-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+  overflow-x: auto;
+  border: none;
+}
+
+.fugassa-wizard-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: max-content;
+  border: none;
+  border-radius: var(--fugassa-radius) var(--fugassa-radius) 0 0;
+  padding: 10px 12px;
+  color: var(--fugassa-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.fugassa-wizard-tab.is-active {
+  background: var(--fugassa-surface);
+  color: var(--fg);
+}
+
+.fugassa-wizard-tab.is-locked {
+  opacity: 0.5;
+}
+
+.fugassa-tab-lock {
+  font-size: 0.72rem;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-wizard-content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+  min-height: 0;
+}
+
+.fugassa-wizard-panel {
+  display: none;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100%;
+}
+
+.fugassa-wizard-panel.is-active,
+.fugassa-wizard-panel:not([hidden]) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.fugassa-wizard-panel[hidden] {
+  display: none !important;
+}
+
+.fugassa-tab-split {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 16px;
+  min-height: min(520px, 52vh);
+  flex: 1;
+}
+
+.fugassa-tab-split > div,
+.fugassa-pre-block,
+.fugassa-builder-section,
+.fugassa-gear-summary,
+.fugassa-opening-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  background: var(--fugassa-surface-muted);
+  border: none;
+  border-radius: var(--fugassa-radius);
+  padding: 16px;
+}
+
+/* Wizard LLM chat (World, Backstory, Inventory, Gear, Opening) */
+.fugassa-wizard-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 10px;
+  min-height: 280px;
+}
+
+.fugassa-wizard-chat-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-wizard-chat-log {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: min(460px, 42vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 12px;
+  border: none;
+  border-radius: var(--fugassa-radius);
+  background: color-mix(in srgb, var(--fg) 2%, var(--bg));
+}
+
+.fugassa-wizard-chat-msg {
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.fugassa-wizard-chat-msg:last-child {
+  margin-bottom: 0;
+}
+
+.fugassa-wizard-chat-msg--user {
+  justify-content: flex-end;
+}
+
+.fugassa-wizard-chat-msg--assistant {
+  justify-content: flex-start;
+}
+
+.fugassa-wizard-chat-bubble {
+  max-width: 94%;
+  padding: 10px 12px;
+  border-radius: var(--fugassa-radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  font-size: 13px;
+}
+
+.fugassa-wizard-chat-msg--user .fugassa-wizard-chat-bubble {
+  background: color-mix(in srgb, var(--fugassa-accent) 16%, transparent);
+  border: none;
+  color: var(--fg);
+}
+
+.fugassa-wizard-chat-msg--assistant .fugassa-wizard-chat-bubble {
+  background: var(--fugassa-surface);
+  border: none;
+  color: var(--fg);
+}
+
+.fugassa-wizard-chat-empty {
+  margin: 0;
+  color: var(--fugassa-muted);
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.fugassa-wizard-chat-form {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.fugassa-main .fugassa-wizard-chat-input {
+  flex: 1;
+  width: 100%;
+  min-height: 72px;
+  max-height: 160px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--fugassa-radius);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--fugassa-input-fg) !important;
+  background-color: var(--fugassa-input-bg) !important;
+  box-shadow: var(--fugassa-shadow-soft);
+  height: auto;
+}
+
+.fugassa-tab-split .fugassa-field textarea {
+  flex: 1 1 auto;
+  min-height: 280px;
+  resize: vertical;
+}
+
+.fugassa-tab-intro {
+  flex-shrink: 0;
+}
+
+.fugassa-field {
+  display: grid;
+  gap: 8px;
+}
+
+.fugassa-field > span:first-child,
+.fugassa-portrait-row > label:first-child {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.fugassa-main .fugassa-field input,
+.fugassa-main .fugassa-field select,
+.fugassa-main .fugassa-field textarea,
+.fugassa-main .fugassa-portrait-row input,
+.fugassa-main .fugassa-portrait-row select {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--fugassa-radius);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--fugassa-input-fg) !important;
+  background-color: var(--fugassa-input-bg) !important;
+  box-shadow: var(--fugassa-shadow-soft);
+  height: auto;
+  min-height: 42px;
+  transition: box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.fugassa-main .fugassa-field select,
+.fugassa-main .fugassa-portrait-row select {
+  padding-right: 36px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--fugassa-input-bg) !important;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--fugassa-accent) 50%),
+    linear-gradient(135deg, var(--fugassa-accent) 50%, transparent 50%),
+    linear-gradient(var(--fugassa-input-bg), var(--fugassa-input-bg));
+  background-repeat: no-repeat;
+  background-position:
+    calc(100% - 18px) calc(50% - 1px),
+    calc(100% - 12px) calc(50% - 1px),
+    0 0;
+  background-size: 6px 6px, 6px 6px, 100% 100%;
+}
+
+.fugassa-main .fugassa-field select option,
+.fugassa-main .fugassa-field select optgroup,
+.fugassa-main .fugassa-portrait-row select option {
+  background-color: var(--fugassa-select-option-bg) !important;
+  color: var(--fugassa-select-option-fg) !important;
+}
+
+.fugassa-main .fugassa-field select option:checked,
+.fugassa-main .fugassa-portrait-row select option:checked {
+  background-color: var(--fugassa-select-option-active-bg) !important;
+  color: var(--fugassa-select-option-fg) !important;
+}
+
+.fugassa-main .fugassa-field input:focus,
+.fugassa-main .fugassa-field select:focus,
+.fugassa-main .fugassa-field textarea:focus,
+.fugassa-main .fugassa-portrait-row input:focus,
+.fugassa-main .fugassa-portrait-row select:focus,
+.fugassa-main .fugassa-wizard-chat-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--fugassa-accent) 28%, transparent), var(--fugassa-shadow-soft);
+}
+
+.fugassa-main .fugassa-field input::placeholder,
+.fugassa-main .fugassa-portrait-row input::placeholder,
+.fugassa-main .fugassa-wizard-chat-input::placeholder {
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+
+.fugassa-field small,
+.fugassa-muted {
+  color: var(--fugassa-muted);
+  line-height: 1.45;
+}
+
+.fugassa-inline-actions,
+.fugassa-builder-actions,
+.fugassa-wizard-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fugassa-wizard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px;
+  border: none;
+  background: transparent;
+}
+
+.fugassa-wizard-feedback {
+  color: var(--fugassa-muted);
+}
+
+.fugassa-wizard-feedback[data-error="1"] {
+  color: #ff8674;
+}
+
+.fugassa-character-builder {
+  display: grid;
+  gap: 16px;
+}
+
+.fugassa-character-builder-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: 16px;
+  align-items: start;
+}
+
+.fugassa-character-builder-form {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.fugassa-builder-identity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.fugassa-homebrew-preview,
+.fugassa-feature-cards {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.fugassa-feature-card {
+  padding: 12px 14px;
+  border-radius: var(--fugassa-radius);
+  background: var(--fugassa-surface-muted);
+}
+
+.fugassa-feature-card h5 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.fugassa-feature-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.fugassa-builder-section h4 {
+  margin-top: 0;
+}
+
+.fugassa-builder-ability-row {
+  display: grid;
+  grid-template-columns: 60px minmax(90px, 120px) 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.fugassa-builder-meta {
+  color: var(--fugassa-muted);
+  font-size: 0.9rem;
+}
+
+.fugassa-builder-validation {
+  padding: 10px 12px;
+  border-radius: var(--fugassa-radius);
+  background: var(--fugassa-surface-muted);
+}
+
+.fugassa-builder-asi,
+.fugassa-builder-asi-row {
+  display: grid;
+  gap: 8px;
+}
+
+.fugassa-builder-asi-row {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.fugassa-required-choices-section.is-attention {
+  outline: 2px solid var(--fugassa-accent, #c9a227);
+  outline-offset: 2px;
+  border-radius: var(--fugassa-radius);
+}
+
+.fugassa-homebrew-choice-row {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: var(--fugassa-radius);
+  background: var(--fugassa-surface-muted);
+}
+
+.fugassa-homebrew-choice-row.is-incomplete select,
+.fugassa-homebrew-choice-row.is-incomplete input {
+  outline: 1px solid #e57373;
+}
+
+.fugassa-spell-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
+.fugassa-spell-grid .fugassa-btn.is-active,
+.fugassa-spell-levels .fugassa-btn.is-active {
+  background: var(--fugassa-accent, #c9a227);
+  color: #111;
+  border-color: var(--fugassa-accent, #c9a227);
+}
+
+.fugassa-spell-level-block {
+  margin-bottom: 12px;
+}
+
+.fugassa-char-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+
+.fugassa-char-tabs .fugassa-btn.is-active {
+  background: var(--fugassa-surface-muted);
+}
+
+.fugassa-char-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.fugassa-char-entry details {
+  margin: 0.15rem 0;
+}
+
+.fugassa-char-entry summary {
+  cursor: pointer;
+  list-style: disclosure-closed;
+}
+
+.fugassa-char-entry details[open] summary {
+  list-style: disclosure-open;
+  margin-bottom: 0.35rem;
+}
+
+.fugassa-char-entry-desc {
+  margin: 0 0 0.5rem 1rem;
+  font-size: 0.9em;
+  line-height: 1.45;
+  color: var(--fugassa-muted, #9aa3b2);
+}
+
+.fugassa-checkbox,
+.fugassa-skill-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.fugassa-skill-check.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.fugassa-skill-check.is-disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
+/* Override Titan global `input { padding: 6.9px }` / hover — native checkboxes jump when toggled. */
+.fugassa-main input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  max-height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0 !important;
+  border: none;
+  border-radius: 4px;
+  background-color: var(--fugassa-input-bg) !important;
+  box-shadow: var(--fugassa-shadow-soft);
+  color: var(--fugassa-input-fg);
+  cursor: pointer;
+  position: relative;
+  vertical-align: middle;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fugassa-main input[type="checkbox"]:hover {
+  background-color: var(--fugassa-surface-hover) !important;
+}
+
+.fugassa-main input[type="checkbox"]:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--fugassa-accent) 28%, transparent), var(--fugassa-shadow-soft);
+}
+
+.fugassa-main input[type="checkbox"]:checked {
+  background-color: var(--fugassa-accent) !important;
+  box-shadow: none;
+}
+
+.fugassa-main input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid var(--fugassa-accent-contrast);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.fugassa-checkbox > span,
+.fugassa-skill-check > span {
+  line-height: 1.35;
+}
+
+.fugassa-character-sheet,
+.fugassa-summary-view,
+.fugassa-pre-block pre {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  color: var(--fg, #f7f0e7);
+  background: var(--fugassa-surface-muted);
+  border: none;
+  border-radius: var(--fugassa-radius);
+  padding: 16px;
+  min-height: 240px;
+}
+
+.fugassa-portrait-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.fugassa-portrait-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.fugassa-skills-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+
+.fugassa-save-list-header h3 {
+  margin: 0;
+}
+
+.fugassa-save-list-header p {
+  margin: 0;
+  color: var(--fugassa-muted);
+}
+
+.fugassa-continue-panel {
+  display: grid;
+  gap: 16px;
+}
+
+/* Keep Fugassa controls off Titan's global bordered button/input hover */
+.fugassa-main button,
+.fugassa-main input,
+.fugassa-main select,
+.fugassa-main textarea {
+  border: none;
+}
+
+.fugassa-main button:hover,
+.fugassa-main input:hover,
+.fugassa-main select:hover,
+.fugassa-main textarea:hover {
+  border: none;
+}
+
+/* ── Gameplay HUD (Phase 4) ── */
+.fugassa-play-root {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.fugassa-hud {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg, #0e0e10);
+}
+
+.fugassa-hud-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 6px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--fugassa-chrome-border);
+  border-radius: 12px;
+  background: var(--fugassa-chrome-fill);
+  min-height: 40px;
+  flex-shrink: 0;
+}
+
+.fugassa-hud-top-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.fugassa-hud-wallet-chip {
+  font-size: 0.85em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fugassa-accent, #c9a227) 18%, transparent);
+  white-space: nowrap;
+}
+
+.fugassa-hud-top-left,
+.fugassa-hud-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+
+.fugassa-hud-top-right {
+  justify-content: flex-end;
+}
+
+.fugassa-hud-combat-tag {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fugassa-accent-contrast);
+  background: var(--fugassa-accent);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.fugassa-hud-mid {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Mid row: chat (full height) | center+party column | right sidebar (full height).
+   Party bar lives only under the center viewport — not under chat — so the
+   bottom strip is narrower and chat/right panels both run to the window bottom. */
+.fugassa-hud-center-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fugassa-hud-chat,
+.fugassa-hud-center,
+.fugassa-hud-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--fugassa-chrome-fill);
+  border: 1px solid var(--fugassa-chrome-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.fugassa-hud-chat {
+  flex-shrink: 0;
+  margin: 6px 0 6px 6px;
+  font-size: calc(14px * var(--fugassa-chat-text-scale, 1));
+  position: relative;
+}
+
+.fugassa-hud-chat-messages {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fugassa-hud-chat-split-h {
+  height: 6px;
+  cursor: row-resize;
+  flex-shrink: 0;
+  background: transparent;
+  z-index: 2;
+}
+
+.fugassa-hud-chat-split-h:hover {
+  background: var(--fugassa-accent-a18);
+}
+
+.fugassa-hud-chat-compose {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--fugassa-accent-a10);
+}
+
+.fugassa-hud-chat-jump {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--fugassa-accent-a22);
+  background: var(--fugassa-chrome-fill);
+  color: var(--fugassa-fg);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.92;
+}
+
+.fugassa-hud-chat-jump:hover {
+  background: var(--fugassa-accent-a14);
+  border-color: var(--fugassa-accent-a28);
+}
+
+.fugassa-hud-top,
+.fugassa-hud-center-col,
+.fugassa-hud-right,
+.fugassa-overlay-host {
+  font-size: calc(14px * var(--fugassa-ui-text-scale, 1));
+}
+
+.fugassa-hud-center {
+  flex: 1 1 auto;
+  margin: 6px 0 0;
+}
+
+.fugassa-hud-right {
+  margin: 6px 6px 6px 0;
+  flex: 0 0 auto;
+}
+
+.fugassa-hud-panel-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--fugassa-chrome-border);
+  flex-shrink: 0;
+}
+
+.fugassa-hud-panel-head h3,
+.fugassa-hud-panel-head h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.fugassa-hud-chat-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px;
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.fugassa-hud-chat-msg {
+  display: grid;
+  gap: 4px;
+  width: calc(100% - var(--fugassa-chat-bubble-inset, 16px));
+  max-width: calc(100% - var(--fugassa-chat-bubble-inset, 16px));
+}
+
+.fugassa-hud-chat-msg--gm {
+  justify-self: start;
+  margin-right: var(--fugassa-chat-bubble-inset, 16px);
+}
+
+.fugassa-hud-chat-msg--player {
+  justify-self: end;
+  margin-left: var(--fugassa-chat-bubble-inset, 16px);
+}
+
+.fugassa-hud-chat-msg--gm .fugassa-hud-chat-body {
+  background: var(--fugassa-accent-a08);
+  border: 1px solid var(--fugassa-accent-a14);
+  border-radius: 0 var(--fugassa-chat-bubble-radius, 10px) var(--fugassa-chat-bubble-radius, 10px) var(--fugassa-chat-bubble-radius, 10px);
+}
+
+.fugassa-hud-chat-msg--player .fugassa-hud-chat-body {
+  background: var(--fugassa-fg-a04);
+  border: 1px solid var(--fugassa-fg-a08);
+  border-radius: var(--fugassa-chat-bubble-radius, 10px) 0 var(--fugassa-chat-bubble-radius, 10px) var(--fugassa-chat-bubble-radius, 10px);
+}
+
+.fugassa-hud-chat-msg--gm .fugassa-hud-chat-role {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.fugassa-hud-chat-msg--player .fugassa-hud-chat-role {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.fugassa-hud-chat-role {
+  font-size: calc(11px * var(--fugassa-chat-text-scale, 1));
+  font-weight: 700;
+  color: var(--fugassa-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.fugassa-hud-chat-role-meta {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: calc(10px * var(--fugassa-chat-text-scale, 1));
+}
+
+.fugassa-hud-chat-body {
+  white-space: pre-wrap;
+  line-height: 1.45;
+  padding: 10px 12px;
+  font-size: calc(13px * var(--fugassa-chat-text-scale, 1));
+}
+
+.fugassa-tts-model-ok {
+  color: var(--fugassa-accent, #6ab04c);
+}
+
+.fugassa-tts-model-miss {
+  color: #c0392b;
+}
+
+.fugassa-tts-model-status {
+  margin-bottom: 10px;
+}
+
+.fugassa-hud-chat-scene-row,
+.fugassa-hud-chat-actions-row {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  z-index: 2;
+}
+
+.fugassa-chat-tts-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--fugassa-fg-a15);
+  background: var(--fugassa-fg-a05);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  opacity: 0.75;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.fugassa-chat-tts-icon:hover:not(:disabled) {
+  opacity: 1;
+  transform: scale(1.08);
+}
+
+.fugassa-chat-tts-icon--loading {
+  opacity: 1;
+  border-color: var(--fugassa-accent-a25);
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  animation: fugassa-tts-dots 1.1s steps(3, end) infinite;
+}
+
+.fugassa-chat-tts-icon--loading:disabled {
+  opacity: 1;
+  cursor: pointer;
+}
+
+@keyframes fugassa-tts-dots {
+  0% { opacity: 0.45; }
+  50% { opacity: 1; }
+  100% { opacity: 0.45; }
+}
+
+.fugassa-chat-tts-icon--playing {
+  opacity: 1;
+  border-color: var(--fugassa-accent-a40);
+}
+
+.fugassa-chat-scene-icon {
+  justify-self: start;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--fugassa-fg-a15);
+  background: var(--fugassa-fg-a05);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
+}
+
+.fugassa-chat-scene-icon:hover:not(:disabled) {
+  opacity: 1;
+  transform: scale(1.08);
+}
+
+.fugassa-chat-scene-icon--ready {
+  opacity: 0.9;
+  border-color: var(--fugassa-accent-a40);
+}
+
+.fugassa-chat-scene-icon:disabled {
+  cursor: default;
+}
+
+.fugassa-lightbox {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  max-width: min(90vw, 720px);
+}
+
+.fugassa-lightbox img {
+  max-width: 100%;
+  max-height: 75vh;
+  border-radius: 10px;
+  object-fit: contain;
+}
+
+.fugassa-hud-chat-status {
+  padding: 6px 12px 4px;
+  font-size: calc(12px * var(--fugassa-chat-text-scale, 1));
+  flex-shrink: 0;
+}
+
+.fugassa-hud-chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.fugassa-hud-chat-input {
+  flex: 1 1 auto;
+  min-height: 3.2em !important;
+  height: 100% !important;
+  max-height: none;
+  padding: 8px 12px !important;
+  border: 1px solid var(--fugassa-accent-a22) !important;
+  border-radius: 10px !important;
+  background: var(--fugassa-input-bg, #141218) !important;
+  color: var(--fugassa-input-fg, #f7f0e7) !important;
+  font-size: calc(13px * var(--fugassa-chat-text-scale, 1));
+  line-height: 1.45;
+  resize: none;
+}
+
+.fugassa-hud-chat-form .fugassa-btn {
+  align-self: flex-end;
+  flex-shrink: 0;
+}
+
+.fugassa-hud-center-viewport {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  padding: 12px 16px;
+  gap: 12px;
+  overflow: hidden;
+  background: rgba(7, 7, 10, 0.55);
+}
+
+.fugassa-hud-center-viewport[data-scene-wrap] {
+  position: relative;
+  display: grid;
+  grid-template: 1fr / 1fr;
+  place-items: center;
+  padding: 12px 16px;
+}
+
+.fugassa-hud-center-viewport[data-scene-wrap] .fugassa-hud-scene {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  flex: unset;
+  min-height: 0;
+  z-index: 1;
+}
+
+.fugassa-hud-center-viewport[data-scene-wrap] .fugassa-hud-scene[hidden] {
+  display: none !important;
+}
+
+.fugassa-hud-center-desc {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 10px 14px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  max-height: 22vh;
+  overflow: auto;
+}
+
+.fugassa-hud-center-desc[hidden] {
+  display: none !important;
+}
+
+.fugassa-hud-center-viewport[data-scene-wrap] .fugassa-hud-scene-regen,
+.fugassa-hud-center-viewport[data-scene-wrap] .fugassa-asset-regen-icon {
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: end;
+  z-index: 2;
+  margin: 0 8px 8px 0;
+}
+
+.fugassa-hud-scene {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+  border-radius: 12px;
+  object-fit: contain;
+  object-position: center center;
+  border: 1px solid var(--fugassa-accent-a20);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.fugassa-hud-right-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fugassa-hud-tab--active {
+  background: var(--fugassa-accent-a22) !important;
+}
+
+.fugassa-hud-right-body {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px 14px;
+  display: grid;
+  gap: 14px;
+}
+
+.fugassa-hud-side-section h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-hud-side-section p,
+.fugassa-hud-list {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fugassa-hud-location-coords {
+  margin-top: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.fugassa-hud-list {
+  padding-left: 18px;
+}
+
+.fugassa-hud-party {
+  flex-shrink: 0;
+  /* Sits under the center viewport only (not under chat) — no side margins so
+     it lines up with the center panel edges inside .fugassa-hud-center-col. */
+  margin: 0 0 6px;
+  border: 1px solid var(--fugassa-chrome-border);
+  border-radius: 12px;
+  background: var(--fugassa-chrome-fill);
+  overflow: hidden;
+}
+
+.fugassa-hud-party-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  height: 100%;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+.fugassa-hud-party-card {
+  display: flex;
+  /* Column, NOT row: the portrait is a full-width banner on top, with
+     name/HP/AC stacked directly UNDERNEATH it — never side-by-side. Cards
+     flex-grow to fill the row's full width/height (not a fixed 120px box)
+     so they always size to max within the panel — the portrait itself
+     grows/shrinks with them via `flex: 1 1 auto` below, instead of staying
+     a fixed, easily-cropped 48px strip. */
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  flex: 1 1 120px;
+  min-width: 96px;
+  max-width: 220px;
+  height: 100%;
+  padding: 0;
+  border-radius: 10px;
+  background: var(--fugassa-accent-a06);
+  border: 1px solid var(--fugassa-accent-a12);
+  overflow: hidden;
+}
+
+.fugassa-hud-party-avatar {
+  width: 100%;
+  /* Grows to fill whatever vertical space `.fugassa-hud-party-info` below
+     doesn't need — as the party bar panel is resized taller, the portrait
+     grows with it instead of staying capped at a cropped 48px sliver. */
+  flex: 1 1 auto;
+  min-height: 64px;
+  min-width: 0;
+  align-self: stretch;
+  border-radius: 0;
+  object-fit: cover;
+  object-position: top center;
+  border: none;
+  border-bottom: 1px solid var(--fugassa-accent-a20);
+}
+
+.fugassa-hud-party-avatar--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--fugassa-accent-a14);
+  color: var(--fugassa-accent);
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.fugassa-hud-party-info {
+  /* Fixed to its natural content height — the avatar above is the one that
+     flex-grows to fill leftover space (see .fugassa-hud-party-avatar). */
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4px 8px;
+}
+
+.fugassa-hud-party-name {
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fugassa-hud-party-meta {
+  font-size: 10px;
+  margin: 1px 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fugassa-hud-party-hp {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.fugassa-hud-party-hp span {
+  display: block;
+  height: 100%;
+  background: var(--fugassa-gradient-accent);
+}
+
+.fugassa-hud-split-v,
+.fugassa-hud-split-h {
+  flex-shrink: 0;
+  background: transparent;
+  z-index: 2;
+}
+
+.fugassa-hud-split-v {
+  width: 6px;
+  cursor: col-resize;
+  margin: 6px 0;
+}
+
+.fugassa-hud-split-h {
+  height: 6px;
+  cursor: row-resize;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.fugassa-hud-split-v:hover,
+.fugassa-hud-split-h:hover {
+  background: var(--fugassa-accent-a18);
+}
+
+@media (max-width: 1180px) {
+  .fugassa-character-builder-main,
+  .fugassa-tab-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .fugassa-menu-brand-mark svg {
+    width: 48px;
+    height: 48px;
+  }
+
+  .fugassa-menu-brand-title {
+    font-size: 1.45rem;
+  }
+
+  .fugassa-menu-home {
+    gap: 28px;
+  }
+
+  .fugassa-skills-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fugassa-builder-identity-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fugassa-portrait-row {
+    grid-template-columns: 1fr;
+  }
+
+  .fugassa-wizard-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fugassa-menu-body--wizard {
+    padding: 12px;
+  }
+
+  .fugassa-wizard-frame {
+    border-radius: var(--fugassa-radius);
+  }
+
+  .fugassa-save-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fugassa-save-card-actions {
+    justify-content: stretch;
+  }
+
+  .fugassa-save-card-actions .fugassa-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* ── Gameplay overlay screens (Phase 5) ── */
+.fugassa-overlay-host {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(8, 6, 4, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.fugassa-overlay-host[hidden] {
+  display: none !important;
+}
+
+.fugassa-overlay-panel {
+  flex: 1;
+  max-width: min(980px, 100%);
+  min-height: 0;
+  display: flex;
+}
+
+.fugassa-screen {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--fugassa-chrome-border);
+  border-radius: 14px;
+  background: var(--panel, var(--fugassa-raised));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.fugassa-screen-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--fugassa-accent-a12);
+  flex-shrink: 0;
+}
+
+.fugassa-screen-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.fugassa-screen-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 18px 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.fugassa-screen-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--fugassa-accent-a10);
+  background: var(--fugassa-fg-a03);
+}
+
+.fugassa-screen-card h3,
+.fugassa-screen-card h4 {
+  margin: 0 0 8px;
+}
+
+.fugassa-inv-layout,
+.fugassa-char-layout,
+.fugassa-loc-layout {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.fugassa-screen--pause .fugassa-pause-tabs {
+  padding: 0 18px;
+  flex-shrink: 0;
+}
+
+.fugassa-screen--pause .fugassa-screen-body[hidden] {
+  display: none !important;
+}
+
+.fugassa-pause-panel {
+  grid-template-columns: 1fr;
+}
+
+.fugassa-pause-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fugassa-pause-actions .fugassa-btn {
+  width: auto;
+  min-width: 0;
+}
+
+.fugassa-summary-digest {
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.fugassa-summary-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fugassa-summary-list li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--fugassa-fg-a03);
+  border: 1px solid var(--fugassa-fg-a06);
+}
+
+.fugassa-summary-list p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.fugassa-summary-section + .fugassa-summary-section {
+  margin-top: 4px;
+}
+
+.fugassa-summary-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.fugassa-summary-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--fugassa-muted, #888);
+  cursor: pointer;
+}
+
+.fugassa-summary-dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.fugassa-summary-dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 140px) 1fr;
+  gap: 8px 12px;
+  align-items: start;
+}
+
+.fugassa-summary-dl dt {
+  margin: 0;
+  font-weight: 600;
+  color: var(--fugassa-muted, #888);
+}
+
+.fugassa-summary-dl dd {
+  margin: 0;
+}
+
+.fugassa-summary-party {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fugassa-summary-party-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--fugassa-fg-a04);
+  border: 1px solid var(--fugassa-fg-a08);
+}
+
+.fugassa-summary-inline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fugassa-summary-chronicle {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.fugassa-summary-chronicle li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--fugassa-fg-a03);
+  border: 1px solid var(--fugassa-fg-a06);
+}
+
+.fugassa-summary-chronicle-type {
+  display: inline-block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fugassa-accent, #c9a227);
+  margin-right: 6px;
+}
+
+.fugassa-summary-chronicle-when {
+  display: block;
+  font-size: 0.82rem;
+  margin-top: 2px;
+}
+
+.fugassa-hud-tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--fugassa-accent, #c9a227);
+  color: #111;
+}
+
+.fugassa-inv-party-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fugassa-inv-party-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--fugassa-fg-a10);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fugassa-inv-party-tab.is-active {
+  border-color: var(--fugassa-accent, #c9a227);
+  background: var(--fugassa-fg-a05);
+}
+
+.fugassa-inv-companion-portrait {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.fugassa-inv-companion-portrait--lg {
+  width: 96px;
+  height: 96px;
+}
+
+.fugassa-inv-companion-portrait--placeholder {
+  display: grid;
+  place-items: center;
+  background: var(--fugassa-fg-a08);
+  font-weight: 700;
+}
+
+.fugassa-inv-companion-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.fugassa-inv-companion-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.fugassa-paperdoll--disabled .fugassa-slot {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.fugassa-inv-grid--readonly .fugassa-inv-item {
+  cursor: default;
+}
+
+.fugassa-char-companion-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.fugassa-char-companion-portrait {
+  width: 112px;
+  height: 112px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.fugassa-char-companion-portrait--placeholder {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border-radius: 12px;
+  background: var(--fugassa-fg-a08);
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.fugassa-hud-party-card--clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.fugassa-hud-party-card--clickable:hover,
+.fugassa-hud-party-card--clickable:focus-visible {
+  border-color: var(--fugassa-accent, #c9a227);
+  background: var(--fugassa-fg-a05);
+}
+
+.fugassa-hud-party-section {
+  display: grid;
+  gap: 8px;
+}
+
+.fugassa-hud-party-row-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--fugassa-fg-a03);
+  border: 1px solid var(--fugassa-fg-a06);
+}
+
+.fugassa-char-party-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+
+.fugassa-hidden {
+  display: none !important;
+}
+
+.fugassa-inv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 10px;
+}
+
+.fugassa-inv-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 72px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--fugassa-accent-a18);
+  background: rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.fugassa-inv-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fugassa-inv-item-kind {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--fugassa-fg-a08);
+  border: 1px solid var(--fugassa-fg-a10);
+  color: var(--fugassa-muted);
+}
+
+.fugassa-item-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.fugassa-item-detail-head h3 {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fugassa-item-detail-head .fugassa-inv-item-kind {
+  flex: 0 0 auto;
+}
+
+.fugassa-inv-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+.fugassa-inv-qty {
+  align-self: flex-end;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fugassa-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--fugassa-fg-a06);
+  border: 1px solid var(--fugassa-fg-a08);
+}
+
+.fugassa-wallet {
+  display: grid;
+  gap: 6px;
+}
+
+.fugassa-wallet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--fugassa-accent-a14);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.fugassa-wallet-name {
+  font-size: 13px;
+  color: #e8dfd3;
+}
+
+.fugassa-wallet-qty {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fugassa-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.fugassa-wallet-card {
+  grid-column: 1 / -1;
+}
+
+.fugassa-inv-item--clickable {
+  cursor: pointer;
+  text-align: left;
+}
+
+.fugassa-slot--spacer {
+  border: none;
+  background: transparent;
+}
+
+.fugassa-inv-item--clickable:hover {
+  filter: brightness(1.08);
+}
+
+.fugassa-inv-equip {
+  display: grid;
+  gap: 8px;
+}
+
+.fugassa-inv-equip > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fugassa-inv-layout-v2 {
+  grid-template-columns: minmax(260px, 420px) 1fr;
+  grid-template-areas:
+    'party party'
+    'doll backpack';
+  align-items: start;
+}
+
+.fugassa-inv-party-card {
+  grid-area: party;
+}
+
+.fugassa-paperdoll-card {
+  grid-area: doll;
+}
+
+.fugassa-backpack-card {
+  grid-area: backpack;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .fugassa-inv-layout-v2 {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'party'
+      'doll'
+      'backpack';
+  }
+}
+
+.fugassa-paperdoll {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-width: 380px;
+}
+
+.fugassa-slot {
+  min-height: 60px;
+  border-radius: 10px;
+  border: 1px dashed var(--fugassa-accent-a28);
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 6px;
+  text-align: center;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.fugassa-slot--filled {
+  border-style: solid;
+  cursor: pointer;
+}
+
+.fugassa-slot--empty {
+  opacity: 0.92;
+}
+
+.fugassa-slot-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #c9a56a;
+}
+
+.fugassa-slot-item {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f0e6d8;
+  word-break: break-word;
+}
+
+.fugassa-slot--empty .fugassa-slot-item {
+  color: #7a7368;
+  font-weight: 400;
+}
+
+/* Inventory item + paperdoll slot colors — shared palette per category/kind */
+.fugassa-inv-item--kind-head,
+.fugassa-slot--cat-head {
+  --fugassa-kind-border: rgba(126, 184, 232, 0.38);
+  --fugassa-kind-bg: rgba(126, 184, 232, 0.14);
+  --fugassa-kind-bg-strong: rgba(126, 184, 232, 0.22);
+  --fugassa-kind-badge-bg: rgba(126, 184, 232, 0.28);
+  --fugassa-kind-badge-text: #b8daf4;
+  --fugassa-kind-label: #9ec8ea;
+}
+
+.fugassa-inv-item--kind-body,
+.fugassa-slot--cat-body {
+  --fugassa-kind-border: rgba(154, 168, 184, 0.42);
+  --fugassa-kind-bg: rgba(154, 168, 184, 0.16);
+  --fugassa-kind-bg-strong: rgba(154, 168, 184, 0.24);
+  --fugassa-kind-badge-bg: rgba(154, 168, 184, 0.3);
+  --fugassa-kind-badge-text: #d0dae4;
+  --fugassa-kind-label: #b8c4d0;
+}
+
+.fugassa-inv-item--kind-clothes,
+.fugassa-slot--cat-clothes {
+  --fugassa-kind-border: rgba(110, 184, 148, 0.38);
+  --fugassa-kind-bg: rgba(110, 184, 148, 0.14);
+  --fugassa-kind-bg-strong: rgba(110, 184, 148, 0.22);
+  --fugassa-kind-badge-bg: rgba(110, 184, 148, 0.28);
+  --fugassa-kind-badge-text: #b8ead0;
+  --fugassa-kind-label: #8ecaa8;
+}
+
+.fugassa-inv-item--kind-feet,
+.fugassa-slot--cat-feet {
+  --fugassa-kind-border: rgba(184, 146, 106, 0.4);
+  --fugassa-kind-bg: rgba(184, 146, 106, 0.14);
+  --fugassa-kind-bg-strong: rgba(184, 146, 106, 0.22);
+  --fugassa-kind-badge-bg: rgba(184, 146, 106, 0.3);
+  --fugassa-kind-badge-text: #ecd0b0;
+  --fugassa-kind-label: #d4b088;
+}
+
+.fugassa-inv-item--kind-hands,
+.fugassa-slot--cat-hands {
+  --fugassa-kind-border: rgba(196, 168, 122, 0.4);
+  --fugassa-kind-bg: rgba(196, 168, 122, 0.14);
+  --fugassa-kind-bg-strong: rgba(196, 168, 122, 0.22);
+  --fugassa-kind-badge-bg: rgba(196, 168, 122, 0.3);
+  --fugassa-kind-badge-text: #f0ddb8;
+  --fugassa-kind-label: #d8c098;
+}
+
+.fugassa-inv-item--kind-backpack,
+.fugassa-slot--cat-backpack {
+  --fugassa-kind-border: rgba(143, 170, 110, 0.4);
+  --fugassa-kind-bg: rgba(143, 170, 110, 0.14);
+  --fugassa-kind-bg-strong: rgba(143, 170, 110, 0.22);
+  --fugassa-kind-badge-bg: rgba(143, 170, 110, 0.3);
+  --fugassa-kind-badge-text: #d8e8c0;
+  --fugassa-kind-label: #b8cc98;
+}
+
+.fugassa-inv-item--kind-belt,
+.fugassa-slot--cat-belt {
+  --fugassa-kind-border: rgba(212, 160, 84, 0.42);
+  --fugassa-kind-bg: rgba(212, 160, 84, 0.14);
+  --fugassa-kind-bg-strong: rgba(212, 160, 84, 0.22);
+  --fugassa-kind-badge-bg: rgba(212, 160, 84, 0.3);
+  --fugassa-kind-badge-text: #f0d8a8;
+  --fugassa-kind-label: #e0c080;
+}
+
+.fugassa-inv-item--kind-weapon,
+.fugassa-slot--cat-weapon {
+  --fugassa-kind-border: rgba(216, 112, 96, 0.42);
+  --fugassa-kind-bg: rgba(216, 112, 96, 0.14);
+  --fugassa-kind-bg-strong: rgba(216, 112, 96, 0.22);
+  --fugassa-kind-badge-bg: rgba(216, 112, 96, 0.3);
+  --fugassa-kind-badge-text: #f0b0a4;
+  --fugassa-kind-label: #e09888;
+}
+
+.fugassa-inv-item--kind-utility {
+  --fugassa-kind-border: rgba(94, 184, 196, 0.4);
+  --fugassa-kind-bg: rgba(94, 184, 196, 0.14);
+  --fugassa-kind-bg-strong: rgba(94, 184, 196, 0.22);
+  --fugassa-kind-badge-bg: rgba(94, 184, 196, 0.3);
+  --fugassa-kind-badge-text: #b8e8f0;
+  --fugassa-kind-label: #88ccd8;
+}
+
+.fugassa-inv-item--kind-exploration {
+  --fugassa-kind-border: rgba(88, 168, 160, 0.4);
+  --fugassa-kind-bg: rgba(88, 168, 160, 0.14);
+  --fugassa-kind-bg-strong: rgba(88, 168, 160, 0.22);
+  --fugassa-kind-badge-bg: rgba(88, 168, 160, 0.3);
+  --fugassa-kind-badge-text: #b8e4de;
+  --fugassa-kind-label: #88c8be;
+}
+
+.fugassa-inv-item--kind-consumable {
+  --fugassa-kind-border: rgba(200, 120, 184, 0.4);
+  --fugassa-kind-bg: rgba(200, 120, 184, 0.14);
+  --fugassa-kind-bg-strong: rgba(200, 120, 184, 0.22);
+  --fugassa-kind-badge-bg: rgba(200, 120, 184, 0.3);
+  --fugassa-kind-badge-text: #f0c0e4;
+  --fugassa-kind-label: #d898c8;
+}
+
+.fugassa-inv-item--kind-tech {
+  --fugassa-kind-border: rgba(136, 152, 224, 0.4);
+  --fugassa-kind-bg: rgba(136, 152, 224, 0.14);
+  --fugassa-kind-bg-strong: rgba(136, 152, 224, 0.22);
+  --fugassa-kind-badge-bg: rgba(136, 152, 224, 0.3);
+  --fugassa-kind-badge-text: #c8d4f8;
+  --fugassa-kind-label: #a8b8e8;
+}
+
+.fugassa-inv-item--kind-quest {
+  --fugassa-kind-border: rgba(224, 192, 96, 0.42);
+  --fugassa-kind-bg: rgba(224, 192, 96, 0.14);
+  --fugassa-kind-bg-strong: rgba(224, 192, 96, 0.22);
+  --fugassa-kind-badge-bg: rgba(224, 192, 96, 0.3);
+  --fugassa-kind-badge-text: #f0e0a8;
+  --fugassa-kind-label: #e0cc78;
+}
+
+.fugassa-inv-item--kind-lore {
+  --fugassa-kind-border: rgba(212, 188, 120, 0.42);
+  --fugassa-kind-bg: rgba(212, 188, 120, 0.14);
+  --fugassa-kind-bg-strong: rgba(212, 188, 120, 0.22);
+  --fugassa-kind-badge-bg: rgba(212, 188, 120, 0.3);
+  --fugassa-kind-badge-text: #f0e4c0;
+  --fugassa-kind-label: #dcc888;
+}
+
+.fugassa-inv-item--kind-misc {
+  --fugassa-kind-border: rgba(144, 136, 128, 0.36);
+  --fugassa-kind-bg: rgba(144, 136, 128, 0.12);
+  --fugassa-kind-bg-strong: rgba(144, 136, 128, 0.2);
+  --fugassa-kind-badge-bg: rgba(144, 136, 128, 0.26);
+  --fugassa-kind-badge-text: #d8d0c8;
+  --fugassa-kind-label: #b0a8a0;
+}
+
+.fugassa-inv-item[class*='fugassa-inv-item--kind-'] {
+  border-color: var(--fugassa-kind-border, var(--fugassa-accent-a18));
+  background: var(--fugassa-kind-bg, rgba(0, 0, 0, 0.22));
+}
+
+.fugassa-inv-item[class*='fugassa-inv-item--kind-'] .fugassa-inv-item-kind[class*='fugassa-inv-item-kind--'] {
+  background: var(--fugassa-kind-badge-bg, var(--fugassa-fg-a08));
+  border-color: var(--fugassa-kind-border, var(--fugassa-fg-a10));
+  color: var(--fugassa-kind-badge-text, var(--fugassa-muted));
+}
+
+.fugassa-slot[class*='fugassa-slot--cat-']:not(.fugassa-slot--spacer) {
+  border-color: var(--fugassa-kind-border, var(--fugassa-accent-a28));
+  background: var(--fugassa-kind-bg, rgba(0, 0, 0, 0.2));
+}
+
+.fugassa-slot[class*='fugassa-slot--cat-'].fugassa-slot--filled:not(.fugassa-slot--spacer) {
+  border-style: solid;
+  background: var(--fugassa-kind-bg-strong, var(--fugassa-accent-a08));
+}
+
+.fugassa-slot[class*='fugassa-slot--cat-']:not(.fugassa-slot--spacer) .fugassa-slot-label {
+  color: var(--fugassa-kind-label, #c9a56a);
+}
+
+.fugassa-slot--valid {
+  border-color: #7cbf7c;
+  background: rgba(120, 190, 120, 0.2);
+}
+
+.fugassa-slot--invalid {
+  border-color: #c0605a;
+  background: rgba(200, 90, 80, 0.16);
+}
+
+.fugassa-inv-grid--drop-target {
+  outline: 2px dashed rgba(120, 190, 120, 0.5);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+.fugassa-inv-notes {
+  margin-top: 10px;
+  white-space: pre-wrap;
+}
+
+.fugassa-item-detail-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.fugassa-item-detail-backdrop[hidden] {
+  display: none;
+}
+
+.fugassa-item-detail {
+  width: min(360px, 90%);
+  padding: 20px 22px;
+  border-radius: 14px;
+  border: 1px solid var(--fugassa-chrome-border);
+  background: var(--panel, var(--fugassa-raised));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.fugassa-item-detail h3 {
+  margin: 0 0 8px;
+}
+
+.fugassa-simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.fugassa-simple-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--fugassa-fg-a06);
+}
+
+.fugassa-map-wrap {
+  overflow: auto;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.fugassa-map-grid {
+  display: grid;
+  /* grid-template-columns is set inline per-render (MapScreen.js) to match
+     the actual row width — one real CSS grid, not a stack of independent
+     flex rows that can drift out of alignment. */
+  gap: 4px;
+  width: max-content;
+  margin: 0 auto;
+}
+
+.fugassa-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.fugassa-map-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+.fugassa-map-hover-info {
+  min-height: 1.4em;
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-map-tile {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid var(--fugassa-fg-a08);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #e8dfd2;
+}
+
+.fugassa-map-tile--current {
+  background: rgba(246, 166, 62, 0.35);
+  border-color: rgba(246, 166, 62, 0.65);
+}
+
+.fugassa-map-tile--visited {
+  background: rgba(120, 160, 120, 0.22);
+}
+
+.fugassa-map-tile--intel {
+  background: rgba(100, 140, 220, 0.22);
+}
+
+.fugassa-map-tile--fog {
+  background: rgba(0, 0, 0, 0.35);
+  color: #888;
+}
+
+.fugassa-map-travel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.fugassa-map-coord {
+  width: 72px;
+}
+
+.fugassa-minimap-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: 100%;
+}
+
+.fugassa-minimap {
+  --fugassa-minimap-cell: 21px;
+  display: grid;
+  gap: 3px;
+  width: max-content;
+  grid-template-columns: repeat(var(--fugassa-minimap-cols, 5), var(--fugassa-minimap-cell));
+}
+
+.fugassa-minimap-cell {
+  width: var(--fugassa-minimap-cell);
+  height: var(--fugassa-minimap-cell);
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-sizing: border-box;
+}
+
+/* Map palette is fixed — independent of Titan UI theme. */
+.fugassa-minimap-cell--current {
+  background: #e8b040;
+  border-color: #f0c860;
+  box-shadow: 0 0 0 1px rgba(232, 176, 64, 0.45);
+}
+
+.fugassa-minimap-cell--visited {
+  background: rgba(120, 160, 120, 0.85);
+  border-color: rgba(140, 180, 140, 0.7);
+}
+
+.fugassa-minimap-cell--intel {
+  background: rgba(100, 140, 220, 0.85);
+  border-color: rgba(120, 160, 230, 0.7);
+}
+
+.fugassa-minimap-cell--fog {
+  background: rgba(20, 20, 24, 0.9);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.fugassa-minimap-legend {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fugassa-muted);
+  line-height: 1.25;
+  flex: 0 0 auto;
+}
+
+.fugassa-minimap-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fugassa-minimap-legend-swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-sizing: border-box;
+}
+
+.fugassa-minimap-legend-swatch--current { background: #e8b040; }
+.fugassa-minimap-legend-swatch--visited { background: rgba(120, 160, 120, 0.85); }
+.fugassa-minimap-legend-swatch--intel { background: rgba(100, 140, 220, 0.85); }
+.fugassa-minimap-legend-swatch--fog { background: rgba(20, 20, 24, 0.9); }
+
+.fugassa-move-grid {
+  display: grid;
+  gap: 4px;
+  width: max-content;
+}
+
+.fugassa-move-row {
+  display: flex;
+  gap: 4px;
+}
+
+.fugassa-move-btn {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+
+.fugassa-hud-side-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.fugassa-hud-combat-custom {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.fugassa-hud-combat-custom .fugassa-hud-chat-input {
+  flex: 1;
+}
+
+.fugassa-npc-card {
+  border: 1px solid var(--fugassa-fg-a08);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.fugassa-npc-card-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.fugassa-npc-card-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fugassa-npc-card-copy h4 {
+  margin: 0;
+}
+
+.fugassa-npc-thumb {
+  width: 200px;
+  height: 260px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--fugassa-fg-a10);
+  background: var(--fugassa-fg-a05);
+}
+
+.fugassa-npc-thumb--empty {
+  display: block;
+  min-height: 260px;
+}
+
+.fugassa-npc-card .fugassa-inline-actions {
+  margin-top: 2px;
+}
+
+.fugassa-npc-tags {
+  margin: 2px 0 6px;
+}
+
+.fugassa-tag {
+  display: inline-block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(246, 166, 62, 0.15);
+  color: var(--fugassa-accent);
+  margin: 0 4px 4px 0;
+}
+
+.fugassa-npc-detail {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--fugassa-fg-a10);
+}
+
+.fugassa-hex-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 28px;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 3px;
+  text-transform: capitalize;
+}
+
+.fugassa-hex-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--fugassa-fg-a08);
+  overflow: hidden;
+}
+
+.fugassa-hex-fill {
+  height: 100%;
+  background: var(--fugassa-gradient-accent-soft);
+}
+
+.fugassa-npc-goals {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
+
+.fugassa-quest-stack {
+  gap: 8px;
+}
+
+.fugassa-quest-card {
+  border: 1px solid var(--fugassa-fg-a08);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.fugassa-quest-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-quest-desc {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fugassa-quest-objectives {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.fugassa-quest-objectives li {
+  margin-bottom: 3px;
+}
+
+.fugassa-obj-done {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+
+.fugassa-debug-json {
+  max-height: 60vh;
+  overflow: auto;
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.fugassa-asset-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.fugassa-asset-panel textarea {
+  width: 100%;
+  min-height: 60px;
+  font-size: 12px;
+}
+
+.fugassa-asset-image-wrap {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  min-height: 120px;
+}
+
+.fugassa-asset-image-wrap img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.fugassa-asset-panel--scene .fugassa-asset-image-wrap {
+  min-height: min(42vh, 520px);
+}
+
+.fugassa-asset-panel--scene .fugassa-asset-image-wrap img {
+  width: 100%;
+  max-height: min(72vh, 960px);
+  object-fit: contain;
+}
+
+.fugassa-screen--location .fugassa-asset-panel--scene .fugassa-asset-image-wrap img {
+  max-height: min(76vh, 1024px);
+}
+
+.fugassa-asset-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  color: var(--fugassa-muted, #8b8fa3);
+  font-size: 12px;
+}
+
+.fugassa-asset-regen-icon,
+.fugassa-asset-edit-icon {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--fugassa-fg-a25);
+  background: rgba(20, 20, 28, 0.75);
+  color: var(--fg);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.fugassa-asset-regen-icon {
+  right: 8px;
+  bottom: 8px;
+}
+
+.fugassa-asset-edit-icon {
+  right: 8px;
+  top: 8px;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.fugassa-asset-regen-icon:hover:not(:disabled),
+.fugassa-asset-edit-icon:hover {
+  background: rgba(60, 60, 80, 0.9);
+  transform: scale(1.08);
+}
+
+.fugassa-asset-regen-icon:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fugassa-asset-spinner-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.fugassa-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--fugassa-fg-a25);
+  border-top-color: var(--fugassa-accent);
+  animation: fugassa-spin 0.8s linear infinite;
+}
+
+@keyframes fugassa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fugassa-asset-edit {
+  display: grid;
+  gap: 6px;
+}
+
+.fugassa-crafting-layout {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.fugassa-profession-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.fugassa-profession-row {
+  display: grid;
+  grid-template-columns: 110px 100px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--fugassa-fg-a06);
+}
+
+.fugassa-profession-name {
+  font-weight: 600;
+}
+
+.fugassa-profession-rank {
+  color: var(--fugassa-accent);
+}
+
+.fugassa-blueprint-group {
+  margin-bottom: 14px;
+}
+
+.fugassa-blueprint-group h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #c9a56a;
+}
+
+.fugassa-blueprint-card {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--fugassa-accent-a12);
+  background: rgba(0, 0, 0, 0.18);
+  margin-bottom: 8px;
+}
+
+.fugassa-blueprint-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.fugassa-ingredient-ok {
+  color: #7cbf7c;
+}
+
+.fugassa-ingredient-missing {
+  color: #d97a6c;
+}
+
+.fugassa-craft-form {
+  display: grid;
+  gap: 10px;
+  max-width: 420px;
+}
+
+.fugassa-craft-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #c9a56a;
+}
+
+.fugassa-craft-form select,
+.fugassa-craft-form input[type='text'] {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--fugassa-accent-a20);
+  background: rgba(0, 0, 0, 0.25);
+  color: #f0e6d8;
+  font-size: 13px;
+}
+
+.fugassa-craft-success {
+  color: #7cbf7c;
+  font-weight: 600;
+}
+
+.fugassa-craft-failure {
+  color: #d97a6c;
+  font-weight: 600;
+}
+
+.fugassa-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.fugassa-popup-backdrop[hidden] {
+  display: none !important;
+}
+
+.fugassa-popup {
+  width: min(380px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: #1c1712;
+  border: 1px solid var(--fugassa-accent-a25);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.fugassa-popup h4 {
+  margin: 0 0 10px;
+  color: var(--fugassa-accent);
+}
+
+.fugassa-scene-ready-backdrop {
+  z-index: 70;
+}
+
+.fugassa-scene-ready-backdrop[hidden] {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+.fugassa-scene-ready-backdrop:not([hidden]) {
+  pointer-events: auto;
+}
+
+.fugassa-scene-ready-popup {
+  width: min(1120px, 94vw);
+  max-width: 94vw;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 14px;
+}
+
+.fugassa-scene-ready-preview {
+  flex: 1 1 auto;
+  min-height: min(52vh, 640px);
+  margin: 10px 0 14px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg, #0e0c10);
+  border: 1px solid var(--fugassa-accent-a15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fugassa-scene-ready-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: min(78vh, 900px);
+  object-fit: contain;
+  object-position: center center;
+}
+
+.fugassa-scene-ready-popup .fugassa-popup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.fugassa-hud--pipeline-locked {
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.92;
+}
+
+.fugassa-hud--pipeline-locked .fugassa-hud-chat,
+.fugassa-hud--pipeline-locked .fugassa-hud-center,
+.fugassa-hud--pipeline-locked .fugassa-hud-right,
+.fugassa-hud--pipeline-locked .fugassa-hud-party,
+.fugassa-hud--pipeline-locked .fugassa-hud-top {
+  filter: saturate(0.85);
+}
+
+.fugassa-pipeline-popup {
+  text-align: center;
+  width: min(320px, 88vw);
+}
+
+.fugassa-pipeline-spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 12px;
+  border: 3px solid rgba(246, 166, 62, 0.25);
+  border-top-color: var(--fugassa-accent);
+  border-radius: 50%;
+  animation: fugassa-pipeline-spin 0.9s linear infinite;
+}
+
+@keyframes fugassa-pipeline-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fugassa-pipeline-error {
+  color: #d97a6c;
+  margin-top: 8px;
+}
+
+.fugassa-popup-checklist {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.fugassa-popup-checkbox-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 2px;
+  border-radius: 6px;
+}
+
+.fugassa-popup-row--disabled {
+  opacity: 0.5;
+}
+
+.fugassa-popup-qty {
+  width: 56px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--fugassa-accent-a20);
+  background: rgba(0, 0, 0, 0.25);
+  color: #f0e6d8;
+}
+
+.fugassa-popup-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #c9a56a;
+  margin-bottom: 10px;
+}
+
+.fugassa-popup-field select {
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--fugassa-accent-a20);
+  background: rgba(0, 0, 0, 0.25);
+  color: #f0e6d8;
+}
+
+.fugassa-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -2,17 +2,6 @@
 import mimetypes
 import os
 import sys
-import asyncio
-import time
-
-# On Windows, asyncio.create_subprocess_exec/shell require the ProactorEventLoop.
-# When started via `python -m uvicorn` from a terminal, uvicorn sets this
-# automatically. But the VS Code debugger (and other non-uvicorn entrypoints)
-# use the default SelectorEventLoop, which raises NotImplementedError on any
-# subprocess call. Force ProactorEventLoop here so the right loop is always
-# used, regardless of how the process is launched.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 def register_static_mime_types() -> None:
@@ -47,6 +36,10 @@ from dotenv import load_dotenv
 # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
 load_dotenv(encoding="utf-8-sig")
 
+from titan.remove_serve import preload_patches
+
+preload_patches()
+
 import asyncio
 import logging
 import secrets
@@ -55,7 +48,7 @@ from typing import Dict
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -76,7 +69,7 @@ from core.exceptions import (
 
 import bcrypt as _bcrypt
 
-from src.app_helpers import abs_join, serve_html_with_nonce
+from src.app_helpers import abs_join
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
@@ -180,7 +173,12 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/titan/hub/image-execute",       # SD generation — KREA can exceed 45s
+    "/api/titan/hub/image-studio/warm",   # VRAM swap + model load
     "/api/memory/audit",    # retains own 120s LLM inactivity timeout
+    "/api/fugassa",         # wizard Suggest/Send + GM turn submit call the LLM directly (no streaming) —
+                             # a big local GGUF model regularly takes 45-90s+ per completion, so the blanket
+                             # hard timeout was killing these requests with a 504 the frontend has no retry for
 )
 
 
@@ -198,50 +196,7 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
             )
 
 
-class _InteractiveActivityMiddleware(_BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        from src.interactive_gate import should_track_interactive_request, track_interactive_request
-
-        path = request.url.path or ""
-        if not should_track_interactive_request(path, request.method):
-            return await call_next(request)
-        async def _stop_background():
-            try:
-                await task_scheduler.stop_background_tasks_for_foreground(reason=f"foreground request {request.method} {path}")
-            except Exception:
-                logging.getLogger("app.foreground_gate").debug("foreground task stop failed", exc_info=True)
-        asyncio.create_task(_stop_background())
-        async with track_interactive_request(path, request.method):
-            return await call_next(request)
-
-
-class _SlowRequestLogMiddleware(_BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        start = time.perf_counter()
-        status = 500
-        try:
-            response = await call_next(request)
-            status = getattr(response, "status_code", 0) or 0
-            return response
-        finally:
-            elapsed = time.perf_counter() - start
-            try:
-                threshold = float(os.getenv("ODYSSEUS_SLOW_REQUEST_LOG_SECONDS", "0.75") or "0.75")
-            except Exception:
-                threshold = 0.75
-            if elapsed >= threshold:
-                logging.getLogger("app.slow_request").warning(
-                    "slow_request method=%s path=%s status=%s elapsed=%.3fs",
-                    request.method,
-                    request.url.path,
-                    status,
-                    elapsed,
-                )
-
-
 app.add_middleware(_RequestTimeoutMiddleware)
-app.add_middleware(_InteractiveActivityMiddleware)
-app.add_middleware(_SlowRequestLogMiddleware)
 
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
@@ -265,6 +220,8 @@ if AUTH_ENABLED:
         "/api/auth/integrations/presets",
         "/api/health",
         "/api/version",
+        "/api/tts/stats",
+        "/api/tts/voices",
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
@@ -332,26 +289,17 @@ if AUTH_ENABLED:
     # nginx, Caddy, Tailscale Funnel, …). cloudflared connects to the app FROM
     # 127.0.0.1, so without this check every tunneled request would look like
     # loopback and could bypass auth.
-    _PROXY_FWD_HEADERS = (
-        "cf-connecting-ip", "cf-ray", "cf-visitor",
-        "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+    from core.middleware import (
+        INTERNAL_TOOL_HEADER,
+        INTERNAL_TOOL_TOKEN as _ITT,
+        INTERNAL_TOOL_USER,
+        is_trusted_internal_token_client,
+        is_trusted_localhost_bypass_client,
+        is_trusted_loopback,
     )
 
     def _is_trusted_loopback(request: Request) -> bool:
-        """True ONLY for a DIRECT loopback connection with no proxy/tunnel
-        forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
-        unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
-        loopback, so a remote visitor would otherwise inherit local trust and
-        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Odysseus's own
-        in-process agent loopback calls carry none of these headers, so they still
-        qualify."""
-        host = request.client.host if request.client else None
-        if host not in ("127.0.0.1", "::1"):
-            return False
-        for _h in _PROXY_FWD_HEADERS:
-            if request.headers.get(_h):
-                return False
-        return True
+        return is_trusted_loopback(request)
 
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
@@ -372,9 +320,8 @@ if AUTH_ENABLED:
             # (no admin cookie available in that context). Restricted to
             # loopback clients + matching token to keep it locked down.
             try:
-                from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT, INTERNAL_TOOL_USER
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-                if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
+                if _hdr and secrets.compare_digest(_hdr, _ITT) and is_trusted_internal_token_client(request):
                     # Impersonation: when the agent's loopback call sets
                     # X-Odysseus-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
@@ -394,7 +341,14 @@ if AUTH_ENABLED:
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
             # Cloudflare tunnel / reverse proxy. Keep LOCALHOST_BYPASS=false for
             # network-exposed deployments regardless.
-            if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+            if LOCALHOST_BYPASS and is_trusted_localhost_bypass_client(request):
+                # Still honour session cookies — auth/status reads the cookie
+                # directly, so login redirects to / while route handlers see no
+                # current_user and 401 (fetch wrapper → /login flash loop).
+                token = request.cookies.get(SESSION_COOKIE)
+                if token and auth_manager.validate_token(token):
+                    request.state.current_user = auth_manager.get_username_for_token(token)
+                    request.state.api_token = False
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
@@ -538,6 +492,69 @@ async def serve_generated_image(filename: str, request: Request):
         headers=GENERATED_IMAGE_HEADERS,
     )
 
+@app.get("/api/gallery/folder")
+async def gallery_folder(request: Request):
+    """Return the on-disk folder where generated gallery images are stored.
+
+    Also best-effort opens it in the host file manager. That open is a no-op
+    inside a headless Docker container (no DISPLAY), so the response always
+    includes the HOST-side path; the frontend reveals/copies it as a fallback.
+    """
+    from src.auth_helpers import get_current_user
+    if not get_current_user(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from src.constants import GENERATED_IMAGES_DIR
+    container_dir = GENERATED_IMAGES_DIR
+    try:
+        os.makedirs(container_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    # data/ is bind-mounted from the host (compose: ${APP_DATA_DIR}); expose the
+    # real host path for display via TITAN_HOST_DATA_DIR (legacy ODYSSEUS_HOST_DATA_DIR), else fall back to
+    host_data = os.environ.get("TITAN_HOST_DATA_DIR") or os.environ.get("ODYSSEUS_HOST_DATA_DIR")
+    host_dir = os.path.join(host_data, "generated_images") if host_data else container_dir
+
+    opened = False
+
+    # Preferred: ask the host-side open-helper (a systemd --user service) to run
+    # xdg-open in the user's graphical session. We're in a headless container, so
+    # this is the only way to actually pop the host file manager.
+    helper_url = os.environ.get("HOST_OPEN_HELPER_URL")
+    if helper_url:
+        try:
+            import httpx
+            resp = httpx.post(
+                f"{helper_url.rstrip('/')}/open",
+                headers={"X-Open-Token": os.environ.get("HOST_OPEN_HELPER_TOKEN", "")},
+                json={"path": host_dir},
+                timeout=4.0,
+            )
+            opened = resp.status_code == 200 and bool(resp.json().get("opened"))
+            if not opened:
+                logger.info("host open helper declined: %s %s", resp.status_code, resp.text[:200])
+        except Exception as _e:
+            logger.info("host open helper unreachable: %s", _e)
+
+    # Fallback: native (non-container) run with a desktop session.
+    if not opened and (os.environ.get("DISPLAY") or sys.platform == "darwin" or os.name == "nt"):
+        if sys.platform == "darwin":
+            opener = ["open", container_dir]
+        elif os.name == "nt":
+            opener = ["explorer", container_dir]
+        else:
+            opener = ["xdg-open", container_dir]
+        try:
+            import subprocess
+            subprocess.Popen(opener, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            opened = True
+        except Exception as _e:
+            logger.info("gallery folder open failed: %s", _e)
+
+    return {"ok": True, "path": host_dir, "opened": opened}
+
+
 # ========= YOUTUBE INIT =========
 from services.youtube import init_youtube
 init_youtube()
@@ -627,20 +644,6 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 auth_router = setup_auth_routes(auth_manager)
 app.include_router(auth_router)
 
-
-@app.post("/api/activity/heartbeat")
-async def activity_heartbeat():
-    from src.interactive_gate import mark_browser_activity
-    await mark_browser_activity()
-    async def _stop_background():
-        try:
-            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
-        except Exception:
-            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
-    asyncio.create_task(_stop_background())
-    return {"ok": True}
-
-
 # Uploads
 from routes.upload_routes import setup_upload_routes
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
@@ -655,19 +658,14 @@ app.include_router(setup_emoji_routes())
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(
-    session_manager,
-    session_config,
-    webhook_manager=webhook_manager,
-    upload_handler=upload_handler,
-))
+app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
-from routes.memory.memory_routes import setup_memory_routes
+from routes.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
@@ -684,12 +682,12 @@ app.include_router(setup_chat_routes(
 ))
 
 # Research (background deep-research tasks)
-from routes.research.research_routes import setup_research_routes
+from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
 # History
-from routes.history.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
+from routes.history_routes import setup_history_routes
+app.include_router(setup_history_routes(session_manager))
 
 # Search
 from routes.search_routes import setup_search_routes
@@ -748,7 +746,7 @@ from routes.signature_routes import setup_signature_routes
 app.include_router(setup_signature_routes())
 
 # Gallery (image library)
-from routes.gallery.gallery_routes import setup_gallery_routes
+from routes.gallery_routes import setup_gallery_routes
 app.include_router(setup_gallery_routes())
 
 # Persisted image-editor drafts (server-backed projects)
@@ -768,7 +766,7 @@ app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-calendar_router = setup_calendar_routes(upload_handler=upload_handler)
+calendar_router = setup_calendar_routes()
 app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
@@ -831,7 +829,7 @@ logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
+app.include_router(setup_note_routes(task_scheduler))
 
 # Email
 from routes.email_routes import setup_email_routes
@@ -856,7 +854,7 @@ from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
-from routes.contacts.contacts_routes import setup_contacts_routes
+from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
@@ -864,17 +862,27 @@ app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
+def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
+    """Read an HTML file and inject the CSP nonce into inline <script> tags."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    nonce = getattr(request.state, "csp_nonce", "")
+    html = html.replace("{{CSP_NONCE}}", nonce)
+    return HTMLResponse(html)
+
+from titan import integrate_titan
+
+integrate_titan(app)
+
 @app.get("/")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
-        return serve_html_with_nonce(request, static_path)
-    # No static bundle — fall back to a root-level index.html if one is shipped.
-    # If neither exists, serve_html_with_nonce logs it and returns a generic 500:
-    # a missing index.html is a broken deployment (server fault), not a client
-    # "not found". This keeps the app-shell route consistent with the other
-    # bundled-template routes instead of mislabelling the fault as a 404.
-    return serve_html_with_nonce(request, abs_join(BASE_DIR, "index.html"))
+        return _serve_html_with_nonce(request, static_path)
+    root_path = abs_join(BASE_DIR, "index.html")
+    if os.path.exists(root_path):
+        return _serve_html_with_nonce(request, root_path)
+    raise HTTPException(404, "index.html not found")
 
 @app.get("/notes")
 async def serve_notes(request: Request):
@@ -904,6 +912,10 @@ async def serve_memory(request: Request):
 async def serve_gallery(request: Request):
     return await serve_index(request)
 
+@app.get("/image-studio")
+async def serve_image_studio(request: Request):
+    return await serve_index(request)
+
 @app.get("/tasks")
 async def serve_tasks(request: Request):
     return await serve_index(request)
@@ -915,13 +927,13 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
-    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
         return RedirectResponse(url="/", status_code=302)
-    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
 async def get_version():
@@ -931,34 +943,6 @@ async def get_version():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-@app.post("/api/client-perf")
-async def client_perf(request: Request):
-    """Low-volume frontend timing reports for stalls that happen before SSE logs."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    try:
-        kind = str(data.get("type") or "client").replace("\n", " ")[:80]
-        total_ms = float(data.get("total_ms") or 0)
-        stages = data.get("stages") if isinstance(data.get("stages"), list) else []
-        stage_txt = " ".join(
-            f"{str(s.get('name') or '')[:40]}={float(s.get('delta_ms') or 0):.0f}ms"
-            for s in stages[:20]
-            if isinstance(s, dict)
-        )
-        extra = str(data.get("extra") or "").replace("\n", " ")[:200]
-        logging.getLogger("app.client_perf").warning(
-            "client_perf type=%s total=%.0fms %s%s",
-            kind,
-            total_ms,
-            stage_txt,
-            f" extra={extra}" if extra else "",
-        )
-    except Exception:
-        logging.getLogger("app.client_perf").debug("client_perf log failed", exc_info=True)
-    return {"ok": True}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:
@@ -1048,7 +1032,7 @@ async def _startup_event():
         except BaseException as e:
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
-            await mcp_manager.connect_all_enabled()
+            await asyncio.wait_for(mcp_manager.connect_all_enabled(), timeout=20)
         except asyncio.TimeoutError:
             logger.warning("User MCP startup timed out (non-critical)")
         except BaseException as e:
@@ -1056,59 +1040,57 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
-    # Startup warmups are opt-in. They make later requests a little warmer, but
-    # they also compete with the first seconds of real UI use on slow or busy
-    # machines. Default to clear/idle startup and let requests warm what they use.
-    _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
-    if _startup_warmups_enabled:
-        async def _warmup_tool_index():
-            try:
-                from src.tool_index import get_tool_index
-                idx = await asyncio.to_thread(get_tool_index)
-                if idx:
-                    await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
-                    logger.info("[startup] Tool index pre-warmed")
-            except Exception as e:
-                logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
+    # Pre-warm the RAG tool index off the request path. Loading the local
+    # embedding model + opening ChromaDB + indexing the built-in tools is a
+    # one-time ~1-3s cost that otherwise lands on the user's FIRST message
+    # (showing up as a big `tool_selection` time). Doing it here makes the
+    # first turn as fast as subsequent ones (warm embed ≈ a few ms).
+    async def _warmup_tool_index():
+        try:
+            from src.tool_index import get_tool_index
+            idx = await asyncio.to_thread(get_tool_index)
+            if idx:
+                await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
+                logger.info("[startup] Tool index pre-warmed")
+        except Exception as e:
+            logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
-        _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
-
-        async def _warmup_endpoints():
-            try:
-                import httpx
-                urls = (
-                    await asyncio.to_thread(model_discovery.warmup_ping_urls)
-                    if model_discovery else []
-                )
-                for url in urls:
-                    try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
-                            await client.get(url)
-                        logger.info(f"Warmup ping OK: {url}")
-                    except Exception as e:
-                        logger.debug(f"Warmup ping failed for endpoint: {e}")
-            except Exception as e:
-                logger.debug(f"Warmup ping skipped: {e}")
-
-        _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
-    else:
-        logger.info("Startup warmups disabled (set ODYSSEUS_STARTUP_WARMUPS=1 to enable)")
-
-    # Keep-alive is opt-in. The ping path performs model discovery, and when
-    # stale LAN endpoints are configured it can add periodic backend pressure
-    # that delays unrelated UI requests such as Notes/Documents.
-    _keepalive_enabled = str(os.getenv("ODYSSEUS_MODEL_KEEPALIVE", "")).lower() in {"1", "true", "yes", "on"}
-    if _keepalive_enabled:
-        async def _keepalive_loop():
-            while True:
+    _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+    # Warmup: ping all known LLM endpoints to prime connections
+    async def _warmup_endpoints():
+        try:
+            import httpx
+            # model_discovery has no get_endpoints(); that call raised
+            # AttributeError every run and silently disabled warmup/keepalive.
+            # Resolve the /models probe URLs via the real discovery API, off the
+            # event loop since discovery does a blocking port scan.
+            urls = (
+                await asyncio.to_thread(model_discovery.warmup_ping_urls)
+                if model_discovery else []
+            )
+            for url in urls:
                 try:
-                    await asyncio.sleep(60)
-                    await _warmup_endpoints()
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        await client.get(url)
+                    logger.info(f"Warmup ping OK: {url}")
                 except Exception as e:
-                    logger.warning(f"Keepalive loop error: {e}")
-                    await asyncio.sleep(300)  # Back off on error
+                    logger.debug(f"Warmup ping failed for endpoint: {e}")
+        except Exception as e:
+            logger.debug(f"Warmup ping skipped: {e}")
 
-        _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
+    _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
+
+    # Keep-alive: ping endpoints every 60 seconds to prevent cold starts
+    async def _keepalive_loop():
+        while True:
+            try:
+                await asyncio.sleep(60)
+                await _warmup_endpoints()
+            except Exception as e:
+                logger.warning(f"Keepalive loop error: {e}")
+                await asyncio.sleep(300)  # Back off on error
+
+    _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
 
     async def _ensure_default_tasks():
         # Create/reconcile default automation tasks + personal assistant for every user.
@@ -1235,14 +1217,12 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
 
-    # Cookbook serve lifecycle — kills scheduler-launched serves whose
-    # window-end has passed. Paired with the cookbook_serve builtin
-    # action; both are no-ops unless a scheduled task actually launches
-    # something with end_after_min set. Removing this line + the
-    # cookbook_serve entry in BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py
-    # removes the feature.
-    from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
-    _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+    from titan import titan_startup
+
+    try:
+        await titan_startup()
+    except Exception as exc:
+        logger.warning("Titan startup skipped: %s", exc)
 
     logger.info("Application startup complete")
 

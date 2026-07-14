@@ -4,7 +4,6 @@
  * Extracted from document.js to reduce file size.
  */
 
-import { topPortalZ } from './toolWindowZOrder.js';
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
@@ -12,6 +11,7 @@ import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
 import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { modalHeaderTileHtml, DOCLIB_TAB_ICONS } from './titanBrand.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -228,7 +228,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     dd.style.right = (window.innerWidth - rect.right) + 'px';
     dd.style.top = (rect.bottom + 2) + 'px';
     dd.style.display = 'block';
-    dd.style.zIndex = String(topPortalZ());
+    dd.style.zIndex = '100000';
     requestAnimationFrame(() => {
       const mr = dd.getBoundingClientRect();
       if (mr.bottom > window.innerHeight - 8) {
@@ -630,7 +630,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           const rect = menuBtn.getBoundingClientRect();
           document.body.appendChild(dropdown);
           dropdown.dataset.owner = doc.id;
-          dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;display:block;`;
+          dropdown.style.cssText = 'position:fixed;z-index:10000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;display:block;';
           dropdown.style.top = (rect.bottom + 4) + 'px';
           dropdown.style.left = 'auto';
           dropdown.style.right = (window.innerWidth - rect.right) + 'px';
@@ -1596,7 +1596,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     modal.className = 'modal';
     modal.id = 'doclib-modal';
     modal.innerHTML = `
-      <div class="modal-content doclib-modal-content" style="width:min(640px, 92vw);background:var(--bg);">
+      <div class="modal-content doclib-modal-content" style="width:min(640px, 92vw);max-height:85vh;background:var(--bg);">
         <div class="modal-header">
           <!-- Header title + icon mirror the currently-active sub-tab (Chats /
                Documents / Research / Archive) so the user sees ONE icon at
@@ -1840,19 +1840,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const _TAB_HEADERS = {
       chats: {
         label: 'Chats',
-        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+        svg: modalHeaderTileHtml(DOCLIB_TAB_ICONS.chats),
       },
       documents: {
         label: 'Documents',
-        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+        svg: modalHeaderTileHtml(DOCLIB_TAB_ICONS.documents),
       },
       research: {
         label: 'Research',
-        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
+        svg: modalHeaderTileHtml(DOCLIB_TAB_ICONS.research),
       },
       archive: {
         label: 'Archive',
-        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+        svg: modalHeaderTileHtml(DOCLIB_TAB_ICONS.archive),
       },
     };
 

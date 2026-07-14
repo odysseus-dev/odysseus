@@ -27,6 +27,7 @@ class DataConfig(BaseSettings):
     uploads_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "uploads", description="Directory for uploaded files")
     sessions_file: Path = Field(default=Path(_DATA_DIR_CONST) / "sessions.json", description="Sessions storage file")
     memory_file: Path = Field(default=Path(_DATA_DIR_CONST) / "memory.json", description="Memory storage file")
+    memory_doc: Path = Field(default=Path(_DATA_DIR_CONST) / "memory_doc.md", description="Memory document file")
     personal_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs", description="Personal documents directory")
     runbook_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs" / "runbook", description="Runbook directory")
     
@@ -57,7 +58,7 @@ class LLMConfig(BaseSettings):
     max_context_messages: int = Field(default=90, description="Maximum number of context messages to keep")
     request_timeout: int = Field(default=20, description="Request timeout in seconds")
     llm_stream_timeout: int = Field(default=30, description="LLM streaming timeout in seconds")
-    llm_max_tokens: int = Field(default=4096, description="Maximum tokens for LLM responses")
+    llm_max_tokens: int = Field(default=0, description="Maximum tokens for LLM responses (0 = no limit)")
     llm_temperature: float = Field(default=0.3, description="Temperature for LLM responses")
     
     model_config = SettingsConfigDict(env_prefix="LLM_")
@@ -161,6 +162,7 @@ class AppConfig(BaseSettings):
             "uploads_dir": data_dir / "uploads",
             "sessions_file": data_dir / "sessions.json",
             "memory_file": data_dir / "memory.json",
+            "memory_doc": data_dir / "memory_doc.md",
             "personal_dir": data_dir / "personal_docs",
             "runbook_dir": data_dir / "personal_docs" / "runbook",
             "max_upload_size": max_upload_size,

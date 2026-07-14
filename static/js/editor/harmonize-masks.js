@@ -32,7 +32,6 @@
  * @returns {HTMLCanvasElement|null}
  */
 export function layerUnionAlpha(w, h, layers) {
-  if (!Array.isArray(layers)) return null;
   const visible = layers.filter(l => l.visible);
   if (visible.length < 2) return null;
   const bgId = visible[0].id;

@@ -1,0 +1,147 @@
+{
+  "human_fighter_1": {
+    "input": {
+      "class_label": "Fighter",
+      "race_label": "Human",
+      "level": 1,
+      "abilities_pre_race": {
+        "str": 15,
+        "dex": 14,
+        "con": 13,
+        "int": 10,
+        "wis": 12,
+        "cha": 8
+      },
+      "skill_proficiencies": {
+        "athletics": true,
+        "intimidation": true
+      }
+    },
+    "expected": {
+      "resolved": {
+        "class_id": "fighter",
+        "subclass_id": "",
+        "race_id": "human",
+        "subrace_id": ""
+      },
+      "level": 1,
+      "hp": 12,
+      "proficiency_bonus": 2,
+      "ac_base": 12,
+      "passive_perception": 11,
+      "spellcasting": {
+        "has": false,
+        "ability": "",
+        "spell_save_dc": 0,
+        "spell_attack_mod": 0,
+        "cantrips_known": 0,
+        "spells_known": -1,
+        "spells_prepared_estimate": -1,
+        "slots_by_level": {},
+        "model": ""
+      },
+      "skill_proficiency_cap": 2
+    }
+  },
+  "hill_dwarf_cleric_3": {
+    "input": {
+      "class_label": "Cleric",
+      "race_label": "Dwarf",
+      "subrace_label": "Hill Dwarf",
+      "level": 3,
+      "abilities_pre_race": {
+        "str": 10,
+        "dex": 10,
+        "con": 14,
+        "int": 10,
+        "wis": 15,
+        "cha": 10
+      },
+      "skill_proficiencies": {
+        "insight": true,
+        "religion": true
+      }
+    },
+    "expected": {
+      "resolved": {
+        "class_id": "cleric",
+        "subclass_id": "",
+        "race_id": "dwarf",
+        "subrace_id": "hill-dwarf"
+      },
+      "level": 3,
+      "hp": 27,
+      "proficiency_bonus": 2,
+      "ac_base": 10,
+      "passive_perception": 13,
+      "spellcasting": {
+        "has": true,
+        "ability": "wis",
+        "spell_save_dc": 13,
+        "spell_attack_mod": 5,
+        "cantrips_known": 3,
+        "spells_known": -1,
+        "spells_prepared_estimate": 6,
+        "slots_by_level": {
+          "1": 4,
+          "2": 2
+        },
+        "model": "prepared",
+        "max_castable_spell_level": 2,
+        "pact_magic": false,
+        "caster_progression_note": ""
+      },
+      "skill_proficiency_cap": 2
+    }
+  },
+  "elf_wizard_1": {
+    "input": {
+      "class_label": "Wizard",
+      "race_label": "Elf",
+      "subrace_label": "High Elf",
+      "level": 1,
+      "abilities_pre_race": {
+        "str": 8,
+        "dex": 14,
+        "con": 13,
+        "int": 15,
+        "wis": 12,
+        "cha": 10
+      },
+      "skill_proficiencies": {
+        "arcana": true,
+        "history": true
+      }
+    },
+    "expected": {
+      "resolved": {
+        "class_id": "wizard",
+        "subclass_id": "",
+        "race_id": "elf",
+        "subrace_id": "high-elf"
+      },
+      "level": 1,
+      "hp": 7,
+      "proficiency_bonus": 2,
+      "ac_base": 13,
+      "passive_perception": 11,
+      "spellcasting": {
+        "has": true,
+        "ability": "int",
+        "spell_save_dc": 13,
+        "spell_attack_mod": 5,
+        "cantrips_known": 3,
+        "spells_known": -1,
+        "spells_prepared_estimate": 4,
+        "slots_by_level": {
+          "1": 2
+        },
+        "model": "prepared",
+        "max_castable_spell_level": 1,
+        "pact_magic": false,
+        "caster_progression_note": ""
+      },
+      "skill_proficiency_cap": 2
+    }
+  }
+}

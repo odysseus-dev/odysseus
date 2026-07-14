@@ -34,3 +34,13 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Fugassa GM narration — sherpa-onnx Supertonic-3 (CPU, multilingual en/cs/uk).
+# Without it, Fugassa TTS is skipped (no fallback). Model via Model Hub → tts_models/.
+sherpa-onnx
+
+# Fugassa (grid RPG) optional semantic memory recall — sqlite-vec loadable
+# extension for `vec0` virtual tables inside each save's game.db. ADR decision:
+# sqlite-vec only, never Chroma. Now installed by default via requirements.txt;
+# listed here for reference when building minimal images without Fugassa vec recall.
+# sqlite-vec

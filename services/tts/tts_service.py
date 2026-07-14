@@ -41,6 +41,7 @@ class TTSService:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._kokoro = None  # lazy-init
+        self._supertonic = None  # lazy-init (Fugassa GM, CPU)
 
     # ── Settings ──
 
@@ -68,7 +69,7 @@ class TTSService:
         if provider == "local":
             kokoro = self._get_kokoro()
             return kokoro is not None and kokoro.available
-        if isinstance(provider, str) and provider.startswith("endpoint:"):
+        if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
 
@@ -102,6 +103,55 @@ class TTSService:
         if self._kokoro is None:
             self._kokoro = _KokoroPipeline()
         return self._kokoro
+
+    def _get_supertonic(self):
+        if self._supertonic is None:
+            from services.tts.supertonic_pipeline import get_supertonic_pipeline
+            self._supertonic = get_supertonic_pipeline()
+        return self._supertonic
+
+    def supertonic_available(self) -> bool:
+        pipe = self._get_supertonic()
+        return bool(pipe.available or pipe._ensure_loaded())
+
+    def list_supertonic_voices(self, lang: str) -> list[Dict[str, Any]]:
+        from services.tts.voice_manifest import list_voices_for_lang
+        return list_voices_for_lang(lang)
+
+    def synthesize_supertonic(
+        self,
+        text: str,
+        *,
+        lang: str = "cs",
+        speaker_id: int = 0,
+        speed: float = 1.0,
+        use_cache: bool = True,
+    ) -> Optional[bytes]:
+        if not text or not str(text).strip():
+            return None
+        text = str(text).strip()
+        if len(text) > 5000:
+            text = text[:5000]
+
+        lang = (lang or "cs").strip().lower()
+        speaker_id = max(0, min(9, int(speaker_id)))
+        speed = _safe_speed(speed, 1.0)
+
+        if use_cache:
+            key = self._cache_key(text, "supertonic", lang, str(speaker_id), speed)
+            cached = self._get_cached(key)
+            if cached:
+                return cached
+
+        pipe = self._get_supertonic()
+        if not pipe.available and not pipe._ensure_loaded():
+            return None
+
+        audio_data = pipe.synthesize_raw(text, lang=lang, speaker_id=speaker_id, speed=speed)
+        if audio_data and use_cache:
+            key = self._cache_key(text, "supertonic", lang, str(speaker_id), speed)
+            self._put_cache(key, audio_data)
+        return audio_data
 
     # ── API endpoint ──
 
@@ -224,6 +274,10 @@ class TTSService:
             stats["model"] = "Browser (Web Speech API)"
         elif provider.startswith("endpoint:"):
             stats["endpoint_id"] = provider.split(":", 1)[1]
+
+        pipe = self._get_supertonic()
+        stats["supertonic_ready"] = bool(pipe.available)
+        stats["supertonic_model_path"] = str(pipe.model_dir) if pipe.model_dir else None
 
         return stats
 

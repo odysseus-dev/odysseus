@@ -1,0 +1,19 @@
+# Local Titan dev overlay — copy to docker-compose.override.yml and adjust paths.
+# NEVER commit docker-compose.override.yml (personal vault mounts, tokens, host paths).
+services:
+  odysseus:
+    volumes:
+      # Optional: read-only Obsidian/docs vault for RAG (local path only)
+      # - /path/to/your/vault:/app/data/personal_docs/vault:ro
+      - ./static:/app/static:ro
+      - ./static/js/chatRenderer.titan.js:/app/static/js/chatRenderer.js:ro
+      - ./titan:/app/titan:ro
+    environment:
+      - TITAN_SCHEDULER_URL=http://host.docker.internal:8150
+      - TITAN_IMAGE_VIA_SCHEDULER=true
+      - TITAN_MODELS_CONFIG=/app/data/titan-models.yaml
+      - TITAN_SD_DIR=/app/data/sd-models
+      - TITAN_HOST_DATA_DIR=./data
+      # Generate your own tokens for local use:
+      # - HOST_OPEN_HELPER_TOKEN=change-me
+      # - ODYSSEUS_INTERNAL_TOKEN=change-me

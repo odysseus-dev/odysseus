@@ -6,10 +6,7 @@ import Storage from './storage.js';
 function clearFreshComposerRestore() {
   const msgInput = document.getElementById('message');
   if (!msgInput) return;
-  const hash = window.location.hash || '';
-  const isEntityHash = /^#(?:document|note|image|email|event|task|skill|research)-/.test(hash)
-    || /^#open=notes&note=/.test(hash);
-  const hasSessionTarget = !!((hash && !isEntityHash) || Storage.get('lastSessionId'));
+  const hasSessionTarget = !!(window.location.hash || Storage.get('lastSessionId'));
   if (hasSessionTarget) return;
   if (msgInput.value) {
     msgInput.value = '';
@@ -61,11 +58,11 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
         });
       };
       // Document editor — overflow menu button + the docs panel rail/tool button.
-      hideOn('#overflow-doc-btn, #tool-doc-btn', privs.can_use_documents);
+      hideOn('#overflow-doc-btn, #tool-doc-btn, #rail-documents, #sidebar-documents-btn', privs.can_use_documents);
       // Research — sidebar tool + the in-input deep-research toggle.
-      hideOn('#tool-research-btn, #research-toggle-btn', privs.can_use_research);
+      hideOn('#tool-research-btn, #rail-research, #research-toggle-btn', privs.can_use_research);
       // Memory & skills (rail/tool button only — UI/API entry).
-      hideOn('#tool-memory-btn', privs.can_manage_memory);
+      hideOn('#tool-memory-btn, #rail-memory', privs.can_manage_memory);
       // Agent mode toggle — force chat mode by hiding the Agent toggle button.
       if (privs.can_use_agent === false) {
         const _agent = document.getElementById('mode-agent-btn');

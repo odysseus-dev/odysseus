@@ -1,0 +1,440 @@
+/* TITAN sidebar / icon-rail — shared row geometry + brand lockup.
+   Row height is the single source of truth for sidebar ↔ rail alignment. */
+:root {
+  --titan-nav-tile-size: 22px;
+  --titan-nav-tile-bg: color-mix(in srgb, var(--fg) 8%, transparent);
+  --titan-nav-tile-border: color-mix(in srgb, var(--border) 85%, transparent);
+  --titan-nav-tile-radius: 6px;
+  --titan-nav-row-pad-y: 8px;
+  --titan-nav-row-height: calc(var(--titan-nav-row-pad-y) * 2 + var(--titan-nav-tile-size));
+  --titan-rail-header-h: 72px;
+  --titan-rail-inner-pad: 10px;
+}
+
+/* ── Shared icon tiles ── */
+.sidebar-icon-tile,
+.icon-rail-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--titan-nav-tile-size);
+  height: var(--titan-nav-tile-size);
+  border-radius: var(--titan-nav-tile-radius);
+  background: var(--titan-nav-tile-bg);
+  border: 1px solid var(--titan-nav-tile-border);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.sidebar-icon-tile svg,
+.icon-rail-tile svg {
+  display: block;
+  flex-shrink: 0;
+  max-width: 14px;
+  max-height: 14px;
+  width: auto;
+  height: auto;
+  color: var(--brand-color, var(--red));
+}
+
+.icon-rail-tile svg.section-icon,
+.icon-rail-tile svg[width="13"] {
+  max-width: 13px;
+  max-height: 13px;
+}
+
+/* ── Sidebar rows — same height as rail buttons ── */
+#sidebar-search-btn,
+#sidebar-new-chat-btn,
+#sidebar-documents-btn {
+  margin: 0 !important;
+  padding: var(--titan-nav-row-pad-y) 8px !important;
+  min-height: var(--titan-nav-row-height) !important;
+  box-sizing: border-box;
+}
+
+#tools-section .list-item {
+  padding: var(--titan-nav-row-pad-y) 8px !important;
+  min-height: var(--titan-nav-row-height) !important;
+  box-sizing: border-box;
+  gap: 8px;
+}
+
+.section-header-flex {
+  padding: var(--titan-nav-row-pad-y) 8px !important;
+  min-height: var(--titan-nav-row-height) !important;
+  height: auto !important;
+  margin: 0 !important;
+  box-sizing: border-box;
+}
+
+/* ── Expanded sidebar header: toggle left, brand centered ── */
+.sidebar-header {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 10px 8px 6px !important;
+  min-height: var(--titan-rail-header-h) !important;
+  box-sizing: border-box;
+}
+
+.sidebar.right-side .sidebar-header {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+#sidebar-toggle-btn {
+  display: none !important;
+  position: absolute !important;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: var(--titan-nav-row-height) !important;
+  height: var(--titan-nav-row-height) !important;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+body:not(.sidebar-collapsed) #sidebar-toggle-btn {
+  display: flex !important;
+}
+
+.sidebar-brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+  cursor: pointer;
+}
+
+.sidebar-brand-lockup .sidebar-brand-mark {
+  line-height: 0;
+}
+
+.sidebar-brand-lockup .sidebar-brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.sidebar-brand-lockup .sidebar-brand-title {
+  position: static;
+  left: auto;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--brand-color, var(--red));
+}
+
+.sidebar-brand-lockup .sidebar-brand-sub {
+  font-size: 0.58rem;
+  opacity: 0.55;
+  letter-spacing: 0.03em;
+}
+
+/* ── Welcome screen — TITAN brand lockup (overrides legacy Odysseus gradient title) ── */
+#welcome-screen .welcome-name.welcome-brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: inherit;
+  font-weight: inherit;
+  background: none !important;
+  -webkit-background-clip: unset !important;
+  -webkit-text-fill-color: unset !important;
+  background-clip: unset !important;
+  color: inherit;
+  letter-spacing: normal;
+  transform-origin: center center;
+}
+
+#welcome-screen .welcome-brand-mark {
+  line-height: 0;
+}
+
+#welcome-screen .welcome-brand-mark svg {
+  display: block;
+  width: 56px;
+  height: 56px;
+}
+
+#welcome-screen .welcome-brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+#welcome-screen .welcome-brand-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  background: linear-gradient(
+    135deg,
+    var(--brand-color, var(--red)),
+    color-mix(in srgb, var(--brand-color, var(--red)) 55%, var(--fg))
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+#welcome-screen .welcome-brand-sub {
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  color: var(--fg);
+  -webkit-text-fill-color: currentColor;
+}
+
+/* Incognito / research alternate welcome headline */
+#welcome-screen .welcome-name.welcome-mode-lockup {
+  flex-direction: row;
+  gap: 10px;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--brand-color, var(--red));
+}
+
+#welcome-screen .welcome-mode-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  color: var(--brand-color, var(--red));
+}
+
+@media (max-width: 768px) {
+  #welcome-screen .welcome-brand-mark svg {
+    width: 48px;
+    height: 48px;
+  }
+  #welcome-screen .welcome-brand-title {
+    font-size: 1.5rem;
+  }
+}
+
+@media (max-height: 500px) {
+  #welcome-screen .welcome-name.welcome-brand-lockup {
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  #welcome-screen .welcome-brand-mark svg {
+    width: 40px;
+    height: 40px;
+  }
+  #welcome-screen .welcome-brand-title {
+    font-size: 1.25rem;
+  }
+}
+
+.welcome-brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.welcome-brand-lockup .welcome-brand-text {
+  text-align: center;
+}
+
+.welcome-brand-lockup .welcome-brand-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.welcome-brand-lockup .welcome-brand-sub {
+  font-size: 0.75rem;
+  opacity: 0.55;
+}
+
+/* ── Icon rail — mirrors sidebar vertical rhythm ── */
+.icon-rail {
+  gap: 0 !important;
+  padding: 0 4px 6px 4px !important;
+  align-items: stretch !important;
+}
+
+.rail-header-slot {
+  flex-shrink: 0;
+  width: 100%;
+  height: var(--titan-nav-row-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  box-sizing: border-box;
+  padding: 6px 0 4px;
+}
+
+.rail-header-slot .rail-header-toggle,
+.rail-header-slot .hamburger-btn,
+.rail-header-slot #hamburger-btn {
+  position: static !important;
+  transform: none !important;
+  width: var(--titan-nav-row-height) !important;
+  height: var(--titan-nav-row-height) !important;
+  margin: 0 !important;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+  cursor: pointer;
+}
+
+.rail-nav-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0 !important;
+  padding-top: var(--titan-rail-inner-pad, 10px);
+  box-sizing: border-box;
+}
+
+.rail-nav-stack > .icon-rail-btn,
+.rail-tools-scroll > .icon-rail-btn {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rail-section-spacer {
+  flex-shrink: 0;
+  width: 100%;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.rail-tools-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0 !important;
+}
+
+.icon-rail-btn {
+  width: 100% !important;
+  height: var(--titan-nav-row-height) !important;
+  min-height: var(--titan-nav-row-height) !important;
+  border-radius: 4px !important;
+  opacity: 1 !important;
+  color: var(--brand-color, var(--red)) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+}
+
+.icon-rail-btn:hover {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--brand-color, var(--red)) 10%, transparent) !important;
+}
+
+.icon-rail-btn.active-section {
+  background: color-mix(in srgb, var(--brand-color, var(--red)) 15%, transparent) !important;
+}
+
+.icon-rail-btn .icon-rail-tile {
+  pointer-events: none;
+}
+
+/* Toggle in rail header — centered clickable T mark */
+.rail-header-slot .hamburger-btn:hover,
+.rail-header-slot #hamburger-btn:hover {
+  opacity: 1;
+}
+
+/* Legacy fixed hamburger — only when sidebar AND rail are both hidden */
+body.hamburger-only > #hamburger-btn.hamburger-fixed {
+  position: fixed !important;
+  top: 12px !important;
+  left: 9px !important;
+  z-index: 210 !important;
+  display: flex !important;
+}
+
+body.hamburger-right.hamburger-only > #hamburger-btn.hamburger-fixed {
+  left: auto !important;
+  right: 9px !important;
+}
+
+/* When sidebar expanded, external fixed hamburger must never show */
+body:not(.sidebar-collapsed):not(.hamburger-only) > #hamburger-btn.hamburger-fixed {
+  display: none !important;
+}
+
+.hamburger-btn.titan-toggle-btn svg {
+  display: block;
+}
+
+.rail-separator {
+  display: none !important;
+}
+
+/* New-chat hover label stays inside rail width — no overlap with toggle */
+.rail-new-chat::after {
+  display: none !important;
+}
+
+/* ── Modal header tiles ── */
+.modal-title-lockup,
+.notes-pane-title.modal-title-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.modal-header-icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--titan-nav-tile-size);
+  height: var(--titan-nav-tile-size);
+  border-radius: var(--titan-nav-tile-radius);
+  background: var(--titan-nav-tile-bg);
+  border: 1px solid var(--titan-nav-tile-border);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.modal-header-icon-tile svg {
+  display: block;
+  max-width: 14px;
+  max-height: 14px;
+  color: var(--brand-color, var(--red));
+}
+
+.modal-header h4.modal-title-lockup,
+.notes-pane-title.modal-title-lockup {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+#doclib-header-icon .modal-header-icon-tile {
+  vertical-align: middle;
+}

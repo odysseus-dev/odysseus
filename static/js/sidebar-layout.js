@@ -62,6 +62,9 @@ export function initSidebarLayout(Storage, opts) {
       document.body.classList.toggle('hamburger-left', !isRight);
       document.body.classList.toggle('hamburger-only', sidebarHidden && railHidden);
       document.body.classList.toggle('sidebar-collapsed', sidebarHidden);
+      if (typeof window.syncNavLayout === 'function') {
+        requestAnimationFrame(window.syncNavLayout);
+      }
     }
     // Keep incognito button clear of hamburger
     const incogBtn = document.getElementById('incognito-btn');
@@ -92,11 +95,10 @@ export function initSidebarLayout(Storage, opts) {
     });
   }
 
-  // Header-only new-chat aliases. #sidebar-new-chat-btn is wired in app.js
-  // because it needs the full default-model/pending-chat flow; wiring it here
-  // as well caused duplicate click handling and occasional no-op/race behavior.
+  // New chat buttons — same as clicking brand
   const chatNewBtn = document.getElementById('chat-new-btn');
-  [chatNewBtn].forEach(btn => {
+  const sidebarNewChat = document.getElementById('sidebar-new-chat-btn');
+  [chatNewBtn, sidebarNewChat].forEach(btn => {
     if (btn) btn.addEventListener('click', () => {
       const brandBtn = document.getElementById('sidebar-brand-btn');
       if (brandBtn) brandBtn.click();
@@ -104,6 +106,7 @@ export function initSidebarLayout(Storage, opts) {
   });
 
   // Hamburger cycles: full sidebar → mini → off → full
+  // Shift-click swaps sidebar side
   let _userToggledSidebar = false;
   let _wasAutoCollapsed = false;
 
@@ -122,7 +125,8 @@ export function initSidebarLayout(Storage, opts) {
     if (window.innerWidth < 768 && cc && cc.classList.contains('compare-active')) return;
     _userToggledSidebar = true;
     // Optionally place the sidebar on a specific edge (the swipe gesture passes
-    // the direction). Persist it + re-anchor the doc panel.
+    // the direction). Persist it + re-anchor the doc panel, same as a
+    // shift-click on the hamburger.
     if (side === 'left' || side === 'right') {
       const wantRight = side === 'right';
       if (sidebar.classList.contains('right-side') !== wantRight) {
@@ -142,6 +146,13 @@ export function initSidebarLayout(Storage, opts) {
     hamburgerBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const sidebar = document.getElementById('sidebar');
+      if (e.shiftKey) {
+        sidebar.classList.toggle('right-side');
+        Storage.set(Storage.KEYS.SIDEBAR_SIDE, sidebar.classList.contains('right-side') ? 'right' : 'left');
+        syncRailSide();
+        if (documentModule && documentModule.swapSide) documentModule.swapSide();
+        return;
+      }
 
       _userToggledSidebar = true;
       const isSidebarVisible = !sidebar.classList.contains('hidden');

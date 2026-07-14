@@ -47,20 +47,6 @@ AREAS: tuple[str, ...] = (
     "uncategorized",
 )
 
-# Backward-compatible aggregate selectors for focused runs whose original
-# monolithic files were split into more specific taxonomy sub-areas.
-SUB_AREA_ALIASES: dict[str, tuple[str, ...]] = {
-    "service_health": (
-        "service_health_chromadb",
-        "service_health_search",
-        "service_health_ntfy",
-        "service_health_email",
-        "service_health_providers",
-        "service_health_collect",
-    ),
-    "embedding": ("embedding", "embedding_memory"),
-}
-
 
 def normalize_sub_area(value: str) -> str:
     """Normalize a CLI sub-area value and remove an optional ``sub_`` prefix."""
@@ -116,13 +102,6 @@ def sub_area_type(valid_sub_areas: frozenset[str]) -> Callable[[str], str]:
     return validate
 
 
-def _sub_area_marker_expression(sub_area: str) -> str:
-    """Build the marker expression for a sub-area, including narrow aliases."""
-    aliases = SUB_AREA_ALIASES.get(sub_area, (sub_area,))
-    markers = [f"sub_{alias}" for alias in aliases]
-    return " or ".join(markers)
-
-
 @dataclass(frozen=True)
 class FocusSelection:
     """A single focused-selection request, decoupled from argparse and pytest."""
@@ -164,10 +143,7 @@ def build_marker_expression(
     if area:
         parts.append(f"area_{area}")
     if sub_area:
-        sub_expression = _sub_area_marker_expression(sub_area)
-        if " or " in sub_expression:
-            sub_expression = f"({sub_expression})"
-        parts.append(sub_expression)
+        parts.append(f"sub_{sub_area}")
     if fast:
         parts.append("not slow")
     if not parts:
@@ -222,7 +198,6 @@ def build_parser(
     """Build the argument parser for the focused runner."""
     if valid_sub_areas is None:
         valid_sub_areas = discover_sub_areas()
-    valid_sub_areas = frozenset(valid_sub_areas) | frozenset(SUB_AREA_ALIASES)
     parser = argparse.ArgumentParser(
         prog="run_focus.py",
         description=(

@@ -6,7 +6,7 @@
  *              + an optional narrow inpaint on a seam mask if the
  *              "Seam fix" slider > 0.
  *   Canvas 2×/4× Upscale: in-browser bicubic resampling, no server.
- *   AI Upscale: Real-ESRGAN via /api/image/upscale-local.
+ *   AI Upscale: Titan SD img2img via hub image-execute (legacy RealESRGAN removed).
  *   Style Transfer: img2img via /api/gallery/style-transfer.
  *
  * Plus the small `_addEmptyLayer` helper and its toolbar wiring,
@@ -25,6 +25,7 @@
  *   renderLayerPanel:    () => void,
  *   spinnerModule:       object,
  *   uiModule:            object,
+ *   getImageId:          () => string | null,
  * }} deps
  *
  * @returns {{ addEmptyLayer: () => void }}
@@ -34,7 +35,7 @@ import { state } from './state.js';
 export function wireAIToolsMisc({
   apiBase, buildLayerBodyMask, buildSeamMask, applyImageTool,
   flatten, saveState, fitZoom, composite, createLayer, renderLayerPanel,
-  spinnerModule, uiModule,
+  spinnerModule, uiModule, getImageId,
 }) {
   // ── Harmonize sliders — Color match + Seam fix ──
   const harmColorPrev = document.getElementById('ge-harmonize-color-preview');
@@ -99,9 +100,14 @@ export function wireAIToolsMisc({
   document.getElementById('ge-upscale-2x')?.addEventListener('click', () => canvasUpscale(2));
   document.getElementById('ge-upscale-4x')?.addEventListener('click', () => canvasUpscale(4));
 
-  // ── AI upscale (Real-ESRGAN, no diffusion server required) ──
+  // ── AI upscale (Titan SD img2img — requires saved gallery image) ──
   document.getElementById('ge-upscale-ai')?.addEventListener('click', async () => {
     const btn = document.getElementById('ge-upscale-ai');
+    const imageId = getImageId?.() || state.imageId || null;
+    if (!imageId) {
+      uiModule.showToast('Uložte obrázek do galerie pro SD upscale (nebo použijte Canvas 2×/4×)');
+      return;
+    }
     const origHTML = btn.innerHTML;
     btn.disabled = true;
     let upWp = null;
@@ -111,45 +117,48 @@ export function wireAIToolsMisc({
       btn.innerHTML = '';
       btn.appendChild(upWp.element);
       const lbl = document.createElement('span');
-      lbl.textContent = 'Upscaling…';
+      lbl.textContent = 'SD Upscale…';
       btn.appendChild(lbl);
-    } catch (_) { btn.textContent = 'Upscaling…'; }
+    } catch (_) { btn.textContent = 'SD Upscale…'; }
     try {
-      const flat = flatten();
-      const imageB64 = flat.toDataURL('image/png').split(',')[1];
-      const res = await fetch('/api/image/upscale-local', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageB64, scale: 2 }),
-      });
-      if (!res.ok) throw new Error('Server returned ' + res.status);
-      const data = await res.json();
-      if (data.image) {
-        const img = new Image();
-        img.onload = () => {
-          if (!state.editorOpen) return;
-          saveState();
-          const newW = img.width, newH = img.height;
-          const layer = createLayer('AI Upscaled', newW, newH);
-          layer.ctx.drawImage(img, 0, 0);
-          state.layers.push(layer);
-          state.activeLayerId = layer.id;
-          state.imgWidth = newW; state.imgHeight = newH;
-          state.mainCanvas.width = newW; state.mainCanvas.height = newH;
-          if (state.maskCanvas) { state.maskCanvas.width = newW; state.maskCanvas.height = newH; }
-          const sizeLabel = document.getElementById('ge-canvas-size');
-          if (sizeLabel) sizeLabel.textContent = `${newW}×${newH}`;
-          fitZoom();
-          composite();
-          renderLayerPanel();
-          uiModule.showToast(`AI upscaled to ${newW}×${newH}`);
-        };
-        img.src = 'data:image/png;base64,' + data.image;
-      } else {
-        throw new Error(data.error || 'No image returned');
+      const actions = window.__titanImageActions;
+      if (!actions?.runAction) throw new Error('Titan image actions not loaded');
+      const meta = {
+        imageId,
+        imageUrl: state.imageUrl || '',
+        prompt: state.draftName || '',
+        model: 'titan-sd:realistic',
+        size: `${state.imgWidth || 1024}x${state.imgHeight || 1024}`,
+        quality: 'high',
+        gen_style: 'realistic',
+      };
+      const result = await actions.runAction('upscale', meta, { upscale_factor: 2 }, null);
+      if (!result?.ok || !result.data?.image_url) {
+        throw new Error(result?.error || 'Upscale failed');
       }
+      const img = new Image();
+      img.onload = () => {
+        if (!state.editorOpen) return;
+        saveState();
+        const newW = img.width, newH = img.height;
+        const layer = createLayer('SD Upscaled', newW, newH);
+        layer.ctx.drawImage(img, 0, 0);
+        state.layers.push(layer);
+        state.activeLayerId = layer.id;
+        state.imgWidth = newW; state.imgHeight = newH;
+        state.mainCanvas.width = newW; state.mainCanvas.height = newH;
+        if (state.maskCanvas) { state.maskCanvas.width = newW; state.maskCanvas.height = newH; }
+        const sizeLabel = document.getElementById('ge-canvas-size');
+        if (sizeLabel) sizeLabel.textContent = `${newW}×${newH}`;
+        fitZoom();
+        composite();
+        renderLayerPanel();
+        uiModule.showToast(`SD upscaled to ${newW}×${newH}`);
+      };
+      img.onerror = () => { throw new Error('Failed to load upscaled image'); };
+      img.src = result.data.image_url;
     } catch (e) {
-      uiModule.showToast('AI upscale failed: ' + e.message);
+      uiModule.showToast('SD upscale failed: ' + e.message);
     }
     try { upWp?.destroy(); } catch (_) {}
     btn.disabled = false;

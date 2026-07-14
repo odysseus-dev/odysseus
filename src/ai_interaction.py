@@ -14,7 +14,6 @@ These are agent tools — the LLM writes fenced code blocks and they execute
 through the standard agent_tools.py pipeline.
 """
 
-import asyncio
 import json
 import logging
 import uuid
@@ -135,8 +134,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                         r = httpx.get(models_url, headers=headers, timeout=5)
                         r.raise_for_status()
                         data = r.json()
-                        items = data if isinstance(data, list) else (data.get("data") or [])
-                        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
                         if not model_ids:
                             model_ids = [
                                 m.get("name") or m.get("model")
@@ -230,7 +228,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
         if not model_spec or not instruction:
             return {"error": f"Step {i + 1}: both 'model' and 'instruction' are required"}
         try:
-            url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+            url, model, headers = _resolve_model(model_spec, owner=owner)
             resolved.append((url, model, headers, instruction))
         except ValueError as e:
             return {"error": f"Step {i + 1}: {e}"}
@@ -433,23 +431,13 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Search needs line 2: query"}
         query = lines[1].strip()
         memories = _memory_manager.load(owner=owner)
-        query_lower = query.lower()
-        exact_results = [m for m in memories if query_lower in (m.get("text", "").lower())]
 
         if hasattr(_memory_manager, 'get_relevant_memories'):
-            vector_results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
         else:
-            vector_results = []
-        seen = set()
-        results = []
-        for m in [*exact_results, *vector_results]:
-            mid = m.get("id")
-            if mid in seen:
-                continue
-            seen.add(mid)
-            results.append(m)
-            if len(results) >= 20:
-                break
+            # Fallback: simple text search
+            query_lower = query.lower()
+            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}
@@ -463,6 +451,8 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 
     else:
         return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +563,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       switch_model <model>    — Change the model for the current session
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
-      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
+      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, model_hub)
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] [body text] — Open a reply draft document for an email; does not send. ALWAYS append the body text when the user told you what to say (one-shot draft); only omit body when the user just asked to "open a reply" without content.
       get_toggles             — Return current toggle states (server-side knowledge)
     """
@@ -583,6 +573,14 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
     parts = lines[0].strip().split(None, 2)
     action = parts[0].lower()
+
+    if action in ("generate_image", "image_generate"):
+        return {
+            "error": (
+                "ui_control cannot generate images. Call the generate_image tool "
+                "directly (prompt + style + confirm=true after the user approves)."
+            ),
+        }
 
     if action == "toggle":
         if len(parts) < 3:
@@ -635,7 +633,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
         # Resolve the model to validate it exists
         try:
-            url, model_id, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+            url, model_id, headers = _resolve_model(model_spec, owner=owner)
         except ValueError as e:
             return {"error": str(e)}
 
@@ -774,7 +772,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
     elif action == "open_panel":
         # Open a top-level panel/modal: documents/library, gallery,
-        # email, sessions, notes, memories, skills, settings, cookbook.
+        # email, sessions, notes, memories, skills, settings, model_hub (Titan).
         panel = parts[1].lower() if len(parts) > 1 else ""
         _panel_aliases = {
             "documents": "documents",
@@ -802,15 +800,21 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "skills": "skills",
             "settings": "settings",
             "preferences": "settings",
-            "cookbook": "cookbook",
-            "models": "cookbook",
-            "llm": "cookbook",
-            "serve": "cookbook",
-            "serving": "cookbook",
+            "cookbook": "model_hub",
+            "models": "model_hub",
+            "model_hub": "model_hub",
+            "modelhub": "model_hub",
+            "hub": "model_hub",
+            "scheduler": "scheduler",
+            "vram": "scheduler",
+            "vram_scheduler": "scheduler",
+            "llm": "model_hub",
+            "serve": "model_hub",
+            "serving": "model_hub",
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
+            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, model_hub, scheduler."}
         return {
             "ui_event": "open_panel",
             "panel": target,
@@ -908,6 +912,10 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
 
+    # Titan Model Hub: route local SD through VRAM scheduler on host.
+    _scheduler_url = os.environ.get("TITAN_SCHEDULER_URL", "http://host.docker.internal:8150").rstrip("/")
+    _use_scheduler = os.environ.get("TITAN_IMAGE_VIA_SCHEDULER", "true").lower() not in ("0", "false", "no")
+
     # Load admin settings for defaults
     try:
         from src.settings import load_settings
@@ -925,7 +933,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     if not model_spec:
         for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
             try:
-                await asyncio.to_thread(_resolve_model, candidate, owner=owner)
+                _resolve_model(candidate, owner=owner)
                 model_spec = candidate
                 break
             except ValueError:
@@ -952,9 +960,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         try:
                             _r = _req.get(_ibase + "/models", timeout=3)
                             _r.raise_for_status()
-                            _data = _r.json()
-                            _ditems = _data if isinstance(_data, list) else (_data.get("data") or [])
-                            _mids = [m.get("id") for m in _ditems if isinstance(m, dict) and m.get("id")]
+                            _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
                             if _mids:
                                 model_spec = _mids[0]
                                 break
@@ -967,9 +973,91 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         if not model_spec:
             return {"error": "No image model found. Configure one in Admin → Image Generation."}
 
+    # Prefer Titan scheduler for local SD (VRAM swap LLM ↔ diffusion).
+    _cloud_names = ("gpt-image", "dall-e")
+    _is_cloud = model_spec and any(c in model_spec.lower() for c in _cloud_names)
+    if _use_scheduler and not _is_cloud:
+        try:
+            from src.settings import load_settings as _ls
+            _st = _ls()
+            _style = "anime" if "anime" in (model_spec or "").lower() or "nova" in (model_spec or "").lower() else "realistic"
+            if "thisisreal" in (model_spec or "").lower() or "realvis" in (model_spec or "").lower() or _st.get("image_model", "").startswith(("thisisreal", "realvis")):
+                _style = "realistic"
+            images_url = f"{_scheduler_url}/v1/images/generations"
+            payload = {
+                "model": model_spec or _st.get("image_model", ""),
+                "prompt": prompt,
+                "n": 1,
+                "size": size,
+                "style": _style,
+                "shutdown_after": True,
+            }
+            if quality in ("low", "medium", "high", "auto"):
+                payload["quality"] = quality
+            logger.info("Image via Titan scheduler: style=%s url=%s", _style, images_url)
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
+                resp = await client.post(images_url, json=payload)
+            if resp.status_code != 200:
+                error_text = resp.text[:500]
+                try:
+                    err_json = resp.json()
+                    error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
+                except Exception:
+                    pass
+                return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
+            data = resp.json()
+            images = data.get("data", [])
+            if not images:
+                return {"error": "No images returned from scheduler"}
+            img = images[0]
+            model_id = payload.get("model") or model_spec
+
+            def _save_to_gallery(filename: str) -> str:
+                try:
+                    from src.database import SessionLocal as _GallerySL, GalleryImage
+                    new_id = str(uuid.uuid4())
+                    _gdb = _GallerySL()
+                    _gdb.add(GalleryImage(
+                        id=new_id,
+                        filename=filename,
+                        prompt=prompt,
+                        model=model_id,
+                        size=size,
+                        quality=payload.get("quality", "medium"),
+                        session_id=session_id,
+                        owner=owner,
+                    ))
+                    _gdb.commit()
+                    _gdb.close()
+                    return new_id
+                except Exception as _ge:
+                    logger.warning(f"Failed to save gallery record: {_ge}")
+                    return ""
+
+            if img.get("b64_json"):
+                img_dir = Path(GENERATED_IMAGES_DIR)
+                img_dir.mkdir(parents=True, exist_ok=True)
+                filename = f"{uuid.uuid4().hex[:12]}.png"
+                img_path = img_dir / filename
+                img_path.write_bytes(base64.b64decode(img.get("b64_json")))
+                image_url = f"/api/generated-image/{filename}"
+                image_id = _save_to_gallery(filename)
+                return {
+                    "results": f"Generated image for: {prompt[:100]}",
+                    "image_url": image_url,
+                    "image_id": image_id,
+                    "image_prompt": prompt,
+                    "image_model": model_id,
+                    "image_size": size,
+                    "image_quality": payload.get("quality", "medium"),
+                }
+            return {"error": "Scheduler returned unexpected image format"}
+        except Exception as _sched_exc:
+            logger.warning("Titan scheduler image path failed, falling back: %s", _sched_exc)
+
     # Resolve the model to find the right endpoint
     try:
-        url, model_id, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+        url, model_id, headers = _resolve_model(model_spec, owner=owner)
     except ValueError:
         return {"error": f"No endpoint found with image model '{model_spec}'. "
                 "Configure an OpenAI-compatible endpoint with image generation support."}

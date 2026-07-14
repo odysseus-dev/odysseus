@@ -18,6 +18,94 @@ INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
 # Pseudo-username on in-process tool-loopback requests; require_admin trusts it and it is reserved.
 INTERNAL_TOOL_USER = "internal-tool"
 
+# Headers that prove a request was forwarded by a proxy/tunnel. A tunneled
+# visitor can appear as loopback/docker-gateway from the app's POV.
+_PROXY_FWD_HEADERS = (
+    "cf-connecting-ip", "cf-ray", "cf-visitor",
+    "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+)
+
+
+def _has_proxy_forward_headers(headers) -> bool:
+    return any(headers.get(h) for h in _PROXY_FWD_HEADERS)
+
+
+def _in_container() -> bool:
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8") as fh:
+            return any(t in fh.read() for t in ("docker", "containerd", "kubepods"))
+    except OSError:
+        return False
+
+
+def _docker_default_gateway_ip() -> str | None:
+    """Default route gateway inside Docker (host OS for published-port callers)."""
+    try:
+        with open("/proc/net/route", encoding="utf-8") as fh:
+            for line in fh.readlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 3 and parts[1] == "00000000":
+                    gw_hex = parts[2]
+                    if len(gw_hex) != 8:
+                        return None
+                    octets = [int(gw_hex[i : i + 2], 16) for i in (6, 4, 2, 0)]
+                    return ".".join(str(o) for o in octets)
+    except OSError:
+        pass
+    return None
+
+
+def is_trusted_loopback(request: Request) -> bool:
+    """Direct loopback connection with no proxy/tunnel forwarding headers."""
+    if _has_proxy_forward_headers(request.headers):
+        return False
+    host = request.client.host if request.client else None
+    return host in ("127.0.0.1", "::1")
+
+
+def is_trusted_localhost_bypass_client(request: Request) -> bool:
+    """Peer allowed when LOCALHOST_BYPASS=true.
+
+    Includes in-container loopback and the Docker bridge gateway (host OS
+    calling a published port like 127.0.0.1:7000). Proxy/tunnel headers still
+    block bypass so tunneled visitors cannot ride this path.
+    """
+    if is_trusted_loopback(request):
+        return True
+    if _has_proxy_forward_headers(request.headers):
+        return False
+    if not _in_container():
+        return False
+    host = request.client.host if request.client else None
+    if not host:
+        return False
+    gateway = _docker_default_gateway_ip()
+    return bool(gateway and host == gateway)
+
+
+def is_trusted_internal_token_client(request: Request) -> bool:
+    """Trusted peer for X-Odysseus-Internal-Token auth.
+
+    In-process agent tools hit 127.0.0.1. Host-side callers (AI tray, scripts)
+    reach a Docker-published port via the bridge gateway (e.g. 172.18.0.1);
+    allow that only when an explicit ODYSSEUS_INTERNAL_TOKEN is configured.
+    """
+    if _has_proxy_forward_headers(request.headers):
+        return False
+    if is_trusted_loopback(request):
+        return True
+    if not os.environ.get("ODYSSEUS_INTERNAL_TOKEN"):
+        return False
+    if not _in_container():
+        return False
+    host = request.client.host if request.client else None
+    if not host:
+        return False
+    gateway = _docker_default_gateway_ip()
+    return bool(gateway and host == gateway)
+
 
 def is_cors_preflight(method: str, headers) -> bool:
     """True for a genuine CORS preflight: an OPTIONS request carrying the
@@ -117,7 +205,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
                 "font-src 'self' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: blob: https:; "
+                "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 "frame-src 'self'; "

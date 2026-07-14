@@ -21,12 +21,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
-from src.tool_security import (
-    BUILTIN_EMAIL_TOOLS,
-    email_tool_policy_names,
-    is_public_blocked_tool,
-    owner_is_admin_or_single_user,
-)
+from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
@@ -71,35 +66,25 @@ _SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
     "known_hosts",
 )
 
-# Case-folded views used for matching. On a case-insensitive filesystem
-# (Windows, default macOS) ".SSH/AUTHORIZED_KEYS" and ".env" resolve to the
-# same protected files as their lowercase forms, so the deny-list has to fold
-# case before comparing — the sibling resolver already normcases paths for the
-# same reason. casefold (not os.path.normcase) because normcase is a no-op on
-# POSIX, which is exactly where the macOS read-exfil path lives.
-_SENSITIVE_BASENAMES_CF: frozenset[str] = frozenset(b.casefold() for b in _SENSITIVE_BASENAMES)
-_SENSITIVE_FILE_PATTERNS_CF: frozenset[str] = frozenset(p.casefold() for p in _SENSITIVE_FILE_PATTERNS)
-
 
 def _is_sensitive_path(resolved: str) -> bool:
     """Return True if *resolved* falls under a sensitive directory or
     matches a sensitive filename — regardless of what root it sits under.
-
-    Matching is case-insensitive: on Windows / default macOS a case-variant
-    name (``.SSH``, ``AUTHORIZED_KEYS``, ``Id_Rsa``) points at the same file as
-    the lowercase form, so a case-sensitive check would let it slip past the
-    deny-list in every file tool that relies on it.
     """
-    parts = [p.casefold() for p in resolved.split(os.sep)]
-    filename = parts[-1] if parts else ""
+    parts = resolved.split(os.sep)
+    filenames: set[str] = {parts[-1]} if parts else set()
 
     # Check if any path component is a sensitive directory.
     for part in parts:
-        if part in _SENSITIVE_BASENAMES_CF:
+        if part in _SENSITIVE_BASENAMES:
             return True
 
     # Check filename against known sensitive files.
-    return filename in _SENSITIVE_FILE_PATTERNS_CF
+    for pat in _SENSITIVE_FILE_PATTERNS:
+        if pat in filenames:
+            return True
+
+    return False
 
 
 def _tool_path_roots() -> list[str]:
@@ -359,12 +344,8 @@ def _parse_qualified_mcp_args(tool: str, content: str) -> tuple[Dict, Optional[s
 
 
 def _parse_generate_image(content: str) -> Dict:
-    lines = content.strip().split("\n")
-    args = {"prompt": lines[0].strip() if lines else ""}
-    for i, key in enumerate(["model", "size", "quality"], 1):
-        if len(lines) > i and lines[i].strip():
-            args[key] = lines[i].strip()
-    return args
+    from titan.image_parse import parse_generate_image
+    return parse_generate_image(content)
 
 
 def _parse_manage_memory(content: str) -> Dict:
@@ -405,42 +386,8 @@ _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
 }
 
 
-# Primary argument key(s) for the legacy line-parsed tools. When a fenced
-# block's content is a JSON object carrying one of these keys, it's structured
-# inline args (the relaxed parser's ```web_search {"query": "..."}``` shape) —
-# use the object directly instead of letting the line-based parsers wrap the
-# whole JSON string as the query/url/path/prompt. Keyed off membership only
-# (the primary key never changes), so this can't drift; an unrecognized object
-# safely falls through to the line-based parser, i.e. the previous behavior.
-#
-# IMPORTANT — this only covers the MCP path. _build_mcp_args is reached via
-# _call_mcp_tool only for _MCP_TOOL_MAP tools (so an entry outside that map is
-# dead, as manage_memory was). And of these, only generate_image has a live MCP
-# server today; web_search/web_fetch/read_file/write_file have none, so they run
-# via _direct_fallback -> TOOL_HANDLERS, whose handlers decode JSON themselves
-# (see ReadFileTool/WriteFileTool/WebSearchTool/WebFetchTool). The entries here
-# are kept as defense-in-depth for if/when those servers are added. The live
-# fix for each server-less tool lives in its handler. test_write_file_inline_
-# json_args and test_mcp_json_primary_keys_are_all_live pin both halves.
-_MCP_JSON_PRIMARY_KEYS: Dict[str, tuple] = {
-    "web_search":     ("query", "queries"),
-    "web_fetch":      ("url",),
-    "read_file":      ("path",),
-    "write_file":     ("path",),
-    "generate_image": ("prompt",),
-}
-
-
 def _build_mcp_args(tool: str, content: str) -> Dict:
     """Convert fenced-block text content to structured MCP arguments."""
-    primaries = _MCP_JSON_PRIMARY_KEYS.get(tool)
-    if primaries and content.strip().startswith("{"):
-        try:
-            decoded = json.loads(content.strip())
-        except (json.JSONDecodeError, TypeError):
-            decoded = None
-        if isinstance(decoded, dict) and any(k in decoded for k in primaries):
-            return decoded
     parser = _MCP_ARG_PARSERS.get(tool)
     return parser(content) if parser else {}
 
@@ -449,6 +396,10 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    *,
+    owner: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_text: Optional[str] = None,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
@@ -458,6 +409,13 @@ async def _call_mcp_tool(
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
     args = _build_mcp_args(tool, content)
+    if tool == "generate_image":
+        if owner:
+            args["_odysseus_owner"] = owner
+        if session_id:
+            args["_odysseus_session_id"] = session_id
+        if user_text:
+            args["_odysseus_user_text"] = user_text
     result = await mcp.call_tool(qualified, args)
 
     # If MCP server not connected, try direct fallback
@@ -473,8 +431,80 @@ async def _call_mcp_tool(
     # URL into its prose (which it mangles/hallucinates).
     if tool == "generate_image":
         _promote_image_fields(result)
+        _promote_image_tool_state(result)
 
     return result
+
+
+def _promote_image_tool_state(result: Dict) -> None:
+    """Mark wizard pending vs UI card proposal based on pipeline config."""
+    if not isinstance(result, dict):
+        return
+    out = str(result.get("stdout") or "")
+    if result.get("image_url") or "Generated image for:" in out:
+        return
+
+    from titan.image_proposal import parse_proposal_from_text
+    from titan.image_pipeline_config import should_use_card
+
+    prop = parse_proposal_from_text(out)
+    if prop:
+        op = prop.get("op") or "generate"
+        if should_use_card(op):
+            result["image_proposal"] = prop
+            result["pending_user"] = True
+            result["trigger_mode"] = "card"
+            result["exit_code"] = None
+        return
+
+    if "NEEDS_USER_INPUT" in out:
+        result["wizard_pending"] = True
+        result["pending_user"] = True
+        result["trigger_mode"] = "wizard"
+        result["exit_code"] = None
+
+
+async def execute_generate_image_with_wizard(
+    initial_args: Dict,
+    *,
+    session_id: Optional[str] = None,
+    disabled_tools: Optional[set] = None,
+    tool_policy: Optional[Any] = None,
+    owner: Optional[str] = None,
+    workspace: Optional[str] = None,
+    max_steps: int = 4,
+) -> Tuple[str, Dict]:
+    """Run generate_image through the MCP wizard until an image or hard stop."""
+    from src.agent_tools import ToolBlock
+
+    args = dict(initial_args or {})
+    desc = "generate_image"
+    result: Dict = {"exit_code": 1, "error": "generate_image wizard produced no result"}
+    for _ in range(max_steps):
+        block = ToolBlock("generate_image", json.dumps(args))
+        desc, result = await execute_tool_block(
+            block,
+            session_id=session_id,
+            disabled_tools=disabled_tools,
+            tool_policy=tool_policy,
+            owner=owner,
+            workspace=workspace,
+        )
+        out = str(result.get("stdout") or result.get("stderr") or "")
+        if result.get("image_url") or "Generated image for:" in out:
+            return desc, result
+        if "NEEDS_USER_INPUT" not in out:
+            return desc, result
+        low = out.lower()
+        if "which style" in low or (
+            "realistic" in low and "anime" in low and "choose" in low
+        ):
+            return desc, result
+        if "confirm" in low:
+            args["confirm"] = True
+            continue
+        return desc, result
+    return desc, result
 
 
 def _promote_image_fields(result: Dict) -> None:
@@ -486,18 +516,51 @@ def _promote_image_fields(result: Dict) -> None:
     if not isinstance(result, dict) or result.get("exit_code") != 0:
         return
     out = result.get("stdout") or ""
-    m = re.search(r'(?:https?://[^\s)\]]+)?/api/generated-image/[A-Za-z0-9._-]+', out)
-    if not m:
+    urls = re.findall(
+        r'(?:https?://[^\s)\]]+)?/api/generated-image/[A-Za-z0-9._-]+',
+        out,
+    )
+    if not urls:
         return
-    result["image_url"] = m.group(0).strip()
+    result["image_urls"] = [u.strip() for u in urls]
+    result["image_url"] = result["image_urls"][0]
     for field, pat in (
-        ("image_prompt", r'^Generated image for:\s*(.+)$'),
-        ("image_model", r'^model:\s*(.+)$'),
-        ("image_size", r'^size:\s*(.+)$'),
+        ("image_prompt", r'^Generated (?:\d+ images?|image) for:\s*(.+)$'),
+        ("image_model", r'^(?:model|style):\s*(.+)$'),
+        ("image_size", r'^size:\s*([^|]+)'),
+        ("image_quality", r'quality:\s*(\w+)'),
+        ("gallery_id", r'^gallery_id:\s*(\S+)$'),
     ):
         fm = re.search(pat, out, re.M)
         if fm:
             result[field] = fm.group(1).strip()
+
+    gm = re.search(r'^gallery_ids:\s*(.+)$', out, re.M)
+    if gm:
+        result["gallery_ids"] = [
+            x.strip() for x in re.split(r'[,\s]+', gm.group(1).strip()) if x.strip()
+        ]
+    elif result.get("gallery_id"):
+        result["gallery_ids"] = [result["gallery_id"]]
+
+    try:
+        from mcp_servers.gallery_provenance import enrich_image_tool_result
+
+        enrich_image_tool_result(result)
+    except Exception:
+        pass
+
+    # Preserve explicit model identifiers (e.g. "qwen-image"). Only normalize
+    # style labels when the value looks like a style, not a model id.
+    try:
+        from titan.style_labels import normalize_model_label
+
+        raw_model = str(result.get("image_model") or "").strip()
+        if raw_model.lower() in {"realistic", "anime", "pixelart", "krea"}:
+            prov = result.get("provenance") if isinstance(result.get("provenance"), dict) else {}
+            result["image_model"] = normalize_model_label(raw_model, prov.get("style"))
+    except Exception:
+        pass
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
@@ -575,6 +638,7 @@ async def execute_tool_block(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
     tool_policy: Optional[Any] = None,
+    user_text: Optional[str] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -584,15 +648,15 @@ async def execute_tool_block(
     """
     token = _active_workspace.set(workspace or None)
     try:
-        output = await _execute_tool_block_impl(
+        return await _execute_tool_block_impl(
             block,
             session_id=session_id,
             disabled_tools=disabled_tools,
             owner=owner,
             progress_cb=progress_cb,
             tool_policy=tool_policy,
+            user_text=user_text,
         )
-        return output
     finally:
         _active_workspace.reset(token)
 
@@ -604,6 +668,7 @@ async def _execute_tool_block_impl(
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     tool_policy: Optional[Any] = None,
+    user_text: Optional[str] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -611,9 +676,25 @@ async def _execute_tool_block_impl(
     (bash, python) so the agent loop can emit `tool_progress` SSE
     events while the command is in flight. Ignored by other tools.
     """
+    from titan.constants import DEPRECATED_SERVE_TOOLS, DEPRECATION_MSG
+
+    tool = getattr(block, "tool_type", None)
+    if tool in DEPRECATED_SERVE_TOOLS:
+        return (
+            tool,
+            {
+                "error": DEPRECATION_MSG,
+                "exit_code": 1,
+                "deprecated": True,
+                "use_instead": "Titan Model Hub (/api/titan/hub) or ui_control open_panel model_hub",
+            },
+        )
+
     from src.tool_implementations import (
         do_search_chats, do_manage_tasks,
-        do_manage_skills, do_api_call, do_manage_notes,
+        do_manage_skills, do_api_call, do_manage_endpoints,
+        do_manage_mcp, do_manage_webhooks, do_manage_tokens,
+        do_manage_settings, do_manage_notes,
         do_manage_calendar,
         do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
         do_tail_serve_output,
@@ -626,30 +707,8 @@ async def _execute_tool_block_impl(
         do_app_api,
     )
 
-    # HACK:
-    # This is a temporary workaround for a circular dependency between
-    # tool_execution.py and agent_tools.__init__.py.
-    #
-    # See issue #4277:
-    # refactor(tools): Move the registry from __init__.py into a
-    # dedicated registry.py module.
-    #
-    # Do not copy this pattern elsewhere. This import should be removed
-    # once the registry refactor is completed.
-    try:
-        agent_tools_mod = __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"])
-        dynamic_handlers = getattr(agent_tools_mod, "TOOL_HANDLERS", {})
-    except ImportError:
-        dynamic_handlers = {}
-
     tool = block.tool_type
     content = block.content
-
-    # The block/disable gates below must match every policy-equivalent
-    # spelling of the tool name (bare email names alias their mcp__email__
-    # form — see email_tool_policy_names), not just the spelling the model
-    # happened to emit.
-    policy_names = email_tool_policy_names(tool)
 
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
@@ -678,13 +737,13 @@ async def _execute_tool_block_impl(
             pass
 
     # Reject tools that the user has disabled for this request
-    if disabled_tools and not policy_names.isdisjoint(disabled_tools):
+    if disabled_tools and tool in disabled_tools:
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
         return desc, result
 
-    if tool_policy and any(tool_policy.blocks(name) for name in policy_names):
+    if tool_policy and tool_policy.blocks(tool):
         desc = f"{tool}: BLOCKED"
         result = {
             "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",
@@ -711,6 +770,86 @@ async def _execute_tool_block_impl(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
+    # ask_user: the agent poses a multiple-choice question to the user to get a
+    # decision/clarification. This is a pure UI-control marker — no subprocess,
+    # no filesystem. It returns an `ask_user` payload that the agent loop turns
+    # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
+    # the user's selection (their choice arrives as the next message).
+    if tool == "ask_user":
+        question, options, multi = "", [], False
+        raw = (content or "").strip()
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            question = str(parsed.get("question", "")).strip()
+            multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
+            for opt in (parsed.get("options") or []):
+                if isinstance(opt, dict):
+                    label = str(opt.get("label", "")).strip()
+                    descr = str(opt.get("description", "")).strip()
+                elif isinstance(opt, str):
+                    label, descr = opt.strip(), ""
+                else:
+                    continue
+                if label:
+                    options.append({"label": label, "description": descr})
+        else:
+            question = raw
+        if not question or len(options) < 2:
+            return "ask_user: invalid", {
+                "error": (
+                    "ask_user needs a non-empty `question` and at least 2 `options` "
+                    "(each an object with a `label`, optional `description`)."
+                ),
+                "exit_code": 1,
+            }
+        options = options[:6]  # keep the choice list sane
+        desc = f"ask_user: {question[:80]}"
+        labels = ", ".join(o["label"] for o in options)
+        result = {
+            "ask_user": {"question": question, "options": options, "multi": multi},
+            "output": f"Asked the user: {question}\nOptions: {labels}\nAwaiting their selection.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s (%d options, multi=%s)", desc, len(options), multi)
+        return desc, result
+
+    # update_plan: the agent writes back to the active plan — tick an item done
+    # or revise steps (e.g. when the user asks to change something). Pure UI
+    # marker: returns a `plan_update` payload the agent loop turns into a
+    # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
+    # the docked plan window. Does NOT end the turn.
+    if tool == "update_plan":
+        import json as _json
+        raw = (content or "").strip()
+        plan = ""
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if isinstance(parsed, dict) and parsed.get("plan"):
+            plan = str(parsed.get("plan", "")).strip()
+        else:
+            # Plain-string call (raw checklist) or JSON without a usable `plan`.
+            plan = raw
+        if not plan:
+            return "update_plan: invalid", {
+                "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
+                "exit_code": 1,
+            }
+        plan = plan[:8192]
+        done = plan.count("- [x]") + plan.count("- [X]")
+        total = done + plan.count("- [ ]")
+        desc = f"update_plan: {done}/{total} done" if total else "update_plan"
+        result = {
+            "plan_update": {"plan": plan},
+            "output": f"Plan updated ({done}/{total} steps complete)." if total else "Plan updated.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s", desc)
+        return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
@@ -745,7 +884,9 @@ async def _execute_tool_block_impl(
     if tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+        result = await _call_mcp_tool(
+            tool, content, progress_cb=progress_cb, owner=owner, session_id=session_id, user_text=user_text,
+        )
     elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
@@ -798,11 +939,21 @@ async def _execute_tool_block_impl(
         first_line = content.split("\n")[0].strip()[:60]
         desc = f"api_call: {first_line}"
         result = await do_api_call(content)
-    elif tool in ("manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "manage_settings"):
-        # Registry-dispatched (agent_tools.admin_tools); owner threaded for ownership/admin checks.
-        desc = tool
-        result = await _direct_fallback(tool, content, owner=owner) \
-            or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "manage_endpoints":
+        desc = "manage_endpoints"
+        result = await do_manage_endpoints(content, owner=owner)
+    elif tool == "manage_mcp":
+        desc = "manage_mcp"
+        result = await do_manage_mcp(content, owner=owner)
+    elif tool == "manage_webhooks":
+        desc = "manage_webhooks"
+        result = await do_manage_webhooks(content, owner=owner)
+    elif tool == "manage_tokens":
+        desc = "manage_tokens"
+        result = await do_manage_tokens(content, owner=owner)
+    elif tool == "manage_settings":
+        desc = "manage_settings"
+        result = await do_manage_settings(content, owner=owner)
     elif tool == "manage_notes":
         desc = "manage_notes"
         result = await do_manage_notes(content, owner=owner)
@@ -878,51 +1029,6 @@ async def _execute_tool_block_impl(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
-    elif tool in BUILTIN_EMAIL_TOOLS:
-        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server.
-        # Non-admin owners never reach here: BUILTIN_EMAIL_TOOLS ⊆ NON_ADMIN_BLOCKED_TOOLS,
-        # so is_public_blocked_tool() above already rejected them.
-        mcp = get_mcp_manager()
-        qualified = f"mcp__email__{tool}"
-        desc = f"email: {tool}"
-        if mcp:
-            _raw = content.strip()
-            args = {}
-            _args_error = None
-            if _raw:
-                # A non-empty body is always meant to be the call's arguments,
-                # and every email tool takes a JSON object. Anything that
-                # isn't one is a correctable error — NOT a silent empty-args
-                # call, which would read the DEFAULT mailbox/folder instead of
-                # the one the model meant (#3966 class). Only an EMPTY body
-                # keeps the no-arg path (e.g. ```list_email_accounts```).
-                try:
-                    parsed = json.loads(_raw)
-                except (json.JSONDecodeError, TypeError) as _je:
-                    # Covers both `{account: "work"}` (looks like JSON, bad)
-                    # and `account: work` (not JSON at all).
-                    _args_error = (
-                        f"'{tool}' arguments are not valid JSON ({_je}). "
-                        'Send a JSON object, e.g. {"account": "work"} — '
-                        "keys and string values need double quotes."
-                    )
-                else:
-                    if isinstance(parsed, dict):
-                        args = parsed
-                    else:
-                        _args_error = (
-                            f"'{tool}' arguments must be a JSON object, "
-                            'e.g. {"uid": "..."} — got a JSON array/value instead.'
-                        )
-            if _args_error is not None:
-                result = {"error": _args_error, "exit_code": 1}
-            else:
-                if owner:
-                    args = dict(args)
-                    args[_EMAIL_MCP_OWNER_ARG] = owner
-                result = await mcp.call_tool(qualified, args)
-        else:
-            result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
@@ -935,28 +1041,21 @@ async def _execute_tool_block_impl(
                 if tool.startswith("mcp__email__") and owner:
                     args = dict(args)
                     args[_EMAIL_MCP_OWNER_ARG] = owner
+                if tool.startswith("mcp__image_gen__"):
+                    args = dict(args)
+                    if owner:
+                        args["_odysseus_owner"] = owner
+                    if session_id:
+                        args["_odysseus_session_id"] = session_id
                 result = await mcp.call_tool(tool, args)
+                if tool.startswith("mcp__image_gen__"):
+                    _promote_image_fields(result)
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
-
-
-    elif tool in dynamic_handlers:
-        first_line = content.split(chr(10))[0][:80]
-        desc = f"registry: {tool} {first_line}".strip()
-        res = await _direct_fallback(tool, content, progress_cb=progress_cb)
-
-        if isinstance(res, tuple):
-            desc, result = res
-        else:
-            result = res or {"error": f"{tool}: execution failed", "exit_code": 1}
-
     else:
         desc = f"unknown: {tool}"
-        result = {
-            "error": f"Unknown tool: {tool}",
-            "exit_code": 1
-        }
+        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

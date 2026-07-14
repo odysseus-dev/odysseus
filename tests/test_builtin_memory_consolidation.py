@@ -29,8 +29,8 @@ def _read_memories(data_dir):
 @pytest.mark.asyncio
 async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monkeypatch, tmp_path):
     from src import constants
+    from src import endpoint_resolver
     from src import llm_core
-    from src import task_endpoint
     action_consolidate_memory = _import_consolidate_action()
 
     long_alice_text = "Alice private project context. " + ("A" * 2200)
@@ -44,15 +44,11 @@ async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monke
         ],
     )
     monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
-    monkeypatch.setattr(
-        task_endpoint,
-        "resolve_task_candidates",
-        lambda *args, **kwargs: [("http://llm", "model", {})],
-    )
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", lambda *args, **kwargs: ("http://llm", "model", {}))
 
     prompts = []
 
-    async def fake_llm_call_async(_candidates, **kwargs):
+    async def fake_llm_call_async(**kwargs):
         prompt = kwargs["messages"][0]["content"]
         prompts.append(prompt)
         if "alice-long" in prompt:
@@ -75,7 +71,7 @@ async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monke
             }
         )
 
-    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_llm_call_async)
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
 
     message, ok = await action_consolidate_memory("")
 

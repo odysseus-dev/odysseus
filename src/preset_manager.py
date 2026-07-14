@@ -10,8 +10,8 @@ class PresetManager:
         "code_analyze": {
             "name": "Code Analyze",
             "temperature": 0.2,
-            "max_tokens": 8000,
-            "system_prompt": """You are a code analyzer. 
+            "max_tokens": 0,
+            "system_prompt": """You are a code analyzer.
 ANALYSIS FORMAT:
 - Issues: [specific problems found]
 - Security: [vulnerabilities if any]
@@ -24,7 +24,7 @@ Start directly with findings. No preamble. If input isn't code, state: "Input is
         "brainstorm": {
             "name": "Brainstorm",
             "temperature": 0.9,
-            "max_tokens": 4096,
+            "max_tokens": 0,
             "system_prompt": """You are a creative ideation assistant focused on divergent thinking.
 
 Generate diverse, unexpected ideas that span from practical to experimental. 
@@ -40,7 +40,7 @@ Structure ideas clearly but allow creative freedom in presentation. Aim for quan
         "reason": {
             "name": "Reason",
             "temperature": 0.3,
-            "max_tokens": 6000,
+            "max_tokens": 0,
             "system_prompt": """You are a systematic reasoning assistant.
 
 Structure all responses using clear logical progression:
@@ -106,6 +106,17 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
                 k not in presets for k in self.DEFAULT_PRESETS
             ):
                 presets = {**self.DEFAULT_PRESETS, **presets}
+                self.save(presets)
+            # Built-in presets used to ship with output caps (4096–8000) that clip
+            # thinking models mid-tool-call (especially long generate_image prompts).
+            # Heal to 0 (no limit) unless the user explicitly enabled custom.
+            _healed_caps = False
+            for _pid in ("code_analyze", "brainstorm", "reason"):
+                _p = presets.get(_pid) if isinstance(presets, dict) else None
+                if isinstance(_p, dict) and int(_p.get("max_tokens") or 0) > 0:
+                    _p["max_tokens"] = 0
+                    _healed_caps = True
+            if _healed_caps:
                 self.save(presets)
             return presets
         except Exception as e:

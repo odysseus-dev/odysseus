@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
-<title>Odysseus — Login</title>
+<title>TITAN — Login</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
@@ -133,6 +133,26 @@
   .logo {
     text-align: center; margin-bottom: 1.5rem;
   }
+  .logo-titan {
+    display: flex; flex-direction: column; align-items: center; gap: 0.55rem;
+  }
+  .logo-mark { color: var(--brand-color, var(--red)); }
+  .logo-text { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; }
+  .logo-title {
+    font-family: 'Fira Code', monospace;
+    font-size: 2rem; font-weight: 600;
+    letter-spacing: 0.06em;
+    background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .logo-sub {
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    opacity: 0.55;
+    color: var(--fg);
+  }
   .logo span {
     font-family: 'Fira Code', monospace;
     font-size: 2rem; font-weight: 600;
@@ -252,8 +272,14 @@
 </head>
 <body>
 <main class="card">
-  <h1 class="logo">
-    <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
+  <h1 class="logo logo-titan">
+    <svg class="logo-mark" width="32" height="32" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+      <rect x="18" y="14" width="64" height="19" rx="4" fill="currentColor"/>
+      <rect x="40.5" y="14" width="19" height="72" rx="4" fill="currentColor"/>
+      <g fill="var(--bg, #282c34)"><circle cx="50" cy="45" r="3"/><circle cx="46" cy="60" r="2.6"/><circle cx="54" cy="73" r="2.3"/></g>
+      <g stroke="var(--bg, #282c34)" stroke-width="1.4" opacity="0.8"><line x1="50" y1="45" x2="46" y2="60"/><line x1="46" y1="60" x2="54" y2="73"/></g>
+    </svg>
+    <span class="logo-text"><span class="logo-title">TITAN</span><span class="logo-sub">by Fugarius</span></span>
   </h1>
   <p class="setup-note" id="setupNote" style="display:none"></p>
 

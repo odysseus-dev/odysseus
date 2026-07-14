@@ -1,0 +1,13 @@
+# Deployment manifests — duplicate bind-mount inventory; causes LLM shadow nodes
+# that collide with real static/*.js file-level graph IDs.
+docker-compose.override.yml
+docker-compose.yml
+
+# Generated / vendor noise (graphify skips many of these anyway)
+graphify-out/
+node_modules/
+.git/
+data/huggingface/
+data/logs/
+data/local/
+docs/graphify-out/

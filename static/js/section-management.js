@@ -9,13 +9,18 @@
 export function initSectionCollapse(Storage) {
   const _chevronHtml = '<button type="button" class="section-collapse-btn" title="Collapse section"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>';
   const savedState = Storage.getJSON('section-collapsed') || {};
+  if (savedState['tools-section']) {
+    delete savedState['tools-section'];
+    Storage.setJSON('section-collapsed', savedState);
+  }
+  document.getElementById('tools-section')?.classList.remove('collapsed');
 
   document.querySelectorAll('.section .section-header-flex').forEach(header => {
     const section = header.closest('.section');
     if (!section || !section.id) return;
 
-    // Skip email section — it doesn't collapse (title opens popup instead)
-    if (section.id === 'email-section') return;
+    // Skip email + tools — titles are labels only, sections stay open
+    if (section.id === 'email-section' || section.id === 'tools-section') return;
 
     // Add chevron (always visible — rotates when collapsed)
     header.insertAdjacentHTML('beforeend', _chevronHtml);
@@ -79,7 +84,7 @@ export function initSectionCollapse(Storage) {
         setTimeout(() => {
           if (section._collapseGen !== gen) return; // superseded by a newer toggle
           section.classList.remove('section-just-expanded');
-        }, 700);
+        }, 920);
       }
     }
 

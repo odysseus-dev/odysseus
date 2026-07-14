@@ -82,7 +82,12 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
-    "generate_image": "Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos.",
+    "generate_image": (
+        "Generate, create, draw, render or make ONE image, picture, illustration, "
+        "logo, artwork, poster or photo from a text prompt using the local Stable "
+        "Diffusion stack (realistic, anime, or pixelart style). Smart: asks the user for style "
+        "and confirmation when not provided."
+    ),
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
     "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
@@ -103,14 +108,14 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "list_sessions": "List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).",
     "send_to_session": "Send a message to another chat. Cross-chat communication.",
     "search_chats": "Search past session transcripts across chats.",
-    "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Omit `multi`/keep it false unless the question explicitly permits choosing multiple options. Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
+    "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
     "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
-    "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply <body text>` (or structured body) to open an email reply draft document without sending. USE THIS whenever the user says to write/draft a reply or tells you what to say — opening an empty draft or sending immediately is wrong. Body can continue on subsequent lines for multi-line replies. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
+    "ui_control": "Control the UI and toggle tools on/off. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, model hub) via `open_panel <name>`. Do NOT use ui_control for image generation — use generate_image. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
     "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
     "send_email": "Send a new email via SMTP. Provide recipient, subject, body, and optional account from list_email_accounts. For replying to a thread use reply_to_email instead.",
-    "reply_to_email": "SEND a reply email immediately by UID. Do not use for write/draft/open/start reply requests; use ui_control open_email_reply with body so the user can review. Only use when the user explicitly says to send now. For send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.",
+    "reply_to_email": "SEND a reply email immediately by UID. Do not use for open/start reply draft requests; use ui_control open_email_reply for those. For follow-up 'reply ...' send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.",
     "archive_email": "Move an email out of the inbox into the Archive folder. Use after handling messages you want to keep but get out of the way.",
     "delete_email": "Delete an email — moves to Trash by default, or expunges permanently with permanent=true.",
     "mark_email_read": "Mark an email as read or unread by toggling the \\Seen flag.",
@@ -118,24 +123,42 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
     "manage_contact": "Save / update / delete / list address-book contacts (CardDAV). Use for info about ANOTHER person — name, email, phone, postal address. Args: action=list|add|update|delete, name, email, phones, address, uid (from list). For 'save this for <person>' / address pastes / phone numbers next to a name, this is the right tool — NOT manage_memory. Do NOT use for facts about the USER ('my name is X'); those are manage_memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
-    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Resolve today/tomorrow using the Current date and time context, then use ISO datetimes in the user's local wall time; supports all-day events. Use rrule only for explicit recurrence; for update_event pass rrule='' to remove repeats. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
-    "download_model": "Download a HuggingFace model to a local or remote server. Specify repo_id (e.g. 'Qwen/Qwen3-8B'), optional server host, and optional include filter for specific files.",
-    "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. cmd MUST start with the binary directly — e.g. `vllm serve /mnt/HADES/models/Qwen3.5-397B-A17B-AWQ --port 8003 --tensor-parallel-size 8 …`. NEVER prefix with `cd …`, `source …`, or chain with `&&`/`||` — those get rejected by the validator. The venv activation (env_prefix) and CUDA env are added automatically from the target host's saved settings. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions. If serve_model fails with 'Invalid characters in cmd', simplify to the bare binary + args.",
-    "list_served_models": "List currently running model servers in the Cookbook — shows status (loading, ready, idle, error), model name, port, throughput, and serve failure diagnosis/retry suggestions. Use when the user asks 'what's running', 'show my cookbook', 'which models are up', 'what's serving'.",
-    "stop_served_model": "Stop a running model server in the Cookbook by session ID or model name. Use when the user says 'kill my cookbook', 'stop the model', 'kill the serve', 'shut down vLLM', 'cancel the running model'.",
-    "tail_serve_output": "Read the actual tmux stderr/traceback of a cookbook serve/download task. Use to debug WHY a task is `crashed`/`error` (compute_89 nvcc mismatch, OOM, missing kernels, wrong attention backend, etc.) so you can call serve_model with adjusted flags. Pass session_id from list_served_models; tail defaults to 300, bump if the error references 'see root cause above'.",
-    "list_downloads": "List in-progress HuggingFace model downloads in the Cookbook. Shows model name, phase, percent, session ID. Use for 'what's downloading', 'show my downloads', 'check download progress'.",
-    "cancel_download": "Cancel an in-progress model download by tmux session ID. Use for 'cancel the download', 'stop downloading X', 'kill the download'. Call list_downloads first to get the session_id.",
-    "search_hf_models": "Search HuggingFace for models matching a query (e.g. 'qwen 8B', 'flux', 'llama-3 instruct'). Returns ranked repo IDs with sizes and download counts. Use for 'find a model', 'search huggingface for X', 'what models are there for Y'.",
-    "list_cached_models": "List models already cached on disk locally or on a remote host. Accepts friendly Cookbook server names like ajax. Use for 'what models do I have', 'show cached models', 'is X downloaded', 'list my models'. Avoids re-downloading.",
-    "list_serve_presets": "List saved Cookbook serve presets (templates with model+host+port+cmd). Always call this BEFORE serve_model when the user asks to launch a known model — they probably have a preset for it from the UI.",
-    "serve_preset": "Launch a saved Cookbook serve preset by name. Reuses the exact tmux command + host the user already saved. Use for 'run stable diffusion 3.5', 'serve vllm-qwen', 'start the inpaint model' — preset-name matches the user's UI labels.",
-    "adopt_served_model": "Register an existing tmux model server (one started manually or outside the cookbook flow) into Cookbook tracking AND add it as a chat endpoint. Use when the user (or a previous turn) launched something via ssh+tmux and now wants it visible in the UI, stoppable via stop_served_model, and usable in the model picker.",
-    "list_cookbook_servers": "List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.",
-    "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
+    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Resolve today/tomorrow using the Current date and time context, then use ISO datetimes in the user's local wall time; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
+    "download_model": "Download a model from Hugging Face to this host's local cache (LLMs to data/huggingface, SD checkpoints to data/sd-models). Give repo_id and optional include filter. Titan is a single local GPU host.",
+    "list_downloads": "List in-progress Hugging Face model downloads on this host. Use for 'what's downloading', 'show my downloads', 'check download progress'.",
+    "cancel_download": "Cancel an in-progress model download by job ID (call list_downloads first).",
+    "search_hf_models": "Search Hugging Face for models matching a query. Returns ranked repo IDs. Use before download_model.",
+    "list_cached_models": "List models already downloaded to this host's local cache. Use for 'what models do I have', 'is X downloaded'.",
+    "app_api": "Generic loopback to allowed Odysseus internal /api/* endpoints. For GPU/VRAM status use VRAM Scheduler (GET /api/titan/scheduler/status). Model catalog/load via Model Hub. Cookbook serve routes are removed.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
     "manage_bg_jobs": "Inspect and control detached background `bash` jobs (the ones started with a `#!bg` marker). action='list' shows this chat's jobs (id/status/age/command); action='output' returns a job's captured output so far (check on a long-running job, or re-read a finished one); action='kill' stops a runaway job by id. Use for 'is the background job done', 'check on that job', 'show the build output', 'kill the background job', 'stop the bg task'. output/kill need a job_id from list.",
+}
+
+# Multilingual intent aliases — indexed as ADDITIONAL short, focused embedding
+# rows that share a tool's `tool_name` metadata. The embedding model is
+# multilingual, but the English tool descriptions above compress cross-lingual
+# similarity, and stuffing many languages into one description dilutes its
+# vector (mean pooling). Separate short per-language rows keep each vector
+# focused, so a Czech/German/Russian image request matches its own row strongly.
+# retrieve_scored() already takes the MAX score per tool_name across rows, so
+# these lift non-English intent detection without affecting English queries.
+MULTILINGUAL_TOOL_ALIASES: Dict[str, List[str]] = {
+    "generate_image": [
+        "vygeneruj obrázek, vytvoř obrázek, nakresli, namaluj, vykresli, vyobraz, fotka, portrét, ilustrace",  # CS/SK
+        "erzeuge ein Bild, zeichne, male, erstelle ein Foto, Illustration, Porträt",  # DE
+        "genera una imagen, dibuja, crea una foto, ilustración, retrato",  # ES
+        "génère une image, dessine, crée une photo, illustration, portrait",  # FR
+        "genera un'immagine, disegna, crea una foto, illustrazione, ritratto",  # IT
+        "wygeneruj obraz, narysuj, stwórz zdjęcie, ilustracja, portret",  # PL
+        "gere uma imagem, desenhe, crie uma foto, ilustração, retrato",  # PT
+        "genereer een afbeelding, teken, maak een foto, illustratie, portret",  # NL
+        "нарисуй картинку, создай изображение, сгенерируй фото, иллюстрация, портрет",  # RU
+        "намалюй зображення, створи картинку, згенеруй фото, ілюстрація, портрет",  # UK
+        "生成图片, 画一张图, 创建图像, 插画, 肖像",  # ZH
+        "画像を生成, 絵を描いて, イラスト, ポートレート",  # JA
+        "이미지 생성, 그림 그려, 일러스트, 초상화",  # KO
+    ],
 }
 
 
@@ -179,6 +202,14 @@ class ToolIndex:
             docs.append(doc_text)
             ids.append(f"builtin_{name}")
             metadatas.append({"tool_name": name, "tool_type": "builtin"})
+
+        # Extra short per-language alias rows (same tool_name) so non-English
+        # intent matches a focused vector. retrieve_scored() maxes per tool_name.
+        for name, aliases in MULTILINGUAL_TOOL_ALIASES.items():
+            for i, alias in enumerate(aliases):
+                docs.append(f"Tool: {name}\n{alias}")
+                ids.append(f"builtin_{name}_i18n{i}")
+                metadatas.append({"tool_name": name, "tool_type": "builtin"})
 
         if not docs:
             return
@@ -292,10 +323,9 @@ class ToolIndex:
         self._mcp_generation = gen
         logger.info(f"Indexed {len(docs)} MCP tools")
 
-    def retrieve(self, query: str, k: int = 8) -> List[str]:
-        """Retrieve the top-K most relevant tool names for a query."""
+    def _scored_rows(self, query: str, k: int = 8) -> List[Dict]:
+        """Raw scored retrieval rows across lanes (tool_name/score/lane)."""
         rows = []
-        lane_priority = {LANE_CUSTOM: 0, LANE_FASTEMBED: 1}
         for lane in self._lanes:
             try:
                 count = lane.count()
@@ -322,8 +352,29 @@ class ToolIndex:
                             })
             except Exception as e:
                 logger.warning("Tool retrieval failed in %s lane: %s", lane.name, e)
+        return rows
+
+    def retrieve(self, query: str, k: int = 8) -> List[str]:
+        """Retrieve the top-K most relevant tool names for a query."""
+        rows = self._scored_rows(query, k=k)
+        lane_priority = {LANE_CUSTOM: 0, LANE_FASTEMBED: 1}
         rows.sort(key=lambda row: (-row["score"], lane_priority.get(row["embedding_lane"], 99)))
         return [row["tool_name"] for row in dedupe_results(rows, id_key="tool_name", limit=k)]
+
+    def retrieve_scored(self, query: str, k: int = 8) -> Dict[str, float]:
+        """Return {tool_name: best_score} for a query (score = 1.0 - cosine dist).
+
+        Used by the agent loop for language-agnostic intent detection — the
+        multilingual embedding model already understands the request, so we read
+        its similarity to e.g. generate_image directly instead of relying on
+        language-specific keyword regexes.
+        """
+        scores: Dict[str, float] = {}
+        for row in self._scored_rows(query, k=k):
+            name = row["tool_name"]
+            if name and row["score"] > scores.get(name, -1.0):
+                scores[name] = row["score"]
+        return scores
 
     # Structural recurring-schedule intent. Typo-resilient (matches "every dya"
     # via "every <word>"), and catches bare clock times ("at 7:30 am", "7am").
@@ -405,10 +456,8 @@ class ToolIndex:
             {"chat_with_model", "ask_teacher", "list_models"},
         # Deep research intent (incl. common typo "reserach")
         frozenset({"web search", "search the web", "search online", "look up",
-                   "find info online", "find information online",
-                   "find info", "find information", "online about",
-                   "on the internet", "google", "latest", "current", "news",
-                   "weather", "forecast", "stock price", "price of"}):
+                   "google", "latest", "current", "news", "weather",
+                   "forecast", "stock price", "price of"}):
             {"web_search", "web_fetch"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
@@ -468,19 +517,26 @@ class ToolIndex:
                    "running models", "running model", "running server",
                    "shut down vllm", "shutdown vllm", "stop vllm",
                    "stop serving", "kill serve", "cancel serve"}):
-            {"list_served_models", "stop_served_model"},
-        # Cookbook serve / launch / preset / server selection
+            {"ui_control"},
         frozenset({"serve", "launch", "spin up", "start the model", "run the model",
                    "preset", "presets", "which server", "what servers",
                    "gpu box", "cookbook server", "vllm", "on the server", "on the gpu"}):
-            {"serve_preset", "serve_model", "list_serve_presets",
-             "list_cookbook_servers", "list_cached_models"},
+            {"ui_control", "list_cached_models", "serve_model"},
+        frozenset({"open cookbook", "open models", "model hub", "open model hub",
+                   "show models", "open serve", "models panel"}):
+            {"ui_control"},
+        frozenset({"draw", "generate image", "create image", "make image", "render image",
+                   "picture of", "photo of", "illustration", "logo", "artwork", "anime style",
+                   "realistic style", "image generation"}):
+            {"generate_image"},
+        frozenset({"anime", "realistic", "photoreal", "square", "portrait", "landscape",
+                   "go", "generate", "proceed", "approve", "confirm"}):
+            {"generate_image"},
         # Cookbook downloads
         frozenset({"download", "downloading", "downloads",
                    "cancel download", "stop download", "kill download",
                    "what's downloading", "download progress", "pull model", "grab model"}):
-            {"list_downloads", "cancel_download", "download_model",
-             "list_cookbook_servers"},
+            {"list_downloads", "cancel_download", "download_model"},
         # HuggingFace search + cached model browse
         frozenset({"huggingface", "hugging face", "hf search",
                    "find a model", "search models", "search for a model",
@@ -510,11 +566,32 @@ class ToolIndex:
     }
 
     def get_tools_for_query(
-        self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
-    ) -> Set[str]:
-        """Get the set of tool names to include for a given user query."""
+        self,
+        query: str,
+        k: int = 8,
+        always_include: Optional[Set[str]] = None,
+        return_scores: bool = False,
+    ):
+        """Get the set of tool names to include for a given user query.
+
+        When ``return_scores`` is True, returns ``(toolset, scores)`` where
+        ``scores`` is ``{tool_name: similarity}`` from the (multilingual)
+        embedding retrieval — lets callers detect intent language-agnostically.
+        """
         base = set(always_include or ALWAYS_AVAILABLE)
-        retrieved = self.retrieve(query, k=k)
+        scores: Dict[str, float] = {}
+        if return_scores:
+            try:
+                scores = self.retrieve_scored(query, k=k)
+                retrieved = [
+                    name
+                    for name, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+                ][:k]
+            except Exception as e:
+                logger.warning("Scored retrieval failed, falling back to retrieve(): %s", e)
+                retrieved = self.retrieve(query, k=k)
+        else:
+            retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
         # Keyword-based force-include for common intents. Match on word
         # boundaries, not raw substrings, so short hints like "fix", "line",
@@ -584,6 +661,8 @@ class ToolIndex:
             base.add("manage_contact")
         if contact_only_signal and "manage_contact" in base:
             base.discard("manage_memory")
+        if return_scores:
+            return base, scores
         return base
 
 

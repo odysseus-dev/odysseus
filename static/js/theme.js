@@ -9,8 +9,15 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
-  dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
-  light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
+  dark:       { bg:'#202020', fg:'#e8e7e3', panel:'#141414', border:'#2a2a2a', red:'#a8a7a2',
+                advanced: { userBubbleBg: '#333230', aiBubbleBg: '#232322', inputBg: '#232322',
+                            sendBtnBg: '#a8a7a2', sendBtnHover: '#c9c8c3', brandColor: '#a8a7a2' } },
+  light:      { bg:'#f6f2e8', fg:'#3d372c', panel:'#ffffff', border:'#ece4d2', red:'#2c3e50',
+                advanced: { userBubbleBg: '#2c3e50', aiBubbleBg: '#ffffff', inputBg: '#ffffff',
+                            sendBtnBg: '#2c3e50', sendBtnHover: '#3d5166', brandColor: '#2c3e50' } },
+  burgundy:   { bg:'#221417', fg:'#ecdfd2', panel:'#2a1a1d', border:'#3a252a', red:'#c9a227',
+                advanced: { userBubbleBg: '#5c2430', aiBubbleBg: '#2a1a1d', inputBg: '#2a1a1d',
+                            sendBtnBg: '#c9a227', sendBtnHover: '#dbb648', brandColor: '#c9a227' } },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
   paper:      { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a' },
   // Spicy / fun themes
@@ -26,7 +33,7 @@ export const THEMES = {
   gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494',
                 advanced: { sendBtnBg: '#949494', sendBtnHover: '#7f7f7f',
                             userBubbleBg: '#2f2f2f', aiBubbleBg: '#171717',
-                            inputBg: '#2f2f2f', brandColor: '#ffffff', brandMixTo: '#ffffff' } },
+                            inputBg: '#2f2f2f' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
@@ -39,7 +46,6 @@ const FONT_MAP = {
   mono: "'Fira Code', monospace",
   sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
-  opendyslexic: "'OpenDyslexic', sans-serif",
 };
 const DEFAULT_FONT = 'mono';
 const DEFAULT_DENSITY = 'comfortable';
@@ -49,6 +55,7 @@ const MAX_CUSTOM_THEMES = 8;
 const THEME_DEFAULT_PATTERN = {
   dark:       'none',
   light:      'dots',
+  burgundy:   'embers',
   midnight:   'rain',
   paper:      'dots',
   cyberpunk:  'synapse',
@@ -184,8 +191,7 @@ const ADV_KEYS = [
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
-  { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
+  { key: 'brandColor',         css: '--brand-color',       label: 'TITAN Logo',       group: 'Sidebar' },
   { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
   { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
   { key: 'inputBorder',        css: '--input-border',      label: 'Input Border',     group: 'Chat Input / Prompt Area' },
@@ -205,7 +211,6 @@ function computeAdvancedDefaults(colors) {
     bubbleBorder: colors.border,
     sidebarBg: colors.panel,
     brandColor: red,
-    brandMixTo: colors.fg,
     hamburgerColor: colors.fg,
     inputBg: colors.panel,
     inputBorder: colors.border,
@@ -336,7 +341,7 @@ function _updateFavicon(fg) {
   if (routeShape) {
     svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>${routeShape.split('__C__').join(fg)}</svg>`;
   } else {
-    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 4L16 22L6 22Z' fill='${fg}'/><path d='M16 8L16 22L24 22Z' fill='${fg}' opacity='0.6'/><path d='M4 24Q10 20 16 24Q22 28 28 24' stroke='${fg}' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>`;
+    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='5' width='20' height='6' rx='1.5' fill='${fg}'/><rect x='13' y='5' width='6' height='22' rx='1.5' fill='${fg}'/></svg>`;
   }
   const href = 'data:image/svg+xml,' + encodeURIComponent(svg);
   let link = document.querySelector("link[rel='icon']");
@@ -386,20 +391,6 @@ export function applyFontDensity(font, density) {
   document.documentElement.style.setProperty('--font-family', family);
   document.documentElement.classList.remove('density-compact', 'density-spacious');
   if (d !== 'comfortable') document.documentElement.classList.add('density-' + d);
-}
-
-// UI text-size scale (accessibility). Global and independent of the active
-// theme, so the chosen size persists across theme switches. Stored as a plain
-// percentage string ('100' | '110' | '125' | '150').
-const UI_SCALE_KEY = 'odysseus-ui-scale';
-const DEFAULT_UI_SCALE = '100';
-
-export function applyUiScale(scale) {
-  const s = scale || DEFAULT_UI_SCALE;
-  // Only one non-default scale ('125'). Remove any legacy classes too so an
-  // older stored value can't leave a stale zoom applied.
-  document.documentElement.classList.remove('ui-scale-110', 'ui-scale-125', 'ui-scale-140');
-  if (s === '125') document.documentElement.classList.add('ui-scale-125');
 }
 
 const _BG_CLASSES = ['bg-pattern-dots',
@@ -647,7 +638,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${name === 'dark' ? 'graphite' : (name === 'gpt' ? 'GPT' : name)}
     </div>
   `).join('');
 
@@ -1146,18 +1137,6 @@ export function initThemeUI() {
     nd.addEventListener('change', () => {
       applyFontDensity(document.getElementById('theme-font-select').value, nd.value);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
-    });
-  }
-  const textSizeSelect = document.getElementById('theme-text-size-select');
-  if (textSizeSelect) {
-    const nts = textSizeSelect.cloneNode(true); textSizeSelect.parentNode.replaceChild(nts, textSizeSelect);
-    let initScale = DEFAULT_UI_SCALE;
-    try { initScale = localStorage.getItem(UI_SCALE_KEY) || DEFAULT_UI_SCALE; } catch (e) {}
-    nts.value = initScale;
-    applyUiScale(initScale);
-    nts.addEventListener('change', () => {
-      applyUiScale(nts.value);
-      try { localStorage.setItem(UI_SCALE_KEY, nts.value); } catch (e) {}
     });
   }
   if (patternSelect) {

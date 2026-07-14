@@ -3,7 +3,6 @@ uvicorn
 python-multipart
 python-dotenv
 httpx
-httpcore>=1.0,<2.0
 pydantic>=2.13.4
 pydantic-settings>=2.14.1
 SQLAlchemy
@@ -18,6 +17,8 @@ numpy
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
 fastembed
+# Fugassa per-save semantic recall (sqlite-vec in game.db — ADR §8)
+sqlite-vec
 youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.

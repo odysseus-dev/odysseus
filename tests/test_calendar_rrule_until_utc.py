@@ -24,7 +24,7 @@ UNTIL must expand to all of its occurrences.
 from datetime import datetime
 from types import SimpleNamespace
 
-from tests.helpers.calendar_routes import import_calendar_routes
+from tests.test_null_owner_gates import _import_calendar_helpers
 
 
 _MOCK_CAL = SimpleNamespace(name="Personal", color="#5b8abf")
@@ -55,7 +55,7 @@ def _make_event(**overrides):
 def test_expand_rrule_with_utc_until_keeps_all_occurrences():
     """FREQ=DAILY;UNTIL=...Z must expand to every occurrence, not collapse
     to a single non-recurring event."""
-    cal = import_calendar_routes()
+    cal = _import_calendar_helpers()
     ev = _make_event(rrule="FREQ=DAILY;UNTIL=20240105T090000Z")
 
     results = cal._expand_rrule(ev, datetime(2024, 1, 1), datetime(2024, 1, 10))

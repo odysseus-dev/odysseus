@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
+    "image_control_net": False,
     "vision_model": "",
     "vision_enabled": True,
     # Ordered fallback chain for the Vision model (image analysis, OCR, tagging).
@@ -136,19 +137,11 @@ DEFAULT_SETTINGS = {
     "task_model": "",
     "default_endpoint_id": "",
     "default_model": "",
-    # Optional prose style used only for normal document writing/editing.
-    # Email replies use email_writing_style instead because greetings,
-    # signatures, and mailbox identity rules are medium-specific.
-    "document_writing_style": "",
     # Ordered fallback chain for the default chat model. Each entry is
     # {"endpoint_id": "...", "model": "..."}. If the primary model fails
     # before producing output (endpoint offline / errors), the chat
     # dispatch retries the next entry in order.
     "default_model_fallbacks": [],
-    # When True, non-admin users inherit global default model/endpoint/fallbacks
-    # when they have no personal defaults. When False, users only use their
-    # personal defaults (no global fallback). Default is False.
-    "share_defaults_with_users": False,
     "utility_endpoint_id": "",
     "utility_model": "",
     # Ordered fallback chain for the Utility model (summarization, naming,
@@ -156,7 +149,6 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
-    "teacher_tier2_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
     # qualify. Keeps low-confidence auto-skills out of context until they're
@@ -268,7 +260,7 @@ def is_setting_overridden(key: str) -> bool:
 # resolved by FastAPI deps; an empty/None owner falls through to the global.
 _PER_USER_KEYS = {
     "vision_model", "vision_enabled", "vision_model_fallbacks",
-    "image_model", "image_gen_enabled", "image_quality",
+    "image_model", "image_gen_enabled", "image_quality", "image_control_net",
     # Default chat endpoint / model — without per-user resolution every new
     # account inherited whatever the most-recent admin picked, which then
     # got injected into the chat composer on first open.

@@ -1,13 +1,13 @@
 {
-  "name": "Odysseus",
-  "short_name": "Odysseus",
+  "name": "TITAN by Fugarius",
+  "short_name": "TITAN",
   "description": "Self-hosted AI chat with memory, documents, and tools",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#282c34",
-  "theme_color": "#282c34",
+  "background_color": "#1b1b1b",
+  "theme_color": "#1b1b1b",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },

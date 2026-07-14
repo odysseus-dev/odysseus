@@ -141,7 +141,17 @@ export function wireInpaintButtons({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify((() => {
           const sel = getSelectedAIEndpoint('inpaint');
-          return { image: imageB64, mask: maskB64, prompt, width: state.imgWidth, height: state.imgHeight, strength, feather: 0, _endpoint: sel.endpoint, _model: sel.model };
+          const payload = {
+            image: imageB64, mask: maskB64, prompt,
+            width: state.imgWidth, height: state.imgHeight,
+            strength, feather: 0,
+            _endpoint: sel.endpoint, _model: sel.model,
+          };
+          try {
+            const gs = sessionStorage.getItem('ge_titan_gen_style');
+            if (gs && (sel.endpoint || '').includes('8150')) payload.style = gs;
+          } catch (_) {}
+          return payload;
         })()),
       });
       if (!res.ok) {
@@ -151,7 +161,8 @@ export function wireInpaintButtons({
       }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (!data.image) throw new Error('No image returned from inpaint endpoint');
+      const resultB64 = data.image || data.data?.[0]?.b64_json;
+      if (!resultB64) throw new Error('No image returned from inpaint endpoint');
       // Load result as a new layer and clip with the user-drawn mask
       // so only the inpainted region is visible. Cache the
       // unfeathered (AI image + hard mask) on the layer so the live
@@ -233,7 +244,7 @@ export function wireInpaintButtons({
         console.error('[inpaint] base64 decode failed', e);
         if (uiModule) uiModule.showToast('Inpaint result failed to decode', 6000);
       };
-      resultImg.src = 'data:image/png;base64,' + data.image;
+      resultImg.src = 'data:image/png;base64,' + resultB64;
     } catch (e) {
       if (uiModule) uiModule.showToast('Inpaint failed: ' + e.message, 6000);
     } finally {
