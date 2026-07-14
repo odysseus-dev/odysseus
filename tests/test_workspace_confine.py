@@ -231,7 +231,8 @@ async def test_binding_does_not_leak(ws, admin):
 # must still surface the file tools, otherwise the agent says it has no file
 # access (the bug this guards against).
 
-def _sent_tool_names(monkeypatch, *, workspace):
+def _sent_tool_names(monkeypatch, *, workspace, message="look at the local project",
+                     approved_plan=None, disabled_tools=None):
     import asyncio
     import src.agent_loop as al
 
@@ -253,8 +254,9 @@ def _sent_tool_names(monkeypatch, *, workspace):
     async def _run():
         gen = al.stream_agent_loop(
             "https://api.openai.com/v1", "gpt-test",
-            [{"role": "user", "content": "look at the local project"}],
+            [{"role": "user", "content": message}],
             max_rounds=1, relevant_tools=None, owner="admin", workspace=workspace,
+            approved_plan=approved_plan, disabled_tools=disabled_tools,
         )
         return [c async for c in gen]
 
@@ -280,6 +282,46 @@ def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
     names = _sent_tool_names(monkeypatch, workspace=None)
     assert "read_file" not in names
     assert "get_workspace" not in names
+
+
+def test_repository_implementation_gets_execution_tools_without_rag(monkeypatch):
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        message="Implement the approved multi-step repository fix, then run focused tests",
+    )
+    assert {"read_file", "edit_file", "bash", "update_plan"} <= names
+
+
+def test_approved_repository_plan_continuation_keeps_execution_tools(monkeypatch):
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        message="go ahead",
+        approved_plan="- [ ] Edit the repository files\n- [ ] Run focused tests",
+    )
+    assert {"read_file", "edit_file", "bash", "update_plan"} <= names
+
+
+def test_repository_read_only_request_does_not_get_write_tools(monkeypatch):
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        message="Inspect the repository files and report what they do",
+    )
+    assert {"read_file", "grep", "get_workspace"} <= names
+    assert not ({"write_file", "edit_file"} & names)
+
+
+def test_repository_execution_respects_disabled_bash(monkeypatch):
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        message="Fix the repository and run the tests",
+        disabled_tools={"bash"},
+    )
+    assert "edit_file" in names
+    assert "bash" not in names
 
 
 # ── browse route is admin-gated ─────────────────────────────────────────

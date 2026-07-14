@@ -52,6 +52,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     } catch (_) {}
   }
   let _pendingContinue = null; // Stores the stopped AI element to merge with new response
+  let _pendingContinuationCheckpoint = null; // Compact handoff for a step-limit continuation
   function _createChatSendPerf() {
     const started = (performance && performance.now) ? performance.now() : Date.now();
     let last = started;
@@ -1166,6 +1167,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      if (_pendingContinuationCheckpoint) {
+        fd.append('continuation_checkpoint', JSON.stringify(_pendingContinuationCheckpoint));
+        _pendingContinuationCheckpoint = null;
+      }
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
       if (documentModule && activeDocIdForSend) {
@@ -2317,6 +2322,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 }
               } else if (json.type === 'rounds_exhausted') {
                 // The agent hit the per-turn step limit while still working.
+                const _checkpoint = (json.checkpoint && json.checkpoint.status === 'incomplete')
+                  ? json.checkpoint : null;
                 // Offer a Continue button instead of stalling silently.
                 // NOTE: append to the chat-history container (bottom), NOT the
                 // message body — the body innerHTML is re-rendered at stream
@@ -2342,6 +2349,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     note.remove();
                     _hideUserBubble = true;
                     _pendingContinue = _holder;
+                    _pendingContinuationCheckpoint = _checkpoint;
                     const msgInput = uiModule.el('message');
                     if (msgInput) {
                       msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';

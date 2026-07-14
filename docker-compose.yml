@@ -4,6 +4,11 @@ services:
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
+      # Live host checkout for repository maintenance. The running app remains
+      # the image snapshot at /app.
+      - .:/project/workspace
+      # Disposable Linux-volume checkout for sandbox-first patch experiments.
+      - odysseus-workbench:/project/workbench
       - ${APP_DATA_DIR:-./data}:/app/data:z
       - ${APP_LOGS_DIR:-./logs}:/app/logs:z
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
@@ -149,6 +154,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  odysseus-workbench:
   searxng-data:
   chromadb-data:
   ntfy-cache:

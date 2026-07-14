@@ -61,6 +61,34 @@ def test_default_compose_files_do_not_mount_host_docker_socket():
         assert "/var/run/docker.sock" not in text, path.name
 
 
+def test_default_compose_separates_live_app_workspace_and_workbench():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    service_volumes = compose["services"]["odysseus"]["volumes"]
+
+    assert ".:/project/workspace" in service_volumes
+    assert "odysseus-workbench:/project/workbench" in service_volumes
+    assert "odysseus-workbench" in compose["volumes"]
+    assert all(not volume.endswith(":/app") for volume in service_volumes)
+
+
+def test_docker_windows_scripts_preserve_data_and_avoid_host_control():
+    start = (ROOT / "scripts" / "start_odysseus_docker.bat").read_text(encoding="utf-8")
+    stop = (ROOT / "scripts" / "stop_odysseus_docker.bat").read_text(encoding="utf-8")
+    hidden = (ROOT / "scripts" / "start_odysseus_docker_hidden.vbs").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'set "APP_BIND=127.0.0.1"' in start
+    assert 'set "APP_PORT=7000"' in start
+    assert "docker info" in start
+    assert "docker compose up -d" in start
+    assert "start_odysseus_docker.bat" in hidden
+    assert "docker compose stop" in stop
+    for forbidden in ("docker compose down", "Stop-Process", "docker system prune"):
+        assert forbidden not in start
+        assert forbidden not in stop
+
+
 def test_host_docker_overlay_mounts_socket_and_adds_docker_group():
     overlay = yaml.safe_load(HOST_DOCKER_OVERLAY.read_text(encoding="utf-8"))
     service = overlay["services"]["odysseus"]
@@ -105,6 +133,7 @@ def test_docker_entrypoint_ownership_repair_stays_inside_expected_mounts():
     assert "find /app -xdev" in script
     for path in ("/app/data", "/app/logs", "/app/.ssh", "/app/.cache", "/app/.local"):
         assert f"-path {path}" in script
+    assert "/project/workbench" in script
     assert "mount_root_for" in script
     assert "is_broad_mount_root" in script
     assert "Skipping recursive ownership repair" in script

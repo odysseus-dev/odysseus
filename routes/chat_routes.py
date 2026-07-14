@@ -16,7 +16,11 @@ from pydantic import ValidationError
 from core.models import ChatMessage
 from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
-from src.agent_loop import stream_agent_loop
+from src.agent_loop import (
+    stream_agent_loop,
+    _agent_response_to_save,
+    _normalize_continuation_checkpoint,
+)
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
@@ -584,6 +588,15 @@ def setup_chat_routes(
         approved_plan = ""
         if not plan_mode:
             approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
+        continuation_checkpoint = None
+        raw_checkpoint = form_data.get("continuation_checkpoint")
+        if raw_checkpoint:
+            try:
+                continuation_checkpoint = _normalize_continuation_checkpoint(
+                    json.loads(str(raw_checkpoint)[:8192])
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continuation_checkpoint = None
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -1429,6 +1442,7 @@ def setup_chat_routes(
                         workspace=workspace or None,
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
+                        continuation_checkpoint=continuation_checkpoint,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1491,9 +1505,8 @@ def setup_chat_routes(
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
-                            _has_tool_events = bool((last_metrics or {}).get("tool_events"))
-                            if full_response or _has_tool_events:
-                                _response_to_save = full_response or "Done."
+                            _response_to_save = _agent_response_to_save(full_response, last_metrics)
+                            if _response_to_save:
                                 _metrics_to_save = dict(last_metrics or {})
                                 if thinking_response.strip() and not _metrics_to_save.get("thinking"):
                                     _metrics_to_save["thinking"] = thinking_response.strip()
