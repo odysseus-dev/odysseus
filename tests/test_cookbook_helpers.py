@@ -16,6 +16,7 @@ from routes.cookbook_helpers import (
     _llama_cpp_rebuild_cmd,
     _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
+    _parse_model_dirs,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
@@ -188,6 +189,35 @@ def test_validate_local_dir_rejects_leading_dash_segments():
     ]:
         with pytest.raises(HTTPException):
             _validate_local_dir(path)
+
+
+def test_parse_model_dirs_returns_empty_for_none_or_blank():
+    assert _parse_model_dirs(None) == []
+    assert _parse_model_dirs("") == []
+    assert _parse_model_dirs("  ,  ,") == []
+
+
+def test_parse_model_dirs_splits_and_validates_each_segment():
+    assert _parse_model_dirs("/models/a, /models/b") == ["/models/a", "/models/b"]
+
+
+def test_parse_model_dirs_prefixes_bare_unix_style_paths():
+    # Users often paste Linux absolute paths without the leading slash.
+    assert _parse_model_dirs("home/user/models") == ["/home/user/models"]
+    assert _parse_model_dirs("mnt/data/models,srv/models") == ["/mnt/data/models", "/srv/models"]
+
+
+def test_parse_model_dirs_rejects_shell_metacharacters_like_download_local_dir():
+    # Same validator the sibling /api/model/download endpoint applies to
+    # local_dir — a segment with shell metacharacters must 400, not reach
+    # the generated scan script.
+    with pytest.raises(HTTPException):
+        _parse_model_dirs("/models/a; touch /tmp/pwned")
+
+
+def test_parse_model_dirs_rejects_leading_dash_segments():
+    with pytest.raises(HTTPException):
+        _parse_model_dirs("/models/-rf")
 
 
 def test_validate_gpus_accepts_indexes_only():

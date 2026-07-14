@@ -372,6 +372,33 @@ def _user_shell_path_bootstrap() -> list[str]:
     ]
 
 
+def _parse_model_dirs(model_dir: str | None) -> list[str]:
+    """Split the comma-separated ``model_dir`` query param for /api/model/cached
+    into individual, validated directory paths.
+
+    Bare paths users paste without a leading slash (``home/...``, ``mnt/...``,
+    etc.) are prefixed with ``/`` first, matching the convention the generated
+    scanner's own ``normalize_model_dir`` uses. Each resulting segment is then
+    run through :func:`_validate_local_dir` — the same validator the sibling
+    ``/api/model/download`` endpoint applies to ``local_dir`` — so an invalid
+    path (shell metacharacters, a segment starting with ``-``) is rejected
+    with a 400 instead of silently reaching the generated scan script.
+    """
+    if not model_dir:
+        return []
+    result = []
+    for segment in model_dir.split(","):
+        segment = segment.strip()
+        if not segment:
+            continue
+        if segment.startswith(("home/", "mnt/", "media/", "data/", "opt/", "srv/", "var/")):
+            segment = "/" + segment
+        validated = _validate_local_dir(segment)
+        if validated:
+            result.append(validated)
+    return result
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache: str | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached.
     Allows for an additional HuggingFace cache path to be scanned (i.e. Windows HF cache for local WSL envs.)
