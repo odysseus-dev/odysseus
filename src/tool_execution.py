@@ -502,11 +502,26 @@ def _promote_image_fields(result: Dict) -> None:
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
-_WORKSPACE_SHELL_MUTATION_CMD_RE = re.compile(
+_WORKSPACE_SHELL_MUTATION_CMD_FALLBACK_RE = re.compile(
     r"(^|[;&|]\s*)(cp|copy|copy-item|mv|move|rename|ren|touch|tee)\b|"
     r"(^|[;&|]\s*)(sed\s+-i|perl\s+-pi|awk\s+-i)\b",
     re.IGNORECASE | re.MULTILINE,
 )
+_WORKSPACE_SHELL_MUTATION_COMMANDS = {
+    "cp",
+    "copy",
+    "copy-item",
+    "mv",
+    "move",
+    "rename",
+    "ren",
+    "touch",
+    "tee",
+}
+_WORKSPACE_SHELL_IN_PLACE_COMMANDS = {"awk", "perl", "sed"}
+_WORKSPACE_SHELL_COMMAND_POSITION_WORDS = {"then", "do", "else", "elif"}
+_WORKSPACE_SHELL_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_WORKSPACE_SHELL_PUNCTUATION = set("(){};<>|&")
 _WORKSPACE_SHELL_HEREDOC_TOKENS = {"<<", "<<-"}
 _WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS = {">", ">>", ">|", "&>", "&>>", ">&", ">>&"}
 _WORKSPACE_SHELL_OUTPUT_REDIRECT_RE = re.compile(
@@ -538,6 +553,84 @@ def _workspace_shell_tokens(command: str) -> Optional[List[str]]:
         return list(lexer)
     except ValueError:
         return None
+
+
+def _workspace_shell_is_punctuation_token(token: str) -> bool:
+    return bool(token) and all(char in _WORKSPACE_SHELL_PUNCTUATION for char in token)
+
+
+def _workspace_shell_starts_command_position(token: str) -> bool:
+    if not _workspace_shell_is_punctuation_token(token):
+        return token.lower() in _WORKSPACE_SHELL_COMMAND_POSITION_WORDS
+    if ">" in token or "<" in token:
+        return False
+    return any(char in token for char in ";&|({")
+
+
+def _workspace_shell_command_name(token: str) -> str:
+    command = token.strip("`").replace("\\", "/").rstrip("/")
+    return command.rsplit("/", 1)[-1].lower()
+
+
+def _workspace_shell_perl_in_place_option(option: str) -> bool:
+    if not option.startswith("-") or option == "--":
+        return False
+    flags = option[1:]
+    return (
+        option.startswith("-i")
+        or option.startswith("-pi")
+        or ("p" in flags and "i" in flags)
+    )
+
+
+def _workspace_shell_in_place_option(command: str, option: str) -> bool:
+    option = option.lower()
+    if command == "perl":
+        return _workspace_shell_perl_in_place_option(option)
+    if command in {"awk", "sed"}:
+        return (
+            option == "--in-place"
+            or option.startswith("--in-place=")
+            or option.startswith("-i")
+        )
+    return False
+
+
+def _workspace_shell_command_is_mutating(tokens: List[str], index: int) -> bool:
+    command = _workspace_shell_command_name(tokens[index])
+    if command in _WORKSPACE_SHELL_MUTATION_COMMANDS:
+        return True
+    if command not in _WORKSPACE_SHELL_IN_PLACE_COMMANDS:
+        return False
+
+    for token in tokens[index + 1 :]:
+        if _workspace_shell_starts_command_position(token):
+            break
+        if token == "--":
+            break
+        if _workspace_shell_in_place_option(command, token):
+            return True
+    return False
+
+
+def _workspace_shell_has_mutation_command(command: str) -> bool:
+    tokens = _workspace_shell_tokens(command)
+    if tokens is None:
+        return bool(_WORKSPACE_SHELL_MUTATION_CMD_FALLBACK_RE.search(command))
+
+    expect_command = True
+    for index, token in enumerate(tokens):
+        if _workspace_shell_starts_command_position(token):
+            expect_command = True
+            continue
+        if not expect_command:
+            continue
+        if _WORKSPACE_SHELL_ASSIGNMENT_RE.match(token):
+            continue
+        if _workspace_shell_command_is_mutating(tokens, index):
+            return True
+        expect_command = False
+    return False
 
 
 def _workspace_shell_redirect_target_is_safe(target: str, workspace: str) -> bool:
@@ -616,7 +709,7 @@ def _workspace_shell_write_block_reason(tool: str, content: str) -> Optional[str
     if not command.strip():
         return None
     if not (
-        _WORKSPACE_SHELL_MUTATION_CMD_RE.search(command)
+        _workspace_shell_has_mutation_command(command)
         or _workspace_shell_redirects_to_workspace(command, workspace)
     ):
         return None
