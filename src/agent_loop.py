@@ -24,7 +24,7 @@ from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
-from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
+from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -321,7 +321,7 @@ _DOMAIN_RULES = {
 }
 
 _DOMAIN_TOOL_MAP = {
-    "web": {"web_search", "web_fetch"},
+    "web": set(WEB_TOOL_NAMES),
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
     "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
@@ -2847,13 +2847,12 @@ async def stream_agent_loop(
         if "email" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
         if "web" in (_intent.get("domains") or set()):
-            _relevant_tools.update({"web_search", "web_fetch"})
-            _removed_web_blocks = sorted({"web_search", "web_fetch"} & disabled_tools)
-            if _removed_web_blocks:
-                disabled_tools.difference_update({"web_search", "web_fetch"})
+            _relevant_tools.update(WEB_TOOL_NAMES)
+            _blocked_web_tools = sorted(WEB_TOOL_NAMES & disabled_tools)
+            if _blocked_web_tools:
                 logger.info(
-                    "[agent-intent] web turn forced search tools enabled; removed disabled=%s",
-                    _removed_web_blocks,
+                    "[agent-intent] web domain selected but search tools remain disabled=%s",
+                    _blocked_web_tools,
                 )
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
@@ -2887,9 +2886,9 @@ async def stream_agent_loop(
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
 
-    # Per-request forced tools are stronger than retrieval. Search toggles and
-    # explicit lookup turns must make web tools visible even when tool RAG
-    # misses them; route-level disabled_tools decides what else is allowed.
+    # Per-request forced tools are stronger than retrieval. Explicit search
+    # settings make web tools visible even when tool RAG misses them;
+    # route-level disabled_tools decides what remains allowed.
     if not guide_only and forced_tools:
         forced_set = {t for t in forced_tools if t not in disabled_tools}
         if _relevant_tools is None:
@@ -3829,9 +3828,8 @@ async def stream_agent_loop(
                 and _intent_match is not None
                 and len(_intent_text) < 400
                 and "```" not in _intent_text
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
             )
-            if _looks_like_promise:
+            if _looks_like_promise and _intent_nudge_count < _MAX_INTENT_NUDGES:
                 _intent_nudge_count += 1
                 _matched_phrase = _intent_match.group(0).strip()
                 logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
@@ -3860,6 +3858,31 @@ async def stream_agent_loop(
                 # Visible signal in the stream so the user knows we caught it.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
                 continue
+            if _looks_like_promise:
+                _matched_phrase = _intent_match.group(0).strip()
+                _guard_message = (
+                    "The agent stopped because it repeatedly announced a tool "
+                    "action without making the tool call."
+                )
+                logger.warning(
+                    "[agent] intent-without-action guard exhausted on round %d after %d nudges: %r",
+                    round_num,
+                    _intent_nudge_count,
+                    _matched_phrase,
+                )
+                yield (
+                    "data: "
+                    + json.dumps({
+                        "type": "intent_nudge_exhausted",
+                        "reason": "intent_without_action_nudge_cap",
+                        "message": _guard_message,
+                        "round": round_num,
+                        "nudges": _intent_nudge_count,
+                        "matched": _matched_phrase,
+                    })
+                    + "\n\n"
+                )
+                break
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -3896,6 +3919,21 @@ async def stream_agent_loop(
             reason = (f"calling {_runaway} with identical arguments over and over" if _runaway
                       else "repeating the same tool calls without new progress")
             logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
+            yield (
+                "data: "
+                    + json.dumps({
+                    "type": "loop_breaker_triggered",
+                    "reason": "loop_breaker_stall",
+                    "message": (
+                        "The loop-breaker detected repeated tool calls without "
+                        "new progress, so the agent is being forced to stop "
+                        "using tools and give its best final answer."
+                    ),
+                    "round": round_num,
+                    "detail": reason,
+                })
+                + "\n\n"
+            )
             # The model has been executing tools, so its results are already
             # in context. Force ONE tool-free round to converge: write the
             # answer from what it has, or state plainly what's blocking it.
@@ -4014,16 +4052,31 @@ async def stream_agent_loop(
                         await _progress_q.put(None)
 
                 _tool_task = asyncio.create_task(_run_tool())
-                # Drain progress events as they arrive — block until the
-                # next event OR the tool finishes (sentinel = None).
-                while True:
-                    evt = await _progress_q.get()
-                    if evt is None:
-                        break
-                    yield (
-                        f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
-                    )
-                desc, result = await _tool_task
+                try:
+                    # Drain progress events as they arrive — block until the
+                    # next event OR the tool finishes (sentinel = None).
+                    while True:
+                        evt = await _progress_q.get()
+                        if evt is None:
+                            break
+                        yield (
+                            f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
+                        )
+                    desc, result = await _tool_task
+                finally:
+                    # If the SSE client disconnects (or this generator is
+                    # otherwise closed) while we're awaiting a progress event
+                    # above, GeneratorExit is thrown in right here and the
+                    # `await _tool_task` on the line above never runs — the
+                    # task (and any subprocess execute_tool_block spawned for
+                    # bash/python tools) would otherwise keep running
+                    # orphaned with nothing left to await or cancel it.
+                    if not _tool_task.done():
+                        _tool_task.cancel()
+                        try:
+                            await _tool_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
 
             # A skill the model just loaded can prescribe tools that weren't
             # RAG-selected this turn (declared via requires_toolsets in its
