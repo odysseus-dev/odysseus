@@ -24,6 +24,11 @@ def _enabled() -> bool:
     return os.getenv("BACKGROUND_TASK_FOREGROUND_GATE", "true").lower() not in {"0", "false", "no", "off"}
 
 
+def foreground_gate_enabled() -> bool:
+    """Whether foreground activity may pause/stop background tasks at all."""
+    return _enabled()
+
+
 def _quiet_seconds() -> float:
     try:
         return max(0.0, float(os.getenv("BACKGROUND_TASK_QUIET_MS", "1500")) / 1000.0)

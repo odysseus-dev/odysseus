@@ -350,6 +350,9 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+        # Task IDs cancelled by stop_background_tasks_for_foreground; lets the
+        # CancelledError path distinguish a foreground pause from a user stop.
+        self._foreground_stops = set()
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -772,6 +775,10 @@ class TaskScheduler:
             self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
             raise
         finally:
+            # Task-level cleanup so the flag can't leak when the cancel lands
+            # outside _execute_task_locked's own handler (e.g. while queued
+            # behind the run semaphore) and misclassify a later user stop.
+            self._foreground_stops.discard(task_id)
             handle = self._task_handles.get(task_id)
             if handle is current:
                 self._task_handles.pop(task_id, None)
@@ -945,9 +952,15 @@ class TaskScheduler:
                 db.commit()
                 return
             except asyncio.CancelledError:
+                # A cancel that came from stop_background_tasks_for_foreground
+                # is a foreground pause too, even though the in-task monitor
+                # never saw the activity itself.
+                foreground_hit = (
+                    foreground_cancel.get("hit") or task_id in self._foreground_stops
+                )
                 msg = (
                     "Paused because Odysseus became active"
-                    if foreground_cancel.get("hit")
+                    if foreground_hit
                     else "Stopped by user"
                 )
                 logger.info("Task '%s' %s", task.name, msg)
@@ -958,7 +971,7 @@ class TaskScheduler:
                     run_obj.result = run_obj.result or msg
                     run_obj.finished_at = _utcnow()
                 task.last_run = _utcnow()
-                if foreground_cancel.get("hit"):
+                if foreground_hit:
                     task.next_run = _utcnow() + timedelta(minutes=15)
                 elif (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
@@ -2247,16 +2260,25 @@ class TaskScheduler:
         user opens or uses Odysseus, foreground interaction wins immediately.
         Manual force-runs can be restarted by the user; automatic jobs will be
         deferred by their cancellation path instead of stealing the app.
+
+        Respects BACKGROUND_TASK_FOREGROUND_GATE: with the gate disabled the
+        user has opted out of foreground preemption entirely, so this is a
+        no-op (#5536 — browser heartbeats were cancelling scheduled tasks
+        regardless of the gate).
         """
+        from src.interactive_gate import foreground_gate_enabled
+        if not foreground_gate_enabled():
+            return 0
         async with self._executing_lock:
             task_ids = list(self._executing)
         stopped = 0
         for task_id in task_ids:
             handle = self._task_handles.get(task_id)
             if handle and not handle.done():
+                self._foreground_stops.add(task_id)
                 handle.cancel()
                 stopped += 1
-            if self._mark_run_aborted(task_id):
+            if self._mark_run_aborted(task_id, message="Paused because Odysseus became active"):
                 stopped += 1
         if stopped:
             logger.info("Stopped %d background scheduler task(s): %s", stopped, reason)

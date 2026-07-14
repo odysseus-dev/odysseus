@@ -64,6 +64,7 @@ def test_stop_task_cleans_up_queued_handle_and_run(tmp_path, monkeypatch):
         scheduler._task_handles = {}
         scheduler._concurrency_cap = 1
         scheduler._task_defer_counts = {}
+        scheduler._foreground_stops = set()
         await scheduler._run_semaphore.acquire()
 
         task = asyncio.create_task(scheduler._execute_task("queued-task"))
