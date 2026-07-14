@@ -16,7 +16,7 @@ const _defaultKeybinds = {
 };
 
 export function _matchesCombo(e, combo, isMac = IS_MAC) {
-  if (typeof combo !== 'string' || !combo) return false;
+  if (!combo) return false;
   // Drop AltGr keystrokes so typing characters on non-US layouts can't fire a
   // Ctrl+Alt shortcut — e.g. the destructive delete_session. See platform.js.
   if (isAltGrEvent(e, isMac)) return false;

@@ -655,12 +655,7 @@ app.include_router(setup_emoji_routes())
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(
-    session_manager,
-    session_config,
-    webhook_manager=webhook_manager,
-    upload_handler=upload_handler,
-))
+app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
@@ -689,7 +684,7 @@ app.include_router(setup_research_routes(research_handler, session_manager=sessi
 
 # History
 from routes.history.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
+app.include_router(setup_history_routes(session_manager))
 
 # Search
 from routes.search_routes import setup_search_routes
@@ -768,7 +763,7 @@ app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-calendar_router = setup_calendar_routes(upload_handler=upload_handler)
+calendar_router = setup_calendar_routes()
 app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
@@ -831,7 +826,7 @@ logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
+app.include_router(setup_note_routes(task_scheduler))
 
 # Email
 from routes.email_routes import setup_email_routes
@@ -1048,7 +1043,7 @@ async def _startup_event():
         except BaseException as e:
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
-            await mcp_manager.connect_all_enabled()
+            await asyncio.wait_for(mcp_manager.connect_all_enabled(), timeout=20)
         except asyncio.TimeoutError:
             logger.warning("User MCP startup timed out (non-critical)")
         except BaseException as e:

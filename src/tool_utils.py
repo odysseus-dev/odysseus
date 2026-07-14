@@ -9,7 +9,6 @@ import json
 from src.constants import MAX_OUTPUT_CHARS
 
 _mcp_manager = None
-_upload_handler = None
 
 # ---------------------------------------------------------------------------
 # MCP Manager singleton
@@ -23,21 +22,6 @@ def set_mcp_manager(manager):
 def get_mcp_manager():
     """Get the global MCP manager instance."""
     return _mcp_manager
-
-
-# ---------------------------------------------------------------------------
-# Shared upload lifecycle handler
-# ---------------------------------------------------------------------------
-
-def set_upload_handler(handler):
-    """Register the process's UploadHandler without importing app modules."""
-    global _upload_handler
-    _upload_handler = handler
-
-
-def get_upload_handler():
-    """Return the shared UploadHandler used by route and agent writers."""
-    return _upload_handler
 
 # ---------------------------------------------------------------------------
 # Helpers

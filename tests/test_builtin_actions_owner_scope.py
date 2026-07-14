@@ -109,9 +109,10 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
         def select(self, *_args, **_kwargs):
             return "OK", []
 
-        def uid(self, command, *_args):
-            if command == "SEARCH":
-                return "OK", [b"1 2 3"]
+        def search(self, *_args, **_kwargs):
+            return "OK", [b"1 2 3"]
+
+        def fetch(self, _uid, _query):
             return "OK", [(None, b"From: Writer <writer@example.com>\r\n\r\n")]
 
         def logout(self):
@@ -170,10 +171,11 @@ async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tm
         def select(self, *_args, **_kwargs):
             return "OK", []
 
-        def uid(self, command, uid=None, query=None):
-            if command == "SEARCH":
-                return "OK", [b"1 2 3"]
-            if query and "HEADER.FIELDS" in query:
+        def search(self, *_args, **_kwargs):
+            return "OK", [b"1 2 3"]
+
+        def fetch(self, uid, query):
+            if "HEADER.FIELDS" in query:
                 return "OK", [(None, b"From: Writer <writer@example.com>\r\n\r\n")]
             return "OK", [
                 (
