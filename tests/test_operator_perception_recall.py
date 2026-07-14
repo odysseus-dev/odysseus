@@ -98,10 +98,15 @@ def test_screen_look_clamps_lookback_to_max():
 
 
 def test_screen_look_truncates_at_frame_boundary():
+    # Patch _char_budget directly rather than the env var: screen_look reloads
+    # memory_stack.env mid-call (via screenpipe_url -> _stack_env), and
+    # load_memory_stack_env unconditionally writes os.environ, so a
+    # patch.dict(os.environ, ...) override would be clobbered by the file's
+    # OPERATOR_PERCEPTION_CHAR_BUDGET value.
     from services.operator import perception
 
     payload = _frames_payload("a" * 60, "b" * 60, "c" * 60)
-    with patch.dict("os.environ", {"OPERATOR_PERCEPTION_CHAR_BUDGET": "100"}):
+    with patch.object(perception, "_char_budget", lambda: 100):
         with patch.object(perception.request, "urlopen", lambda req, timeout=None: _FakeResp(payload)):
             result = perception.screen_look(query="x")
 
