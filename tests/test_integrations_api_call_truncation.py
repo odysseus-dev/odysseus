@@ -83,9 +83,10 @@ async def _call(json_data, status=200):
     with (
         patch.object(integrations, "_find_integration", return_value=DUMMY_INTEGRATION),
         patch("httpx.AsyncClient", return_value=mock_client),
-        # api.example.com doesn't resolve; the SSRF guard would fail closed.
-        # These tests are about truncation, so stub the guard open.
-        patch("src.url_safety.check_outbound_url", return_value=(True, "ok")),
+        # api.example.com doesn't resolve here; feed the SSRF guard a public IP
+        # so it passes (and the connection pins to it). These tests are about
+        # truncation, not the guard.
+        patch("src.url_safety._default_resolver", lambda host: ["93.184.216.34"]),
     ):
         return await integrations.execute_api_call("test_integ", "GET", "/items")
 
@@ -101,9 +102,10 @@ async def _call_with_integration(integration, path="/items"):
     with (
         patch.object(integrations, "_find_integration", return_value=integration),
         patch("httpx.AsyncClient", return_value=mock_client),
-        # api.example.com doesn't resolve; the SSRF guard would fail closed.
-        # These tests are about URL joining, so stub the guard open.
-        patch("src.url_safety.check_outbound_url", return_value=(True, "ok")),
+        # api.example.com doesn't resolve here; feed the SSRF guard a public IP
+        # so it passes (and the connection pins to it). These tests are about
+        # URL joining, not the guard.
+        patch("src.url_safety._default_resolver", lambda host: ["93.184.216.34"]),
     ):
         result = await integrations.execute_api_call("test_integ", "GET", path)
     return result, mock_client

@@ -97,3 +97,62 @@ async def test_private_base_url_allowed_by_default_blocked_with_knob(monkeypatch
     assert result["exit_code"] == 1
     assert "rejected" in result["error"].lower()
     client.request.assert_not_called()
+
+
+async def _call_capturing_transport(base_url, path="/items"):
+    """Drive execute_api_call and return (result, transport) where transport is
+    the object passed to httpx.AsyncClient(transport=...)."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"content-type": "application/json"}
+    resp.json.return_value = {"ok": True}
+    resp.text = '{"ok": true}'
+
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.request = AsyncMock(return_value=resp)
+
+    captured = {}
+
+    def _fake_async_client(*args, **kwargs):
+        captured.update(kwargs)
+        return client
+
+    with (
+        patch.object(integrations, "_find_integration",
+                     return_value=_integration(base_url)),
+        patch("httpx.AsyncClient", side_effect=_fake_async_client),
+    ):
+        result = await integrations.execute_api_call("test_integ", "GET", path)
+    return result, captured.get("transport"), client
+
+
+@pytest.mark.asyncio
+async def test_connection_is_pinned_to_the_validated_ip(monkeypatch):
+    """DNS-rebinding defense: the guard resolves the host once to a benign
+    public IP, and the request must be pinned to *that* IP so a host that
+    rebinds to the metadata range at connect time can't be reached with the
+    integration's auth headers. Static resolution passing the guard is not
+    enough — a plain client would re-resolve at connect."""
+    monkeypatch.setattr("src.url_safety._default_resolver",
+                        lambda host: ["93.184.216.34"])
+    result, transport, client = await _call_capturing_transport(
+        "http://rebinding.attacker.example")
+
+    assert result.get("exit_code") == 0
+    client.request.assert_called_once()
+    assert isinstance(transport, integrations._PinnedAsyncTransport)
+    assert str(transport._pinned_ip) == "93.184.216.34"
+
+
+@pytest.mark.asyncio
+async def test_pin_uses_a_validated_ip_when_host_has_several(monkeypatch):
+    """When a host resolves to multiple records the pin targets the first one
+    the guard walked (and therefore validated)."""
+    monkeypatch.setattr("src.url_safety._default_resolver",
+                        lambda host: ["93.184.216.34", "198.51.100.7"])
+    result, transport, _ = await _call_capturing_transport("http://multi.example")
+
+    assert result.get("exit_code") == 0
+    assert str(transport._pinned_ip) == "93.184.216.34"
