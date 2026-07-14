@@ -96,9 +96,7 @@ class DbTokenStorage:
         try:
             srv = db.query(McpServer).filter(McpServer.id == self.server_id).first()
             if srv and srv.oauth_tokens:
-                parsed = json.loads(srv.oauth_tokens)
-                if isinstance(parsed, dict):
-                    return parsed
+                return json.loads(srv.oauth_tokens)
         finally:
             db.close()
         return {}
@@ -113,8 +111,6 @@ class DbTokenStorage:
             if srv is None:
                 return
             data = json.loads(srv.oauth_tokens) if srv.oauth_tokens else {}
-            if not isinstance(data, dict):
-                data = {}
             data[key] = value
             srv.oauth_tokens = json.dumps(data)
             db.commit()

@@ -10,9 +10,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.auth_helpers import effective_user
 from src.topic_analyzer import analyze_topics
-from src.upload_handler import reserve_message_upload_references
 from routes.session_routes import (
     _message_role,
     _message_text,
@@ -100,28 +98,8 @@ def _merge_continue_rows_to_delete(db_messages, db1, db2):
     return to_delete
 
 
-def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
+def setup_history_routes(session_manager) -> APIRouter:
     router = APIRouter(tags=["history"])
-
-    def _reserve_message_uploads(
-        request: Request,
-        content: Any,
-        metadata: Any = None,
-    ) -> None:
-        try:
-            missing_id = reserve_message_upload_references(
-                upload_handler,
-                effective_user(request),
-                content,
-                metadata,
-            )
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, "Invalid message attachment metadata") from exc
-        if missing_id:
-            raise HTTPException(
-                409,
-                f"Referenced upload is no longer available: {missing_id}",
-            )
 
     def _db_history_entry(m: DbChatMessage) -> Dict[str, Any]:
         entry = {"role": m.role, "content": _history_display_content(m.content)}
@@ -273,9 +251,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             content = body.get("content", "")
             if not content:
                 raise HTTPException(400, "content is required")
-            metadata = body.get("metadata")
-            _reserve_message_uploads(request, content, metadata)
-            msg = ChatMessage(role=role, content=content, metadata=metadata)
+            msg = ChatMessage(role=role, content=content, metadata=body.get("metadata"))
             session_manager.add_message(session_id, msg)
             return {"status": "ok"}
         except KeyError:
@@ -354,8 +330,6 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             content = body.get("content")
             if not msg_id or content is None:
                 raise HTTPException(400, "msg_id and content are required")
-
-            _reserve_message_uploads(request, content)
 
             session = session_manager.get_session(session_id)
             db = SessionLocal()
