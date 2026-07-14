@@ -354,34 +354,58 @@ class McpManager:
 
             provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
-            read_stream, write_stream, _get_session_id = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-            await session.initialize()
+            registered = False
+            try:
+                transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+                read_stream, write_stream, _get_session_id = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+                await session.initialize()
 
-            tools_result = await session.list_tools()
-            tools = []
-            for tool in tools_result.tools:
-                tools.append({
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
-                })
+                tools_result = await session.list_tools()
+                tools = []
+                for tool in tools_result.tools:
+                    tools.append({
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    })
 
-            self._sessions[server_id] = session
-            self._stacks[server_id] = stack
-            self._tools[server_id] = tools
-            self._connections[server_id] = {
-                "status": "connected", "name": name, "transport": "http",
-                "tool_count": len(tools),
-            }
-            clear_auth_url(server_id)
-            # Tools changed (this can complete after connect_server already
-            # returned, via the background OAuth flow), so bump the generation
-            # to invalidate the tool-prompt cache.
-            self._generation += 1
-            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via http")
-            return True
+                self._sessions[server_id] = session
+                self._stacks[server_id] = stack
+                self._tools[server_id] = tools
+                self._connections[server_id] = {
+                    "status": "connected", "name": name, "transport": "http",
+                    "tool_count": len(tools),
+                }
+                registered = True
+
+                clear_auth_url(server_id)
+                # Tools changed (this can complete after connect_server already
+                # returned, via the background OAuth flow), so bump the generation
+                # to invalidate the tool-prompt cache.
+                self._generation += 1
+                logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via http")
+                return True
+            finally:
+                # _connect_stdio and _connect_sse already guard their stack this way; http
+                # was the one transport that did not. A failed connect left the stack -- and
+                # the anyio task group entered inside it -- to be finalized by the garbage
+                # collector, from a DIFFERENT task than the one that entered it.
+                #
+                # anyio's CancelScope.__exit__ then raises "Attempted to exit cancel scope in
+                # a different task than it was entered in" BEFORE it can remove the host task
+                # from _tasks, so _deliver_cancellation re-arms call_soon on every iteration
+                # of the event loop, forever. The loop never sleeps again:
+                # epoll_wait(timeout=0) at ~149k calls/sec returning zero events, and the
+                # process pins a CPU core for the rest of its life.
+                #
+                # `finally` rather than `except`, deliberately: the failure arrives as
+                # CancelledError, which is a BaseException, so `except Exception` never sees
+                # it. (Observed in production: the outer handler below logged nothing at all
+                # across the entire lifetime of the process, because it could not catch what
+                # was being raised.)
+                if not registered:
+                    await stack.aclose()
         except ImportError:
             logger.warning("MCP package not installed. Install with: pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
