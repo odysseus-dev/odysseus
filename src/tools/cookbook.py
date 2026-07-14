@@ -159,24 +159,14 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
 
 
 def _infer_serve_port(cmd: str) -> int:
-    """Infer likely listen port from a serve command."""
-    if not cmd:
-        return 8080
-    m = re.search(r"--port\\s+(\\d+)", cmd)
-    if m:
-        try:
-            return int(m.group(1))
-        except Exception:
-            pass
-    m = re.search(r"OLLAMA_HOST=[^\\s]*?:(\\d+)", cmd)
-    if m:
-        try:
-            return int(m.group(1))
-        except Exception:
-            pass
-    if "ollama" in cmd:
-        return 11434
-    return 8080
+    """Infer likely listen port from a serve command.
+
+    Delegates to ``_serve_listen_port_from_cmd`` so agent-tool endpoint
+    registration stays IPv6-safe and matches Cookbook auto-register.
+    """
+    from routes.cookbook_helpers import _serve_listen_port_from_cmd
+
+    return _serve_listen_port_from_cmd(cmd)
 
 
 def _infer_serve_host(host: str | None) -> tuple[str, bool]:

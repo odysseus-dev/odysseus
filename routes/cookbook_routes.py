@@ -59,7 +59,7 @@ from routes.cookbook_helpers import (
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _append_pip_install_runner_lines, _pip_install_command_without_break_system_packages,
-    _normalize_llama_cpp_python_cache_types,
+    _normalize_llama_cpp_python_cache_types, _serve_listen_port_from_cmd,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1692,26 +1692,15 @@ def setup_cookbook_routes() -> APIRouter:
         import re
         from core.database import SessionLocal, ModelEndpoint
 
-        # Port: ordered fallbacks so we match whatever the user actually
-        # asked for, not a hardcoded default:
+        # Port: ordered fallbacks via `_serve_listen_port_from_cmd` so we match
+        # whatever the user actually asked for, not a hardcoded default:
         #   1. explicit `--port N`  (vllm / sglang / llama-server)
-        #   2. `OLLAMA_HOST=host:port`  (the way Ollama specifies its bind)
+        #   2. `OLLAMA_HOST=host:port`  (IPv6-safe via `_ollama_bind_from_cmd`)
         #   3. fallback by backend (11434 ollama / 8080 llama.cpp)
-        # Previously the OLLAMA_HOST form was silently ignored and we
-        # registered every Ollama endpoint at 11434 — even if the user
-        # set OLLAMA_HOST=0.0.0.0:11435 to avoid colliding with an
-        # existing systemd Ollama, the registered endpoint pointed at
-        # the OLD port and showed as offline.
-        port_match = re.search(r'--port\s+(\d+)', req.cmd)
-        ollama_host_match = re.search(r'OLLAMA_HOST=[^\s]*?:(\d+)', req.cmd)
-        if port_match:
-            port = int(port_match.group(1))
-        elif ollama_host_match:
-            port = int(ollama_host_match.group(1))
-        elif "ollama" in req.cmd:
-            port = 11434
-        else:
-            port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
+        # Previously a naive OLLAMA_HOST regex misparsed bracketed IPv6 binds
+        # like `[::1]:11435` as port 1, so the registered endpoint pointed at
+        # the wrong port while the serve itself listened on 11435.
+        port = _serve_listen_port_from_cmd(req.cmd)
 
         # Determine host. The cookbook tmux for `local=true` serves runs INSIDE
         # the odysseus container — so the right URL for the in-container

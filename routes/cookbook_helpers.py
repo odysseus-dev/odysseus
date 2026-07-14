@@ -689,6 +689,27 @@ def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -
     return f"[{host}]" if bracketed_host else host, port
 
 
+def _serve_listen_port_from_cmd(cmd: str | None) -> int:
+    """Infer the listen port a Cookbook serve command actually binds.
+
+    Ordered fallbacks match endpoint registration:
+      1. explicit ``--port N`` (vLLM / SGLang / llama-server)
+      2. ``OLLAMA_HOST=host:port`` via ``_ollama_bind_from_cmd`` (IPv6-safe)
+      3. backend default (11434 ollama / 8080 llama.cpp)
+    """
+    if not cmd:
+        return 8080
+    port_match = re.search(r"--port\s+(\d+)", cmd)
+    if port_match:
+        return int(port_match.group(1))
+    if "OLLAMA_HOST=" in cmd:
+        _, port_str = _ollama_bind_from_cmd(cmd)
+        return int(port_str)
+    if "ollama" in cmd:
+        return 11434
+    return 8080
+
+
 def _normalize_llama_cpp_python_cache_types(cmd: str | None) -> str | None:
     """Map llama.cpp KV cache type names to llama-cpp-python's integer enum."""
     if not cmd or "llama_cpp.server" not in cmd:

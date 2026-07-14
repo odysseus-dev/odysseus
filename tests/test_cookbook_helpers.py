@@ -19,6 +19,7 @@ from routes.cookbook_helpers import (
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
+    _serve_listen_port_from_cmd,
     _safe_env_prefix,
     _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
@@ -625,6 +626,41 @@ def test_ollama_serve_rejects_unsafe_bind_values():
         _ollama_bind_from_cmd("OLLAMA_HOST=127.0.0.1:99999 ollama serve")
         == ("127.0.0.1", "11434")
     )
+
+
+def test_serve_listen_port_prefers_explicit_port_flag():
+    assert _serve_listen_port_from_cmd("llama-server --port 9000") == 9000
+    assert _serve_listen_port_from_cmd("vllm serve model --port 8001") == 8001
+
+
+def test_serve_listen_port_parses_ipv6_ollama_host_not_inner_colon():
+    """Bracketed IPv6 must not be misread as port 1 (inner colon)."""
+    cmd = "OLLAMA_HOST=[::1]:11435 ollama serve"
+    assert _serve_listen_port_from_cmd(cmd) == 11435
+    # Registration builds the picker URL from this port — never :1.
+    assert f"http://localhost:{_serve_listen_port_from_cmd(cmd)}/v1" == (
+        "http://localhost:11435/v1"
+    )
+
+
+def test_serve_listen_port_parses_ipv4_ollama_host():
+    assert _serve_listen_port_from_cmd("OLLAMA_HOST=0.0.0.0:12345 ollama serve") == 12345
+
+
+def test_serve_listen_port_defaults_by_backend():
+    assert _serve_listen_port_from_cmd("ollama serve") == 11434
+    assert _serve_listen_port_from_cmd("llama-server --model m.gguf") == 8080
+    assert _serve_listen_port_from_cmd("") == 8080
+    assert _serve_listen_port_from_cmd(None) == 8080
+
+
+def test_auto_register_uses_serve_listen_port_helper():
+    """Regression guard: registration must not reintroduce the naive regex."""
+    src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_serve_listen_port_from_cmd(req.cmd)" in src
+    assert "OLLAMA_HOST=[^\\s]*?:(\\d+)" not in src
 
 
 def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():

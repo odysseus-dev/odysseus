@@ -36,6 +36,10 @@ async def _delete_endpoint_for_task(task: dict) -> None:
     Without this, killing the tmux session leaves the endpoint sitting in
     the picker (probe goes offline; chats still try to route there) and
     the user has to delete it by hand in Settings -> Endpoints.
+
+    Cleanup is endpoint-id based (``_endpointId`` / ``endpointId``). URL
+    matching is intentionally not used — a later serve can reuse the same
+    host:port after an older task has gone stale.
     """
     endpoint_id = (task.get("_endpointId") or task.get("endpointId") or "").strip()
     if not endpoint_id:
@@ -44,26 +48,6 @@ async def _delete_endpoint_for_task(task: dict) -> None:
             task.get("sessionId") or task.get("id") or "",
         )
         return
-    import re as _re
-    payload = task.get("payload") or {}
-    cmd = str(payload.get("_cmd") or "")
-    remote = task.get("remoteHost") or ""
-    # Build host the same way _auto_register_llm_endpoint does so URL match wins.
-    if remote:
-        host = remote.split("@")[-1] if "@" in remote else remote
-    else:
-        host = "host.docker.internal"
-    port_match = _re.search(r"--port\s+(\d+)", cmd)
-    ollama_host_match = _re.search(r"OLLAMA_HOST=[^\s]*?:(\d+)", cmd)
-    if port_match:
-        port = int(port_match.group(1))
-    elif ollama_host_match:
-        port = int(ollama_host_match.group(1))
-    elif "ollama" in cmd:
-        port = 11434
-    else:
-        port = 8080
-    base_url = f"http://{host}:{port}/v1"
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
@@ -73,9 +57,6 @@ async def _delete_endpoint_for_task(task: dict) -> None:
             if r.status_code >= 400:
                 return
             eps = r.json() if r.content else []
-            # Delete only the endpoint created by this scheduled serve. URL
-            # matching is unsafe because a later scheduled serve can reuse the
-            # same host:port after an older task has gone stale.
             ep = next((e for e in eps if e.get("id") == endpoint_id), None)
             if ep:
                 await client.delete(
