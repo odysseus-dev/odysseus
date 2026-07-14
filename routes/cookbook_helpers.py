@@ -238,7 +238,6 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
-    from core.platform_compat import IS_WINDOWS
     upgrade_flag = " -U" if upgrade else ""
     # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
     # contains brackets that bash would treat as a glob, so it must be quoted
