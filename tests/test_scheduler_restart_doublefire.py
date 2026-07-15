@@ -29,7 +29,7 @@ def _stub_heavy():
         sys.modules.setdefault(name, types.ModuleType(name))
 
 
-def _setup_isolated_db():
+def _setup_isolated_db(monkeypatch):
     import core.database as cd
     B = declarative_base()
 
@@ -56,10 +56,15 @@ def _setup_isolated_db():
 
     eng = create_engine("sqlite:///:memory:")
     B.metadata.create_all(eng)
-    cd.engine = eng
-    cd.SessionLocal = sessionmaker(bind=eng, autocommit=False, autoflush=False)
-    cd.ScheduledTask = ScheduledTask
-    cd.TaskRun = TaskRun
+    # Install the stubs with monkeypatch so the REAL core.database module is
+    # restored after each test. Direct assignment leaked these slim stubs into
+    # the disk-loaded module (clear_fake_database_modules only evicts modules
+    # without a __file__), breaking any later test that instantiates
+    # cd.ScheduledTask with real-schema columns the stubs lack.
+    monkeypatch.setattr(cd, "engine", eng)
+    monkeypatch.setattr(cd, "SessionLocal", sessionmaker(bind=eng, autocommit=False, autoflush=False))
+    monkeypatch.setattr(cd, "ScheduledTask", ScheduledTask)
+    monkeypatch.setattr(cd, "TaskRun", TaskRun)
     return cd, ScheduledTask, TaskRun
 
 
@@ -75,7 +80,7 @@ def test_scheduler_utcnow_preserves_naive_utc_contract():
 def _drive_scheduler(monkeypatch, pre_start_setup=None):
     """Build a TaskScheduler bypassing __init__ and run start() + two polls."""
     _stub_heavy()
-    cd, ScheduledTask, TaskRun = _setup_isolated_db()
+    cd, ScheduledTask, TaskRun = _setup_isolated_db(monkeypatch)
 
     from src.task_scheduler import TaskScheduler
     sch = TaskScheduler.__new__(TaskScheduler)
