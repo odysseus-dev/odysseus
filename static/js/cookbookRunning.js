@@ -877,7 +877,7 @@ function _redactTaskForStorage(task) {
 function _stripStateSecrets(state) {
   const safe = { ...state };
   if (safe.env && typeof safe.env === 'object') {
-    const { hfToken, ...env } = safe.env;
+    const env = { ...safe.env };
     delete env.hostPlatform;
     safe.env = env;
   }
