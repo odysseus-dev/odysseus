@@ -192,6 +192,10 @@ _QWEN_BARE_MARKER_RE = re.compile(
     r"(?:^|[\t\r\n ])assistan(?:t)?(?=[\t\r\n ]|$)",
     re.IGNORECASE,
 )
+_QWEN_TOOL_CALL_RE = re.compile(
+    r"<\|tool_call_start\|>\[(\w+)\(([\s\S]*?)\)\](?:<\|tool_call_end\|>)?",
+    re.IGNORECASE
+)
 
 
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
@@ -1105,6 +1109,52 @@ def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
     return function_call_to_tool_block(tool_name, json.dumps(params))
 
 
+def _parse_qwen_tool_call(tool_name: str, args_str: str) -> Optional[ToolBlock]:
+    """Parse a Qwen-style call: <|tool_call_start|>[tool_name(args_str)]<|tool_call_end|>."""
+    tool_name = tool_name.strip().lower().replace("-", "_")
+    args_str = args_str.strip()
+    
+    params = {}
+    if args_str:
+        import ast
+        try:
+            tree = ast.parse(f"dummy({args_str})")
+            call_node = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    call_node = node
+                    break
+            if call_node:
+                for kw in call_node.keywords:
+                    try:
+                        params[kw.arg] = ast.literal_eval(kw.value)
+                    except Exception:
+                        pass
+        except Exception:
+            params = {}
+            for m in re.finditer(r"(\w+)\s*=\s*(?:['\"]([^'\"]*)['\"]|([\w.]+))", args_str):
+                k = m.group(1)
+                v = m.group(2) if m.group(2) is not None else m.group(3)
+                if v == "True":
+                    v = True
+                elif v == "False":
+                    v = False
+                elif v == "None":
+                    v = None
+                else:
+                    try:
+                        if "." in v:
+                            v = float(v)
+                        else:
+                            v = int(v)
+                    except ValueError:
+                        pass
+                params[k] = v
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(tool_name, json.dumps(params))
+
+
 def _parse_function_model_call(body: str) -> Optional[ToolBlock]:
     """Parse <function_model><function_call>tool</...><parameters>...</...>."""
     name_match = _FUNCTION_MODEL_NAME_RE.search(body or "")
@@ -1374,6 +1424,15 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 4b_qwen: Qwen-style <|tool_call_start|> blocks
+    if not blocks:
+        for m in _QWEN_TOOL_CALL_RE.finditer(text):
+            tool_name = m.group(1)
+            args_str = m.group(2)
+            block = _parse_qwen_tool_call(tool_name, args_str)
+            if block:
+                blocks.append(block)
+
     # Pattern 4c: <function_model> wrapper from local MLX/Exo models.
     if not blocks:
         for _ms, inner_start, inner_end, _me in _iter_delimited(
@@ -1436,6 +1495,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
     cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _QWEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _FUNCTION_MODEL_OPEN_RE, _FUNCTION_MODEL_CLOSE_RE)
     cleaned = _strip_raw_openai_tool_call_json(cleaned)
     cleaned = _QWEN_ROLE_MARKER_RE.sub('', cleaned)
