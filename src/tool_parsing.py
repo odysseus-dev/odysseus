@@ -188,7 +188,7 @@ _FUNCTION_MODEL_PARAMS_OPEN_RE = re.compile(r"<parameters>\s*", re.IGNORECASE)
 _FUNCTION_MODEL_PARAMS_CLOSE_RE = re.compile(r"</parameters>", re.IGNORECASE)
 _QWEN_ROLE_MARKER_RE = re.compile(r"</?\|(?:assistant|assistan|user|system|tool)\|>?|</\|end\|>?", re.IGNORECASE)
 _QWEN_BARE_MARKER_RE = re.compile(
-    r"(?:^|[\t\r\n ])(?:\|?end\|?|/?\|end\|)(?=[\t\r\n ]|$)|"
+    r"(?:^|[\t\r\n ])(?:\|end\||/?\|end\|)(?=[\t\r\n ]|$)|"
     r"(?:^|[\t\r\n ])assistan(?:t)?(?=[\t\r\n ]|$)",
     re.IGNORECASE,
 )
