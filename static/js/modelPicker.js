@@ -183,6 +183,24 @@ function _initModelPickerDropdown() {
   const refreshBtn = document.getElementById('model-picker-refresh-btn');
   if (!wrap || !btn || !menu || !search || !listEl) return;
 
+  function _liftInputBar() {
+    wrap.style.setProperty('z-index', String(topPortalZ()), 'important');
+    const bar = document.querySelector('.chat-input-bar');
+    if (bar) {
+      bar.style.setProperty('position', 'relative', 'important');
+      bar.style.setProperty('z-index', String(topPortalZ()), 'important');
+    }
+  }
+
+  function _restoreInputBar() {
+    wrap.style.removeProperty('z-index');
+    const bar = document.querySelector('.chat-input-bar');
+    if (bar) {
+      bar.style.removeProperty('position');
+      bar.style.removeProperty('z-index');
+    }
+  }
+
   function _close() {
     if (menu.classList.contains('hidden')) return;
     // Restore scroll button
@@ -194,7 +212,7 @@ function _initModelPickerDropdown() {
       menu.classList.remove('closing');
       menu.classList.add('hidden');
       search.value = '';
-      wrap.style.removeProperty('z-index');
+      _restoreInputBar();
     }, { once: true });
     // Fallback if animationend doesn't fire
     setTimeout(() => {
@@ -202,7 +220,7 @@ function _initModelPickerDropdown() {
         menu.classList.remove('closing');
         menu.classList.add('hidden');
         search.value = '';
-        wrap.style.removeProperty('z-index');
+        _restoreInputBar();
       }
     }, 200);
   }
@@ -658,7 +676,7 @@ function _initModelPickerDropdown() {
     if (menu.classList.contains('hidden') || menu.classList.contains('closing')) {
       // Force-clear any in-progress close animation
       menu.classList.remove('closing', 'hidden');
-      wrap.style.setProperty('z-index', String(topPortalZ()), 'important');
+      _liftInputBar();
       _populate('');
       if (window.modelsModule && window.modelsModule.refreshModels) {
         window.modelsModule.refreshModels().then(() => {
