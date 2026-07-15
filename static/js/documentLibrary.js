@@ -1488,6 +1488,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       '.csv': 'csv', '.tsv': 'csv',
       '.xlsx': 'csv', '.xls': 'csv', '.ods': 'csv',
       '.docx': 'markdown', '.doc': 'markdown',
+      '.tex': 'latex',
     };
 
     let imported = 0;

@@ -104,6 +104,9 @@ def _sniff_doc_language(text: str) -> str:
     if (hl.startswith("<!doctype html") or hl.startswith("<html")
             or _re2.search(r"<(div|body|head|p|span|table|button|h[1-6]|ul|ol|li|img)\b", hl)):
         return "html"
+    # LaTeX
+    if _re2.search(r"(?m)^\s*\\(documentclass|begin\{document\}|section\{)", s):
+        return "latex"
     # JSON
     if s[0] in "{[":
         try:

@@ -4861,6 +4861,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <option value="ruby">ruby</option>
           <option value="php">php</option>
           <option value="csv">csv</option>
+          <option value="latex">latex</option>
           <option value="email">email</option>
           <option value="pdf">pdf</option>
         </select>
@@ -9346,6 +9347,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
       typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
       xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
+      latex: '.tex',
     };
     const ext = extMap[lang] || '.txt';
     const safeName = title.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'document';
@@ -9373,6 +9375,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       '.java':'java','.c':'c','.cpp':'cpp','.h':'c','.hpp':'cpp',
       '.rb':'ruby','.php':'php','.xml':'xml','.toml':'toml','.ini':'ini',
       '.txt':'','.log':'','.csv':'csv','.tsv':'csv','.jsx':'javascript','.tsx':'typescript',
+      '.tex':'latex',
     };
     const fi = document.createElement('input');
     fi.type = 'file';
@@ -9470,6 +9473,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
       typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
       xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
+      latex: '.tex',
     };
     const ext = extMap[lang] || '.txt';
 
