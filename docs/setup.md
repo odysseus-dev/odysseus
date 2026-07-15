@@ -78,6 +78,42 @@ expose this port directly to the public internet. To build a clickable app wrapp
 ./build-macos-app.sh
 ```
 
+### Mac Mini — install as a system service
+
+For a Mac Mini running as a home server (always-on, no need to start it manually), install Odysseus as a macOS LaunchAgent. This sets it up to start automatically on every login and restart automatically if it crashes.
+
+```bash
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+cp .env.example .env   # optional — edit APP_PORT or APP_BIND here before install
+./install-macos-service.sh
+```
+
+The script installs Homebrew dependencies, sets up the Python environment, creates a LaunchAgent plist at `~/Library/LaunchAgents/com.odysseus.app.plist`, and starts the service immediately. On every subsequent login it will start automatically.
+
+After install the UI is at `http://127.0.0.1:7860`. The first admin password is printed in the log:
+
+```bash
+grep -i 'admin password' ~/Library/Logs/Odysseus/odysseus.log | tail -1
+```
+
+**Manage the service:**
+
+```bash
+launchctl stop  com.odysseus.app   # stop
+launchctl start com.odysseus.app   # start
+cat ~/Library/Logs/Odysseus/odysseus.log   # view logs
+```
+
+**Expose over LAN / Tailscale:** set `APP_BIND=0.0.0.0` (and optionally `APP_PORT`) in `.env`, then re-run `./install-macos-service.sh` to reinstall the plist with the new settings.
+
+**Uninstall:**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.odysseus.app.plist
+rm ~/Library/LaunchAgents/com.odysseus.app.plist
+```
+
 <details>
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
 

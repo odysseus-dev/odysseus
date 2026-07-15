@@ -36,6 +36,8 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
+**Mac Mini (always-on server):** use `./install-macos-service.sh` to set Odysseus up as a LaunchAgent that starts automatically on login — see the [Mac Mini section](docs/setup.md#mac-mini--install-as-a-system-service) in the setup guide.
+
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
 ## Features
