@@ -16,7 +16,7 @@ import pytest
 from src.action_intents import classify_tool_intent
 from src.tool_policy import (
     WEB_TOOL_NAMES,
-    is_web_search_explicitly_denied,
+    disabled_web_tools_for_turn,
     web_search_enabled_for_turn,
 )
 
@@ -94,8 +94,11 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
     assert "web_search_enabled_for_turn(allow_web_search, use_web)" in source, (
         "web tools must be gated through the explicit per-turn web setting"
     )
-    assert "disabled_tools.update(WEB_TOOL_NAMES)" in source, (
-        "disabled_tools must add web_search/web_fetch when web is not explicitly enabled"
+    assert "disabled_web_tools_for_turn(" in source, (
+        "web access must be gated through the shared per-turn denylist helper"
+    )
+    assert "disabled_tools.update(_disabled_web_tools)" in source, (
+        "disabled_tools must add all denied network-backed tools"
     )
     assert "_forced_tools = set(WEB_TOOL_NAMES)" in source, (
         "web tools should only be forced visible from the explicit web setting"
@@ -109,6 +112,7 @@ def _build_disabled_tools(
     allow_bash=None,
     allow_web_search=None,
     use_web=None,
+    use_research=None,
     can_use_bash=True,
     can_use_browser=True,
     explicit_web_intent=False,
@@ -124,8 +128,12 @@ def _build_disabled_tools(
     if allow_bash is not None and str(allow_bash).lower() != "true":
         disabled_tools.add("bash")
     search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
-    if is_web_search_explicitly_denied(allow_web_search) or not search_enabled:
-        disabled_tools.update(WEB_TOOL_NAMES)
+    disabled_web_tools = disabled_web_tools_for_turn(
+        allow_web_search,
+        use_web,
+        use_research,
+    )
+    disabled_tools.update(disabled_web_tools)
     if explicit_web_intent:
         disabled_tools.update({
             "bash", "python",
@@ -139,7 +147,7 @@ def _build_disabled_tools(
         if search_enabled:
             disabled_tools.difference_update(WEB_TOOL_NAMES)
         else:
-            disabled_tools.update(WEB_TOOL_NAMES)
+            disabled_tools.update(disabled_web_tools)
     elif search_enabled:
         disabled_tools.difference_update(WEB_TOOL_NAMES)
 
@@ -178,6 +186,18 @@ def test_json_body_allow_web_search_false_disables_web():
     disabled = _build_disabled_tools(allow_web_search="false")
     assert "web_search" in disabled
     assert "web_fetch" in disabled
+    assert "trigger_research" in disabled
+
+
+def test_explicit_research_toggle_allows_research_with_web_search_off():
+    disabled = _build_disabled_tools(
+        allow_web_search="false",
+        use_research="true",
+    )
+
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
+    assert "trigger_research" not in disabled
 
 
 def test_chat_mode_use_web_true_enables_web():
@@ -245,6 +265,7 @@ def test_web_search_disabled_by_default_without_explicit_turn_setting():
     disabled = _build_disabled_tools(allow_web_search=None)
     assert "web_search" in disabled
     assert "web_fetch" in disabled
+    assert "trigger_research" in disabled
 
 
 def test_non_privileged_user_without_explicit_flag_still_disabled():

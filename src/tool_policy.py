@@ -50,6 +50,27 @@ def web_search_enabled_for_turn(allow_web_search: object, use_web: object = None
     return tool_toggle_enabled(allow_web_search) or tool_toggle_enabled(use_web)
 
 
+def disabled_web_tools_for_turn(
+    allow_web_search: object,
+    use_web: object = None,
+    use_research: object = None,
+) -> Set[str]:
+    """Return network-backed tools denied by the request's web controls.
+
+    Deep research performs live retrieval too, so an agent must not be able to
+    use ``trigger_research`` as a fallback when web access is off. An explicit
+    research request remains allowed while the quick-search tools stay off.
+    """
+
+    if web_search_enabled_for_turn(allow_web_search, use_web):
+        return set()
+
+    disabled = set(WEB_TOOL_NAMES)
+    if not tool_toggle_enabled(use_research):
+        disabled.add("trigger_research")
+    return disabled
+
+
 _COMMON_TOOL_NAMES = {
     "api_call",
     "app_api",
