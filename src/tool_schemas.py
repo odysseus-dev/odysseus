@@ -25,6 +25,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "read_file": ("path",),
     "write_file": ("path",),
     "edit_file": ("path",),
+    "generate_image": ("prompt",),
 }
 
 # ---------------------------------------------------------------------------
@@ -1004,6 +1005,25 @@ FUNCTION_TOOL_SCHEMAS = [
         }
     },
     {
+        # generate_image existed only as a fenced prompt-block tool — API models
+        # (native function calling) could never invoke it and hallucinated
+        # malformed text calls instead. Give it a schema like its sibling edit_image.
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate a new image from a text prompt using the configured image model. Use for any 'create/draw/generate an image of X' request.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Detailed description of the image to generate"},
+                    "size": {"type": "string", "description": "WxH, e.g. 1024x1024 (optional)"},
+                    "quality": {"type": "string", "enum": ["low", "medium", "high"], "description": "Optional quality hint"},
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
         "type": "function",
         "function": {
             "name": "trigger_research",
@@ -1507,6 +1527,15 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         # them once; pre-escaping here caused literal ``\u00f1`` sequences to
         # remain visible in the debug panel.
         content = json.dumps(args, ensure_ascii=False)
+    elif tool_type == "generate_image":
+        # The executor parses line-format
+        # (prompt \n model \n size \n quality) \u2014 see ai_interaction.py.
+        content = "\n".join([
+            str(args.get("prompt", "")).strip(),
+            str(args.get("model", "") or ""),
+            str(args.get("size", "") or ""),
+            str(args.get("quality", "") or ""),
+        ]).rstrip("\n")
     else:
         content = json.dumps(args)
 
