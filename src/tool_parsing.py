@@ -1167,7 +1167,15 @@ def _parse_json_tool_call_body(body: str) -> Optional[ToolBlock]:
     else:
         arguments_json = json.dumps(args)
     from src.tool_schemas import function_call_to_tool_block
-    return function_call_to_tool_block(name.strip(), arguments_json)
+    block = function_call_to_tool_block(name.strip(), arguments_json)
+    # Fail closed on non-string content. function_call_to_tool_block passes
+    # scalar fields straight through (e.g. bash -> args["command"]), so a
+    # numeric or structured "command"/"code" value produces a ToolBlock whose
+    # content isn't a string; the agent loop then calls .strip() on it and
+    # aborts the turn. A malformed call must not run.
+    if block is not None and not isinstance(block.content, str):
+        return None
+    return block
 
 
 def _iter_delimited(text, open_re, close_re):
@@ -1376,6 +1384,18 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             text, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE
         ):
             body = text[inner_start:inner_end]
+            # A JSON-looking wrapper body ({...} or [...]) is a bare
+            # function-call object (Qwen/Hermes), not XML. Classify and convert
+            # it as JSON FIRST, and fail closed — never fall through to the XML
+            # scan. Otherwise XML-like text inside a JSON argument (e.g. a
+            # write_file whose content is "<bash>echo unsafe</bash>") gets
+            # reinterpreted by the direct-XML scanner as a different tool and
+            # the intended call is dropped (#5199 review, P1).
+            if body.lstrip()[:1] in ("{", "["):
+                block = _parse_json_tool_call_body(body)
+                if block:
+                    blocks.append(block)
+                continue
             before = len(blocks)
             for inv_name, inv_body in _iter_xml_invoke(body):
                 block = _parse_xml_invoke(inv_name, inv_body)
@@ -1386,15 +1406,18 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     block = _parse_xml_direct_tool(d_name, d_body)
                     if block:
                         blocks.append(block)
-            if len(blocks) == before:
-                block = _parse_json_tool_call_body(body)
-                if block:
-                    blocks.append(block)
         # Some local models stream an opening <tool_call> wrapper and a
         # complete inner tool tag, but forget the closing </tool_call>.
         if not blocks:
             for m in _XML_OPEN_TOOL_CALL_RE.finditer(text):
                 body = m.group(1)
+                # Same JSON-first, fail-closed classification as the closed
+                # wrapper above (#5199 review, P1).
+                if body.lstrip()[:1] in ("{", "["):
+                    block = _parse_json_tool_call_body(body)
+                    if block:
+                        blocks.append(block)
+                    break
                 for inv_name, inv_body in _iter_xml_invoke(body):
                     block = _parse_xml_invoke(inv_name, inv_body)
                     if block:
@@ -1406,10 +1429,6 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     if block:
                         blocks.append(block)
                 if blocks:
-                    break
-                block = _parse_json_tool_call_body(body)
-                if block:
-                    blocks.append(block)
                     break
         # Try bare <invoke> without wrapper
         if not blocks:
