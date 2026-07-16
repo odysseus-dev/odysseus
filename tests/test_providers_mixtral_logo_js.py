@@ -26,10 +26,30 @@ def _has_logo(model):
     return json.loads(p.stdout.strip())
 
 
+def _provider_label(endpoint_url):
+    js = (
+        f"import {{ providerLabel }} from '{_HELPER.as_posix()}';"
+        f"console.log(JSON.stringify(providerLabel({json.dumps(endpoint_url)})));"
+    )
+    p = subprocess.run(["node", "--input-type=module"], input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout.strip())
+
+
 def test_mixtral_ministral_get_a_logo():
     assert _has_logo("mixtral-8x7b") is True
     assert _has_logo("ministral-8b") is True
     assert _has_logo("mistral-large-latest") is True
+
+
+def test_siliconflow_gets_a_logo():
+    assert _has_logo("siliconflow") is True
+    assert _has_logo("https://api.siliconflow.cn/v1") is True
+
+
+def test_siliconflow_endpoint_labels():
+    assert _provider_label("https://api.siliconflow.cn/v1") == "SiliconFlow (CN)"
+    assert _provider_label("https://api.siliconflow.com/v1") == "SiliconFlow (Global)"
 
 
 def test_unknown_vendor_has_no_logo():

@@ -57,6 +57,14 @@ class TestBuildersRejectLookalikeHosts:
         assert llm_core._detect_provider("https://notollama.com") == "openai"
         assert build_models_url("https://notollama.com") == "https://notollama.com/models"
 
+    def test_siliconflow_cn_models_preserves_v1_base(self):
+        assert llm_core._detect_provider("https://api.siliconflow.cn/v1") == "siliconflow"
+        assert build_models_url("https://api.siliconflow.cn/v1") == "https://api.siliconflow.cn/v1/models"
+
+    def test_siliconflow_global_models_preserves_v1_base(self):
+        assert llm_core._detect_provider("https://api.siliconflow.com/v1") == "siliconflow"
+        assert build_models_url("https://api.siliconflow.com/v1") == "https://api.siliconflow.com/v1/models"
+
 
 class TestBuildersLocalAndDockerEndpoints:
     """Local and docker endpoints must keep working after the hostname change:

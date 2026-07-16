@@ -20,6 +20,11 @@ def test_copilot_and_chatgpt_subscription_are_dropdown_device_auth_options():
     assert 'id="adm-deviceAuthStatus"' in _INDEX
 
 
+def test_siliconflow_cn_and_global_are_dropdown_provider_options():
+    assert 'value="https://api.siliconflow.cn/v1" data-logo="siliconflow">SiliconFlow (CN)' in _INDEX
+    assert 'value="https://api.siliconflow.com/v1" data-logo="siliconflow">SiliconFlow (Global)' in _INDEX
+
+
 def test_provider_selection_is_inert_and_add_button_starts_device_flow():
     change_block = _between(_ADMIN, "provider.addEventListener('change'", "urlInput.addEventListener('input'")
     add_block = _between(_ADMIN, "el('adm-epAddBtn').addEventListener('click'", "async function _startProviderDeviceAuth")
