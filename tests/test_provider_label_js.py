@@ -47,6 +47,7 @@ def _provider_label(url: str) -> str | None:
     ("http://localhost:9999/v1",      "Local"),
     # Known remote provider hosts are still labeled by host suffix.
     ("https://api.openai.com/v1",     "OpenAI"),
+    ("https://api.atlascloud.ai/v1",  "Atlas Cloud"),
     ("https://api.groq.com/openai/v1","Groq"),
     ("http://192.168.1.50:8080",      "Local"),      # private LAN: no port branding
 ])

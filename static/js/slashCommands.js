@@ -56,11 +56,12 @@ const SETUP_PROVIDER_URLS = {
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  atlascloud: { name: 'Atlas Cloud', url: 'https://api.atlascloud.ai/v1' },
   'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1' },
   'opencode-go': { name: 'OpenCode Go', url: 'https://opencode.ai/zen/go/v1' },
   nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go', 'nvidia'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'atlascloud', 'opencode-zen', 'opencode-go', 'nvidia'];
 const SETUP_DEVICE_AUTH_PROVIDERS = [
   { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
   { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
@@ -100,6 +101,9 @@ function _setupProviderFromInput(input) {
     google: 'gemini',
     xai: 'xai',
     grok: 'xai',
+    atlas: 'atlascloud',
+    atlascloud: 'atlascloud',
+    atlascloudai: 'atlascloud',
     nvidia: 'nvidia',
     opencodezen: 'opencode-zen',
     opencodego: 'opencode-go',
@@ -130,6 +134,7 @@ function _extractSetupProviderCredential(input) {
     ['groq', 'groq'],
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
+    ['atlas cloud', 'atlascloud'], ['atlascloud', 'atlascloud'], ['atlas', 'atlascloud'],
     ['nvidia', 'nvidia'],
     ['opencode zen', 'opencode-zen'], ['opencode-zen', 'opencode-zen'],
     ['opencode go', 'opencode-go'], ['opencode-go', 'opencode-go'],
@@ -5864,6 +5869,7 @@ const COMMANDS = {
       groq:       { help: 'Groq',          usage: '/setup groq gsk_...',        handler: (a, c) => _cmdSetup(['groq',       ...a], c) },
       gemini:     { help: 'Google Gemini', alias: ['google'], usage: '/setup gemini AIza...', handler: (a, c) => _cmdSetup(['gemini', ...a], c) },
       xai:        { help: 'xAI (Grok)',    alias: ['grok'],   usage: '/setup xai xai-...',   handler: (a, c) => _cmdSetup(['xai',    ...a], c) },
+      atlascloud: { help: 'Atlas Cloud',    alias: ['atlas'],  usage: '/setup atlascloud KEY', handler: (a, c) => _cmdSetup(['atlascloud', ...a], c) },
       ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
       copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
       'chatgpt-subscription': { help: 'ChatGPT Subscription', alias: ['codex'], usage: '/setup chatgpt-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },

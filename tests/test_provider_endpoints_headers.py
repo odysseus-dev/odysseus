@@ -24,6 +24,7 @@ def test_headers_anthropic_without_key_still_sends_version():
 
 @pytest.mark.parametrize("base", [
     "https://api.openai.com/v1",
+    "https://api.atlascloud.ai/v1",
     "https://api.x.ai/v1",
     "https://api.deepseek.com",
     "https://api.groq.com/openai/v1",

@@ -1001,6 +1001,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
+    if _host_match(url, "atlascloud.ai"): return "Atlas Cloud"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"

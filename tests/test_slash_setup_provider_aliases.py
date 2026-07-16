@@ -25,5 +25,10 @@ assert(zenCredential.credential === 'sk-test', 'opencode-zen credential extracti
 const goCredential = _extractSetupProviderCredential('opencode go sk-test');
 assert(goCredential && goCredential.provider.name === 'OpenCode Go', 'opencode go credential provider failed');
 assert(goCredential.credential === 'sk-test', 'opencode go credential extraction failed');
-"""
+const atlasFromCommand = _setupProviderFromInput('atlas cloud');
+assert(atlasFromCommand && atlasFromCommand.url === 'https://api.atlascloud.ai/v1', 'atlas cloud command alias failed');
+const atlasCredential = _extractSetupProviderCredential('atlascloud sk-test');
+assert(atlasCredential && atlasCredential.provider.name === 'Atlas Cloud', 'atlascloud credential provider failed');
+assert(atlasCredential.credential === 'sk-test', 'atlascloud credential extraction failed');
+    """
     subprocess.run(["node", "-e", script], check=True)

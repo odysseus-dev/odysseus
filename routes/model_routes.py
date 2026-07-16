@@ -342,6 +342,10 @@ _PROVIDER_CURATED = {
     "deepseek": [
         "deepseek-chat", "deepseek-reasoner",
     ],
+    "atlascloud": [
+        "qwen/qwen3.5-flash",
+        "deepseek-ai/deepseek-v4-pro",
+    ],
     "groq": [
         "openai/gpt-oss-120b", "openai/gpt-oss-20b",
         "groq/compound", "groq/compound-mini",
@@ -381,6 +385,7 @@ _PROVIDER_CURATED = {
 # inside an unrelated URL.
 _HOST_TO_CURATED = (
     ("z.ai", "zai"),
+    ("atlascloud.ai", "atlascloud"),
     ("deepseek.com", "deepseek"),
     ("groq.com", "groq"),
     ("mistral.ai", "mistral"),

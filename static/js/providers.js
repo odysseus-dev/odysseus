@@ -110,6 +110,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)openrouter\.ai$/i, "OpenRouter"],
   [/(^|\.)anthropic\.com$/i, "Anthropic"],
   [/(^|\.)openai\.com$/i, "OpenAI"],
+  [/(^|\.)atlascloud\.ai$/i, "Atlas Cloud"],
   [/(^|\.)(generativelanguage|aiplatform)\.googleapis\.com$/i, "Google"],
   [/(^|\.)bedrock[\w.-]*\.amazonaws\.com$/i, "AWS Bedrock"],
   [/(^|\.)deepseek\.com$/i, "DeepSeek"],

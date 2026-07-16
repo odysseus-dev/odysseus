@@ -45,6 +45,7 @@ class TestDetectProvider:
         ("https://api.openai.com/v1", "openai"),
         ("https://api.x.ai/v1", "openai"),
         ("https://api.deepseek.com", "openai"),
+        ("https://api.atlascloud.ai/v1", "openai"),
         ("https://generativelanguage.googleapis.com/v1beta/openai", "openai"),
         # Ollama's OpenAI-compatible /v1 surface is generic, not native ollama.
         ("http://localhost:11434/v1", "openai"),
@@ -79,6 +80,7 @@ class TestProviderLabel:
         ("https://ollama.com", "Ollama Cloud"),
         ("https://api.x.ai/v1", "xAI"),
         ("https://api.openai.com/v1", "OpenAI"),
+        ("https://api.atlascloud.ai/v1", "Atlas Cloud"),
         ("https://openrouter.ai/api/v1", "OpenRouter"),
         ("https://api.groq.com/openai/v1", "Groq"),
         ("https://integrate.api.nvidia.com/v1", "NVIDIA"),

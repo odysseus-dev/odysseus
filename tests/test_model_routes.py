@@ -184,6 +184,9 @@ class TestMatchProviderCurated:
     def test_deepseek_url(self):
         assert _match_provider_curated("https://api.deepseek.com/v1", "openai") == "deepseek"
 
+    def test_atlascloud_url(self):
+        assert _match_provider_curated("https://api.atlascloud.ai/v1", "openai") == "atlascloud"
+
     def test_groq_url(self):
         assert _match_provider_curated("https://api.groq.com/openai/v1", "openai") == "groq"
 
@@ -340,6 +343,12 @@ class TestCurateModels:
         assert "deepseek-chat" in curated
         assert "deepseek-reasoner" in curated
         assert "deepseek-coder" in extra
+
+    def test_atlascloud_curated(self):
+        models = ["deepseek-ai/deepseek-v4-pro", "custom-atlas-model", "qwen/qwen3.5-flash"]
+        curated, extra = _curate_models(models, "atlascloud")
+        assert curated == ["qwen/qwen3.5-flash", "deepseek-ai/deepseek-v4-pro"]
+        assert extra == ["custom-atlas-model"]
 
     def test_xai_curated(self):
         models = ["grok-4", "grok-3-fast", "grok-2"]
