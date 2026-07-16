@@ -880,8 +880,11 @@ def setup_chat_routes(
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
         _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
+        # trigger_research reaches the internet too, so gate it with the same
+        # per-turn web toggle as web_search/web_fetch — "web off" must mean offline.
+        _web_gated_tools = set(WEB_TOOL_NAMES) | {"trigger_research"}
         if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
-            disabled_tools.update(WEB_TOOL_NAMES)
+            disabled_tools.update(_web_gated_tools)
         if _explicit_web_intent:
             # A direct lookup/search request should not drift into personal
             # tools or shell fallbacks. It can only use web_search/web_fetch
@@ -896,11 +899,11 @@ def setup_chat_routes(
                 "api_call", "builtin_browser",
             })
             if _search_enabled:
-                disabled_tools.difference_update(WEB_TOOL_NAMES)
+                disabled_tools.difference_update(_web_gated_tools)
             else:
-                disabled_tools.update(WEB_TOOL_NAMES)
+                disabled_tools.update(_web_gated_tools)
         elif _search_enabled:
-            disabled_tools.difference_update(WEB_TOOL_NAMES)
+            disabled_tools.difference_update(_web_gated_tools)
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
