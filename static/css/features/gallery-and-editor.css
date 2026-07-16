@@ -755,9 +755,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
+  gap: 4px;
+  min-width: 26px;
+  width: auto;
   height: 100%;
-  padding: 0 !important;
+  padding: 0 7px !important;
   border: none !important;
   border-radius: 0 !important;
   background: none !important;
@@ -765,6 +767,11 @@
   opacity: 0.45;
   cursor: pointer;
   transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.md-view-label {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
 }
 .md-view-toggle .md-view-opt:hover { opacity: 0.8; }
 .md-view-toggle .md-view-opt.active {
@@ -784,13 +791,50 @@
   .md-view-toggle .md-view-opt.active { animation: none; }
 }
 
+.doc-md-toolbar.md-preview-active,
+.doc-md-toolbar.md-write-active {
+  overflow: visible;
+  -webkit-mask-image: none;
+          mask-image: none;
+  z-index: 3;
+}
+.doc-md-toolbar.md-preview-active {
+  border-bottom-color: var(--border);
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle,
+.doc-md-toolbar.md-write-active #doc-md-view-toggle {
+  align-self: flex-end;
+  height: 28px;
+  margin-bottom: -1px;
+  border-radius: 7px 7px 0 0;
+  box-shadow: 0 -1px 0 var(--border), -1px 0 0 var(--border), 1px 0 0 var(--border);
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle {
+  background: var(--bg);
+  border-bottom-color: var(--bg);
+}
+.doc-md-toolbar.md-write-active #doc-md-view-toggle {
+  background: var(--sidebar-bg, var(--panel));
+  border-bottom-color: var(--sidebar-bg, var(--panel));
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle .md-view-opt.active {
+  background: var(--bg) !important;
+}
+.doc-md-toolbar.md-write-active #doc-md-view-toggle .md-view-opt.active {
+  background: var(--sidebar-bg, var(--panel)) !important;
+}
+.doc-md-preview.md-preview-active {
+  border-top: 1px solid var(--border);
+  margin-top: -1px;
+}
+
 /* Mobile: the doc/email footer controls (format toggle, export button, export
    menu) were slimmer than the Send button, so the row looked ragged. Bump them
    to match the Send button height (and give the export/overflow menu bigger,
    touch-friendly rows). */
 @media (max-width: 768px) {
   .md-view-toggle { height: 28px; }
-  .md-view-toggle .md-view-opt { width: 38px; }
+  .md-view-toggle .md-view-opt { min-width: 38px; padding: 0 8px !important; }
   .doc-action-icon-btn { padding: 6px; }
   .email-send-btn { height: 28px; }
   /* The type/language picker was the slim one stuck at 22px — match it to the
@@ -1246,7 +1290,7 @@ mark.doc-find-mark.current {
   scrollbar-width: none;
   pointer-events: none;
   z-index: 0;
-  background: var(--hl-bg, var(--bg)) !important;
+  background: var(--sidebar-bg, var(--panel)) !important;
   color: var(--hl-fg, var(--fg));
   border: none;
   /* Disable ligatures + kerning everywhere in the editor. Monospace fonts
@@ -1448,6 +1492,13 @@ mark.doc-find-mark.current {
   font-size: 11px;
   white-space: nowrap;
 }
+.history-attach-card {
+  cursor: default;
+  opacity: 0.82;
+}
+.history-attach-card .attach-card-size {
+  text-transform: lowercase;
+}
 /* Import prompt banner (above chatbar) */
 .import-prompt-banner {
   display: flex;
@@ -1624,35 +1675,41 @@ mark.doc-find-mark.current {
   border-color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
 }
-.diff-toolbar-btn-accept { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }
-.diff-toolbar-btn-accept:hover { border-color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
-.diff-toolbar-btn-reject { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }
-.diff-toolbar-btn-reject:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+.diff-toolbar-btn-accept { color: #58a6ff; border-color: color-mix(in srgb, #58a6ff 36%, transparent); }
+.diff-toolbar-btn-accept:hover { border-color: #58a6ff; background: color-mix(in srgb, #58a6ff 12%, transparent); }
+.diff-toolbar-btn-reject { color: #f2cc60; border-color: color-mix(in srgb, #f2cc60 36%, transparent); }
+.diff-toolbar-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 12%, transparent); }
 .diff-line-del {
   display: block;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, #f2cc60 24%, transparent);
+  border-left: 3px solid #f2cc60;
+  color: #f2cc60;
   padding-left: 4px;
   margin-left: -7px;
   text-decoration: line-through;
-  opacity: 0.7;
 }
 .diff-line-add {
   display: block;
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
-  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, #58a6ff 24%, transparent);
+  border-left: 3px solid #58a6ff;
+  color: #58a6ff;
   padding-left: 4px;
   margin-left: -7px;
 }
 /* Inline diff summary (version history cards) */
 .diff-del {
-  color: var(--accent);
+  color: #f2cc60;
+  background: color-mix(in srgb, #f2cc60 16%, transparent);
   text-decoration: line-through;
-  opacity: 0.7;
+  border-radius: 2px;
+  padding: 0 2px;
 }
 .diff-add {
-  color: var(--accent);
+  color: #58a6ff;
+  background: color-mix(in srgb, #58a6ff 16%, transparent);
   font-weight: 600;
+  border-radius: 2px;
+  padding: 0 2px;
 }
 .diff-line-equal {
   display: block;
@@ -1674,10 +1731,25 @@ mark.doc-find-mark.current {
    Disable its pointer events so clicks reach the buttons in the layer below. */
 .doc-editor-wrap.diff-mode .doc-editor-textarea {
   pointer-events: none;
+  color: transparent !important;
+  caret-color: transparent !important;
 }
 .doc-editor-wrap.diff-mode .doc-editor-highlight {
+  display: block !important;
   pointer-events: auto;
-  z-index: 2;
+  z-index: 3;
+  color: var(--fg) !important;
+  background: var(--sidebar-bg, var(--panel)) !important;
+  overflow: auto;
+}
+.doc-editor-wrap.diff-mode .doc-editor-highlight * {
+  color: inherit;
+}
+.doc-editor-wrap.diff-mode .diff-line-del {
+  color: #f2cc60 !important;
+}
+.doc-editor-wrap.diff-mode .diff-line-add {
+  color: #58a6ff !important;
 }
 .diff-chunk-btn {
   width: 20px;
@@ -1695,10 +1767,10 @@ mark.doc-find-mark.current {
   opacity: 0.6;
 }
 .diff-chunk-btn:hover { opacity: 1; }
-.diff-chunk-btn-accept { color: var(--green); }
-.diff-chunk-btn-accept:hover { border-color: var(--green); background: color-mix(in srgb, var(--green) 15%, transparent); }
-.diff-chunk-btn-reject { color: var(--red); }
-.diff-chunk-btn-reject:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 15%, transparent); }
+.diff-chunk-btn-accept { color: #58a6ff; }
+.diff-chunk-btn-accept:hover { border-color: #58a6ff; background: color-mix(in srgb, #58a6ff 15%, transparent); }
+.diff-chunk-btn-reject { color: #f2cc60; }
+.diff-chunk-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 15%, transparent); }
 
 .doc-suggestion-accept-all {
   flex: 1;
@@ -2006,8 +2078,15 @@ mark.doc-find-mark.current {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-word;
 }
-.doc-version-diff .diff-del { color: var(--red); opacity: 0.75; }
-.doc-version-diff .diff-add { color: #3fb950; }
+.doc-version-diff .diff-del {
+  color: #f2cc60;
+  background: color-mix(in srgb, #f2cc60 16%, transparent);
+  opacity: 1;
+}
+.doc-version-diff .diff-add {
+  color: #58a6ff;
+  background: color-mix(in srgb, #58a6ff 16%, transparent);
+}
 
 /* Mobile: doc editor takes over full screen as toggle */
 @media (max-width: 768px) {
@@ -2049,6 +2128,9 @@ mark.doc-find-mark.current {
   body.doc-view .modal[id^="email-reader-"] { z-index: 150 !important; }
   body.doc-view.email-front #email-lib-modal,
   body.doc-view.email-front .modal[id^="email-reader-"] { z-index: 300 !important; }
+  body.doc-view:not(.email-front) .doc-editor-pane { z-index: 10010 !important; }
+  body.doc-view:not(.email-front) #email-lib-modal,
+  body.doc-view:not(.email-front) .modal[id^="email-reader-"] { z-index: 10000 !important; }
   /* Hide new-session button and hamburger when doc editor is open on mobile */
   body.doc-view .mobile-new-chat-btn,
   /* Hide the global hamburger while Compare Mode is active — the compare
@@ -2142,7 +2224,7 @@ body:has(.compare-active) .hamburger-btn { display: none !important; }
     font-size: 13px !important;
     padding: 6px 10px !important;
     min-width: 34px;
-    min-height: 34px;
+    min-height: 26px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3139,6 +3221,126 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   justify-content: center;
   background: color-mix(in srgb, var(--bg) 30%, transparent);
   pointer-events: none;
+}
+.ge-ai-command {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 18;
+  width: min(430px, calc(100% - 28px));
+  transform: translateX(-50%);
+  padding: 7px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 94%, transparent);
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 26%, transparent);
+  backdrop-filter: blur(8px);
+}
+.ge-ai-command-toggle {
+  width: 100%;
+  height: 28px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent, var(--red));
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ge-ai-command-collapsed {
+  width: auto;
+  min-width: 112px;
+  padding: 2px 8px;
+}
+.ge-ai-command-collapsed .ge-ai-command-toggle {
+  display: inline-flex;
+}
+.ge-ai-command-collapsed .ge-ai-command-form,
+.ge-ai-command-collapsed .ge-ai-command-status {
+  display: none;
+}
+.ge-ai-command-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ge-ai-command-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 76%, #000 24%);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.ge-ai-command-input:focus {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+.ge-ai-command-run {
+  background: var(--send-btn-bg, var(--red));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  min-width: 32px;
+  width: 32px;
+  height: 32px !important;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  transition: background 0.25s, opacity 0.12s;
+  overflow: hidden;
+}
+.ge-ai-command-run:hover {
+  background: var(--send-btn-hover, color-mix(in srgb, var(--red) 80%, white));
+}
+.ge-ai-command-close {
+  width: 28px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.52;
+  cursor: pointer;
+  padding: 0;
+}
+.ge-ai-command-close:hover {
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-ai-command-status {
+  min-height: 13px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--fg-muted);
+}
+.ge-ai-command-status[data-kind="running"] {
+  color: var(--accent, var(--red));
+}
+.ge-ai-command-status[data-kind="done"] {
+  color: var(--green, #4caf50);
+}
+.ge-ai-command-status[data-kind="error"] {
+  color: var(--red, #e5484d);
 }
 /* Loading overlay shown while a large image is decoding — centered
    whirlpool + "Loading" caption over a translucent dim. */

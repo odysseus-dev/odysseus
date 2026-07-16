@@ -89,6 +89,18 @@ def test_request_flags_vision():
     assert vision is True
 
 
+def test_request_flags_non_dict_last_message_does_not_crash():
+    # A client can send a bare-string (non-dict) last element; before the
+    # isinstance guard this raised AttributeError on last.get("role").
+    assert copilot.request_flags(["hi"]) == (False, False)
+    assert copilot.request_flags([{"role": "user"}, "trailing"]) == (False, False)
+
+
+def test_request_flags_empty_and_none():
+    assert copilot.request_flags([]) == (False, False)
+    assert copilot.request_flags(None) == (False, False)
+
+
 def test_apply_request_headers_mutates():
     h = {"X-GitHub-Api-Version": "v"}
     copilot.apply_request_headers(h, [{"role": "tool", "content": "x"}])

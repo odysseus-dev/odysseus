@@ -1334,15 +1334,18 @@ textarea.memory-add-input {
   filter: saturate(0.9);
 }
 .task-status-badge {
+  appearance: none;
+  -webkit-appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  margin: 0;
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: 999px;
   flex-shrink: 0;
   cursor: pointer;
   border: 1px solid transparent;
@@ -1350,6 +1353,13 @@ textarea.memory-add-input {
   font-family: 'Fira Code', monospace;
   transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, filter 0.12s ease;
   user-select: none;
+}
+.task-state-badge > svg,
+.task-state-badge > .task-state-label {
+  pointer-events: none;
+}
+.task-state-label-mobile {
+  display: none;
 }
 .task-paused-badge {
   color: var(--orange, #ffb86c);
@@ -1781,6 +1791,32 @@ textarea.memory-add-input {
   background: color-mix(in srgb, var(--red) 15%, transparent);
   border-color: color-mix(in srgb, var(--red) 40%, transparent);
   color: var(--red);
+}
+
+@media (max-width: 768px) {
+  .memory-category-filters:has(.memory-cat-chip),
+  .gallery-tag-chips,
+  .gallery-album-chips,
+  .gallery-ai-tags {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    touch-action: pan-x;
+  }
+  .memory-category-filters:has(.memory-cat-chip)::-webkit-scrollbar,
+  .gallery-tag-chips::-webkit-scrollbar,
+  .gallery-album-chips::-webkit-scrollbar,
+  .gallery-ai-tags::-webkit-scrollbar {
+    display: none;
+  }
+  .memory-category-filters:has(.memory-cat-chip) .memory-cat-chip,
+  .gallery-tag-chips .gallery-chip,
+  .gallery-album-chips .gallery-chip,
+  .gallery-ai-tags .gallery-ai-chip {
+    flex: 0 0 auto;
+  }
 }
 
 /* Sort select */

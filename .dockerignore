@@ -15,6 +15,10 @@ build/
 # at runtime — never baked into the image. Mirrored in .gitignore.
 secrets.env
 secrets.env.*
+secrets.env~
+.secrets.env.swp
+.secrets.env.swo
+**/#secrets.env#
 !secrets.env.example
 /data/
 /logs/

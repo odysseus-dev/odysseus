@@ -17,10 +17,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
-_PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
-                     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
-                     "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-                     "172.30.", "172.31.", "192.168.")
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
 
 # Tailscale uses the CGNAT range 100.64.0.0/10, NOT all of 100.0.0.0/8.
 # A bare "100." prefix would classify public addresses (e.g. AWS ranges
@@ -34,6 +35,14 @@ def _in_tailscale_range(host: str) -> bool:
         return ipaddress.ip_address(host) in _TAILSCALE_CGNAT
     except ValueError:
         return False
+
+
+def _is_private_ip_literal(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in _PRIVATE_NETWORKS)
 
 
 def _normalize_base_for_compare(url: str) -> str:
@@ -87,7 +96,7 @@ def is_local_endpoint(url: str) -> bool:
         return True
     try:
         host = urlparse(url).hostname or ""
-        return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES) or _in_tailscale_range(host)
+        return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
     except Exception:
         return False
 
@@ -211,6 +220,10 @@ KNOWN_CONTEXT_WINDOWS = {
     'hermes': 131072,
     'nous-hermes': 131072,
 
+    # --- Xiaomi ---
+    'mimo-v2.5-pro': 1048576,
+    'mimo-v2.5': 1048576,
+
     # --- Open community ---
     'dolphin': 32768,
     'mythomax': 4096,
@@ -303,6 +316,83 @@ def _lookup_known(model: str) -> Optional[int]:
     return best_ctx
 
 
+def _model_ctx_from_entry(m: dict) -> Optional[int]:
+    """Extract a positive context window from one /models catalog entry.
+
+    Checks the common top-level fields first, then a nested meta/model_extra
+    object. Returns None when no positive window is reported.
+    """
+    if not isinstance(m, dict):
+        return None
+    for field in (
+        "context_length",
+        "context_window",
+        "max_model_len",
+        "max_context_length",
+        "max_seq_len",
+    ):
+        val = m.get(field)
+        if val and isinstance(val, (int, float)) and val > 0:
+            return int(val)
+    meta = m.get("meta") or m.get("model_extra") or {}
+    if isinstance(meta, dict):
+        # n_ctx is the actual serving context (set via -c flag in llama.cpp)
+        for field in ("n_ctx", "context_length", "context_window", "max_model_len"):
+            val = meta.get(field)
+            if val and isinstance(val, (int, float)) and val > 0:
+                return int(val)
+    return None
+
+
+# Per-endpoint cache of the {model_id: context_length} map parsed from a
+# proxy/api catalog. api/proxy endpoints skip the /models download on every
+# lookup because a large catalog is expensive; caching the whole map lets us
+# pay that download at most once per endpoint instead of once per model.
+_catalog_ctx_cache: Dict[str, Dict[str, int]] = {}
+
+
+def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
+    """Context window for a model read from the endpoint's /models catalog.
+
+    Fetches the catalog once per endpoint and caches the full id->context map,
+    so an api/proxy endpoint serving a model that isn't in KNOWN_CONTEXT_WINDOWS
+    (e.g. a new OpenRouter model) still reports its real window instead of the
+    bare default. Returns None when the catalog can't be read or doesn't list a
+    positive window for the model.
+    """
+    cat = _catalog_ctx_cache.get(endpoint_url)
+    if cat is None:
+        from src.endpoint_resolver import build_models_url
+        try:
+            r = httpx.get(build_models_url(endpoint_url), timeout=REQUEST_TIMEOUT)
+        except Exception as e:
+            logger.debug(f"Failed to fetch proxy catalog for context length: {e}")
+            return None
+        if not r.is_success:
+            return None
+        cat = {}
+        try:
+            for m in (r.json().get("data") or []):
+                mid = m.get("id") if isinstance(m, dict) else None
+                ctx = _model_ctx_from_entry(m) if mid else None
+                if mid and ctx:
+                    cat[mid] = ctx
+        except Exception as e:
+            logger.debug(f"Failed to parse proxy catalog for context length: {e}")
+            return None
+        _catalog_ctx_cache[endpoint_url] = cat
+
+    if model in cat:
+        return cat[model]
+    # Catalog ids may carry a provider prefix (e.g. "openai/gpt-4o") while the
+    # session stores the bare id; match on the trailing segment as a fallback.
+    base = model.split("/")[-1]
+    for mid, ctx in cat.items():
+        if mid.split("/")[-1] == base:
+            return ctx
+    return None
+
+
 def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     """Query the model API for context length. Returns (context_length, known) where
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
@@ -317,6 +407,14 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         if known:
             logger.info(f"Using known context window for {model}: {known}")
             return known, True
+        # Not in the known table: read the real window from the catalog (cached
+        # once per endpoint) instead of capping every unknown model at the
+        # default — that under-reported large windows on aggregators like
+        # OpenRouter (issue #4886).
+        api_ctx = _proxy_catalog_context(endpoint_url, model)
+        if api_ctx:
+            logger.info(f"Proxy catalog reports context window for {model}: {api_ctx}")
+            return api_ctx, True
         return DEFAULT_CONTEXT, False
 
     # Try llama.cpp /slots endpoint first — reports actual serving context
@@ -357,27 +455,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
             for m in models_list:
                 mid = m.get("id", "")
                 if mid == model or mid.split("/")[-1] == model.split("/")[-1]:
-                    for field in (
-                        "context_length",
-                        "context_window",
-                        "max_model_len",
-                        "max_context_length",
-                        "max_seq_len",
-                    ):
-                        val = m.get(field)
-                        if val and isinstance(val, (int, float)) and val > 0:
-                            api_ctx = int(val)
-                            break
-
-                    if not api_ctx:
-                        meta = m.get("meta") or m.get("model_extra") or {}
-                        if isinstance(meta, dict):
-                            # n_ctx is the actual serving context (set via -c flag in llama.cpp)
-                            for field in ("n_ctx", "context_length", "context_window", "max_model_len"):
-                                val = meta.get(field)
-                                if val and isinstance(val, (int, float)) and val > 0:
-                                    api_ctx = int(val)
-                                    break
+                    api_ctx = _model_ctx_from_entry(m)
                     break
     except Exception as e:
         logger.debug(f"Failed to query context length for {model}: {e}")

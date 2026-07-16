@@ -14,13 +14,56 @@ from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
+from src.model_context import estimate_tokens
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
+from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
+
+_CASUAL_OPENING_RE = re.compile(
+    r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
+    r"lol|lmao|haha+|hehe+|thanks?|thank you|ty|idk|dunno|meh|bruh|bro)\b(?P<tail>.*)$",
+    re.IGNORECASE,
+)
+_CASUAL_BLOCKLIST_RE = re.compile(
+    r"\b(?:cookbook|serve|serving|launch|start|vllm|sglang|llama\.?cpp|ollama|"
+    r"download|model|email|document|doc|note|calendar|task|search|web|research|"
+    r"file|folder|repo|git|settings?|endpoint|api|token|mcp)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_casual_low_signal(text: str) -> bool:
+    """Short greetings/slang should not pull memory, skills, RAG, or docs."""
+    s = str(text or "").strip()
+    m = _CASUAL_OPENING_RE.match(s)
+    if not m:
+        return False
+    tail = m.group("tail") or ""
+    if _CASUAL_BLOCKLIST_RE.search(tail):
+        return False
+    tail_words = re.findall(r"[A-Za-z0-9_'-]+", tail)
+    return len(tail_words) <= 2
+
+
+# Strong references to in-flight fire-and-forget tasks scheduled from this
+# module. asyncio only keeps weak references to tasks created via
+# create_task, so without this the GC can collect a task mid-execution and
+# the background work (extraction, auto-naming) silently never runs.
+# Mirrors WebhookManager._spawn_tracked from src/webhook_manager.py.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Schedule a background task and hold a strong reference until it finishes."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
 
 
 # ── Data containers ────────────────────────────────────────────────────── #
@@ -58,11 +101,19 @@ class ChatContext:
     uprefs: dict
     preset: PresetInfo
     preprocessed: PreprocessedMessage
+    context_trimmed: bool = False
+    context_messages_before_trim: int = 0
+    context_messages_after_trim: int = 0
+    context_tokens_before_trim: int = 0
+    context_tokens_after_trim: int = 0
     # Documents auto-created server-side during preprocess (e.g. when an
     # attached fillable PDF gets rendered into a markdown editor doc).
     # The chat route emits a doc_update SSE event for each before streaming
     # begins, so the editor pane switches to the new doc immediately.
     auto_opened_docs: list = field(default_factory=list)
+    # Uploads attached to this user turn, resolved and owner-checked for the
+    # agent's private context. This is not emitted to the browser.
+    uploaded_files: list = field(default_factory=list)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────── #
@@ -159,17 +210,9 @@ async def auto_name_session(session_manager, sess):
             return
 
         owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(owner=owner)
-        if not t_model:
-            # If no task/utility model is configured at all, fall back to
-            # the session's own model so auto-naming still works even on
-            # minimal setups.
-            from src.endpoint_resolver import resolve_endpoint
-            _fallback = resolve_endpoint("default", owner=owner)
-            if _fallback and _fallback[1]:
-                t_url, t_model, t_headers = _fallback
-            else:
-                t_url, t_model, t_headers = sess.endpoint_url, sess.model, sess.headers
+        t_url, t_model, t_headers = resolve_task_endpoint(
+            sess.endpoint_url, sess.model, sess.headers, owner=owner
+        )
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
             return
@@ -331,6 +374,62 @@ async def preprocess(
         youtube_transcripts=yt_transcripts,
         attachment_meta=att_meta,
     )
+
+
+def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[str]) -> list[dict]:
+    """Resolve current-turn upload IDs into a small tool-facing manifest.
+
+    The chat UI already sends attachment ids, and preprocessing inlines as much
+    text as fits. Agent mode still needs a discoverable bridge for files whose
+    content was truncated/omitted or when the model chooses file tools. Only
+    owner-authorized uploads are included, and paths must remain inside the
+    configured upload directory.
+    """
+    if not att_ids or not upload_handler or not hasattr(upload_handler, "resolve_upload"):
+        return []
+
+    def _read_file_can_open(path: str) -> bool:
+        try:
+            from src.tool_execution import _resolve_tool_path
+
+            return _resolve_tool_path(path) == os.path.realpath(path)
+        except Exception:
+            return False
+
+    manifest: list[dict] = []
+    for att_id in att_ids:
+        try:
+            info = upload_handler.resolve_upload(str(att_id), owner=owner)
+        except Exception:
+            logger.debug("Failed to resolve upload %r for agent manifest", att_id, exc_info=True)
+            continue
+        if not isinstance(info, dict):
+            continue
+
+        path = info.get("path")
+        if path:
+            try:
+                inside = True
+                if hasattr(upload_handler, "_inside_upload_dir"):
+                    inside = bool(upload_handler._inside_upload_dir(path))
+                elif hasattr(upload_handler, "inside_base_dir"):
+                    inside = bool(upload_handler.inside_base_dir(path))
+                if not inside or not os.path.exists(path) or not _read_file_can_open(path):
+                    path = None
+            except Exception:
+                path = None
+
+        ref = attachment_ref({**info, "id": info.get("id") or str(att_id)})
+        ref.update({
+            "id": ref["attachment_id"],
+            "uri": f"odysseus://attachment/{ref['attachment_id']}",
+            "read_policy": "owner_checked_upload",
+            # Transitional compatibility: existing built-in tools can still use
+            # this path, but only after owner, upload-root, and tool-root checks.
+            "path": path,
+        })
+        manifest.append(ref)
+    return manifest
 
 
 def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, incognito: bool = False):
@@ -576,9 +675,16 @@ async def build_chat_context(
     if not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
-    # Resolve user prefs
+    # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
+    # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
+    uploaded_files = build_uploaded_file_manifest(
+        att_ids or [],
+        getattr(chat_handler, "upload_handler", None),
+        getattr(sess, "owner", None),
+    )
+    casual_low_signal = _is_casual_low_signal(message)
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
@@ -586,6 +692,9 @@ async def build_chat_context(
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
     if not allow_tool_preprocessing:
+        mem_enabled = False
+        skills_enabled = False
+    if casual_low_signal:
         mem_enabled = False
         skills_enabled = False
     logger.debug(
@@ -603,11 +712,11 @@ async def build_chat_context(
 
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito or not allow_tool_preprocessing or is_research_spinoff:
+    if incognito or not allow_tool_preprocessing or is_research_spinoff or casual_low_signal:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
-    skip_web = bool(search_context) or not allow_tool_preprocessing
+    skip_web = bool(search_context) or not allow_tool_preprocessing or casual_low_signal
 
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
@@ -626,7 +735,7 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None or is_research_spinoff:
+    if use_rag is not None or is_research_spinoff or casual_low_signal:
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
@@ -634,7 +743,7 @@ async def build_chat_context(
     used_memories = getattr(chat_processor, '_last_used_memories', [])
 
     # Inject pre-fetched search context (compare mode)
-    if search_context and allow_tool_preprocessing:
+    if search_context and allow_tool_preprocessing and not casual_low_signal:
         preface.append(untrusted_context_message("prefetched search context", search_context))
 
     # YouTube transcripts
@@ -678,7 +787,12 @@ async def build_chat_context(
     messages, context_length, was_compacted = await maybe_compact(
         sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
     )
+    _before_trim_messages = len(messages)
+    _before_trim_tokens = estimate_tokens(messages)
     messages = trim_for_context(messages, context_length)
+    _after_trim_messages = len(messages)
+    _after_trim_tokens = estimate_tokens(messages)
+    _context_trimmed = _after_trim_messages < _before_trim_messages or _after_trim_tokens < _before_trim_tokens
 
     return ChatContext(
         preface=preface,
@@ -692,7 +806,13 @@ async def build_chat_context(
         uprefs=uprefs,
         preset=preset,
         preprocessed=preprocessed,
+        context_trimmed=_context_trimmed,
+        context_messages_before_trim=_before_trim_messages,
+        context_messages_after_trim=_after_trim_messages,
+        context_tokens_before_trim=_before_trim_tokens,
+        context_tokens_after_trim=_after_trim_tokens,
         auto_opened_docs=auto_opened_docs,
+        uploaded_files=uploaded_files,
     )
 
 
@@ -1112,7 +1232,7 @@ def run_post_response_tasks(
             )))
 
     if _extraction_jobs:
-        asyncio.create_task(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
+        _spawn_bg(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
 
     # Token accumulation
     if last_metrics:
@@ -1127,4 +1247,4 @@ def run_post_response_tasks(
 
     # Auto-name
     if needs_auto_name(sess.name):
-        asyncio.create_task(auto_name_session(session_manager, sess))
+        _spawn_bg(auto_name_session(session_manager, sess))

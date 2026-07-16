@@ -27,6 +27,11 @@ def test_new_chat_prefers_pending_and_current_model_before_default():
 def test_desktop_new_chat_actions_use_shared_preference_helper():
     source = APP_JS.read_text(encoding="utf-8")
 
+    shared_handler = _slice(
+        source,
+        "async function _handleNewChatAction",
+        "// New session button on icon rail",
+    )
     rail_handler = _slice(
         source,
         "// New session button on icon rail",
@@ -38,7 +43,8 @@ def test_desktop_new_chat_actions_use_shared_preference_helper():
         "const sidebarNewChatBtn = el('sidebar-new-chat-btn');",
     )
 
-    assert "if (await _createDirectChatFromPreferredModel()) return;" in rail_handler
-    assert "if (await _createDirectChatFromPreferredModel()) return;" in brand_handler
+    assert "if (preferModel && await _createDirectChatFromPreferredModel()) return;" in shared_handler
+    assert "await _handleNewChatAction();" in rail_handler
+    assert "await _handleNewChatAction();" in brand_handler
     assert "const dc = await _refreshDefaultChat();" not in rail_handler
     assert "const dc = await _refreshDefaultChat();" not in brand_handler

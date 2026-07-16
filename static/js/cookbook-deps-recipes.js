@@ -49,6 +49,16 @@ const _RECIPES = [
     },
   },
 
+  // ── MLX ───────────────────────────────────────────────────────────────
+  {
+    backend: 'mlx_lm',
+    label: 'Any MLX model',
+    match: () => true,
+    variants: {
+      pip:    { commands: ['uv pip install -U mlx-lm'] },
+    },
+  },
+
   // ── llama.cpp ─────────────────────────────────────────────────────────
   {
     backend: 'llama_cpp',
@@ -56,7 +66,7 @@ const _RECIPES = [
     match: () => true,
     variants: {
       pip:    { commands: ['CMAKE_ARGS="-DGGML_CUDA=on" uv pip install -U "llama-cpp-python[server]"'] },
-      docker: { commands: ['docker pull ghcr.io/ggerganov/llama.cpp:server-cuda'] },
+      docker: { commands: ['docker pull ghcr.io/ggml-org/llama.cpp:server-cuda'] },
     },
   },
 ];
@@ -75,7 +85,7 @@ export function recipeCommands(recipe, variant) {
 // Backends we surface a recipe panel for. Other rows in the Dependencies
 // list keep the existing flat Install/Reinstall button without an expand
 // affordance.
-export const RECIPE_BACKENDS = new Set(['vllm', 'sglang', 'llama_cpp']);
+export const RECIPE_BACKENDS = new Set(['vllm', 'sglang', 'mlx_lm', 'llama_cpp']);
 
 // All recipe entries for a given backend, in catalog order. The first one
 // is the model-specific match (when present); the last is always the

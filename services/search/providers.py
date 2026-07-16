@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 import httpx
 from bs4 import BeautifulSoup
 
-from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT
+from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT, WEB_FETCH_USER_AGENT
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
@@ -138,7 +138,7 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
     count = count if count is not None else _get_result_count()
     instance = _get_search_instance()
     api_key = ""
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": WEB_FETCH_USER_AGENT}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     # News/fresh queries do badly in the 'general' category — it favours
@@ -250,7 +250,7 @@ def searxng_search(query, max_results=10):
     """Search using SearXNG instance - parsing HTML."""
     instance = _get_search_instance()
     api_key = ""
-    req_headers = {"User-Agent": "Mozilla/5.0"}
+    req_headers = {"User-Agent": WEB_FETCH_USER_AGENT}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
     try:
@@ -389,7 +389,7 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
             response = httpx.get(
                 "https://html.duckduckgo.com/html/",
                 params={"q": query, "kp": _safesearch_for("duckduckgo_html")},
-                headers={"User-Agent": "Mozilla/5.0"},
+                headers={"User-Agent": WEB_FETCH_USER_AGENT},
                 timeout=REQUEST_TIMEOUT,
             )
             response.raise_for_status()

@@ -220,32 +220,32 @@
    .section-just-expanded recipe so list items spring in staggered. Class
    is applied to #email-lib-grid in emailLibrary.js on the first render
    only, then removed after the longest delay so re-renders feel instant. */
-.email-lib-just-opened .doclib-card {
+.email-lib-just-opened :is(.doclib-card, .date-section-header) {
   animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
 }
-.email-lib-just-opened .doclib-card:nth-child(1)  { animation-delay: 0.02s; }
-.email-lib-just-opened .doclib-card:nth-child(2)  { animation-delay: 0.04s; }
-.email-lib-just-opened .doclib-card:nth-child(3)  { animation-delay: 0.06s; }
-.email-lib-just-opened .doclib-card:nth-child(4)  { animation-delay: 0.08s; }
-.email-lib-just-opened .doclib-card:nth-child(5)  { animation-delay: 0.10s; }
-.email-lib-just-opened .doclib-card:nth-child(6)  { animation-delay: 0.12s; }
-.email-lib-just-opened .doclib-card:nth-child(7)  { animation-delay: 0.14s; }
-.email-lib-just-opened .doclib-card:nth-child(8)  { animation-delay: 0.16s; }
-.email-lib-just-opened .doclib-card:nth-child(9)  { animation-delay: 0.18s; }
-.email-lib-just-opened .doclib-card:nth-child(10) { animation-delay: 0.20s; }
-.email-lib-just-opened .doclib-card:nth-child(11) { animation-delay: 0.22s; }
-.email-lib-just-opened .doclib-card:nth-child(12) { animation-delay: 0.24s; }
-.email-lib-just-opened .doclib-card:nth-child(13) { animation-delay: 0.26s; }
-.email-lib-just-opened .doclib-card:nth-child(14) { animation-delay: 0.28s; }
-.email-lib-just-opened .doclib-card:nth-child(15) { animation-delay: 0.30s; }
-.email-lib-just-opened .doclib-card:nth-child(16) { animation-delay: 0.32s; }
-.email-lib-just-opened .doclib-card:nth-child(17) { animation-delay: 0.34s; }
-.email-lib-just-opened .doclib-card:nth-child(18) { animation-delay: 0.36s; }
-.email-lib-just-opened .doclib-card:nth-child(19) { animation-delay: 0.38s; }
-.email-lib-just-opened .doclib-card:nth-child(20) { animation-delay: 0.40s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(1)  { animation-delay: 0.02s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(2)  { animation-delay: 0.04s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(3)  { animation-delay: 0.06s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(4)  { animation-delay: 0.08s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(5)  { animation-delay: 0.10s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(6)  { animation-delay: 0.12s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(7)  { animation-delay: 0.14s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(8)  { animation-delay: 0.16s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(9)  { animation-delay: 0.18s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(10) { animation-delay: 0.20s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(11) { animation-delay: 0.22s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(12) { animation-delay: 0.24s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(13) { animation-delay: 0.26s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(14) { animation-delay: 0.28s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(15) { animation-delay: 0.30s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(16) { animation-delay: 0.32s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(17) { animation-delay: 0.34s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(18) { animation-delay: 0.36s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(19) { animation-delay: 0.38s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(20) { animation-delay: 0.40s; }
 /* Cap the cascade at 20 — beyond that they animate together so opening a
    long inbox doesn't take forever to settle. */
-.email-lib-just-opened .doclib-card:nth-child(n+21) { animation-delay: 0.42s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(n+21) { animation-delay: 0.42s; }
 
 /* Inside the email library modal, the grid needs to grow with the modal —
    but `flex: 1 1 0` collapses to 0 when the parent isn't height-constrained
@@ -712,7 +712,15 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 #email-lib-modal.email-reading .admin-card > *:not(.doclib-grid):not(.hwfit-cached-list) {
   display: none !important;
 }
-#email-lib-modal.email-reading .admin-card { gap: 0 !important; }
+#email-lib-modal .admin-card:has(.doclib-card-expanded),
+#email-lib-modal.email-reading .admin-card {
+  gap: 0 !important;
+  padding: 0 !important;
+  margin-bottom: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
 /* Override for chat-rows + research-rows: those expand inline with a
    bounded preview (max-height: 60vh), so the grid must stay clipped
    and scrollable. Without this scoping the overflow:visible above lets
@@ -732,6 +740,9 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   overflow: hidden !important;
   display: flex !important;
   flex: 1 1 auto !important;
+}
+#email-lib-modal.email-reading #email-lib-grid > .date-section-header {
+  display: none !important;
 }
 #email-lib-modal.email-reading .doclib-modal-content {
   min-height: var(--email-reading-modal-min-h, auto);
@@ -1004,7 +1015,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   #email-lib-modal .email-attachment-chip {
     padding: 1px 6px !important;
     font-size: 10px !important;
-    max-width: 130px !important;
+    max-width: min(240px, calc(100vw - 44px)) !important;
     line-height: 18px !important;
   }
 }
@@ -1682,7 +1693,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .skill-card-section-hidden { display: none !important; }
 /* Warning banner shown when previewing/editing a built-in capability. */
 .skill-builtin-warn {
-  font-size: 10.5px;
+  font-size: 9.5px;
   line-height: 1.45;
   color: var(--color-warning, #f0ad4e);
   background: color-mix(in srgb, var(--color-warning, #f0ad4e) 12%, transparent);
@@ -1865,7 +1876,8 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 /* Kebab dropdown */
 .skill-kebab-menu {
   position: fixed;
-  z-index: 100002;
+  /* z-index is set inline via topPortalZ() at open time (#4720); a static
+     value here loses once the modal bring-to-front counter climbs past it. */
   min-width: 150px;
   padding: 4px;
   background: var(--panel, var(--bg));
@@ -2683,6 +2695,10 @@ body.gallery-selecting .gallery-dl-btn,
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
+.gallery-card.gallery-card-focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
 /* Upload-affordance tile pinned to the top-left of the Photos grid. Matches
    the Upload album tile in the Albums tab — dashed border, centered icon. */
 .gallery-card-upload {
@@ -3383,7 +3399,7 @@ body.gallery-selecting .gallery-dl-btn,
   }
   .gallery-select-btn {
     padding: 6px 8px 8px;
-    font-size: 10px;
+    font-size: 9px;
     flex-shrink: 0;
     /* Push Select to the far right of the single-row toolbar, regardless
        of its DOM position (sits between search and the dropdowns). */

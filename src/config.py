@@ -27,7 +27,6 @@ class DataConfig(BaseSettings):
     uploads_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "uploads", description="Directory for uploaded files")
     sessions_file: Path = Field(default=Path(_DATA_DIR_CONST) / "sessions.json", description="Sessions storage file")
     memory_file: Path = Field(default=Path(_DATA_DIR_CONST) / "memory.json", description="Memory storage file")
-    memory_doc: Path = Field(default=Path(_DATA_DIR_CONST) / "memory_doc.md", description="Memory document file")
     personal_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs", description="Personal documents directory")
     runbook_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs" / "runbook", description="Runbook directory")
     
@@ -162,7 +161,6 @@ class AppConfig(BaseSettings):
             "uploads_dir": data_dir / "uploads",
             "sessions_file": data_dir / "sessions.json",
             "memory_file": data_dir / "memory.json",
-            "memory_doc": data_dir / "memory_doc.md",
             "personal_dir": data_dir / "personal_docs",
             "runbook_dir": data_dir / "personal_docs" / "runbook",
             "max_upload_size": max_upload_size,

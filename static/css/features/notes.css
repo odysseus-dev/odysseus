@@ -868,24 +868,34 @@ body.notes-drag-mode .note-card-pin svg {
 .note-corner-menu-dropdown .ncm-item:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-/* "Agent" tag on a note that has a linked agent chat session */
-.note-agent-tag {
-  align-self: flex-start;
+.note-checkbox-agent {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0 1px;
+  border: 0;
+  background: transparent;
   color: var(--accent, var(--red));
-  border-radius: 999px;
-  padding: 3px 10px 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
+  box-shadow: none;
   cursor: pointer;
-  margin-top: 2px;
-  transition: background 0.12s;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
 }
-.note-agent-tag:hover { background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent); }
+.note-checkbox:hover .note-checkbox-agent { opacity: 0.55; }
+.note-checkbox-agent:hover {
+  background: transparent;
+  opacity: 1 !important;
+}
+.note-checkbox-agent.is-agent-stream-complete {
+  color: #50fa7b;
+  opacity: 0.9;
+}
+.note-checkbox-agent svg {
+  display: block;
+}
 
 .note-card {
   /* Same tint that .doclib-card uses so a default (uncolored) note
@@ -1711,6 +1721,9 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   .note-form-remind-btn { color: var(--accent, var(--red)) !important; }
   .note-form-remind-btn > svg { color: var(--accent, var(--red)); }
   .note-form-archive-btn { display: none !important; }
+  .note-fullscreen-actions .note-form-archive-btn {
+    display: inline-flex !important;
+  }
   .note-form-save.archive-mode {
     color: var(--accent, var(--red)) !important;
     border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
@@ -2856,7 +2869,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   word-break: break-all;
 }
 .note-link:hover { opacity: 0.8; }
-.note-checkbox-rm {
+.note-checkbox-edit, .note-checkbox-rm {
   flex: 0 0 auto;
   background: transparent;
   border: none;
@@ -2868,13 +2881,25 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-left: auto;
-  margin-right: 0;
+  margin-left: 2px;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
+.note-checkbox-rm { margin-left: auto; }
+.note-checkbox-edit { margin-left: auto; }
+.note-checkbox:hover .note-checkbox-edit,
 .note-checkbox:hover .note-checkbox-rm { opacity: 0.55; }
 .note-checkbox-rm:hover { opacity: 1 !important; color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+.note-checkbox-edit:hover { opacity: 1 !important; color: var(--accent, var(--blue)); background: color-mix(in srgb, var(--accent, var(--blue)) 12%, transparent); }
+.note-card-selectmode .note-checkbox-edit,
 .note-card-selectmode .note-checkbox-rm { display: none; }
+.note-check-text[contenteditable="true"] {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  outline: 1px solid var(--accent, var(--blue));
+  border-radius: 2px;
+  cursor: text;
+  padding: 0 2px;
+  margin: 0 -2px;
+}
 .note-check-dot {
   width: 16px;
   height: 16px;

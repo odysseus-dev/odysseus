@@ -36,6 +36,14 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
+function imageHtml(alt, url, title) {
+  const safeUrl = safeLinkUrl(url);
+  if (!safeUrl || safeUrl.startsWith('#')) return escapeHtml(alt || '');
+  const safeAlt = escapeHtml(alt || '');
+  const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<img src="${escapeHtml(safeUrl)}" alt="${safeAlt}"${safeTitle} loading="lazy" decoding="async">`;
+}
+
 function _isModelEndpointUrl(rawUrl) {
   try {
     const parsed = new URL(String(rawUrl || ''), window.location.origin);
@@ -125,7 +133,7 @@ function _cleanAllowedHtmlOnce(htmlString) {
   return tpl.innerHTML;
 }
 
-function sanitizeAllowedHtml(html) {
+export function sanitizeAllowedHtml(html) {
   const raw = String(html == null ? '' : html);
   // Non-browser context (e.g. a future SSR/Node import): fail closed by
   // escaping rather than trusting the markup.
@@ -146,7 +154,7 @@ function sanitizeAllowedHtml(html) {
  * Check if text has unclosed think tag
  */
 export function hasUnclosedThinkTag(text) {
-  text = text || '';
+  text = normalizeThinkingMarkup(text || '');
   const openCount =
     (text.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi) || []).length
     + (text.match(/<\|channel>thought/gi) || []).length;
@@ -157,12 +165,16 @@ export function hasUnclosedThinkTag(text) {
 }
 
 export function startsWithReasoningPrefix(text) {
-  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
+  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |i need |i should |i will |i'll |i am going |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|they are |the question |i can )/i.test(text || '');
 }
 
 export function normalizeThinkingMarkup(text) {
   if (!text) return text;
   let normalized = text;
+  // MiniMax M-series can emit namespaced reasoning tags like
+  // <mm:think>...</mm:think>. Normalize them into the shared thinking parser.
+  normalized = normalized.replace(/<mm:think(\s+[^>]*)?>/gi, (_m, attrs = '') => `<think${attrs || ''}>`);
+  normalized = normalized.replace(/<\/mm:think>/gi, '</think>');
   normalized = normalized.replace(/<thought(\s+[^>]*)?>/gi, (_m, attrs = '') => `<think${attrs || ''}>`);
   normalized = normalized.replace(/<\/thought>/gi, '</think>');
   normalized = normalized.replace(/<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*/gi, (_m, content = '') => {
@@ -222,6 +234,11 @@ function normalizePlainThinking(text) {
       const reply = withoutPrefix.slice(match.index + 1).trim();
       if (thinkBlock && reply) return `<think>${thinkBlock}</think>\n${reply}`;
     }
+  }
+
+  if (/^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|i need to |i should |i will |i'll |i am going )/i.test(trimmed)) {
+    const thinkBlock = withoutPrefix.trim();
+    if (thinkBlock) return `<think>${thinkBlock}</think>`;
   }
 
   return text;
@@ -471,6 +488,7 @@ export function processWithThinking(text) {
 export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
+  const inlineCodeBlocks = [];
   const mermaidBlocks = [];
   let s = (src ?? '');
 
@@ -509,6 +527,19 @@ export function mdToHtml(src, opts) {
     return placeholder;
   });
 
+  // Extract inline code spans before the link/autolink/HTML passes, mirroring
+  // the fenced-block handling above. A URL inside `inline code` (e.g.
+  // `irm http://127.0.0.1:3000/x`) is preceded by a space, so the bare-URL
+  // autolink matches it, wraps it in an <a> tag, and swaps that for an
+  // ___ALLOWED_HTML_ placeholder — corrupting the command. The old inline-code
+  // pass ran after those passes, too late to protect it.
+  s = s.replace(/`([^`]+?)`/g, (match, code) => {
+    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_')) return match;
+    const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+    inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+    return placeholder;
+  });
+
   // Repair common ways the agent mangles the entity-anchor convention
   // (`[Name](#kind-<id>)`). Models reliably get the single-link case
   // right but slip into other formats when listing many in a table.
@@ -534,6 +565,18 @@ export function mdToHtml(src, opts) {
     new RegExp(`(^|[^\\[(])#(${ANCHOR_KIND}-[A-Za-z0-9_-]+)\\b`, 'g'),
     '$1[#$2](#$2)',
   );
+  // Legacy search_chats output used bare session hashes (`#<uuid>`). Upgrade
+  // those too so old answers and model summaries remain clickable.
+  s = s.replace(
+    /(^|[^\[(])#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi,
+    '$1[#session-$2](#session-$2)',
+  );
+
+  // Convert markdown images before links so ![alt](url) does not become
+  // literal "!" plus a normal link.
+  s = s.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (match, alt, url, title) => {
+    return imageHtml(alt, url, title);
+  });
 
   // Convert markdown links [text](url) to clickable links
   // Internal #hash links navigate in-page; external links open in new tab
@@ -573,8 +616,9 @@ export function mdToHtml(src, opts) {
     return placeholder;
   });
 
-  // ALSO preserve <a> tags the same way (they're now in the HTML from markdown conversion)
-  s = s.replace(/<a\s+[^>]*>.*?<\/a>/gi, (match) => {
+  // ALSO preserve <a>/<img> tags the same way (they're now in the HTML from
+  // markdown conversion)
+  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
     allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
     return placeholder;
@@ -617,8 +661,11 @@ export function mdToHtml(src, opts) {
         return placeholder;
       } catch (e) { return match; }
     });
-    // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
-    s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
+    // Inline math: $...$ — single line only, and Pandoc-style delimiter rules so
+    // currency doesn't render as math ("$5 to $10"): the opening $ must be
+    // immediately followed by a non-space, the closing $ must be immediately
+    // preceded by a non-space and not followed by a digit.
+    s = s.replace(/(?<![\$\d])\$(?!\$)(?=\S)([^\$\n]+?)(?<=\S)\$(?!\$|\d)/g, (match, math) => {
       try {
         const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
@@ -657,12 +704,6 @@ export function mdToHtml(src, opts) {
 
     html += '</tbody></table>';
     return html;
-  });
-
-  // Inline code (but not placeholders)
-  s = s.replace(/`([^`]+?)`/g, (match, code) => {
-    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___ALLOWED_HTML_')) return match;
-    return `<code>${code}</code>`;
   });
 
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
@@ -737,6 +778,14 @@ export function mdToHtml(src, opts) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
+  // Restore inline code spans last, so placeholders carried inside restored
+  // <a>/allowed-HTML blocks are resolved too. The function replacer keeps the
+  // escaped code literal — e.g. a shell snippet like `echo $1` is not treated
+  // as a regex back-reference.
+  inlineCodeBlocks.forEach((block, index) => {
+    s = s.replace(`___INLINE_CODE_${index}___`, () => block);
+  });
+
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 
@@ -789,6 +838,7 @@ export function renderMermaid(container) {
 const markdownModule = {
   escapeHtml,
   mdToHtml,
+  sanitizeAllowedHtml,
   squashOutsideCode,
   renderContent,
   processWithThinking,

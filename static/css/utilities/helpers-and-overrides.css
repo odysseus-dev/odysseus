@@ -673,7 +673,7 @@
        inside .chat-input-top, matching .model-picker-wrap's slot. */
     .chat-input-top > .cmp-eval-wrap {
       position: absolute;
-      top: 0; right: 0;
+      top: -2px; right: 0;
       z-index: 2;
     }
     .cmp-eval-btn {
@@ -1015,14 +1015,16 @@
       width: 100%; order: 99; margin-top: -4px; padding-bottom: 2px; padding-left: 2px;
     }
     .pane-finish-badge {
-      font-weight: 600; color: var(--red);
+      font-weight: 600; color: var(--green, #50fa7b);
+      position: relative;
+      top: 2px;
     }
     .compare-pane.winner .pane-header {
-      background: color-mix(in srgb, var(--red) 12%, transparent);
-      border-bottom-color: color-mix(in srgb, var(--red) 30%, var(--border));
+      background: color-mix(in srgb, var(--green, #50fa7b) 12%, transparent);
+      border-bottom-color: color-mix(in srgb, var(--green, #50fa7b) 30%, var(--border));
     }
     .compare-pane.winner .pane-title {
-      color: var(--red);
+      color: var(--green, #50fa7b);
     }
     .compare-pane.loser .pane-header {
       opacity: 0.5;
@@ -1291,6 +1293,33 @@
       .compare-header-bar {
         padding: 14px 8px 10px 8px !important;
         min-height: 44px;
+      }
+      .compare-pane .pane-header {
+        align-items: flex-start;
+        row-gap: 3px;
+      }
+      .compare-pane .pane-title-btn {
+        flex: 0 0 100%;
+        width: 100%;
+        order: 0;
+        padding-right: 2px;
+      }
+      .compare-pane .pane-timer,
+      .compare-pane .pane-finish-badge,
+      .compare-pane .pane-actions {
+        order: 1;
+      }
+      .compare-grid[data-cols="4"] .compare-pane .pane-timer,
+      .compare-grid[data-cols="5"] .compare-pane .pane-timer,
+      .compare-grid[data-cols="6"] .compare-pane .pane-timer {
+        width: auto;
+        order: 1;
+        margin-top: 0;
+        padding-bottom: 0;
+        padding-left: 0;
+      }
+      .compare-pane .pane-actions {
+        margin-left: auto;
       }
       /* Mode tabs: icons only, centered */
       .compare-mode-tab span { display: none; }
@@ -1597,6 +1626,11 @@ button.hamburger {
 .msg a:hover {
   border-bottom-color: var(--hl-function, #5b8def);
 }
+.msg a.is-loading {
+  opacity: 0.65;
+  border-bottom-color: var(--accent, #bd93f9);
+  cursor: progress;
+}
 
 /* Tables */
 .msg table {
@@ -1793,7 +1827,7 @@ button.hamburger {
   position: fixed;
   top: 20px;
   right: 20px;
-  background: var(--bg);
+  background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 6px 12px;
@@ -1822,7 +1856,7 @@ button.hamburger {
   margin-left: 4px;
   border: 1px solid var(--red);
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   font-family: inherit;
   font-size: 10.2px;
@@ -2108,6 +2142,97 @@ button.hamburger {
   transform: scale(0.96);
 }
 
+.attach-crop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--attach-crop-z, 100001);
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  box-sizing: border-box;
+}
+.attach-crop-panel {
+  width: min(94vw, 520px);
+  max-height: min(86vh, 720px);
+  background: var(--panel, #111);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.attach-crop-stage {
+  position: relative;
+  min-height: 280px;
+  height: min(66vh, 560px);
+  background: #050505;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+.attach-crop-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+.attach-crop-box {
+  position: absolute;
+  border: 2px solid var(--accent, var(--red));
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.42);
+  cursor: move;
+  touch-action: none;
+  box-sizing: border-box;
+}
+.attach-crop-box::before,
+.attach-crop-box::after {
+  content: '';
+  position: absolute;
+  inset: 33.333% 0 auto;
+  border-top: 1px solid rgba(255,255,255,0.38);
+}
+.attach-crop-box::after {
+  inset: 66.666% 0 auto;
+}
+.attach-crop-handle {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: 2px solid var(--bg);
+  box-sizing: border-box;
+  cursor: nwse-resize;
+}
+.attach-crop-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.attach-crop-btn {
+  flex: 1;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.attach-crop-primary {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border-color: var(--accent, var(--red));
+}
 @media (max-width: 768px) {
   .thumb-collapsed { position: relative; }
   .thumb-collapsed .thumb-collapsed-x {
@@ -2264,6 +2389,12 @@ button.hamburger {
 
 /* Hide thinking sections globally via settings toggle */
 body.hide-thinking .thinking-section { display: none !important; }
+
+/* Widen chat area via settings toggle */
+body.fullwidth-chat .chat-history {
+  padding-left: 0 !important;
+  padding-right: 12px !important;
+}
 
 /* Thinking process styles — colors follow theme accent */
 .msg .body .stream-content {
@@ -2534,7 +2665,7 @@ body.hide-thinking .thinking-section { display: none !important; }
 .icon-rail-btn.rail-notify::before {
   content: '';
   position: absolute;
-  top: 4px;
+  top: 5px;
   right: 4px;
   width: 6px;
   height: 6px;

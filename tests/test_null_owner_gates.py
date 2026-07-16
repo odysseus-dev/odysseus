@@ -18,6 +18,8 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from tests.helpers.calendar_routes import import_calendar_routes
+
 # `tests/conftest.py` stubs the heavy optional deps. We additionally
 # stub `core.database` here because the real module instantiates
 # SQLAlchemy declarative classes at import-time — which blows up under
@@ -64,20 +66,8 @@ from fastapi import HTTPException
 # calendar._get_or_404_calendar / _get_or_404_event
 # ---------------------------------------------------------------------------
 
-def _import_calendar_helpers():
-    """Import the two private gate helpers without booting the full
-    calendar router. We patch sys.modules so the module-load side
-    effects (DB import) don't blow up under the conftest stubs."""
-    mod_name = "routes.calendar_routes"
-    if mod_name in sys.modules:
-        return sys.modules[mod_name]
-    # core.database is stubbed by conftest already; the module should
-    # import cleanly.
-    return __import__(mod_name, fromlist=["_get_or_404_calendar", "_get_or_404_event"])
-
-
 def test_calendar_gate_rejects_null_owner_for_authenticated_user():
-    cal_mod = _import_calendar_helpers()
+    cal_mod = import_calendar_routes()
     db = MagicMock()
     cal = SimpleNamespace(id="c1", owner=None)
     db.query.return_value.filter.return_value.first.return_value = cal
@@ -87,7 +77,7 @@ def test_calendar_gate_rejects_null_owner_for_authenticated_user():
 
 
 def test_calendar_gate_rejects_cross_owner():
-    cal_mod = _import_calendar_helpers()
+    cal_mod = import_calendar_routes()
     db = MagicMock()
     cal = SimpleNamespace(id="c1", owner="bob")
     db.query.return_value.filter.return_value.first.return_value = cal
@@ -97,7 +87,7 @@ def test_calendar_gate_rejects_cross_owner():
 
 
 def test_calendar_gate_accepts_matching_owner():
-    cal_mod = _import_calendar_helpers()
+    cal_mod = import_calendar_routes()
     db = MagicMock()
     cal = SimpleNamespace(id="c1", owner="alice")
     db.query.return_value.filter.return_value.first.return_value = cal
@@ -106,7 +96,7 @@ def test_calendar_gate_accepts_matching_owner():
 
 
 def test_calendar_event_gate_rejects_null_owner_calendar():
-    cal_mod = _import_calendar_helpers()
+    cal_mod = import_calendar_routes()
     db = MagicMock()
     cal = SimpleNamespace(owner=None)
     ev = SimpleNamespace(uid="e1", calendar=cal)
@@ -117,7 +107,7 @@ def test_calendar_event_gate_rejects_null_owner_calendar():
 
 
 def test_calendar_event_gate_rejects_cross_owner():
-    cal_mod = _import_calendar_helpers()
+    cal_mod = import_calendar_routes()
     db = MagicMock()
     cal = SimpleNamespace(owner="bob")
     ev = SimpleNamespace(uid="e1", calendar=cal)

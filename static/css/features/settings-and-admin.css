@@ -1197,6 +1197,9 @@ body:not(.welcome-ready) #welcome-screen {
     transform: scaleY(0.4) translateY(8px);
   }
 }
+@keyframes model-picker-refresh-spin {
+  to { transform: rotate(360deg); }
+}
 
 @keyframes modal-enter {
   from {
@@ -1288,7 +1291,40 @@ body:not(.welcome-ready) #welcome-screen {
 }
 
 /* ── Tasks ── */
+#tool-tasks-btn.task-failure-pending,
+#rail-tasks.task-failure-pending {
+  color: var(--red, #f87171);
+}
+#tool-tasks-btn.task-failure-pending::after,
+#rail-tasks.task-failure-pending::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--red, #f87171);
+  box-shadow: 0 0 7px var(--red, #f87171), 0 0 3px var(--red, #f87171);
+  flex: 0 0 auto;
+}
+@media (min-width: 769px) {
+  #tool-tasks-btn #assistant-notif-dot.sidebar-notif-dot,
+  #tool-tasks-btn.task-failure-pending::after {
+    transform: translateX(-2px);
+  }
+}
+#rail-tasks.task-failure-pending::after {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
 .tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
+.tasks-activity-card,
+.tasks-activity-list {
+  min-height: 0;
+}
+.tasks-activity-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
 
 /* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
    full-bleed (its underline spans the whole modal width). The Tasks bar is a
@@ -1315,6 +1351,13 @@ body:not(.welcome-ready) #welcome-screen {
 .task-log-row:hover {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
+.task-log-row.task-log-row-error {
+  border-color: color-mix(in srgb, var(--red, #f87171) 35%, var(--border));
+  background: color-mix(in srgb, var(--red, #f87171) 4%, transparent);
+}
+.task-log-row.task-log-row-error:hover {
+  background: color-mix(in srgb, var(--red, #f87171) 7%, transparent);
+}
 .task-log-row.expanded { padding: 8px 10px 6px; }
 .task-log-row-head {
   display: flex;
@@ -1336,11 +1379,26 @@ body:not(.welcome-ready) #welcome-screen {
      title still reads in dark mode. Lightness stays adaptive. */
   color: hsl(var(--cat-hue) 60% 60%);
 }
+.task-log-failed-tag {
+  color: var(--red, #f87171);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  margin-left: -2px;
+}
 .task-log-task-icon {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   margin-right: -3px;
+}
+.task-log-row.task-log-row-error .task-log-name,
+.task-log-row.task-log-row-error .task-log-task-icon {
+  color: var(--red, #f87171);
+}
+.task-log-row.task-log-row-error .task-log-task-icon svg {
+  opacity: 0.82 !important;
 }
 .task-log-task-icon svg {
   top: 0 !important;
@@ -1391,6 +1449,8 @@ body:not(.welcome-ready) #welcome-screen {
   font-variant-numeric: tabular-nums;
 }
 .task-log-force-run {
+  appearance: none;
+  box-sizing: border-box;
   border: 0;
   background: color-mix(in srgb, var(--fg) 7%, transparent);
   box-shadow: none;
@@ -1398,7 +1458,9 @@ body:not(.welcome-ready) #welcome-screen {
   opacity: .82;
   margin-left: 7px;
   padding: 1px 6px 1px 4px;
+  height: 18px;
   min-height: 16px;
+  max-height: 18px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -1409,7 +1471,7 @@ body:not(.welcome-ready) #welcome-screen {
   line-height: 1;
   cursor: pointer;
   position: relative;
-  top: -1px;
+  top: -3px;
 }
 .task-log-force-run svg,
 .task-log-stop svg {
@@ -1767,34 +1829,42 @@ a.chat-link[href^="#research-"] {
 /* Per-card select checkbox rides up to the title line. The "All" checkbox is
    #tasks-select-all (not .memory-select-cb), so it stays put. */
 .task-card .memory-select-cb { position: relative; top: -4px; }
+#tasks-pause-all-btn { position: relative; top: -2px; }
 /* Bigger ⋮ dropdown on mobile (its buttons carry inline styles → !important). */
 @media (max-width: 768px) {
   .task-dropdown { min-width: 160px !important; padding: 6px !important; }
   .task-dropdown button { font-size: 13px !important; padding: 10px 12px !important; gap: 10px !important; }
   .task-dropdown button svg { width: 15px !important; height: 15px !important; }
   .task-card .task-status-badge {
-    padding-left: 5px;
-    padding-right: 5px;
-    gap: 2px;
-    letter-spacing: 0.15px;
+    padding-left: 9px;
+    padding-right: 10px;
+    gap: 5px;
+    letter-spacing: 0.1px;
+    min-height: 34px;
+    min-width: 72px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   .task-card .task-state-badge {
-    width: 20px;
-    min-width: 20px;
-    height: 20px;
-    min-height: 20px;
-    padding-left: 0;
-    padding-right: 0;
+    width: auto;
+    min-width: 72px;
+    height: 26px;
+    min-height: 26px;
     box-sizing: border-box;
     justify-content: center;
-    top: 2px !important;
+    top: 0 !important;
   }
   .task-card .task-state-badge .task-state-label {
-    display: none;
+    display: inline;
+    font-size: 10px;
+    line-height: 1;
+    position: relative;
+    top: 1px;
   }
-  .task-card .task-card-run-btn {
-    margin-right: 1px !important;
-    top: 2px;
+  .task-card .task-state-badge svg,
+  .task-card .task-card-run-btn svg {
+    width: 14px;
+    height: 14px;
   }
 }
 
@@ -1923,6 +1993,61 @@ select.task-form-input { text-overflow: ellipsis; }
 .task-form-textarea { resize: vertical; min-height: 60px; }
 .task-form-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
 
+.task-form-notif-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0 3px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.task-form-notif-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.task-form-notif-switch {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  position: relative;
+  flex: 0 0 auto;
+  transition: background 0.15s, border-color 0.15s;
+}
+.task-form-notif-switch::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  left: 3px;
+  top: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 62%, transparent);
+  transition: transform 0.15s, background 0.15s;
+}
+.task-form-notif-toggle input:checked + .task-form-notif-switch {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 58%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+}
+.task-form-notif-toggle input:checked + .task-form-notif-switch::after {
+  transform: translateX(13px);
+  background: var(--accent, var(--red));
+}
+.task-form-notif-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.task-form-notif-copy span:last-child {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.52;
+}
+
 .task-form-toggle {
   display: flex; gap: 4px;
 }
@@ -2048,6 +2173,36 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   border-color: var(--red);
 }
 
+@media (max-width: 768px) {
+  /* Deep Research settings contain desktop-sized inline widths. On mobile,
+     let each control claim the card width instead of escaping the admin block. */
+  .settings-row:has(#set-researchSearch),
+  .settings-row:has(#set-researchMaxTokens),
+  .settings-row:has(#set-researchExtractTimeout),
+  .settings-row:has(#set-researchExtractConcurrency),
+  .settings-row:has(#set-researchRunTimeout) {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .settings-row:has(#set-researchSearch) .settings-label,
+  .settings-row:has(#set-researchMaxTokens) .settings-label,
+  .settings-row:has(#set-researchExtractTimeout) .settings-label,
+  .settings-row:has(#set-researchExtractConcurrency) .settings-label,
+  .settings-row:has(#set-researchRunTimeout) .settings-label {
+    flex: 1 1 auto;
+  }
+  #set-researchSearch,
+  #set-researchMaxTokens,
+  #set-researchRunTimeout,
+  .settings-row div:has(> #set-researchExtractTimeout),
+  .settings-row div:has(> #set-researchExtractConcurrency) {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+    margin-left: 0 !important;
+  }
+}
+
 /* Default-chat fallback chain editor. Each row mirrors the primary
    endpoint/model selectors, indented under them to read as a chain. */
 .settings-fallbacks {
@@ -2062,6 +2217,8 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   gap: 6px;
   padding-left: 12px;
   border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .settings-fallback-num {
   font-size: 11px;
@@ -2069,10 +2226,26 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   min-width: 14px;
   text-align: right;
 }
-.settings-fallback-row .settings-select { flex: 1; min-width: 0; }
+.settings-fallback-row .settings-select {
+  width: 0;
+  min-width: 0;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-fallback-row .settings-select:first-of-type {
+  flex: 0 1 128px;
+  width: 128px;
+  max-width: 34%;
+}
+.settings-fallback-row .settings-select:nth-of-type(2) {
+  flex: 1 1 0;
+  width: 0;
+  max-width: 100%;
+}
 .settings-fallback-remove {
   flex-shrink: 0;
-  margin-right: 4px;
   width: 22px;
   height: 22px;
   line-height: 1;
@@ -3109,3 +3282,13 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
 
 /* ═══════════════════════════════════════════════════════════
 /* #endregion Settings Modal Layout And Task Surfaces */
+
+/* The model-comparison grid hard-codes 2-4 equal columns with no phone
+   breakpoint that stacks them, so at 390px two models render ~178px columns and
+   four render ~88px columns. Each column is a full scrolling chat (code blocks,
+   tool output, vote footer), so the text is unreadably over-wrapped and clipped.
+   On phones, stack the panes into a single scrollable column instead. */
+@media (max-width: 768px) {
+  .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
+  .compare-pane { min-height: 60dvh; }
+}

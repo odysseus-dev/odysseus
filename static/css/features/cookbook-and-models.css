@@ -155,11 +155,19 @@
 }
 .cookbook-field-input:focus { border-color: var(--red); }
 #hwfit-dl-server, #hwfit-usecase, #hwfit-server-select, #hwfit-cache-server, #serve-sort { height: 28px; width: 88px; }
+#hwfit-dl-server.cookbook-server-select-colored,
+#hwfit-server-select.cookbook-server-select-colored,
+#hwfit-cache-server.cookbook-server-select-colored,
+#hwfit-deps-server.cookbook-server-select-colored {
+  color: var(--cookbook-server-color, var(--fg));
+  border-color: color-mix(in srgb, var(--cookbook-server-color) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--cookbook-server-color) 12%, var(--bg));
+}
 /* Serve tab — match Documents sizing, but leave room for the active "Cancel"
    label and center it vertically so the descenders don't clip. */
 #hwfit-cache-select {
   min-width: 58px;
-  height: 32px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -368,6 +376,12 @@
 .cookbook-open-loading canvas {
   display: block;
 }
+.cookbook-section-loading-wp,
+.cookbook-section-loading-wp canvas {
+  width: 22px !important;
+  height: 22px !important;
+  display: block !important;
+}
 #rail-cookbook .cookbook-open-loading {
   position: absolute;
   right: 2px;
@@ -457,7 +471,7 @@
   top: -6px;
 }
 #serve-bulk-bar #serve-bulk-cancel {
-  top: 0 !important;
+  top: -2px !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -568,6 +582,19 @@
 }
 .cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list .doclib-card.doclib-card-expanded {
   border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+}
+@media (max-width: 768px) {
+  /* Launch tab's cached-list normally has `flex: 1 1 0; min-height: 0`
+     (so it fills the modal on desktop). On mobile the parent now has
+     `height: auto`, which collapses `flex: 1 1 0` to ZERO PX —
+     models render but the list area is invisible because the flex
+     basis is 0 and there's no free space to grow into. Switch to
+     content-sized flex so the list grows with its children. */
+  #cookbook-modal .cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list,
+  #cookbook-modal .cookbook-group[data-backend-group="Serve"] > .admin-card > #hwfit-cached-list {
+    flex: 0 0 auto !important;
+    overflow: visible !important;
+  }
 }
 
 .cookbook-serve-downloading-pill {
@@ -736,9 +763,55 @@
   min-width: 88px;
 }
 .hwfit-serve-row label:has(> .cookbook-serve-slots) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  grid-column: -2 / -1;
+  justify-self: end;
+  text-align: right;
+  padding-right: 0;
+}
+.hwfit-serve-row label:has(> .cookbook-serve-slots) > span {
+  display: inline-block;
+  position: relative;
+  left: -33px;
+}
+.hwfit-serve-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+.hwfit-serve-topline .hwfit-serve-runtime-note {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.hwfit-serve-topline .hwfit-serve-runtime-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hwfit-serve-preset-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0;
+  flex: 0 0 auto;
+  position: relative;
+  top: -6px;
+}
+@media (max-width: 768px) {
+  .hwfit-serve-preset-row {
+    justify-content: flex-end;
+    margin: -2px 0 0;
+  }
+  .hwfit-serve-topline {
+    flex-wrap: wrap;
+  }
+  .hwfit-serve-topline .hwfit-serve-runtime-note {
+    flex-basis: 100%;
+  }
+  .hwfit-serve-topline .hwfit-serve-runtime-text {
+    white-space: normal;
+  }
 }
 .hwfit-spec-tokens-bare {
   min-width: 74px;
@@ -791,14 +864,95 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 details.hwfit-serve-advanced > .hwfit-serve-extra {
   margin-top: 8px;
 }
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: -18px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-backend-llamacpp,
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-llamacpp {
+  margin-top: -20px;
+  position: relative;
+  left: 4px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-backend-llamacpp {
+  column-gap: 8px;
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-llama-placement-row {
+  margin-top: -6px !important;
+}
+details.hwfit-serve-advanced > .hwfit-llama-memory-row {
+  margin-top: -20px !important;
+}
+.cookbook-llama-cpu-mode details.hwfit-serve-advanced > .hwfit-llama-memory-row {
+  margin-top: -8px !important;
+}
+details.hwfit-serve-advanced > .hwfit-llama-batch-row,
+details.hwfit-serve-advanced > .hwfit-llama-monitor-row,
+details.hwfit-serve-advanced > .hwfit-llama-checks-row {
+  margin-top: -18px !important;
+}
+details.hwfit-serve-advanced > .hwfit-diff-settings-row {
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-diff-checks-row,
+details.hwfit-serve-advanced > .hwfit-diff-harmonize-row {
+  margin-top: -10px !important;
+}
+details.hwfit-serve-advanced > .hwfit-diff-checks-row {
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor {
+  gap: 4px !important;
+  grid-template-columns: max-content minmax(0, 1fr);
+  white-space: nowrap;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor .hwfit-vram-readout {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_attn_backend"]) {
+  position: relative;
+  left: -63px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
+  position: relative;
+  left: -75px;
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_block_size"] {
+  width: calc(100% - 6px);
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
+  position: relative;
+  left: -73px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype"]) {
+  position: relative;
+  left: 2px;
+}
+@media (max-width: 768px) {
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
+    left: 1px;
+  }
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
+    left: -3px;
+  }
+  details.hwfit-serve-advanced > .hwfit-serve-checks .hwfit-sf-cb {
+    flex: 1 1 100%;
+  }
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_kv_cache_dtype"] {
+  width: 60px;
+  min-width: 60px;
+}
 .cookbook-gpu-group {
   display: flex;
   gap: 2px;
   margin-top: -4px;
 }
 .cookbook-gpu-btn {
-  width: 22px; height: 22px;
-  font-size: 10px;
+  width: 30px; height: 30px;
+  font-size: 12px;
   font-family: 'Fira Code', monospace;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -956,6 +1110,18 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   background: color-mix(in srgb, var(--red) 20%, transparent);
 }
 .cookbook-gpu-kill:disabled { opacity: 0.4; cursor: wait; }
+.cookbook-serve-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.cookbook-serve-title-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cookbook-hf-link {
   font-size: 9px;
   text-decoration: none;
@@ -968,6 +1134,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   vertical-align: 1px;
   letter-spacing: 0.3px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 .cookbook-hf-link:hover {
   opacity: 0.8;
@@ -1002,6 +1169,25 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   background: color-mix(in srgb, var(--fg) 9%, transparent);
   border-color: color-mix(in srgb, var(--fg) 22%, transparent);
 }
+.cookbook-section-header.has-server-color {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 45%, var(--border));
+  background: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 4%, var(--bg));
+  box-shadow: inset 6px 0 0 var(--cookbook-server-accent, var(--cookbook-server-color));
+}
+.cookbook-section-header.has-server-color:hover {
+  background: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 7%, var(--bg));
+  border-color: color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 60%, var(--border));
+}
+.cookbook-section-header.has-server-color .cookbook-section-title,
+.cookbook-section-header.has-server-color .cookbook-section-chevron {
+  color: var(--cookbook-server-accent, var(--cookbook-server-color));
+}
+.cookbook-section-header.has-server-color .cookbook-srv-status.ok {
+  background: var(--cookbook-server-accent, var(--cookbook-server-color));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 18%, transparent),
+    0 0 8px color-mix(in srgb, var(--cookbook-server-accent, var(--cookbook-server-color)) 55%, transparent);
+}
 .cookbook-section-header .cookbook-section-title {
   flex: 1;
 }
@@ -1009,6 +1195,14 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   margin-left: 0;
   position: relative;
   top: -3px;
+}
+@media (max-width: 768px) {
+  .cookbook-section-header .cookbook-clear-btn {
+    top: -3px;
+  }
+  .cookbook-task-check {
+    top: 4px;
+  }
 }
 /* "Stop all" sits just left of "Clear finished"; it carries the auto margin so
    the pair is pushed together to the right of the section title. */
@@ -1118,7 +1312,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   margin-bottom: 4px;
 }
 .cookbook-slot-btn {
-  min-width: 22px; height: 22px;
+  min-width: 22px; height: 28px;
   padding: 0 6px;
   font-size: 10px; font-weight: 600;
   border: 1px solid var(--border);
@@ -1146,24 +1340,67 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 .cookbook-saved-save {
   padding: 0 10px;
   gap: 4px;
-  background: var(--red);
-  color: #fff;
-  border-color: var(--red);
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--border);
   font-weight: 600;
   opacity: 1;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 .cookbook-saved-save:hover {
-  background: color-mix(in srgb, var(--red) 80%, white);
-  border-color: color-mix(in srgb, var(--red) 80%, white);
+  background: var(--border);
+  border-color: var(--accent);
   opacity: 1;
 }
 .cookbook-saved-arrow {
   padding: 0 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--border);
+  opacity: 1;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: none;
+}
+.cookbook-saved-menu .cookbook-saved-favorite {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+}
+.cookbook-saved-fav-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-muted);
+  opacity: 0.55;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.cookbook-saved-fav-btn:hover,
+.cookbook-saved-fav-btn.active {
+  color: var(--red);
+  opacity: 1;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.cookbook-saved-fav-badge {
+  flex-shrink: 0;
+}
+.cookbook-serve-favorite-model {
+  border-left-color: var(--red) !important;
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+}
+.cookbook-serve-fav-badge {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: 1px;
+  margin-left: 5px;
+  margin-right: 2px;
 }
 .cookbook-slot-saved { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
 .cookbook-slot-saved:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
@@ -1282,6 +1519,9 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   -webkit-appearance: none;
   -moz-appearance: none;
 }
+.cookbook-dep-reinstall {
+  top: -3px;
+}
 .cookbook-dep-rebuild:hover {
   background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
   color: var(--accent, var(--red));
@@ -1291,9 +1531,9 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   background: color-mix(in srgb, var(--green, #50fa7b) 18%, transparent);
   color: var(--green, #50fa7b);
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
-  /* Match the Install button + Installed ▾ split width so all three variants
-     align in a mixed row. */
-  min-width: 75.85px;
+  /* Match Install + Installed ▾ so all three variants align in mixed rows. */
+  width: 87.7px;
+  min-width: 87.7px;
   padding: 0 10px;
   box-sizing: border-box;
 }
@@ -1316,9 +1556,8 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   font-weight: 500;
   position: relative;
   top: -3px;
-  /* Width matches the measured Installed ▾ split button (75.85px) so a row of
-     mixed Install / Installed deps lines up. */
-  min-width: 75.85px;
+  width: 87.7px;
+  min-width: 87.7px;
   padding: 0 10px;
   /* Strip the native button box so it's the same height as the sibling tags
      (Firefox renders <button> taller otherwise); height comes from .cookbook-dep-tag. */
@@ -1345,6 +1584,8 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
    opens the actions menu (Update). Replaces the old ⋮ button. */
 .cookbook-dep-installed-btn {
   padding: 0;
+  width: 87.7px;
+  min-width: 87.7px;
   cursor: pointer;
   font-family: inherit;
   overflow: hidden;
@@ -1376,6 +1617,118 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   color: var(--fg-muted);
   white-space: nowrap;
   letter-spacing: 0.3px;
+}
+.hwfit-serve-row-core .hwfit-context-label {
+  grid-column: span 2;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  justify-self: start;
+}
+.hwfit-context-control {
+  display: block;
+  position: relative;
+  align-items: center;
+  margin-top: 2px;
+  width: 100px;
+}
+.hwfit-context-control .hwfit-sf[data-field="ctx"] {
+  min-width: 0;
+  width: 100%;
+  padding-right: 40px;
+}
+.hwfit-serve-row-core label:has(.hwfit-sf[data-field="max_seqs"]) {
+  position: relative;
+  left: -66px;
+}
+.hwfit-serve-row-core label:has(.hwfit-sf[data-field="gpu_mem"]) {
+  position: relative;
+  left: -64px;
+}
+.hwfit-serve-row-core .hwfit-gpus-label {
+  position: relative;
+  left: -70px;
+}
+.hwfit-context-calc-btn {
+  position: absolute;
+  right: 3px;
+  top: -4px;
+  width: 34px;
+  height: 28px;
+  min-width: 34px;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.hwfit-context-calc-btn .spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+  margin: 0 auto !important;
+}
+.hwfit-context-calc-btn .ai-spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+}
+@media (min-width: 769px) {
+  [data-llama-mode-toggle].mode-toggle.mode-toggle-three .mode-toggle-btn > span {
+    top: -6px !important;
+  }
+  .mode-toggle.mode-toggle-three [data-llama-mode="unified"] > span {
+    font-size: 0;
+  }
+  .mode-toggle.mode-toggle-three [data-llama-mode="unified"] > span::after {
+    content: 'Unif';
+    font-size: 11px;
+  }
+}
+@media (max-width: 768px) {
+  .hwfit-serve-row-core .hwfit-context-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .hwfit-serve-row-core label:has(.hwfit-sf[data-field="max_seqs"]),
+  .hwfit-serve-row-core label:has(.hwfit-sf[data-field="gpu_mem"]) {
+    left: 0;
+  }
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_env_preset"]),
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="extra_env"]) {
+    grid-column: 1 / -1 !important;
+  }
+  .hwfit-context-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: auto;
+  }
+  .hwfit-context-control .hwfit-sf[data-field="ctx"] {
+    width: 100px;
+    padding-right: 6px;
+  }
+  .hwfit-context-calc-btn {
+    position: relative;
+    top: -2px;
+    left: 2px;
+    right: auto;
+    flex: 0 0 34px;
+    width: 34px;
+    min-width: 34px;
+  }
+}
+.hwfit-auto-ctx-note {
+  display: block;
+  margin-top: 3px;
+  font-size: 9px;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hwfit-serve-row label select,
 .hwfit-serve-row label input {
@@ -1479,6 +1832,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   font-size: 12px;
   padding: 0 6px;
   height: 28px;
+  box-sizing: border-box;
 }
 .hwfit-sf[data-field="backend"],
 .hwfit-sf[data-field="dtype"],
@@ -1486,6 +1840,12 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   height: 32px;
   box-sizing: border-box;
   width: 100%;
+}
+.hwfit-extra-env-label {
+  grid-column: 1 / -1;
+}
+.hwfit-serve-panel[data-backend-active="vllm"] .hwfit-extra-env-label {
+  grid-column: 2 / -1;
 }
 .hwfit-sf:focus {
   border-color: var(--accent, var(--red));
@@ -1631,23 +1991,66 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 .hwfit-serve-extra .hwfit-sf {
   width: 100%;
 }
-.hwfit-serve-cmd {
-  margin: 6px 0;
-  padding: 8px 10px;
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
+.hwfit-serve-cmd-details {
+  margin: 4px 0 0;
+}
+.hwfit-serve-cmd-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 10px;
   border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.hwfit-serve-cmd-summary::-webkit-details-marker {
+  display: none;
+}
+.hwfit-serve-cmd-summary::after {
+  content: '';
+  margin-left: auto;
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  opacity: 0.6;
+  transform: rotate(0deg);
+  transition: transform 0.18s ease;
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary::after {
+  transform: rotate(90deg);
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.hwfit-serve-cmd {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-top: none;
   border-radius: 4px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
   font-size: 10px;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
+  word-break: normal;
   width: 100%;
   box-sizing: border-box;
   resize: none;
   color: var(--fg);
   line-height: 1.5;
-  min-height: 36px;
-  overflow: hidden;
+  min-height: 112px;
+  overflow: auto;
 }
 .hwfit-serve-actions {
   display: flex;
@@ -1660,6 +2063,10 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   font-size: 11px;
 }
 .hwfit-serve-actions-spacer { flex: 1 1 auto; }
+.hwfit-serve-actions .cookbook-serve-slots {
+  margin: 0;
+  align-self: stretch;
+}
 .hwfit-serve-launch {
   background: var(--accent-primary, var(--red));
   color: #fff;
@@ -1725,13 +2132,19 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   border-color: var(--border);
   color: var(--fg);
 }
+.cookbook-task-menu-btn.cookbook-menu-active {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+}
 @media (max-width: 768px) {
   .cookbook-task .cookbook-task-menu-btn {
     opacity: 0.72;
     width: 32px;
     height: 32px;
     min-width: 32px;
-    top: -5px;
+    top: -3px;
   }
   .cookbook-task .cookbook-task-menu-btn:active {
     opacity: 1;
@@ -1753,6 +2166,12 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
    corner of the field (chat run-output pattern). */
 .hwfit-serve-cmd-wrap {
   position: relative;
+}
+.hwfit-serve-cmd-title {
+  margin: 2px 0 3px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  letter-spacing: 0.3px;
 }
 .hwfit-serve-cmd-wrap .hwfit-serve-cmd {
   /* Just enough breathing room so a cursor at line-end doesn't actually
@@ -1885,6 +2304,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 }
 /* Status-driven left stripe via :has() — graceful fallback to neutral. */
 .cookbook-task:has(.cookbook-task-running) { border-left-color: var(--green, #50fa7b); }
+.cookbook-task:has(.cookbook-task-downloading) { border-left-color: var(--color-accent, #00aaff); }
 .cookbook-task:has(.cookbook-task-done)    { border-left-color: var(--green, #50fa7b); }
 .cookbook-task:has(.cookbook-task-error)   { border-left-color: var(--color-error, var(--warn, #f87171)); }
 .cookbook-task:has(.cookbook-task-queued)  { border-left-color: var(--color-warning, #f0ad4e); }
@@ -1930,6 +2350,10 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 .cookbook-task-type[data-type="download"] {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg-muted);
+}
+.cookbook-task[data-type="download"][data-status="running"] .cookbook-task-type[data-type="download"] {
+  background: color-mix(in srgb, var(--color-accent, #00aaff) 18%, transparent);
+  color: var(--color-accent, #00aaff);
 }
 /* Finished state — overrides the per-type colors so a completed download or
    serve task shows the same green FINISHED chip. */
@@ -2012,6 +2436,11 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 }
 .cookbook-task[data-status="done"] .cookbook-task-check-ico { display: inline; }
 .cookbook-task[data-status="done"] .cookbook-task-clear-ico { display: none; }
+@media (max-width: 820px) {
+  .cookbook-task-check {
+    top: 2px;
+  }
+}
 .cookbook-task-start-now {
   display: inline-flex;
   align-items: center;
@@ -2045,24 +2474,30 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 /* "Serve" button on a finished download — green pill matching the "running" /
    finished badge (it sits next to the green FINISHED chip + check). */
 .cookbook-task-serve-btn {
-  font-size: 9px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border: none;
-  border-radius: 3px;
-  line-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 4px;
+  border: 0;
+  border-radius: 9px;
+  line-height: 1;
   flex-shrink: 0;
   cursor: pointer;
   font-family: inherit;
-  background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
+  font-size: 9px;
+  text-transform: lowercase;
+  background: transparent;
   color: var(--green, #50fa7b);
   position: relative;
   top: -2px;
+  margin-right: 2px;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  transition: background 0.15s;
 }
-.cookbook-task-serve-btn:hover { background: color-mix(in srgb, var(--green, #50fa7b) 32%, transparent); }
+.cookbook-task-serve-btn svg { flex-shrink: 0; }
+.cookbook-task-serve-btn:hover { background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent); }
 .cookbook-task-sub {
   padding: 1px 10px 4px;
   line-height: 1;
@@ -2099,6 +2534,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   line-height: 16px;
 }
 .cookbook-task-running { background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent); color: var(--green, #50fa7b); }
+.cookbook-task-downloading { background: color-mix(in srgb, var(--color-accent, #00aaff) 20%, transparent); color: var(--color-accent, #00aaff); }
 /* Stopping: same pill treatment as "running" but orange. */
 .cookbook-task-stopping { background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent); color: var(--orange, #ffb86c); }
 .cookbook-task-done { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
@@ -2142,6 +2578,16 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 }
 .cookbook-task-header {
   cursor: pointer;
+}
+.cookbook-task[data-type="serve"] .cookbook-task-header {
+  margin: 4px 4px 0;
+  border-radius: 6px;
+}
+.cookbook-task[data-type="serve"] .cookbook-output-wrap {
+  margin: 0 4px 4px;
+}
+.cookbook-task[data-type="serve"] .cookbook-output-pre {
+  border-radius: 6px;
 }
 
 /* Env bar — match admin-card */
@@ -2264,6 +2710,9 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 
 /* Mobile cookbook sizing — kept in line with calendar/library modals. */
 @media (max-width: 768px) {
+  .hwfit-serve-row-core .hwfit-context-label {
+    grid-column: 1 / -1;
+  }
   /* The Speculative control (checkbox + method dropdown + token stepper)
      is too wide for a phone — the stepper ran off the right edge of the
      modal. Let the group wrap onto its own line, take full width, and
@@ -2271,10 +2720,19 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   .hwfit-spec-group {
     flex-wrap: wrap;
     flex-basis: 100%;
+    column-gap: 4px;
     row-gap: 4px;
   }
-  .hwfit-spec-group .hwfit-spec-method { min-width: 0; flex: 1 1 auto; }
+  .hwfit-spec-group .hwfit-spec-method {
+    min-width: 0;
+    flex: 0 1 82px;
+    max-width: 82px;
+  }
   .hwfit-numstep { flex: 0 0 auto; }
+  .hwfit-spec-group .hwfit-help-chip-inline {
+    flex: 0 0 auto;
+    margin-left: 2px !important;
+  }
   .cookbook-card-title { font-size: 13px; }
   .cookbook-card-desc { font-size: 12px; }
   .cookbook-field-label { font-size: 12px; }
@@ -2498,8 +2956,8 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   white-space: nowrap;
 }
 .cookbook-gpu-btn {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   font-size: 11px;
   font-family: inherit;
@@ -2795,6 +3253,31 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 .cookbook-dl-btn:hover {
   opacity: 0.9;
 }
+.cookbook-dl-gguf-row {
+  margin-top: -1px;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 11px;
+  position: relative;
+  top: -2px;
+}
+.cookbook-dl-gguf-label {
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+#cookbook-dl-gguf-quant {
+  height: 28px;
+  min-width: 118px;
+  flex: 0 0 auto;
+}
+#cookbook-dl-gguf-note {
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
 
 /* HF link in search panel */
 .hwfit-panel-hf-link {
@@ -2978,7 +3461,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid color-mix(in srgb, var(--fg) 30%, transparent);
+  border-left: 3px solid var(--cookbook-server-color, color-mix(in srgb, var(--fg) 30%, transparent));
   border-radius: 8px;
   background: color-mix(in srgb, var(--fg) 3%, var(--bg));
   box-sizing: border-box;
@@ -2991,6 +3474,113 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   .cookbook-server-row .cookbook-srv-path { flex: 1 1 100% !important; width: auto !important; min-width: 0 !important; }
 }
 .cookbook-server-row .cookbook-srv-name { width: 60px; flex-shrink: 0; flex-grow: 0; }
+.cookbook-server-row .cookbook-srv-color-wrap {
+  width: 86px;
+  flex-shrink: 0;
+  flex-grow: 0;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  color: var(--cookbook-server-color, var(--fg-muted));
+}
+.cookbook-server-row select.cookbook-srv-color {
+  display: none !important;
+}
+.cookbook-server-row .cookbook-srv-color-dot {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  z-index: 1;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-dot {
+  opacity: 0.8;
+}
+.cookbook-server-row .cookbook-srv-color-btn {
+  width: 100%;
+  padding-left: 22px !important;
+  padding-right: 18px !important;
+  position: relative;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cookbook-server-row .cookbook-srv-color-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cookbook-server-row .cookbook-srv-color-caret {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.65;
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-btn {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--cookbook-server-color, var(--border)) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--cookbook-server-color, var(--fg)) 14%, var(--bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cookbook-server-color, var(--border)) 18%, transparent);
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-dot {
+  background: var(--cookbook-server-color, currentColor);
+}
+.cookbook-server-row .cookbook-srv-color-wrap.has-color .cookbook-srv-color-caret {
+  color: var(--fg-muted);
+}
+.cookbook-srv-color-menu {
+  position: absolute;
+  z-index: 5000;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 138px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 35%, transparent);
+}
+.cookbook-srv-color-menu.hidden {
+  display: none;
+}
+.cookbook-srv-color-item {
+  width: 100%;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--swatch-color, var(--fg)) 10%, transparent);
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.cookbook-srv-color-item:hover,
+.cookbook-srv-color-item.active {
+  border-color: color-mix(in srgb, var(--swatch-color, var(--accent, var(--red))) 55%, var(--border));
+  background: color-mix(in srgb, var(--swatch-color, var(--accent, var(--red))) 18%, var(--bg));
+}
+.cookbook-srv-color-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--swatch-color, var(--fg-muted));
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  flex-shrink: 0;
+}
 .cookbook-server-row .cookbook-srv-host { flex: 1; min-width: 100px; }
 .cookbook-server-row .cookbook-srv-host[readonly] { opacity: 0.4; cursor: default; }
 .cookbook-server-row .cookbook-srv-port { width: 40px; flex-shrink: 0; flex-grow: 0; }
@@ -3208,6 +3798,7 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 .hwfit-toolbar .hwfit-server-select { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-quant { min-width: 50px; flex-shrink: 0; }
+.hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 86px; flex-shrink: 0; font-size: 10px; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
 /* Lower-opacity "Search models..." placeholder so it reads as a hint, not
    a label — matches the muted form-field feel of the inline filters. */
@@ -3277,6 +3868,85 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
   position: relative;
   display: inline-flex;
   align-items: center;
+}
+.hwfit-engine-btn {
+  height: 28px;
+  padding: 0 30px 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  top: -3px;
+}
+.hwfit-engine-btn-icon,
+.hwfit-engine-item-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.hwfit-engine-btn-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hwfit-engine-caret {
+  position: absolute;
+  right: 6px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.hwfit-engine-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  padding: 4px;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+}
+.hwfit-engine-item {
+  width: 100%;
+  min-height: 26px;
+  padding: 5px 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.hwfit-engine-item:hover,
+.hwfit-engine-item.active {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.hwfit-engine-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .hwfit-quant-wrap .hwfit-quant,
 .hwfit-engine-wrap .hwfit-engine {
@@ -3737,11 +4407,20 @@ details.hwfit-serve-advanced > .hwfit-serve-extra {
 }
 #hwfit-cache-scan {
   position: relative;
-  top: 1px;
-  width: 51px;
+  top: -1px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+#hwfit-cache-scan.spinning svg {
+  animation: modelPickerRefreshSpin 0.75s linear infinite;
 }
 #serve-search {
-  height: 32px;
+  height: 28px;
 }
 #cookbook-dl-btn {
   position: relative;
