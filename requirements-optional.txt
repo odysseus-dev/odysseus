@@ -34,3 +34,12 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Native Windows desktop harness (odysseus-desktop.py): runs Odysseus as a real
+# desktop window instead of a browser tab. pywebview embeds the existing web UI
+# in a native window, pystray provides the system-tray icon, and Pillow renders
+# the tray/window icon. Only needed to launch odysseus-desktop.py — the server,
+# Docker, and browser-based use don't require any of these.
+pywebview
+pystray
+pillow
