@@ -10,6 +10,8 @@ import re
 from typing import Dict, Optional
 
 from src.tools._common import _parse_tool_args
+from src.tool_utils import get_upload_handler
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +200,18 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                             "duplicate": True,
                             "exit_code": 0,
                         }
+            missing_id = reserve_upload_references(
+                get_upload_handler(),
+                owner,
+                content_raw,
+                args.get("color"),
+                items_json,
+            )
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
             note = Note(
                 id=str(_uuid.uuid4()),
                 owner=owner,
@@ -235,6 +249,19 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
+            missing_id = reserve_upload_references(
+                get_upload_handler(),
+                owner,
+                args.get("content"),
+                args.get("color"),
+                args.get("checklist_items"),
+                args.get("items"),
+            )
+            if missing_id:
+                return {
+                    "error": f"Referenced upload is no longer available: {missing_id}",
+                    "exit_code": 1,
+                }
             for field in ("title", "content", "note_type", "color", "label"):
                 if field in args and args[field] is not None:
                     setattr(note, field, args[field])

@@ -2118,6 +2118,9 @@ body.bg-pattern-sparkles {
       overflow-wrap: break-word;
       overflow: hidden;
     }
+    .msg-user:has(textarea) {
+      width: 85%;
+    }
     .msg-ai {
       align-items: flex-start;
       margin-right: auto;

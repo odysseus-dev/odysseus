@@ -1822,7 +1822,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
@@ -2851,6 +2851,22 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 budgetDiv.textContent = `Tool budget reached (${json.used}/${json.limit} calls). Agent stopped.`;
                 const chatBox = document.getElementById('chat-history');
                 chatBox.appendChild(budgetDiv);
+
+              } else if (json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted') {
+                if (_isBg) continue;
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const guardDiv = document.createElement('div');
+                guardDiv.className = 'stopped-indicator';
+                const guardLabel = document.createElement('span');
+                guardLabel.textContent = `[Agent guard: ${json.message || json.reason || 'internal stop'}]`;
+                guardDiv.appendChild(guardLabel);
+                const targetBody = roundHolder && roundHolder.querySelector('.body');
+                if (targetBody) targetBody.appendChild(guardDiv);
+                else {
+                  const chatBox = document.getElementById('chat-history');
+                  if (chatBox) chatBox.appendChild(guardDiv);
+                }
 
               } else if (json.type === 'teacher_takeover') {
                 if (_isBg) continue;

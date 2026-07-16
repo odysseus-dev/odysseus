@@ -1450,7 +1450,9 @@ def setup_chat_routes(
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
-                                    "rounds_exhausted",
+                                    "rounds_exhausted", "budget_exceeded",
+                                    "loop_breaker_triggered",
+                                    "intent_nudge_exhausted",
                                     "ask_user",
                                     "plan_update",
                                 ):
