@@ -272,7 +272,15 @@ class ChatHandler:
                                     _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
                                 except Exception:
                                     pass
-                        enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"
+                        # Label the vision text as auto-generated — injected bare,
+                        # chat models mistake it for the user's own writing and respond
+                        # to the prose instead of the image.
+                        _vl_label = f" by {vl_model}" if vl_model else ""
+                        enhanced_message = (
+                            f"{enhanced_message}\n\n[Attached image: {file_info['name']} — "
+                            f"description below was auto-generated{_vl_label}, "
+                            f"not written by the user]\n{vl_desc}"
+                        )
                         # Surface the description to the client live so it renders as a
                         # collapsible "image description" on the user bubble (not just
                         # after a refresh that re-parses the stored message).
