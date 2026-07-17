@@ -469,6 +469,33 @@ def ensure_start_menu_shortcut(force: bool = False) -> bool:
         return False
 
 
+def _ensure_first_run_setup() -> None:
+    """On first launch, create the data directories and initialize the database
+    so the backend comes up ready on a clean clone — WITHOUT creating an admin.
+
+    The web UI's first-run "Create Admin Account" screen creates the admin
+    in-app, so onboarding stays entirely in the GUI: there's no separate
+    ``setup.py install`` step and no "start the server" terminal hint. Reuses
+    the project's own setup helpers (create_dirs / init_database) so behavior
+    matches a normal install. Idempotent and best-effort — skipped once the DB
+    exists, and never blocks launch if a step fails (the backend also
+    self-initializes core.database on import)."""
+    try:
+        import setup as _odysseus_setup  # also puts the repo root on sys.path
+        from src.constants import DATA_DIR
+    except Exception as e:
+        log.warning(f"First-run setup helpers unavailable, letting the backend self-init: {e}")
+        return
+    if (Path(DATA_DIR) / "app.db").exists():
+        return  # already initialized
+    try:
+        log.info("First run — creating data directories and database (admin is created in the app)...")
+        _odysseus_setup.create_dirs()
+        _odysseus_setup.init_database()
+    except Exception as e:
+        log.warning(f"First-run setup step failed (backend will self-initialize): {e}")
+
+
 def setup_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -509,6 +536,11 @@ def main() -> None:
     # Register a Start Menu entry so Odysseus is launchable from the Start Menu
     # / Windows search, not just this script. First run only; safe elsewhere.
     ensure_start_menu_shortcut()
+
+    # First launch on a clean clone: create data dirs + DB so the backend comes
+    # up ready, and let the web UI's "Create Admin Account" screen handle the
+    # admin in-app. This removes the separate `setup.py install` step.
+    _ensure_first_run_setup()
 
     backend = BackendManager()
     tray = TrayController(backend)
