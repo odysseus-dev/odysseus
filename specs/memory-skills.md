@@ -1,6 +1,6 @@
 # Memory And Skills
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -43,7 +43,7 @@ Extraction handles reasoning-model response shapes and records explicit dislike/
 
 `services/memory/skills.py` owns disk-backed skill storage under `data/skills/<category>/<name>/SKILL.md`, plus `_usage.json` usage/audit sidecars. Legacy `data/skills.json` is a read-only fallback/import source, not the current write shape.
 
-`services/memory/skill_format.py` owns frontmatter/body parsing and emission. `services/memory/skill_importer.py` resolves public GitHub/skills URLs, fetches bundle files with outbound URL safety, and chooses/imports `SKILL.md`. `routes/skills_routes.py` owns HTTP skill CRUD/search/index/markdown/import behavior, owner filtering, tag/search handling, skill test jobs, audit-all jobs, scheduled audit entry points, and admin-gated built-in tool instruction overrides.
+`services/memory/skill_format.py` owns frontmatter/body parsing and emission. `services/memory/skill_importer.py` resolves public GitHub/skills URLs, fetches bundle files with strict public-network URL safety, and chooses/imports `SKILL.md`. Import fetches disable automatic HTTP redirects, follow at most five redirects manually, and re-run the private/loopback/link-local guard before every hop; GitHub final-host checks still apply after the network guard. `routes/skills_routes.py` owns HTTP skill CRUD/search/index/markdown/import behavior, owner filtering, tag/search handling, skill test jobs, audit-all jobs, scheduled audit entry points, and admin-gated built-in tool instruction overrides.
 
 Skill extraction is owned by `services/memory/skill_extractor.py`. It can suggest or save skills from conversations, tries valid brace-delimited JSON candidates with `JSONDecoder.raw_decode()`, rejects ambiguous multiple top-level JSON objects instead of guessing, and saved skills remain user-editable data.
 
@@ -96,11 +96,17 @@ Owner isolation is surface-specific:
 
 Skill test/audit flows intentionally run user-editable `SKILL.md` content as instructions inside controlled jobs. Those jobs rely on route owner checks, admin gates where applicable, and tool execution policy.
 
+Skill import is admin-gated defense-in-depth, but imported URLs are still
+untrusted network input. Initial and redirected targets must remain public;
+`httpx` redirect following must stay disabled so validation happens before
+each connection rather than after a redirect has already reached a private
+service.
+
 User rename flows update skill frontmatter owner fields and `_usage.json` owner keys alongside memory/upload/research ownership migrations.
 
 ## Testing Coverage
 
-Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape and owner-scope behavior, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, CLI non-object row handling, and selected route owner checks.
+Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape and owner-scope behavior, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, skill-import private-target and redirect-hop SSRF rejection, CLI non-object row handling, and selected route owner checks.
 
 Route-level memory CRUD/security, skills route security, MCP memory behavior, vector degraded writes, compatibility facade owner behavior, backup skill import, admin vector cleanup, and frontend endpoint wiring need broader coverage.
 

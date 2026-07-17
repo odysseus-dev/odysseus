@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -73,7 +73,12 @@ Runtime behavior:
 
 `core.database.McpServer` persists transport, command, args, env, URL, enabled state, OAuth config, disabled tool names, and encrypted generic OAuth token/client state. `McpServer.env` is plaintext JSON in the database.
 
-`src.mcp_manager.McpManager` owns live connection state, stdio/SSE/Streamable HTTP transports, sessions, tool schemas, qualified names, and tool calls. HTTP route operations update both database state and live manager state where applicable. Streamable HTTP connects in a background task, can report `connecting` or `needs_auth`, and surfaces an authorization URL when the OAuth client flow redirects.
+`src.mcp_manager.McpManager` owns live connection state, stdio/SSE/Streamable HTTP transports, sessions, tool schemas, qualified names, and tool calls. HTTP route operations update both database state and live manager state where applicable. Streamable HTTP connects in a background task, can report `connecting` or `needs_auth`, and surfaces an authorization URL when the OAuth client flow redirects. Enabled configured servers connect concurrently at startup; each server has its own 20-second connection timeout and records `timeout` state without delaying siblings. The startup task has no second outer timeout.
+
+Stdio and SSE connection setup registers the session, exit stack, tool list,
+and status as one completed unit. If initialization or tool discovery fails
+before registration, the partial `AsyncExitStack` is closed so transports do
+not leak into later reconnect attempts.
 
 `src.agent_tools.admin_tools.do_manage_mcp()` is the agent/admin tool path for MCP config and is re-exported lazily through `src.tool_implementations` for compatibility. It is narrower than the HTTP routes: add is stdio-only, command values are checked against an allowlist/denylist before persistence, and enable/disable primarily flips DB config. `scripts/odysseus-mcp` is config-only; it reads and mutates database rows, redacts env values by default, and does not report live manager connection state.
 
@@ -121,7 +126,9 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 ## Degraded And Platform Behavior
 
 - `app.py` starts the background monitor and MCP startup tasks asynchronously; MCP startup is non-critical to app readiness.
-- Configured MCP server startup is bounded and errors are stored in manager status.
+- Configured MCP servers start concurrently with a per-server 20-second bound;
+  timeout state is stored per server and partial connection resources are
+  closed before returning.
 - Missing Python `mcp` dependency degrades attempted MCP connections to error status.
 - Missing or uncached browser NPX package is optional and log-only during built-in startup; startup should not perform an implicit package download.
 - Windows does not support POSIX PTY/tmux paths; streaming falls back to pipes or detached logfile behavior.
@@ -146,7 +153,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 
 ## Testing Notes
 
-Current targeted coverage includes Windows PTY import degradation, PTY unsupported stream events, the cross-site helper, `ShellService` stream deadline behavior, background store/monitor basics, MCP manager cache/reconnect args, built-in `PYTHONPATH` preservation, non-object generic OAuth-token storage recovery, MCP CLI JSON/env serialization, MCP common truncation helper, action intent shell verbs, and public blocked-tool fail-closed behavior.
+Current targeted coverage includes Windows PTY import degradation, PTY unsupported stream events, the cross-site helper, `ShellService` stream deadline behavior, background store/monitor basics, concurrent MCP startup, per-server timeout isolation and cleanup, MCP manager cache/reconnect args, built-in `PYTHONPATH` preservation, non-object generic OAuth-token storage recovery, MCP CLI JSON/env serialization, MCP common truncation helper, action intent shell verbs, and public blocked-tool fail-closed behavior.
 
 The shell/MCP audit ran the targeted venv subset with 78 passing tests and one warning.
 
