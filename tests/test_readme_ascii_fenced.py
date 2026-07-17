@@ -23,10 +23,11 @@ def _fenced_segments(text: str):
 
 
 def test_readme_opens_with_wordmark_title():
-    # The README must still open with a recognizable Odysseus title: now the
-    # centered wordmark image rather than an H1 / ASCII banner.
+    # The Hellaine fork must open with its protected centered wordmark and title
+    # rather than the upstream Odysseus identity or an ASCII banner.
     head = "\n".join(README.read_text(encoding="utf-8").splitlines()[:15])
-    assert 'alt="Odysseus"' in head, "README must open with the Odysseus wordmark image"
+    assert 'alt="Hellaine\'s Jade Palace"' in head
+    assert "Hellaine's Jade Palace" in head
 
 
 def test_reintroduced_ascii_banner_stays_fenced():

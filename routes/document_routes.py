@@ -10,8 +10,9 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, _auth_disabled
 from src.constants import MAIL_ATTACHMENTS_DIR
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,18 @@ def _library_language_for_document(doc: Document) -> str:
     return doc.language or "text"
 
 
+def _email_source_key(content: str) -> tuple[str, str]:
+    """Return the source email identity embedded in an email draft document."""
+    import re
+
+    text = content or ""
+    uid_m = re.search(r"(?im)^X-Source-UID:\s*(.+?)\s*$", text)
+    folder_m = re.search(r"(?im)^X-Source-Folder:\s*(.+?)\s*$", text)
+    uid = (uid_m.group(1).strip() if uid_m else "")
+    folder = (folder_m.group(1).strip() if folder_m else "INBOX")
+    return uid, folder
+
+
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
@@ -65,6 +78,14 @@ from routes.document_helpers import (
 
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
+
+    def _reserve_document_uploads(user: Optional[str], content: str) -> None:
+        missing_id = reserve_upload_references(upload_handler, user, content)
+        if missing_id:
+            raise HTTPException(
+                409,
+                f"Referenced upload is no longer available: {missing_id}",
+            )
 
     def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
         if upload_handler is None:
@@ -99,23 +120,62 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 # the existing lenient path.
                 session = _get_session_or_404(db, req.session_id, user)
 
-            doc_id = str(uuid.uuid4())
-            ver_id = str(uuid.uuid4())
-
             # If no language was supplied (e.g. cloning a doc whose language
             # was never set), detect it from the content rather than storing
             # NULL — which made the editor fall back to plain text. Defaults
             # to markdown for prose.
             language = req.language
             if not language:
-                from src.agent_tools.document_tools import _looks_like_email_document, _sniff_doc_language
+                from src.agent_tools.document_tools import _looks_like_email_document, _sniff_doc_language, _coerce_email_document_content
                 language = _sniff_doc_language(req.content)
             else:
-                from src.agent_tools.document_tools import _looks_like_email_document
+                from src.agent_tools.document_tools import _looks_like_email_document, _coerce_email_document_content
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
 
+            _reserve_document_uploads(user, req.content)
             _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
+
+            # Reply drafts are keyed to the source email. If a UI/tool path tries
+            # to create a second draft for the same email in the same chat,
+            # update the existing draft instead so quoted thread history stays
+            # attached to the visible document.
+            if language == "email" and req.session_id:
+                source_uid, source_folder = _email_source_key(req.content)
+                if source_uid:
+                    candidates = (
+                        db.query(Document)
+                        .filter(Document.session_id == req.session_id)
+                        .filter(Document.is_active == True)
+                        .filter(Document.language == "email")
+                        .order_by(Document.updated_at.desc())
+                        .limit(25)
+                        .all()
+                    )
+                    for existing in candidates:
+                        old_uid, old_folder = _email_source_key(existing.current_content or "")
+                        if old_uid != source_uid or old_folder != source_folder:
+                            continue
+                        merged = _coerce_email_document_content(existing.current_content or "", req.content)
+                        if existing.current_content != merged:
+                            new_ver = (existing.version_count or 1) + 1
+                            existing.current_content = merged
+                            existing.title = req.title or existing.title
+                            existing.version_count = new_ver
+                            db.add(DocumentVersion(
+                                id=str(uuid.uuid4()),
+                                document_id=existing.id,
+                                version_number=new_ver,
+                                content=merged,
+                                summary="Updated existing email draft",
+                                source="user",
+                            ))
+                            db.commit()
+                            db.refresh(existing)
+                        return _doc_to_dict(existing)
+
+            doc_id = str(uuid.uuid4())
+            ver_id = str(uuid.uuid4())
 
             doc = Document(
                 id=doc_id,
@@ -388,7 +448,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             if not user:
-                raise HTTPException(403, "Authentication required")
+                if not _auth_disabled():
+                    raise HTTPException(403, "Authentication required")
             # v2 review HIGH-9: raise 403 explicitly when the caller
             # can't see this session, instead of returning [] which the
             # UI treats identically to "no docs" and silently masks
@@ -569,11 +630,24 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
 
-            # Skip if content is identical
-            if doc.current_content == req.content:
+            incoming_content = req.content
+            from src.agent_tools.document_tools import _coerce_email_document_content, _looks_like_email_document
+            is_email_doc = (
+                (doc.language or "").lower() == "email"
+                or _looks_like_email_document(doc.current_content or "", doc.title or "")
+                or _looks_like_email_document(req.content or "", doc.title or "")
+            )
+            if is_email_doc:
+                incoming_content = _coerce_email_document_content(doc.current_content or "", req.content)
+                doc.language = "email"
+
+            # Skip if content is identical unless the caller explicitly wants
+            # a checkpoint version from the current editor state.
+            if doc.current_content == incoming_content and not req.force_version:
                 return _doc_to_dict(doc)
 
-            _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
+            _reserve_document_uploads(user, incoming_content)
+            _assert_pdf_marker_upload_owned(request, incoming_content, user, upload_handler)
 
             # Check if we can coalesce with the latest version
             latest_ver = db.query(DocumentVersion).filter(
@@ -582,14 +656,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             now = datetime.now(timezone.utc)
             coalesced = False
-            if latest_ver and latest_ver.source == "user":
+            if latest_ver and latest_ver.source == "user" and not req.force_version:
                 ver_time = latest_ver.created_at
                 if ver_time.tzinfo is None:
                     ver_time = ver_time.replace(tzinfo=timezone.utc)
                 age = (now - ver_time).total_seconds()
                 if age < VERSION_COALESCE_SECONDS:
                     # Update the existing version in-place
-                    latest_ver.content = req.content
+                    latest_ver.content = incoming_content
                     latest_ver.created_at = now
                     if req.summary:
                         latest_ver.summary = req.summary
@@ -601,14 +675,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     id=str(uuid.uuid4()),
                     document_id=doc_id,
                     version_number=new_ver,
-                    content=req.content,
+                    content=incoming_content,
                     summary=req.summary or "Manual edit",
                     source="user",
                 )
                 doc.version_count = new_ver
                 db.add(ver)
 
-            doc.current_content = req.content
+            doc.current_content = incoming_content
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -798,10 +872,26 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             from src.document_actions import _JUNK_TITLES
 
             to_delete = []
+            now = datetime.now(timezone.utc)
             for doc in docs:
+                created = doc.created_at
+                if created and created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+
+                # Skip freshly created documents to avoid deleting them while the user is actively editing
+                if created and (now - created).total_seconds() < 900:  # 15 minutes
+                    continue
+
                 content = (doc.current_content or "").strip()
                 title_raw = (doc.title or "").strip()
                 title = title_raw.lower()
+                is_fresh_empty = (
+                    not content
+                    and created is not None
+                    and (now - created).total_seconds() < 1800
+                )
+                if is_fresh_empty:
+                    continue
 
                 # Strip markdown noise to get a "real" character count
                 stripped = _re.sub(r"^#{1,6}\s+", "", content, flags=_re.MULTILINE)
@@ -835,10 +925,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 if _is_email_stub:
                     to_delete.append(doc); deleted += 1; continue
                 if title in _JUNK_TITLES:
-                    to_delete.append(doc); deleted += 1; continue
-                if real_len < 30:
-                    to_delete.append(doc); deleted += 1; continue
-                if "\n" not in content and real_len < 50:
                     to_delete.append(doc); deleted += 1; continue
 
                 # Fix empty or placeholder titles on survivors

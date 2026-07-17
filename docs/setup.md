@@ -15,7 +15,7 @@ On first setup, Odysseus creates an admin account (`admin` unless
 For Docker installs, the same line is in `docker compose logs odysseus`.
 Use that for the first login, then change it in **Settings**.
 
-Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
+Contributing? See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
 ### Docker (recommended)
@@ -99,6 +99,33 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
+**Host Docker access (explicit opt-in).** Default Docker Compose intentionally
+does not mount `/var/run/docker.sock`. You can still connect Odysseus to
+existing Ollama, vLLM, and other OpenAI-compatible endpoints without Docker
+socket access.
+
+Cookbook/local Docker-daemon management requires the opt-in overlay below. Raw
+Docker socket access is high-trust because it can effectively grant broad
+control over the host Docker daemon. Remote server Docker workflows over SSH
+remain preferred.
+
+Place these values in `.env`, or export them in the shell before running
+`docker compose`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/host-docker.yml
+DOCKER_GID=<host docker group gid>
+```
+
+Combine host Docker access with a GPU overlay when both are intentionally
+required:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/host-docker.yml
+# or
+COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml:docker/host-docker.yml
+```
+
 **Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
 only detect GPUs that Docker exposes to the container — if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or
@@ -123,6 +150,51 @@ scripts/check-docker-gpu.sh --enable-nvidia-overlay
 # Full assisted setup — install toolkit, then enable overlay if passthrough works:
 scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
 ```
+#### Arch Linux NVIDIA Docker notes
+
+On Arch Linux, verify the host NVIDIA driver and Docker GPU passthrough before enabling the Odysseus NVIDIA overlay.
+
+Install the required packages:
+
+```bash
+sudo pacman -Syu
+sudo pacman -S docker docker-compose nvidia-container-toolkit nvidia-utils
+sudo systemctl enable --now docker
+```
+
+Configure Docker to use the NVIDIA container runtime:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Verify the host GPU:
+
+```bash
+nvidia-smi
+```
+
+Verify Docker GPU passthrough:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu22.04 nvidia-smi
+```
+
+Then enable the Odysseus NVIDIA compose overlay:
+
+```env
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+```
+
+Rebuild and verify the GPU inside the Odysseus container:
+
+```bash
+docker compose up -d --build
+docker compose exec odysseus nvidia-smi -L
+```
+
+For first-time local model testing on 8 GB laptop GPUs, start with GGUF/Q4 models on llama.cpp before trying GPTQ/AWQ models on vLLM or SGLang. This keeps the first run simpler while confirming GPU passthrough works.
 
 Safety notes:
 - The app never installs host GPU runtime automatically.
@@ -250,6 +322,19 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 If `python` points at an older interpreter, use `py -3.12` (or another installed
 3.11+ version) for the venv step.
 
+**Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and
+does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env`
+alone leaves the native Windows server on loopback. Pass the launcher's
+`-BindHost` flag instead:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -BindHost 0.0.0.0
+```
+
+The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind
+outside loopback only for a trusted LAN/VPN such as Tailscale: keep
+`AUTH_ENABLED=true` and do not expose the port directly to the public internet.
+
 **Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
 email, calendar, deep research) runs fully native. For full **Cookbook** background
 model downloads and the agent shell tool, also install
@@ -285,6 +370,16 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
    python -m uvicorn app:app --host 0.0.0.0 --port 7000 --ssl-certfile=cert.pem --ssl-keyfile=key.pem
    ```
 4. Install the `mkcert` CA on any other device you want to access Odysseus from (e.g., for iOS, email the `rootCA.pem` to yourself, install the profile, and trust it in Certificate Trust Settings).
+
+### Common self-host traps (30-second fixes)
+A grab-bag of small gotchas that otherwise turn into long debugging sessions.
+
+- **`AUTH_ENABLED=false` is ignored / you're still forced to log in (Windows).** If you edited `.env` in Notepad it may have saved a UTF-8 **BOM**, turning the first key into `﻿AUTH_ENABLED` so it is never matched. Odysseus loads `.env` with `encoding="utf-8-sig"` to tolerate a leading BOM, but the safe fix is to re-save `.env` as **UTF-8 without BOM** (VS Code: *Save with Encoding → UTF-8*).
+- **macOS: the app isn't at `http://localhost:7000`.** macOS AirPlay Receiver usually holds port `7000`, so the macOS start script serves on **`7860`** instead — open `http://localhost:7860`. To use `7000`, free it (System Settings → General → AirDrop & Handoff → turn off *AirPlay Receiver*) and set `APP_PORT=7000`.
+- **Copy buttons do nothing over a plain-HTTP Tailscale/LAN URL.** Browsers only expose the clipboard API (`navigator.clipboard`) on **secure origins** — HTTPS, or `localhost`. Over `http://100.x.y.z:7860` it is blocked. Serve over HTTPS (see *HTTPS + LAN/Tailscale exposure* above); `localhost` is exempt, so copy still works on the host itself.
+- **Self-hosted ntfy reminders don't reach your phone.** Two things: (1) the bundled ntfy binds to loopback by default — to reach it from your phone set `NTFY_BIND` to your host/Tailscale IP and `NTFY_BASE_URL` to the same server URL in `.env`, then recreate the ntfy container (see the `NTFY_*` block in `.env.example`); (2) in the ntfy **Android** app, subscribe to the topic with **Instant delivery** enabled — non-`ntfy.sh` servers don't get instant push otherwise.
+- **Local mail (Dovecot) login fails: "Plaintext authentication disallowed on non-encrypted connections."** Your IMAP/SMTP server is refusing cleartext auth over an unencrypted link. Prefer enabling TLS on the mail server; on a trusted LAN only, you can allow cleartext (Dovecot: `disable_plaintext_auth = no`).
+- **Calendar/contacts (Radicale) won't sync.** Point Odysseus at the **full collection URL** with its trailing slash — e.g. `http://host:5232/<user>/<collection-id>/` — not just the server root. Radicale shows this address for each calendar/address book in its web UI.
 
 ### Optional Dependencies
 `requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
@@ -422,4 +517,4 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
 To back up or restore everything in `data/`, see the
-[Backup & Restore guide](docs/backup-restore.md).
+[Backup & Restore guide](backup-restore.md).

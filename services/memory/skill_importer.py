@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 
@@ -68,6 +68,52 @@ def _is_text_file(name: str) -> bool:
     return any(low.endswith(s) for s in ALLOWED_SUFFIXES)
 
 
+# Max redirect hops to follow manually while re-validating each one.
+_MAX_FETCH_REDIRECTS = 5
+
+
+def _check_fetch_url(url: str) -> None:
+    """SSRF guard for skill-import fetches (defense-in-depth).
+
+    Skill bundles only ever come from public GitHub, never an internal
+    address, so block private/loopback/link-local targets on every hop —
+    matching the hardened web-fetch path in
+    ``services/search/content.py:_get_public_url`` rather than the lenient
+    default used for admin-configured model endpoints.
+    """
+    ok, reason = check_outbound_url(url, block_private=True)
+    if not ok:
+        raise SkillImportError(reason)
+
+
+def _get_checked(
+    url: str,
+    *,
+    headers: Optional[dict] = None,
+    timeout: float = 30.0,
+) -> httpx.Response:
+    """GET that follows redirects manually, re-running the SSRF guard per hop.
+
+    ``httpx``'s ``follow_redirects=True`` validates only the initial URL, so a
+    ``3xx`` to an internal address (``169.254.169.254``, ``127.0.0.1``, …) would
+    still be connected to before any post-hoc host check. Following redirects by
+    hand lets us re-validate every hop, closing that blind-SSRF gap.
+    """
+    current = url
+    with httpx.Client(follow_redirects=False, timeout=timeout) as client:
+        for _ in range(_MAX_FETCH_REDIRECTS + 1):
+            _check_fetch_url(current)
+            r = client.get(current, headers=headers)
+            if r.status_code in (301, 302, 303, 307, 308):
+                location = r.headers.get("location")
+                if not location:
+                    return r
+                current = urljoin(str(r.url), location)
+                continue
+            return r
+    raise SkillImportError("too many redirects while fetching skill bundle")
+
+
 def parse_skill_source(url: str) -> ResolvedSource:
     """Normalize skills.sh / GitHub web URLs into owner/repo/ref/path."""
     raw = (url or "").strip()
@@ -76,22 +122,18 @@ def parse_skill_source(url: str) -> ResolvedSource:
 
     # skills.sh often links to GitHub; try to unwrap ?url= or redirect target later.
     if "skills.sh" in raw and "github.com" not in raw:
-        ok, reason = check_outbound_url(raw)
-        if not ok:
-            raise SkillImportError(reason)
-        with httpx.Client(follow_redirects=True, timeout=20.0) as client:
-            r = client.get(raw)
-            if r.status_code >= 400:
-                raise _github_response_error(r)
-            final = str(r.url)
-            _assert_github_url(final, context="redirect target")
-            # Page may embed a github link; prefer final URL if redirected.
-            if "github.com" in final:
-                raw = final
-            else:
-                m = re.search(r"https?://github\.com/[^\s\"')]+", r.text or "")
-                if m:
-                    raw = m.group(0).rstrip(".,)")
+        r = _get_checked(raw, timeout=20.0)
+        if r.status_code >= 400:
+            raise _github_response_error(r)
+        final = str(r.url)
+        _assert_github_url(final, context="redirect target")
+        # Page may embed a github link; prefer final URL if redirected.
+        if "github.com" in final:
+            raw = final
+        else:
+            m = re.search(r"https?://github\.com/[^\s\"')]+", r.text or "")
+            if m:
+                raw = m.group(0).rstrip(".,)")
 
     parsed = urlparse(raw)
     host = _github_host(raw)
@@ -165,17 +207,13 @@ def _github_response_error(response: httpx.Response) -> SkillImportError:
 
 
 def _fetch_bytes(url: str) -> bytes:
-    ok, reason = check_outbound_url(url)
-    if not ok:
-        raise SkillImportError(reason)
-    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-        r = client.get(url, headers={"Accept": "application/vnd.github+json"})
-        if r.status_code >= 400:
-            raise _github_response_error(r)
-        _assert_github_url(str(r.url), context="redirect target")
-        if len(r.content) > MAX_FILE_BYTES:
-            raise SkillImportError(f"file too large: {url}")
-        return r.content
+    r = _get_checked(url, headers={"Accept": "application/vnd.github+json"}, timeout=30.0)
+    if r.status_code >= 400:
+        raise _github_response_error(r)
+    _assert_github_url(str(r.url), context="redirect target")
+    if len(r.content) > MAX_FILE_BYTES:
+        raise SkillImportError(f"file too large: {url}")
+    return r.content
 
 
 def _fetch_text(url: str) -> str:
@@ -190,15 +228,11 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
     if depth > 4 or len(out) >= MAX_FILES:
         return
     url = _api_contents_url(src, rel_dir)
-    ok, reason = check_outbound_url(url)
-    if not ok:
-        raise SkillImportError(reason)
-    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-        r = client.get(url, headers={"Accept": "application/vnd.github+json"})
-        if r.status_code >= 400:
-            raise _github_response_error(r)
-        _assert_github_url(str(r.url), context="redirect target")
-        entries = r.json()
+    r = _get_checked(url, headers={"Accept": "application/vnd.github+json"}, timeout=30.0)
+    if r.status_code >= 400:
+        raise _github_response_error(r)
+    _assert_github_url(str(r.url), context="redirect target")
+    entries = r.json()
     if not isinstance(entries, list):
         raise SkillImportError("expected a directory on GitHub")
     total = sum(len(v.encode("utf-8")) for v in out.values())

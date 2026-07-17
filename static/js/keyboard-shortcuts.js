@@ -16,7 +16,7 @@ const _defaultKeybinds = {
 };
 
 export function _matchesCombo(e, combo, isMac = IS_MAC) {
-  if (!combo) return false;
+  if (typeof combo !== 'string' || !combo) return false;
   // Drop AltGr keystrokes so typing characters on non-US layouts can't fire a
   // Ctrl+Alt shortcut — e.g. the destructive delete_session. See platform.js.
   if (isAltGrEvent(e, isMac)) return false;
@@ -211,7 +211,7 @@ export function initKeyboardShortcuts(modules) {
           } else {
             sessionModule.setCurrentSessionId(null);
             el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Odysseus Chat';
+            el('current-meta').textContent = 'Hellaine Chat';
             Storage.remove('lastSessionId');
             if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
           }

@@ -5,8 +5,5 @@
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.6.1"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.105.0"
   }
 }

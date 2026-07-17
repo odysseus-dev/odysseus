@@ -1,4 +1,8 @@
 import asyncio
+import os
+import shutil
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +14,7 @@ from routes.chat_helpers import (
     _session_is_research_spinoff,
     auto_name_session,
     build_chat_context,
+    build_uploaded_file_manifest,
     clean_thinking_for_save,
     needs_auto_name,
     PreprocessedMessage,
@@ -143,6 +148,130 @@ class _FakeSession:
 
     def add_message(self, message):
         self.history.append(message)
+
+
+class _ManifestUploadHandler:
+    def __init__(self, upload_dir, rows):
+        self.upload_dir = str(upload_dir)
+        self.rows = rows
+        self.calls = []
+
+    def _inside_upload_dir(self, path):
+        base = os.path.realpath(self.upload_dir)
+        candidate = os.path.realpath(path)
+        try:
+            return os.path.commonpath([base, candidate]) == base
+        except ValueError:
+            return False
+
+    def resolve_upload(self, upload_id, owner=None):
+        self.calls.append((upload_id, owner))
+        row = self.rows.get(upload_id)
+        if isinstance(row, dict) and row.get("owner") and row.get("owner") != owner:
+            return None
+        return row
+
+
+def _manifest_test_dir(name):
+    root = Path(__file__).resolve().parents[1] / "tmp_pytest_probe" / f"{name}-{uuid.uuid4().hex}"
+    root.mkdir(parents=True, exist_ok=False)
+    return root
+
+
+def test_build_uploaded_file_manifest_filters_and_nulls_unreadable_paths(monkeypatch):
+    root = _manifest_test_dir("manifest")
+    try:
+        upload_dir = root / "uploads"
+        upload_dir.mkdir()
+        good = upload_dir / "good.txt"
+        good.write_text("hello", encoding="utf-8")
+        outside = root / "outside.txt"
+        outside.write_text("nope", encoding="utf-8")
+        missing = upload_dir / "missing.txt"
+
+        import src.settings as settings
+
+        monkeypatch.setattr(
+            settings,
+            "get_setting",
+            lambda key: [str(upload_dir)] if key == "tool_path_extra_roots" else None,
+        )
+        handler = _ManifestUploadHandler(upload_dir, {
+            "good": {
+                "id": "good",
+                "name": "good.txt",
+                "mime": "text/plain",
+                "size": 5,
+                "path": str(good),
+                "owner": "alice",
+            },
+            "bob": {
+                "id": "bob",
+                "name": "bob.txt",
+                "path": str(good),
+                "owner": "bob",
+            },
+            "outside": {
+                "id": "outside",
+                "name": "outside.txt",
+                "path": str(outside),
+                "owner": "alice",
+            },
+            "missing": {
+                "id": "missing",
+                "name": "missing.txt",
+                "path": str(missing),
+                "owner": "alice",
+            },
+            "bad": ["not", "a", "dict"],
+        })
+
+        manifest = build_uploaded_file_manifest(
+            ["good", "bob", "outside", "missing", "bad"],
+            handler,
+            owner="alice",
+        )
+
+        assert [item["id"] for item in manifest] == ["good", "outside", "missing"]
+        assert manifest[0]["type"] == "attachment_ref"
+        assert manifest[0]["attachment_id"] == "good"
+        assert manifest[0]["uri"] == "odysseus://attachment/good"
+        assert manifest[0]["read_policy"] == "owner_checked_upload"
+        assert os.path.realpath(manifest[0]["path"]) == os.path.realpath(good)
+        assert manifest[1]["path"] is None
+        assert manifest[2]["path"] is None
+        assert handler.calls == [
+            ("good", "alice"),
+            ("bob", "alice"),
+            ("outside", "alice"),
+            ("missing", "alice"),
+            ("bad", "alice"),
+        ]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypatch):
+    root = _manifest_test_dir("manifest-unreadable")
+    try:
+        upload_dir = root / "uploads"
+        upload_dir.mkdir()
+        upload = upload_dir / "upload.txt"
+        upload.write_text("hello", encoding="utf-8")
+        handler = _ManifestUploadHandler(upload_dir, {
+            "upload": {"id": "upload", "name": "upload.txt", "path": str(upload), "owner": "alice"},
+        })
+
+        def reject_path(_path):
+            raise ValueError("outside the allowed roots")
+
+        monkeypatch.setattr("src.tool_execution._resolve_tool_path", reject_path)
+
+        manifest = build_uploaded_file_manifest(["upload"], handler, owner="alice")
+
+        assert manifest[0]["path"] is None
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 @pytest.mark.parametrize("name,expected", [

@@ -2,6 +2,17 @@
 import mimetypes
 import os
 import sys
+import asyncio
+import time
+
+# On Windows, asyncio.create_subprocess_exec/shell require the ProactorEventLoop.
+# When started via `python -m uvicorn` from a terminal, uvicorn sets this
+# automatically. But the VS Code debugger (and other non-uvicorn entrypoints)
+# use the default SelectorEventLoop, which raises NotImplementedError on any
+# subprocess call. Force ProactorEventLoop here so the right loop is always
+# used, regardless of how the process is launched.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 def register_static_mime_types() -> None:
@@ -44,7 +55,7 @@ from typing import Dict
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -65,7 +76,7 @@ from core.exceptions import (
 
 import bcrypt as _bcrypt
 
-from src.app_helpers import abs_join
+from src.app_helpers import abs_join, serve_html_with_nonce
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
@@ -187,7 +198,50 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
             )
 
 
+class _InteractiveActivityMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        from src.interactive_gate import should_track_interactive_request, track_interactive_request
+
+        path = request.url.path or ""
+        if not should_track_interactive_request(path, request.method):
+            return await call_next(request)
+        async def _stop_background():
+            try:
+                await task_scheduler.stop_background_tasks_for_foreground(reason=f"foreground request {request.method} {path}")
+            except Exception:
+                logging.getLogger("app.foreground_gate").debug("foreground task stop failed", exc_info=True)
+        asyncio.create_task(_stop_background())
+        async with track_interactive_request(path, request.method):
+            return await call_next(request)
+
+
+class _SlowRequestLogMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        start = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = getattr(response, "status_code", 0) or 0
+            return response
+        finally:
+            elapsed = time.perf_counter() - start
+            try:
+                threshold = float(os.getenv("ODYSSEUS_SLOW_REQUEST_LOG_SECONDS", "0.75") or "0.75")
+            except Exception:
+                threshold = 0.75
+            if elapsed >= threshold:
+                logging.getLogger("app.slow_request").warning(
+                    "slow_request method=%s path=%s status=%s elapsed=%.3fs",
+                    request.method,
+                    request.url.path,
+                    status,
+                    elapsed,
+                )
+
+
 app.add_middleware(_RequestTimeoutMiddleware)
+app.add_middleware(_InteractiveActivityMiddleware)
+app.add_middleware(_SlowRequestLogMiddleware)
 
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
@@ -573,6 +627,20 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 auth_router = setup_auth_routes(auth_manager)
 app.include_router(auth_router)
 
+
+@app.post("/api/activity/heartbeat")
+async def activity_heartbeat():
+    from src.interactive_gate import mark_browser_activity
+    await mark_browser_activity()
+    async def _stop_background():
+        try:
+            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
+        except Exception:
+            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
+    asyncio.create_task(_stop_background())
+    return {"ok": True}
+
+
 # Uploads
 from routes.upload_routes import setup_upload_routes
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
@@ -587,14 +655,19 @@ app.include_router(setup_emoji_routes())
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
+app.include_router(setup_session_routes(
+    session_manager,
+    session_config,
+    webhook_manager=webhook_manager,
+    upload_handler=upload_handler,
+))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
-from routes.memory_routes import setup_memory_routes
+from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
@@ -611,12 +684,12 @@ app.include_router(setup_chat_routes(
 ))
 
 # Research (background deep-research tasks)
-from routes.research_routes import setup_research_routes
+from routes.research.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
 # History
-from routes.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager))
+from routes.history.history_routes import setup_history_routes
+app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
 
 # Search
 from routes.search_routes import setup_search_routes
@@ -675,7 +748,7 @@ from routes.signature_routes import setup_signature_routes
 app.include_router(setup_signature_routes())
 
 # Gallery (image library)
-from routes.gallery_routes import setup_gallery_routes
+from routes.gallery.gallery_routes import setup_gallery_routes
 app.include_router(setup_gallery_routes())
 
 # Persisted image-editor drafts (server-backed projects)
@@ -695,7 +768,7 @@ app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-calendar_router = setup_calendar_routes()
+calendar_router = setup_calendar_routes(upload_handler=upload_handler)
 app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
@@ -758,7 +831,7 @@ logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler))
+app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
 
 # Email
 from routes.email_routes import setup_email_routes
@@ -783,7 +856,7 @@ from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
-from routes.contacts_routes import setup_contacts_routes
+from routes.contacts.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
@@ -791,23 +864,17 @@ app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
-def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
-    """Read an HTML file and inject the CSP nonce into inline <script> tags."""
-    with open(file_path, "r", encoding="utf-8") as f:
-        html = f.read()
-    nonce = getattr(request.state, "csp_nonce", "")
-    html = html.replace("{{CSP_NONCE}}", nonce)
-    return HTMLResponse(html)
-
 @app.get("/")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
-        return _serve_html_with_nonce(request, static_path)
-    root_path = abs_join(BASE_DIR, "index.html")
-    if os.path.exists(root_path):
-        return _serve_html_with_nonce(request, root_path)
-    raise HTTPException(404, "index.html not found")
+        return serve_html_with_nonce(request, static_path)
+    # No static bundle — fall back to a root-level index.html if one is shipped.
+    # If neither exists, serve_html_with_nonce logs it and returns a generic 500:
+    # a missing index.html is a broken deployment (server fault), not a client
+    # "not found". This keeps the app-shell route consistent with the other
+    # bundled-template routes instead of mislabelling the fault as a 404.
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "index.html"))
 
 @app.get("/notes")
 async def serve_notes(request: Request):
@@ -848,13 +915,13 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
         return RedirectResponse(url="/", status_code=302)
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
 async def get_version():
@@ -864,6 +931,34 @@ async def get_version():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@app.post("/api/client-perf")
+async def client_perf(request: Request):
+    """Low-volume frontend timing reports for stalls that happen before SSE logs."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        kind = str(data.get("type") or "client").replace("\n", " ")[:80]
+        total_ms = float(data.get("total_ms") or 0)
+        stages = data.get("stages") if isinstance(data.get("stages"), list) else []
+        stage_txt = " ".join(
+            f"{str(s.get('name') or '')[:40]}={float(s.get('delta_ms') or 0):.0f}ms"
+            for s in stages[:20]
+            if isinstance(s, dict)
+        )
+        extra = str(data.get("extra") or "").replace("\n", " ")[:200]
+        logging.getLogger("app.client_perf").warning(
+            "client_perf type=%s total=%.0fms %s%s",
+            kind,
+            total_ms,
+            stage_txt,
+            f" extra={extra}" if extra else "",
+        )
+    except Exception:
+        logging.getLogger("app.client_perf").debug("client_perf log failed", exc_info=True)
+    return {"ok": True}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:
@@ -953,7 +1048,7 @@ async def _startup_event():
         except BaseException as e:
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
-            await asyncio.wait_for(mcp_manager.connect_all_enabled(), timeout=20)
+            await mcp_manager.connect_all_enabled()
         except asyncio.TimeoutError:
             logger.warning("User MCP startup timed out (non-critical)")
         except BaseException as e:
@@ -961,57 +1056,59 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
-    # Pre-warm the RAG tool index off the request path. Loading the local
-    # embedding model + opening ChromaDB + indexing the built-in tools is a
-    # one-time ~1-3s cost that otherwise lands on the user's FIRST message
-    # (showing up as a big `tool_selection` time). Doing it here makes the
-    # first turn as fast as subsequent ones (warm embed ≈ a few ms).
-    async def _warmup_tool_index():
-        try:
-            from src.tool_index import get_tool_index
-            idx = await asyncio.to_thread(get_tool_index)
-            if idx:
-                await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
-                logger.info("[startup] Tool index pre-warmed")
-        except Exception as e:
-            logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
-
-    _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
-    # Warmup: ping all known LLM endpoints to prime connections
-    async def _warmup_endpoints():
-        try:
-            import httpx
-            # model_discovery has no get_endpoints(); that call raised
-            # AttributeError every run and silently disabled warmup/keepalive.
-            # Resolve the /models probe URLs via the real discovery API, off the
-            # event loop since discovery does a blocking port scan.
-            urls = (
-                await asyncio.to_thread(model_discovery.warmup_ping_urls)
-                if model_discovery else []
-            )
-            for url in urls:
-                try:
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        await client.get(url)
-                    logger.info(f"Warmup ping OK: {url}")
-                except Exception as e:
-                    logger.debug(f"Warmup ping failed for endpoint: {e}")
-        except Exception as e:
-            logger.debug(f"Warmup ping skipped: {e}")
-
-    _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
-
-    # Keep-alive: ping endpoints every 60 seconds to prevent cold starts
-    async def _keepalive_loop():
-        while True:
+    # Startup warmups are opt-in. They make later requests a little warmer, but
+    # they also compete with the first seconds of real UI use on slow or busy
+    # machines. Default to clear/idle startup and let requests warm what they use.
+    _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
+    if _startup_warmups_enabled:
+        async def _warmup_tool_index():
             try:
-                await asyncio.sleep(60)
-                await _warmup_endpoints()
+                from src.tool_index import get_tool_index
+                idx = await asyncio.to_thread(get_tool_index)
+                if idx:
+                    await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
+                    logger.info("[startup] Tool index pre-warmed")
             except Exception as e:
-                logger.warning(f"Keepalive loop error: {e}")
-                await asyncio.sleep(300)  # Back off on error
+                logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
-    _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
+        _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+
+        async def _warmup_endpoints():
+            try:
+                import httpx
+                urls = (
+                    await asyncio.to_thread(model_discovery.warmup_ping_urls)
+                    if model_discovery else []
+                )
+                for url in urls:
+                    try:
+                        async with httpx.AsyncClient(timeout=5.0) as client:
+                            await client.get(url)
+                        logger.info(f"Warmup ping OK: {url}")
+                    except Exception as e:
+                        logger.debug(f"Warmup ping failed for endpoint: {e}")
+            except Exception as e:
+                logger.debug(f"Warmup ping skipped: {e}")
+
+        _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
+    else:
+        logger.info("Startup warmups disabled (set ODYSSEUS_STARTUP_WARMUPS=1 to enable)")
+
+    # Keep-alive is opt-in. The ping path performs model discovery, and when
+    # stale LAN endpoints are configured it can add periodic backend pressure
+    # that delays unrelated UI requests such as Notes/Documents.
+    _keepalive_enabled = str(os.getenv("ODYSSEUS_MODEL_KEEPALIVE", "")).lower() in {"1", "true", "yes", "on"}
+    if _keepalive_enabled:
+        async def _keepalive_loop():
+            while True:
+                try:
+                    await asyncio.sleep(60)
+                    await _warmup_endpoints()
+                except Exception as e:
+                    logger.warning(f"Keepalive loop error: {e}")
+                    await asyncio.sleep(300)  # Back off on error
+
+        _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
 
     async def _ensure_default_tasks():
         # Create/reconcile default automation tasks + personal assistant for every user.

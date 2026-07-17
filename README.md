@@ -42,7 +42,7 @@ git clone https://github.com/TheMagistrateofMordor/hellaine.git
 cd hellaine
 cp .env.example .env
 docker compose up -d --build
-````
+```
 
 Open `http://localhost:7000` when the containers are healthy.
 
@@ -50,7 +50,6 @@ The first admin password is printed in:
 
 ```bash
 docker compose logs odysseus
-```
 
 > Note: the service may still be named `odysseus` internally for compatibility. Hellaine may wear jade and gold now, but some machinery underneath still answers to its old name. Software, like nobility, clings to lineage.
 
@@ -135,6 +134,3 @@ This project is not presented as a polished commercial product. It is a private 
 ## License
 
 AGPL-3.0-or-later — see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
-
-```
-```

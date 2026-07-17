@@ -265,6 +265,134 @@ const _applyImageTool = createApplyImageTool({
   uiModule,
 });
 
+function _setAiCommandStatus(text, kind = '') {
+  const el = document.getElementById('ge-ai-command-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.dataset.kind = kind || '';
+}
+
+function _clickToolButton(toolId) {
+  const btn = state.container?.querySelector(`.ge-tool-btn[data-tool="${toolId}"]`);
+  if (btn) btn.click();
+}
+
+function _runExistingButton(id, status) {
+  const btn = document.getElementById(id);
+  if (!btn) {
+    _setAiCommandStatus('That edit is not available in this editor state.', 'error');
+    return false;
+  }
+  if (status) _setAiCommandStatus(status, 'running');
+  btn.click();
+  return true;
+}
+
+function _buildAiCommandBox() {
+  const wrap = document.createElement('div');
+  wrap.className = 'ge-ai-command ge-ai-command-collapsed';
+  wrap.id = 'ge-ai-command';
+  wrap.innerHTML = `
+    <button type="button" class="ge-ai-command-toggle" id="ge-ai-command-toggle" aria-expanded="false">
+      <span class="ge-btn-ai-mark" aria-hidden="true">✦</span>
+      <span>AI Edit</span>
+    </button>
+    <form class="ge-ai-command-form" id="ge-ai-command-form">
+      <input type="text" class="ge-ai-command-input" id="ge-ai-command-input" autocomplete="off" />
+      <button type="submit" class="ge-ai-command-run" id="ge-ai-command-run" title="Run AI edit" aria-label="Run AI edit">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="19" x2="12" y2="5"></line>
+          <polyline points="5 12 12 5 19 12"></polyline>
+        </svg>
+      </button>
+      <button type="button" class="ge-ai-command-close" id="ge-ai-command-close" title="Close AI edit" aria-label="Close AI edit">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </form>
+    <div class="ge-ai-command-status" id="ge-ai-command-status" aria-live="polite"></div>
+  `;
+  return wrap;
+}
+
+function _wireAiCommandBox() {
+  const wrap = document.getElementById('ge-ai-command');
+  const toggle = document.getElementById('ge-ai-command-toggle');
+  const closeBtn = document.getElementById('ge-ai-command-close');
+  const form = document.getElementById('ge-ai-command-form');
+  const input = document.getElementById('ge-ai-command-input');
+  const runBtn = document.getElementById('ge-ai-command-run');
+  if (!wrap || !form || !input || !runBtn) return;
+  wrap.addEventListener('pointerdown', (e) => e.stopPropagation());
+  wrap.addEventListener('click', (e) => e.stopPropagation());
+  const setOpen = (open) => {
+    wrap.classList.toggle('ge-ai-command-collapsed', !open);
+    toggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) requestAnimationFrame(() => input.focus());
+  };
+  toggle?.addEventListener('click', () => setOpen(wrap.classList.contains('ge-ai-command-collapsed')));
+  closeBtn?.addEventListener('click', () => setOpen(false));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const prompt = input.value.trim();
+    if (!prompt) {
+      _setAiCommandStatus('Type what you want changed.', 'error');
+      input.focus();
+      return;
+    }
+    const p = prompt.toLowerCase();
+    try {
+      if (/\b(remove|erase|cut\s*out|transparent)\b.*\b(bg|background)\b|\b(bg|background)\b.*\b(remove|erase|transparent)\b/.test(p)) {
+        _clickToolButton('rembg');
+        _runExistingButton('ge-rembg-run', 'Removing background...');
+        return;
+      }
+      if (/\b(upscale|higher\s*res|increase\s*resolution|bigger|2x|4x)\b/.test(p)) {
+        _clickToolButton('upscale');
+        _runExistingButton('ge-upscale-ai', 'Upscaling image...');
+        return;
+      }
+      if (/\b(denoise|noise|grain|grainy|clean\s*up)\b/.test(p)) {
+        _setAiCommandStatus('Denoising image...', 'running');
+        await _applyImageTool('/api/image/denoise', { strength: 0.55 }, 'Denoised', runBtn, { busyLabel: 'Denoising...' });
+        _setAiCommandStatus('Added denoised layer.', 'done');
+        return;
+      }
+      if (/\b(face|portrait|skin|selfie|restore)\b/.test(p)) {
+        _setAiCommandStatus('Enhancing face/portrait...', 'running');
+        await _applyImageTool('/api/image/enhance-face', {}, 'Enhanced Face', runBtn, { busyLabel: 'Enhancing...' });
+        _setAiCommandStatus('Added enhanced layer.', 'done');
+        return;
+      }
+      if (/\b(sharpen|sharp|crisp|clearer|make it look better|enhance|improve|better)\b/.test(p)) {
+        const amount = document.getElementById('ge-sharpen-amount');
+        if (amount) {
+          amount.value = '65';
+          amount.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        _clickToolButton('sharpen');
+        _runExistingButton('ge-sharpen-run', 'Sharpening image...');
+        return;
+      }
+
+      const stylePrompt = document.getElementById('ge-style-prompt');
+      const styleStrength = document.getElementById('ge-style-strength');
+      if (stylePrompt) stylePrompt.value = prompt;
+      if (styleStrength) {
+        styleStrength.value = /\b(subtle|slight|small)\b/.test(p) ? '35' : '55';
+        styleStrength.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      _clickToolButton('style');
+      _runExistingButton('ge-style-run', 'Running full-image AI edit...');
+    } catch (err) {
+      console.error('[ge-ai-command] failed', err);
+      _setAiCommandStatus(err?.message || 'AI edit failed', 'error');
+    }
+  });
+}
+
 // Layer offsets for move tool
 
 // ── Layer class ──
@@ -2551,6 +2679,7 @@ function _buildEditor(container) {
   state.transformOverlay.className = 'ge-transform-overlay';
   state.transformOverlayCtx = state.transformOverlay.getContext('2d');
   canvasArea.appendChild(state.transformOverlay);
+  canvasArea.appendChild(_buildAiCommandBox());
   // Keep the transform handles glued to the photo while the canvas-area
   // scrolls (the overlay is anchored to the canvas's live rect, so a
   // re-draw on scroll re-reads its position).
@@ -2879,6 +3008,7 @@ function _buildEditor(container) {
     applyImageTool: _applyImageTool,
     uiModule,
   });
+  _wireAiCommandBox();
 
   // Merge / Flatten buttons (layer-panel footer) — full
   // implementation in editor/wire-merge-buttons.js.

@@ -247,9 +247,13 @@ def test_partial_write_recovery_via_bak(tmp_path):
     )
 
     full = open(db_path, "rb").read()
+    cached_mtime_ns = os.stat(db_path).st_mtime_ns
     truncated_len = max(1, len(full) // 2)
     with open(db_path, "wb") as f:
         f.write(full[:truncated_len])
+    # Coarse/overlay filesystems can report the same timestamp for a rapid torn
+    # write. Cache invalidation must also notice the changed file size.
+    os.utime(db_path, ns=(cached_mtime_ns, cached_mtime_ns))
 
     recovered = handler._load_upload_index()
     missing = [k for k in original if k not in recovered]

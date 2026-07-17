@@ -68,6 +68,8 @@ def read_text_file(path: str) -> str:
 
 def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config.CHUNK_OVERLAP) -> List[str]:
     """Split text into overlapping chunks."""
+    if not isinstance(text, str):
+        return []
     text = text.strip()
     if not text:
         return []
@@ -87,7 +89,8 @@ def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config
 
 def tokenize(s: str) -> Set[str]:
     """Tokenize string into words, excluding stop words."""
-    tokens = re.findall(r"[A-Za-z0-9_\-]+", (s or "").lower())
+    text = s if isinstance(s, str) else ""
+    tokens = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
     return set(t for t in tokens if t not in config.STOP_WORDS and len(t) > 1)
 
 def load_personal_index(
