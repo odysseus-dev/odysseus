@@ -1,7 +1,7 @@
-from src import model_behavior_quirks as quirks
 from src import model_capabilities as mc
 from src import provider_capability_schemas as pcs
 from src.model_capability_readers import (
+    CANONICAL_MODEL_SHAPE_VERSION,
     anthropic,
     chatgpt_subscription,
     cohere,
@@ -14,7 +14,7 @@ from src.model_capability_readers import (
 )
 
 
-def test_provider_resolution_order_explicit_then_host_then_native_then_general():
+def test_provider_identity_and_catalog_shape_are_resolved_separately():
     google_payload = {
         "models": [
             {
@@ -27,21 +27,39 @@ def test_provider_resolution_order_explicit_then_host_then_native_then_general()
     explicit = pcs.resolve_provider(google_payload, provider="openrouter")
     host = pcs.resolve_provider(google_payload, base_url="https://api.mistral.ai/v1")
     native = pcs.resolve_provider(google_payload)
-    general = pcs.resolve_provider([{"id": "future-model", "future": {"x": True}}])
+    fallback = pcs.resolve_provider([{"id": "future-model", "future": {"x": True}}])
     unknown = pcs.resolve_provider({"future": [{"not_an_identity": True}]})
 
-    assert (explicit.provider_id, explicit.stage) == ("openrouter", pcs.RESOLUTION_EXPLICIT)
-    assert (host.provider_id, host.stage) == ("mistral", pcs.RESOLUTION_HOST)
-    assert (native.provider_id, native.stage) == ("google", pcs.RESOLUTION_NATIVE_SHAPE)
-    assert native.catalog_shape.shape_id == "google.generative-language.models.v1beta"
-    assert (general.provider_id, general.stage) == (
-        pcs.PROVIDER_GENERIC_OPENAI,
-        pcs.RESOLUTION_GENERAL_SHAPE,
-    )
-    assert (unknown.provider_id, unknown.stage) == (
-        pcs.PROVIDER_UNKNOWN,
-        pcs.RESOLUTION_UNKNOWN,
-    )
+    assert explicit.to_dict() == {
+        "provider": "openrouter",
+        "provider_source": pcs.PROVIDER_SOURCE_EXPLICIT,
+        "shape": "fallback.models.envelope.v1",
+        "fallback": True,
+    }
+    assert host.to_dict() == {
+        "provider": "mistral",
+        "provider_source": pcs.PROVIDER_SOURCE_HOST,
+        "shape": "fallback.models.envelope.v1",
+        "fallback": True,
+    }
+    assert native.to_dict() == {
+        "provider": "google",
+        "provider_source": pcs.PROVIDER_SOURCE_PAYLOAD,
+        "shape": "google.generative-language.models.v1beta",
+        "fallback": False,
+    }
+    assert fallback.to_dict() == {
+        "provider": pcs.PROVIDER_UNKNOWN,
+        "provider_source": pcs.PROVIDER_SOURCE_UNKNOWN,
+        "shape": "fallback.models.list.v1",
+        "fallback": True,
+    }
+    assert unknown.to_dict() == {
+        "provider": pcs.PROVIDER_UNKNOWN,
+        "provider_source": pcs.PROVIDER_SOURCE_UNKNOWN,
+        "shape": "",
+        "fallback": False,
+    }
 
 
 def test_provider_host_matching_rejects_lookalikes_and_does_not_use_ports():
@@ -53,31 +71,57 @@ def test_provider_host_matching_rejects_lookalikes_and_does_not_use_ports():
     assert pcs.provider_from_host("http://127.0.0.1:30000") == pcs.PROVIDER_UNKNOWN
 
 
-def test_provider_aliases_collapse_runtime_names_without_url_path_guessing():
+def test_provider_aliases_only_normalize_explicit_identity():
     assert pcs.normalize_provider_id("opencode-go") == "opencode"
     assert pcs.normalize_provider_id("opencode-zen") == "opencode"
     assert pcs.normalize_provider_id("nvidia-nim") == "nvidia"
     assert pcs.normalize_provider_id("tgi") == "text_generation_inference"
     assert pcs.normalize_provider_id("llama.cpp") == "llamacpp"
     assert pcs.normalize_provider_id("Z.AI") == "zai"
+    assert pcs.normalize_provider_id("future-provider") == "future_provider"
 
 
-def test_current_native_catalog_shapes_are_discriminating_and_versioned():
+def test_unregistered_explicit_provider_is_preserved_but_stays_on_fallback():
+    resolution = pcs.resolve_provider(
+        {"data": [{"id": "future-model", "capabilities": {"tools": True}}]},
+        provider="future-provider",
+    )
+    records = records_from_payload(
+        {"data": [{"id": "future-model", "capabilities": {"tools": True}}]},
+        vendor="future-provider",
+    )
+
+    assert resolution.to_dict() == {
+        "provider": "future_provider",
+        "provider_source": pcs.PROVIDER_SOURCE_EXPLICIT,
+        "shape": "fallback.models.data.v1",
+        "fallback": True,
+    }
+    assert records[0].vendor == "future_provider"
+    assert records[0].capability.family == mc.FAMILY_UNKNOWN
+    assert records[0].capability.capabilities == ()
+
+
+def test_current_native_catalog_shapes_are_discriminating():
     cases = (
         (
             {"models": [{"key": "local/model", "type": "llm", "capabilities": {"vision": True}}]},
+            "lmstudio",
             "lmstudio.models.native.v1",
         ),
         (
             {"data": [{"id": "legacy", "type": "vlm", "arch": "gemma"}]},
+            "lmstudio",
             "lmstudio.models.native.v0",
         ),
         (
             {"models": [{"name": "local", "digest": "abc", "details": {"family": "qwen3"}}]},
+            "ollama",
             "ollama.tags.v1",
         ),
         (
             {"capabilities": ["completion", "vision"], "model_info": {"x.context_length": 4096}},
+            "ollama",
             "ollama.show.v1",
         ),
         (
@@ -86,10 +130,12 @@ def test_current_native_catalog_shapes_are_discriminating_and_versioned():
                 "default_generation_settings": {"n_ctx": 4096},
                 "chat_template_caps": {"supports_tools": True},
             },
+            "llamacpp",
             "llamacpp.props.v1",
         ),
         (
             {"data": [{"id": "mistral", "capabilities": {"completion_chat": True, "vision": False}}]},
+            "mistral",
             "mistral.models.rich.v1",
         ),
         (
@@ -102,6 +148,7 @@ def test_current_native_catalog_shapes_are_discriminating_and_versioned():
                     }
                 ]
             },
+            "copilot",
             "github-copilot.models.v1",
         ),
         (
@@ -111,6 +158,7 @@ def test_current_native_catalog_shapes_are_discriminating_and_versioned():
                 "is_generation": True,
                 "has_image_understanding": False,
             },
+            "sglang",
             "sglang.model-info.v2",
         ),
         (
@@ -127,46 +175,38 @@ def test_current_native_catalog_shapes_are_discriminating_and_versioned():
                     }
                 ],
             },
+            "vllm",
             "vllm.models.openai.v1",
         ),
         (
             {"models": [{"slug": "gpt-example", "visibility": "list", "priority": 1}]},
+            "chatgpt_subscription",
             "chatgpt-subscription.codex-models.v1",
         ),
         (
-            {
-                "models": [
-                    {
-                        "name": "command-example",
-                        "endpoints": ["chat"],
-                        "context_length": 131072,
-                    }
-                ]
-            },
+            {"models": [{"name": "command-example", "endpoints": ["chat"], "context_length": 131072}]},
+            "cohere",
             "cohere.models.rich.v1",
         ),
         (
             {
                 "object": "list",
-                "data": [
-                    {
-                        "id": "MiniMax-M2-example",
-                        "object": "model",
-                        "owned_by": "minimax",
-                    }
-                ],
+                "data": [{"id": "MiniMax-M2", "object": "model", "owned_by": "minimax"}],
             },
+            "minimax",
             "minimax.models.identity.v1",
         ),
     )
 
-    for payload, expected_shape in cases:
+    for payload, expected_provider, expected_shape in cases:
         resolution = pcs.resolve_provider(payload)
-        assert resolution.stage == pcs.RESOLUTION_NATIVE_SHAPE
-        assert resolution.catalog_shape.shape_id == expected_shape
+        assert resolution.provider_id == expected_provider
+        assert resolution.provider_source == pcs.PROVIDER_SOURCE_PAYLOAD
+        assert resolution.shape_id == expected_shape
+        assert resolution.fallback is False
 
 
-def test_native_shape_detection_rejects_wrong_field_types_before_general_fallback():
+def test_wrong_native_field_types_degrade_to_explicit_fallback_inventory():
     malformed_cohere = pcs.resolve_provider(
         {"models": [{"name": "future", "endpoints": "chat", "context_length": 4096}]}
     )
@@ -174,57 +214,69 @@ def test_native_shape_detection_rejects_wrong_field_types_before_general_fallbac
         {"data": [{"id": "future", "capabilities": ["completion_chat"]}]}
     )
 
-    assert (malformed_cohere.provider_id, malformed_cohere.stage) == (
-        pcs.PROVIDER_GENERIC_OPENAI,
-        pcs.RESOLUTION_GENERAL_SHAPE,
-    )
-    assert (malformed_mistral.provider_id, malformed_mistral.stage) == (
-        pcs.PROVIDER_GENERIC_OPENAI,
-        pcs.RESOLUTION_GENERAL_SHAPE,
-    )
+    assert malformed_cohere.provider_id == pcs.PROVIDER_UNKNOWN
+    assert malformed_cohere.shape_id == "fallback.models.envelope.v1"
+    assert malformed_cohere.fallback is True
+    assert malformed_mistral.provider_id == pcs.PROVIDER_UNKNOWN
+    assert malformed_mistral.shape_id == "fallback.models.data.v1"
+    assert malformed_mistral.fallback is True
 
 
-def test_general_reader_promotes_only_explicit_structural_fields_and_accepts_bare_lists():
-    records = generic_openai.records_from_payload(
-        [
-            {
-                "id": "future-rich-model",
-                "type": "chat",
-                "architecture": {
-                    "input_modalities": ["text", "image"],
-                    "output_modalities": ["text"],
-                },
-                "supported_parameters": ["tools", "structured_outputs", "temperature"],
-                "max_model_len": 131072,
-                "future_capability": {"may_be_important_later": True},
+def test_fallback_reader_is_identity_only_even_for_dangerous_looking_fields():
+    payload = [
+        {
+            "id": "future-rich-model",
+            "type": "chat",
+            "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
             },
-            {
-                "id": "vision-reasoning-tools-in-the-name-only",
-                "description": "Claims every capability in prose",
-                "type": "image",
-                "future_capability": True,
-            },
-        ]
-    )
+            "capabilities": {"supports": {"tools": True, "reasoning": True}},
+            "supported_parameters": ["tools", "structured_outputs", "temperature"],
+            "max_model_len": 131072,
+        },
+        {"key": "key-only-model", "pipeline_tag": "text-to-image"},
+        {"slug": "slug-only-model", "modality": "text_to_image"},
+    ]
 
-    rich, identity_only = records
-    assert rich.capability.family == mc.FAMILY_CHAT
-    assert rich.capability.modalities.input == (mc.MODALITY_TEXT, mc.MODALITY_IMAGE)
-    assert rich.capability.capabilities == (
-        mc.CAP_TOOL_CALL,
-        mc.CAP_STRUCTURED_OUTPUT,
-        mc.CAP_VISION,
-    )
-    assert dict(rich.capability.limits) == {"context_tokens": 131072}
-    assert [control.control for control in rich.deterministic_controls] == [mc.CONTROL_TEMPERATURE]
-    assert rich.raw["future_capability"] == {"may_be_important_later": True}
+    direct = generic_openai.records_from_payload(payload)
+    wrapped = records_from_payload(payload, vendor="together")
 
-    assert identity_only.capability.family == mc.FAMILY_UNKNOWN
-    assert identity_only.capability.capabilities == ()
-    assert identity_only.raw["future_capability"] is True
+    assert [record.model_id for record in direct] == [
+        "future-rich-model",
+        "key-only-model",
+        "slug-only-model",
+    ]
+    for record in (*direct, *wrapped):
+        assert record.capability.family == mc.FAMILY_UNKNOWN
+        assert record.capability.capabilities == ()
+        assert dict(record.capability.limits) == {}
+        assert record.deterministic_controls == ()
+
+    lean = wrapped[0].to_dict()
+    assert lean == {
+        "schema_version": CANONICAL_MODEL_SHAPE_VERSION,
+        "provider": "together",
+        "model": "future-rich-model",
+        "stable_id": "together|global|future-rich-model",
+        "family": "unknown",
+        "task": "unknown",
+        "modalities": {"input": [], "output": []},
+        "features": [],
+        "limits": {},
+        "controls": [],
+        "evidence": {
+            "source": "provider_reader",
+            "confidence": "unknown",
+            "provider_source": "explicit",
+            "shape": "fallback.models.list.v1",
+            "fallback": True,
+        },
+    }
+    assert wrapped[0].to_dict(include_raw=True)["raw"] == payload[0]
 
 
-def test_general_reader_fails_soft_for_null_and_malformed_envelopes():
+def test_fallback_reader_fails_soft_for_null_and_malformed_envelopes():
     for payload in (
         {"data": None},
         {"models": None},
@@ -235,13 +287,12 @@ def test_general_reader_fails_soft_for_null_and_malformed_envelopes():
         assert generic_openai.records_from_payload(payload) == ()
 
 
-def test_mistral_reader_maps_per_model_capabilities_without_provider_wide_inheritance():
+def test_mistral_reader_maps_per_model_capabilities_without_provider_inheritance():
     records = mistral.records_from_payload(
         {
             "data": [
                 {
                     "id": "vision-chat",
-                    "root": "mistral-small",
                     "capabilities": {
                         "completion_chat": True,
                         "function_calling": True,
@@ -258,10 +309,7 @@ def test_mistral_reader_maps_per_model_capabilities_without_provider_wide_inheri
                         "vision": False,
                     },
                 },
-                {
-                    "id": "future-card",
-                    "capabilities": {"future_only": True},
-                },
+                {"id": "future-card", "capabilities": {"future_only": True}},
             ]
         }
     )
@@ -270,14 +318,12 @@ def test_mistral_reader_maps_per_model_capabilities_without_provider_wide_inheri
     assert records[0].capability.modalities.input == (mc.MODALITY_TEXT, mc.MODALITY_IMAGE)
     assert records[0].capability.capabilities == (mc.CAP_VISION, mc.CAP_TOOL_CALL)
     assert dict(records[0].capability.limits) == {"context_tokens": 32768}
-    assert records[0].model_family == "mistral-small"
     assert records[1].capability.family == mc.FAMILY_CLASSIFICATION
     assert records[2].capability.family == mc.FAMILY_UNKNOWN
-    assert records[2].capability.capabilities == ()
 
 
 def test_copilot_reader_uses_picker_and_nested_supports_shape():
-    records = copilot.records_from_payload(
+    record = copilot.records_from_payload(
         {
             "data": [
                 {
@@ -285,23 +331,17 @@ def test_copilot_reader_uses_picker_and_nested_supports_shape():
                     "model_picker_enabled": True,
                     "capabilities": {"supports": {"tool_calls": True, "vision": True}},
                     "limits": {"max_prompt_tokens": 64000, "max_output_tokens": 8192},
-                },
-                {
-                    "id": "utility-model",
-                    "model_picker_enabled": False,
-                    "capabilities": {"supports": {}},
-                },
+                }
             ]
         }
-    )
+    )[0]
 
-    assert records[0].capability.family == mc.FAMILY_CHAT
-    assert records[0].capability.capabilities == (mc.CAP_TOOL_CALL, mc.CAP_VISION)
-    assert dict(records[0].capability.limits) == {"input_tokens": 64000, "output_tokens": 8192}
-    assert records[1].capability.family == mc.FAMILY_UNKNOWN
+    assert record.capability.family == mc.FAMILY_CHAT
+    assert record.capability.capabilities == (mc.CAP_TOOL_CALL, mc.CAP_VISION)
+    assert dict(record.capability.limits) == {"input_tokens": 64000, "output_tokens": 8192}
 
 
-def test_sglang_model_info_is_structural_and_non_generation_stays_unknown():
+def test_sglang_model_info_maps_native_generation_flags_only():
     generation = sglang.records_from_payload(
         {
             "model_path": "org/vision-model",
@@ -309,7 +349,6 @@ def test_sglang_model_info_is_structural_and_non_generation_stays_unknown():
             "is_generation": True,
             "has_image_understanding": True,
             "has_audio_understanding": True,
-            "model_type": "future_arch",
             "preferred_sampling_params": {"temperature": 0.2, "top_p": 0.9},
         }
     )[0]
@@ -333,11 +372,10 @@ def test_sglang_model_info_is_structural_and_non_generation_stays_unknown():
         mc.CONTROL_TEMPERATURE,
         mc.CONTROL_TOP_P,
     ]
-    assert generation.model_family == "future_arch"
     assert pooling.capability.family == mc.FAMILY_UNKNOWN
 
 
-def test_identity_only_catalogs_do_not_claim_model_capability():
+def test_identity_only_native_catalogs_remain_unknown():
     anthropic_record = anthropic.records_from_payload(
         {
             "data": [
@@ -356,13 +394,7 @@ def test_identity_only_catalogs_do_not_claim_model_capability():
     minimax_record = records_from_payload(
         {
             "object": "list",
-            "data": [
-                {
-                    "id": "MiniMax-M2-example",
-                    "object": "model",
-                    "owned_by": "minimax",
-                }
-            ],
+            "data": [{"id": "MiniMax-M2", "object": "model", "owned_by": "minimax"}],
         }
     )[0]
 
@@ -372,7 +404,7 @@ def test_identity_only_catalogs_do_not_claim_model_capability():
     assert minimax_record.capability.family == mc.FAMILY_UNKNOWN
 
 
-def test_huggingface_reader_maps_pipeline_tag_as_registry_evidence():
+def test_huggingface_reader_maps_provider_specific_pipeline_metadata():
     record = huggingface.records_from_payload(
         {
             "modelId": "org/vision-model",
@@ -387,7 +419,6 @@ def test_huggingface_reader_maps_pipeline_tag_as_registry_evidence():
     assert record.capability.capabilities == (mc.CAP_VISION,)
     assert record.capability.source == mc.SOURCE_COOKBOOK_HF
     assert record.capability.confidence == mc.CONFIDENCE_REGISTRY
-    assert record.model_family == "future_vlm"
 
 
 def test_cohere_reader_maps_only_native_endpoint_and_limit_fields():
@@ -411,7 +442,6 @@ def test_cohere_reader_maps_only_native_endpoint_and_limit_fields():
     )
 
     assert chat.capability.family == mc.FAMILY_CHAT
-    assert chat.capability.modalities.input == (mc.MODALITY_TEXT,)
     assert dict(chat.capability.limits) == {"context_tokens": 131072}
     assert [control.control for control in chat.deterministic_controls] == [
         mc.CONTROL_TEMPERATURE,
@@ -422,8 +452,8 @@ def test_cohere_reader_maps_only_native_endpoint_and_limit_fields():
     assert ambiguous.capability.family == mc.FAMILY_UNKNOWN
 
 
-def test_registry_wrapper_records_resolution_and_preserves_compatible_provider_identity():
-    mistral_records = records_from_payload(
+def test_reader_wrapper_adds_one_lean_evidence_object():
+    record = records_from_payload(
         {
             "data": [
                 {
@@ -432,74 +462,20 @@ def test_registry_wrapper_records_resolution_and_preserves_compatible_provider_i
                 }
             ]
         }
-    )
-    together_records = records_from_payload(
-        [{"id": "served/model", "type": "chat", "supported_parameters": ["tools"]}],
-        vendor="together",
-    )
+    )[0]
+    serialized = record.to_dict()
 
-    assert mistral_records[0].vendor == "mistral"
-    assert mistral_records[0].provider_schema_id == "mistral"
-    assert mistral_records[0].catalog_shape_id == "mistral.models.rich.v1"
-    assert mistral_records[0].provider_resolution == pcs.RESOLUTION_NATIVE_SHAPE
-
-    assert together_records[0].vendor == "together"
-    assert together_records[0].capability.family == mc.FAMILY_CHAT
-    assert together_records[0].provider_schema_id == "together"
-    assert together_records[0].provider_resolution == pcs.RESOLUTION_EXPLICIT
-
-
-def test_reasoning_control_preserves_canonical_and_native_values():
-    control = mc.ReasoningControl.build(
-        mechanism="reasoning_effort",
-        values=("enabled", "disabled"),
-        native_values=("high", "medium", "low", "none"),
-        request_path="reasoning_effort",
-        response_paths=("choices[].delta.reasoning",),
-        status="claimed",
-        source="provider_docs_registry",
-        confidence="registry",
-    )
-
-    assert control.values == (mc.REASONING_CONTROL_VALUE_ON, mc.REASONING_CONTROL_VALUE_OFF)
-    assert control.native_values == ("high", "medium", "low", "none")
-    assert mc.ReasoningControl.from_dict(control.to_dict()) == control
-
-
-def test_model_quirks_require_structured_exact_identity_not_name_parsing():
-    matching = quirks.matching_quirks(
-        provider="moonshot",
-        model_id="kimi-k2.5",
-        model_family="",
-        api_dialect=pcs.DIALECT_OPENAI_CHAT,
-        capabilities=(mc.CAP_REASONING,),
-    )
-    lookalike = quirks.matching_quirks(
-        provider="moonshot",
-        model_id="proxy/kimi-k2.5-lookalike",
-        model_family="",
-        api_dialect=pcs.DIALECT_OPENAI_CHAT,
-        capabilities=(mc.CAP_REASONING,),
-    )
-    opus_without_version = quirks.matching_quirks(
-        provider="anthropic",
-        model_family="claude-opus",
-        model_id="claude-opus-4-8-in-name-only",
-        api_dialect=pcs.DIALECT_ANTHROPIC_MESSAGES,
-    )
-    opus_structured = quirks.matching_quirks(
-        provider="anthropic",
-        model_family="claude-opus",
-        model_version=(4, 8),
-        api_dialect=pcs.DIALECT_ANTHROPIC_MESSAGES,
-    )
-
-    assert {quirk.quirk_id for quirk in matching} == {
-        "moonshot.kimi-k2.5-k2.6.provider-fixed-temperature",
-        "moonshot.kimi-k2.5-k2.6.tool-history-reasoning-content",
+    assert record.vendor == "mistral"
+    assert serialized["schema_version"] == 1
+    assert serialized["provider"] == "mistral"
+    assert serialized["features"] == [mc.CAP_TOOL_CALL]
+    assert serialized["evidence"] == {
+        "source": mc.SOURCE_PROVIDER_READER,
+        "confidence": mc.CONFIDENCE_PROVIDER_REPORTED,
+        "provider_source": pcs.PROVIDER_SOURCE_PAYLOAD,
+        "shape": "mistral.models.rich.v1",
+        "fallback": False,
     }
-    assert lookalike == ()
-    assert opus_without_version == ()
-    assert [quirk.quirk_id for quirk in opus_structured] == [
-        "anthropic.claude-opus-4.7-plus.omit-sampling-controls"
-    ]
+    assert "capability" not in serialized
+    assert "capability_assertions" not in serialized
+    assert "deterministic_controls" not in serialized

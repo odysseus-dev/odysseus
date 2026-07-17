@@ -42,7 +42,6 @@ def record_from_model(
         display_name=compact_str(raw.get("displayName")) or model_id,
         capability=ai_studio.capability_from_model(raw),
         deterministic_controls=ai_studio.deterministic_controls_from_model(raw),
-        model_family=compact_str(raw.get("baseModelId")),
         raw=raw,
     )
 
