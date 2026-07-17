@@ -658,6 +658,106 @@ class DeterministicControl:
 
 
 @dataclass(frozen=True)
+class ReasoningControl:
+    """A provider/model-supported request mechanism for reasoning.
+
+    This is intentionally separate from :class:`DeterministicControl` and
+    from the user's on/off/auto preference.  The mechanism records the native
+    request shape that a later resolver may choose after provider and model
+    evidence have been reconciled.
+    """
+
+    mechanism: str = ""
+    values: tuple[str, ...] = ()
+    native_values: tuple[Any, ...] = ()
+    request_path: str = ""
+    response_paths: tuple[str, ...] = ()
+    status: str = ASSERTION_UNKNOWN
+    source: str = SOURCE_UNKNOWN
+    confidence: str = CONFIDENCE_UNKNOWN
+    evidence: tuple[tuple[str, Any], ...] = ()
+    tested_at: str = ""
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        mechanism: Any,
+        values: Any = None,
+        native_values: Any = None,
+        request_path: Any = "",
+        response_paths: Any = None,
+        status: Any = ASSERTION_UNKNOWN,
+        source: Any = SOURCE_UNKNOWN,
+        confidence: Any = CONFIDENCE_UNKNOWN,
+        evidence: Mapping[str, Any] | None = None,
+        tested_at: Any = "",
+    ) -> "ReasoningControl":
+        normalized_mechanism = normalize_reasoning_control_mechanism(mechanism)
+        normalized_status = normalize_assertion_status(status)
+        if not normalized_mechanism:
+            normalized_status = ASSERTION_UNKNOWN
+        if isinstance(response_paths, str):
+            response_paths = (response_paths,)
+        elif isinstance(response_paths, Mapping) or not isinstance(response_paths, Iterable):
+            response_paths = ()
+        if native_values is None:
+            native_values = ()
+        elif (
+            isinstance(native_values, (str, Mapping))
+            or not isinstance(native_values, Iterable)
+        ):
+            native_values = (native_values,)
+        return cls(
+            mechanism=normalized_mechanism,
+            values=_normalize_tokens(values, normalize_reasoning_control_value),
+            native_values=tuple(native_values),
+            request_path=str(request_path or "").strip(),
+            response_paths=tuple(
+                str(path or "").strip()
+                for path in response_paths
+                if str(path or "").strip()
+            ),
+            status=normalized_status,
+            source=normalize_source(source),
+            confidence=normalize_confidence(confidence),
+            evidence=_normalize_limits(evidence),
+            tested_at=str(tested_at or "").strip(),
+        )
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ReasoningControl":
+        if not isinstance(value, Mapping):
+            return cls.build(mechanism="")
+        return cls.build(
+            mechanism=value.get("mechanism"),
+            values=value.get("values"),
+            native_values=value.get("native_values"),
+            request_path=value.get("request_path"),
+            response_paths=value.get("response_paths"),
+            status=value.get("status"),
+            source=value.get("source"),
+            confidence=value.get("confidence"),
+            evidence=value.get("evidence"),
+            tested_at=value.get("tested_at"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mechanism": self.mechanism,
+            "values": list(self.values),
+            "native_values": list(self.native_values),
+            "request_path": self.request_path,
+            "response_paths": list(self.response_paths),
+            "status": self.status,
+            "source": self.source,
+            "confidence": self.confidence,
+            "evidence": dict(self.evidence),
+            "tested_at": self.tested_at,
+        }
+
+
+@dataclass(frozen=True)
 class CapabilityProbeResult:
     provider: str
     model_id: str
