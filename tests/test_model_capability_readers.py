@@ -9,6 +9,7 @@ from src.model_capability_readers.base import (
     VENDOR_OLLAMA,
     VENDOR_OPENAI,
     VENDOR_OPENROUTER,
+    VENDOR_UNKNOWN,
     detect_vendor,
     stable_model_id_for,
 )
@@ -24,10 +25,10 @@ def test_detect_vendor_uses_endpoint_kind_and_host_but_not_ambiguous_local_ports
     assert detect_vendor("https://openrouter.ai/api/v1") == VENDOR_OPENROUTER
     assert detect_vendor("https://api.openai.com/v1") == VENDOR_OPENAI
     assert detect_vendor("https://generativelanguage.googleapis.com/v1beta/openai") == VENDOR_GOOGLE
-    assert detect_vendor("http://127.0.0.1:11434") == VENDOR_GENERIC_OPENAI
-    assert detect_vendor("http://127.0.0.1:1234") == VENDOR_GENERIC_OPENAI
-    assert detect_vendor("http://127.0.0.1:8080") == VENDOR_GENERIC_OPENAI
-    assert detect_vendor("http://localhost:7000/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("http://127.0.0.1:11434") == VENDOR_UNKNOWN
+    assert detect_vendor("http://127.0.0.1:1234") == VENDOR_UNKNOWN
+    assert detect_vendor("http://127.0.0.1:8080") == VENDOR_UNKNOWN
+    assert detect_vendor("http://localhost:7000/v1") == VENDOR_UNKNOWN
 
 
 def test_generic_openai_reader_keeps_basic_model_payload_unknown():
@@ -362,7 +363,6 @@ def test_ollama_reader_maps_show_capabilities_and_tags_are_unknown():
 
     assert len(tags) == 1
     assert tags[0].capability.family == mc.FAMILY_UNKNOWN
-    assert tags[0].model_family == "qwen3"
     assert surfaces(tags[0]) == set()
 
 

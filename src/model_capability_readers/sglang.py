@@ -72,7 +72,6 @@ def record_from_model_info(
         display_name=model_id,
         capability=capability,
         deterministic_controls=deterministic_controls_from_supported_parameters(sampling.keys()),
-        model_family=compact_str(payload.get("model_type")),
         raw=payload,
     )
 
