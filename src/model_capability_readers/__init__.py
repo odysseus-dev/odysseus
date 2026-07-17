@@ -23,6 +23,7 @@ from src.model_capability_readers import (
     sglang,
 )
 from src.model_capability_readers.base import (
+    CANONICAL_MODEL_SHAPE_VERSION,
     ModelCapabilityRecord,
     VENDOR_ANTHROPIC,
     VENDOR_CEREBRAS,
@@ -104,7 +105,7 @@ def records_from_payload(
         vendor_id = detect_vendor(base_url, endpoint_kind)
     reader = reader_for_vendor(vendor_id)
     if reader is generic_openai:
-        record_vendor = vendor_id if vendor_id not in {VENDOR_UNKNOWN, ""} else VENDOR_GENERIC_OPENAI
+        record_vendor = vendor_id if vendor_id else VENDOR_UNKNOWN
         records = reader.records_from_payload(
             payload,
             vendor_id=record_vendor,
@@ -113,13 +114,12 @@ def records_from_payload(
         )
     else:
         records = reader.records_from_payload(payload, endpoint_id=endpoint_id, base_url=base_url)
-    shape_id = resolution.catalog_shape.shape_id if resolution.catalog_shape else ""
     return tuple(
         replace(
             record,
-            provider_schema_id=resolution.schema.provider_id,
-            catalog_shape_id=shape_id,
-            provider_resolution=resolution.stage,
+            provider_source=resolution.provider_source,
+            catalog_shape_id=resolution.shape_id,
+            fallback=resolution.fallback,
         )
         for record in records
     )
@@ -127,6 +127,7 @@ def records_from_payload(
 
 __all__ = [
     "ModelCapabilityRecord",
+    "CANONICAL_MODEL_SHAPE_VERSION",
     "PLACEHOLDER_VENDOR_IDS",
     "READER_MODULES",
     "VENDOR_ANTHROPIC",

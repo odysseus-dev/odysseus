@@ -142,7 +142,6 @@ def record_from_show_payload(
         stable_model_id=stable_model_id_for(VENDOR_OLLAMA, model_id, endpoint_id=endpoint_id, base_url=base_url),
         display_name=model_id,
         capability=capability,
-        model_family=compact_str(as_mapping(payload.get("details")).get("family")),
         raw=payload,
     )
 
@@ -175,7 +174,6 @@ def records_from_tags_payload(
                     source=mc.SOURCE_PROVIDER_READER,
                     confidence=mc.CONFIDENCE_UNKNOWN,
                 ),
-                model_family=compact_str(as_mapping(item.get("details")).get("family")),
                 raw=item,
             )
         )

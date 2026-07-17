@@ -94,7 +94,6 @@ def record_from_model(
         ),
         display_name=compact_str(raw.get("name")) or model_id,
         capability=capability,
-        model_family=compact_str(raw.get("family")),
         raw=raw,
     )
 

@@ -42,7 +42,6 @@ def record_from_model(
             source=mc.SOURCE_PROVIDER_READER,
             confidence=mc.CONFIDENCE_UNKNOWN,
         ),
-        model_family=compact_str(raw.get("family")),
         raw=raw,
     )
 
