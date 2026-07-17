@@ -4,16 +4,16 @@ Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
-Canonical provider ID `vllm`; OpenAI Chat and Responses serving; general
-structural reader selected by explicit endpoint kind or the exact vLLM model
-card shape.
+Canonical provider ID `vllm`; OpenAI Chat and Responses serving; exact vLLM
+model-card detection with identity-only inventory normalization.
 
 ## Catalog Shape
 
 Current `GET /v1/models` returns `object: list`, `data[]` model cards with
 `id`, `object`, `owned_by: vllm`, `root`, `parent`, `max_model_len`, and
-`permission[]`. `max_model_len` maps endpoint context; `root` is structured
-served-model family/provenance. The card does not prove chat template, tools,
+`permission[]`. The current detector uses these fields to identify the shape,
+but the inventory reader does not promote `max_model_len` or `root` into the
+canonical record. The card does not prove chat template, tools,
 reasoning parser, vision assets, embeddings, transcription, or rerank.
 
 LoRA cards can use a different `id`, root path, and parent. Keep each served ID

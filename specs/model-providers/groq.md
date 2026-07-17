@@ -9,9 +9,9 @@ request behavior in `src/llm_core.py`.
 
 ## Shape
 
-Model discovery falls back to the general `data[].id` shape. Map richer fields
-only when the payload explicitly supplies modalities, supported parameters, or
-limits. Groq transport may accept OpenAI-style tools and streaming extensions,
+Model discovery falls back to the general `data[].id` identity shape. Richer
+fields require a Groq-native mapped shape even when the payload happens to
+supply modalities, supported parameters, or limits. Groq transport may accept OpenAI-style tools and streaming extensions,
 but support remains per model and account.
 
 Runtime currently exempts Groq/OpenRouter from some parameter stripping paths;

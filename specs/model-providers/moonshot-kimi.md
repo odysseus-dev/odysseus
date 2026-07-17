@@ -6,7 +6,7 @@ Last updated: dev@28d27ee | 2026-07-17
 
 Provider IDs `moonshot` for official Moonshot API and `kimi_code` for the Kimi
 Code surface; OpenAI-compatible transport with provider-specific headers and
-model quirks in `src/llm_core.py`/`src/model_behavior_quirks.py`.
+model-specific behavior in `src/llm_core.py`.
 
 ## Shape And Observations
 

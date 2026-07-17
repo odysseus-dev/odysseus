@@ -9,9 +9,10 @@ proposed in #5562.
 
 ## Shape
 
-Use the general `/v1/models` identity/structural reader for both regional
-surfaces. Region/base URL and API key remain endpoint identity. Promote only
-explicit fields, not model-family tokens in returned IDs or PR examples.
+Use the general `/v1/models` identity-only inventory reader for both regional
+surfaces. Region/base URL and API key remain endpoint identity. A regional
+provider-native schema is required before any item fields are promoted; model
+tokens in returned IDs or PR examples are never capability evidence.
 
 ## Fallback And Current Gaps
 

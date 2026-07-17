@@ -9,8 +9,8 @@ labels/curation in `src/llm_core.py` and `routes/model_routes.py`.
 
 ## Shape
 
-Model discovery uses general identity unless explicit model-card fields are
-returned. Reasoning effort, tools, image input, or other Grok behavior must be
+Model discovery uses general identity-only inventory. Reasoning effort, tools,
+image input, or other Grok behavior must be
 scoped per returned model/registry/probe. The provider's broad API feature set
 does not grant every listed model every capability.
 

@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -114,6 +114,9 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 - `src/url_security.py` owns public HTTP(S) validation for integration/API-token supplied URLs. It should fail closed for private IP, loopback, invalid scheme, and unsafe redirect targets.
 - `src/url_safety.py` owns local-first outbound URL safety for model endpoints and similar local services. Loopback/LAN can be allowed by default, and private-IP blocking is an explicit caller policy.
 - `core.log_safety.redact_url()` strips URL userinfo, query strings, and fragments before endpoint URLs enter logs. Model, chat/research endpoint, contact/CardDAV, and similar diagnostics should use this helper instead of logging raw admin-configured URLs.
+- Model-capability debug summaries may log canonical version, provider/source,
+  catalog shape, fallback state, record count, and normalized capability names.
+  They must not log model IDs, raw provider records, base URLs, or credentials.
 - `src.webhook_manager` validates webhook URLs at create and delivery time,
   rejects private/internal targets, disables redirects, and pins delivery to
   the public IP set that passed validation immediately before the request.

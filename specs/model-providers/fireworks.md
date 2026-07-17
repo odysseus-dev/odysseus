@@ -10,9 +10,10 @@ prefixes such as `/inference/v1`; curation and URL handling in
 
 ## Shape
 
-Use the general identity/structural model reader. Fireworks IDs can contain
-account/model paths; preserve the full request ID and endpoint scope. Promote
-only explicit item modalities, supported parameters, task/type, and limits.
+Use the general identity-only inventory reader. Fireworks IDs can contain
+account/model paths; preserve the full request ID and endpoint scope. Item
+modalities, supported parameters, task/type, and limits require a
+Fireworks-native mapped shape before promotion.
 
 ## Fallback And Current Gaps
 

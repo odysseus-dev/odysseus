@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -130,6 +130,12 @@ Native platform launchers:
 - `--version`;
 - common parser scaffolding;
 - exit handling.
+
+`LOG_LEVEL` is the shared process logging toggle. CLI helpers default it to
+`WARNING` to keep JSON command output clean; the web app defaults it to `INFO`
+and applies it to root, console, rotating-file, and direct-uvicorn logging.
+`LOG_LEVEL=DEBUG` enables bounded model-capability normalization diagnostics;
+tests require those events to omit model IDs and raw payload values.
 
 Shell completions in `scripts/_completion/` introspect CLI `--help` output through the venv and cache subcommands.
 

@@ -9,7 +9,7 @@ webhook presets and cloud/self-hosted classification tests.
 
 ## Shape
 
-Use general identity/structural mapping. Treat `api.venice.ai` as a remote API
+Use general identity-only inventory mapping. Treat `api.venice.ai` as a remote API
 for routing/security, while keeping model capability per returned model. Do not
 infer privacy, tools, reasoning, or context from provider marketing or names.
 

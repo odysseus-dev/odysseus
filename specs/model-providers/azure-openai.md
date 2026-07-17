@@ -12,7 +12,8 @@ custom endpoints use explicit configuration.
 Azure commonly identifies deployments rather than globally stable model IDs.
 Preserve endpoint, deployment ID, API version, and underlying model/version as
 separate structured identity when returned. A standard OpenAI-compatible model
-list is identity-only unless it includes explicit common fields.
+list is identity-only until an Azure-specific reader intentionally maps its
+deployment fields.
 
 Request paths and authentication can be deployment/API-version specific; do
 not blindly append public OpenAI paths or copy provider quirks. Capability and

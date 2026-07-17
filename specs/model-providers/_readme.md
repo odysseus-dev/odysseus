@@ -4,7 +4,7 @@ Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
-This directory maps serving-provider/API dialect and model-catalog shapes into
+This directory maps serving-provider observations and model-catalog shapes into
 the canonical layer defined by
 [model-capability-canonical.md](../model-capability-canonical.md). It records
 current Odysseus implementation evidence, merged fixes, reproducible user
@@ -18,18 +18,19 @@ Read specs in this order:
 1. [openai-compatible.md](openai-compatible.md) for the conservative general
    envelope and fallback contract;
 2. the serving-provider file for native endpoints, headers, request/response
-   shapes, and catalog fields;
-3. [model-quirks.md](../model-quirks.md) only when exact structured model and
-   version identity is available.
+   observations, and catalog fields;
+3. [model-quirks.md](../model-quirks.md) for model-specific observations.
 
-Provider files own transport. Model quirks own only deviations. Shared model
-facts must not be copied into every provider file. An OpenAI-compatible
+Provider files document transport; runtime adapters still own it. Model quirks
+record only deviations and are not a second runtime matcher. Shared model facts
+must not be copied into every provider file. An OpenAI-compatible
 provider is not OpenAI: keep its provider identity even when it uses the
-general reader.
+inventory reader.
 
 Latest native catalog shapes precede explicitly listed legacy shapes. If no
-provider is known, use an unambiguous native shape, then the general structural
-reader, then unknown. Never identify a local engine from its default port.
+provider is known, use an unambiguous native shape, then explicit
+inventory-only fallback, then unknown. Fallback never promotes capability.
+Never identify a local engine from its default port.
 
 ## Provider Map
 
@@ -45,7 +46,7 @@ reader, then unknown. Never identify a local engine from its default port.
 - [mistral.md](mistral.md): rich model cards, reasoning controls, and structured content.
 - [github-copilot.md](github-copilot.md): picker-scoped nested support metadata and required headers.
 - [chatgpt-subscription.md](chatgpt-subscription.md): Codex model identity and Responses event shape.
-- [vllm.md](vllm.md): served-model cards and deployment-configured capabilities.
+- [vllm.md](vllm.md): discriminating served-model identity cards; deployment capability remains unknown.
 - [sglang.md](sglang.md): `/model_info`, `/v1/models`, parser/config-dependent capabilities.
 - [hugging-face.md](hugging-face.md): Hub pipeline metadata versus serving-provider truth.
 - [cohere.md](cohere.md): native endpoint families, context limits, sampling defaults, and v2/compatibility transports.
@@ -84,7 +85,8 @@ Each provider file records:
 - provider identity and API dialects;
 - latest native catalog endpoint/envelope and exact capability-bearing fields;
 - known compatibility shapes in explicit order;
-- request, tool, text, reasoning, and control paths;
+- observed request, tool, text, reasoning, and control paths owned by runtime
+  adapters rather than the catalog detector;
 - what remains per-model/unknown;
 - Odysseus evidence and regressions;
 - fallback/safety behavior and current gaps.

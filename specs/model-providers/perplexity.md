@@ -9,7 +9,7 @@ by current UI/provider host maps and agent cloud-host safeguards (#3015).
 
 ## Shape
 
-Use general identity/structural model mapping. Perplexity products may perform
+Use general identity-only inventory mapping. Perplexity products may perform
 search, but `web_search` becomes a canonical model capability only when an
 exact model card, maintained registry, or probe reports it. Provider identity
 alone and product descriptions are insufficient.

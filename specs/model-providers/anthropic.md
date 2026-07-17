@@ -24,7 +24,7 @@ typed content rather than OpenAI roles/fields. Preserve block IDs/signatures
 needed for continuation.
 
 Sampling and thinking support can be version/model specific. The Opus 4.7+
-sampling omission is an exact structured model quirk, not an Anthropic-wide
+sampling omission is a model-scoped runtime observation, not an Anthropic-wide
 rule. Anthropic-compatible proxies are Anthropic dialect only when configured
 or their exact payload/endpoint shape proves it (#3110).
 
@@ -37,5 +37,5 @@ matching is forbidden. Identity-only model cards remain unknown.
 ## Current Gaps
 
 - The public model list does not provide per-model canonical capability data.
-- Runtime model-version parsing must migrate to structured identity before the
-  canonical quirk registry can own all sampling exceptions.
+- Runtime model-version parsing needs structured identity before a later
+  consumer can centralize sampling exceptions without another name matcher.

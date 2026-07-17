@@ -9,7 +9,7 @@ provider detection and cache-affinity safeguards in `src/llm_core.py`.
 
 ## Shape And Observations
 
-Model lists use the general identity/structural reader. Cerebras rejects
+Model lists use the general identity-only inventory reader. Cerebras rejects
 llama.cpp-only `session_id` and `cache_prompt` fields (#4640), so cloud identity
 must suppress local slot-affinity extensions. Current regressions pin this
 provider boundary.

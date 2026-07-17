@@ -11,7 +11,7 @@ OpenAI-compatible transport and webhook presets in `src/llm_core.py` and
 ## Shape
 
 Keep Zen and Go path identity in endpoint metadata even though the canonical
-provider family is OpenCode. Model discovery uses general identity/structural
+provider family is OpenCode. Model discovery uses general identity-only
 fallback. Path/version, account policy, and model selection can differ between
 variants; do not flatten them into OpenAI.
 

@@ -10,7 +10,8 @@ endpoint observations in #5175; explicit provider configuration required.
 ## Shape
 
 Cloudflare account/path identity is part of the endpoint. Use the general
-OpenAI-compatible reader for returned model cards, preserving full model IDs.
+OpenAI-compatible inventory reader for returned model cards, preserving full
+model IDs but no capability fields.
 Do not identify the provider from broad `api.cloudflare.com` alone or infer
 capability from Workers AI catalog prose.
 

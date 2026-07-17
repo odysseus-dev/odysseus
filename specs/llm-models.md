@@ -10,7 +10,7 @@ This spec covers model/provider behavior in:
 - `src/endpoint_resolver.py`;
 - `src/model_discovery.py`;
 - `src/model_context.py`;
-- `src/model_capabilities.py`, `src/provider_capability_schemas.py`, and `src/model_behavior_quirks.py`;
+- `src/model_capabilities.py` and `src/provider_capability_schemas.py`;
 - `src/model_capability_readers/`;
 - `src/task_endpoint.py`;
 - `src/tls_overrides.py`;
@@ -43,25 +43,25 @@ Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls
 `src.model_capabilities` owns canonical model family, modality, capability,
 limit, evidence, deterministic-control, probe-result, reasoning-control, and
 display-query types. `src.provider_capability_schemas` owns serving-provider
-identity, API dialects, versioned model-catalog envelopes, stable request and
-response paths, and deterministic provider-resolution stages.
+identity and tested model-catalog envelopes; provider request/response paths
+remain in `llm_core` and its adapters.
 `src.model_capability_readers` maps already-fetched provider payloads into
-`ModelCapabilityRecord`; readers do no network I/O. `src.model_behavior_quirks`
-owns exact structured provider/model exceptions, but does not parse identity
-from display names.
+`ModelCapabilityRecord`; readers do no network I/O. Model-specific observations
+are kept in `model-quirks.md`, not a runtime registry without a consumer.
 
 Provider support and model support are different facts. A provider may expose
 tools, reasoning, vision, or multiple APIs while individual models differ.
-Provider schemas describe transport and where evidence can appear; only
+Provider-native readers describe where model evidence can appear; only
 per-model catalog fields, explicit endpoint configuration, a scoped registry,
 or a probe can claim a model capability. Identity-only model lists remain
 unknown.
 
 Resolution order is explicit provider, explicit endpoint kind, exact provider
-host, discriminating native payload shape, general structural model shape,
-then unknown. Default ports are not provider identity. Unknown future fields
+host, then a discriminating native payload shape. General `data`, `models`, and
+bare-list envelopes are explicit inventory fallbacks and never promote
+capability. Default ports are not provider identity. Unknown future fields
 remain available in raw evidence but do not become capabilities until their
-shape is intentionally mapped. See [model-capability-canonical.md](model-capability-canonical.md),
+provider-native shape is intentionally mapped. See [model-capability-canonical.md](model-capability-canonical.md),
 [model-quirks.md](model-quirks.md), and the
 [provider map](model-providers/_readme.md).
 
@@ -142,7 +142,7 @@ Provider tool calls are untrusted requests, not authorization. `supports_tools` 
 
 - Runtime provider detection, model curation, and frontend logos are still split across `llm_core`, `model_routes`, and `providers.js`; the canonical schema registry is not yet their single consumer.
 - Provider-specific behavior is concentrated in `llm_core.py`, which is large and easy to regress.
-- Several runtime request builders still use model-name heuristics. They should migrate only after endpoint/provider code can supply the structured family, version, capability, and API-dialect identity required by the canonical quirk selectors.
+- Several runtime request builders still use model-name heuristics. They should migrate only after endpoint/provider code supplies structured identity and a real consumer contract; the canonical catalog does not add a parallel quirk matcher.
 - Endpoint identity and fallback behavior need careful review when new OAuth/subscription providers are added.
 - Owner must continue to be threaded through new utility/research/default endpoint-resolution call sites so provider keys stay isolated.
 - `/api/models` owner-scoped listing/cache behavior, shared/private endpoint dedupe, endpoint-kind refresh policy, fallback-chain owner scope, and image endpoint create/list/update lifecycle need stronger route-level regression coverage.

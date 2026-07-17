@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -26,7 +26,7 @@ This spec covers current app runtime wiring in:
 
 ## App Orchestrator
 
-`app.py` owns process-level startup and HTTP composition. It configures MIME types, `.env` loading, logging under `DATA_DIR/logs`, CORS, gzip compression, auth middleware, request timeout middleware, static files, generated-image serving, router registration, SPA HTML routes, health/readiness/runtime endpoints, and lifespan hooks. `core/middleware.py` owns security headers, admin helpers, and internal-tool token constants.
+`app.py` owns process-level startup and HTTP composition. It configures MIME types, `.env` loading, logging under `DATA_DIR/logs`, CORS, gzip compression, auth middleware, request timeout middleware, static files, generated-image serving, router registration, SPA HTML routes, health/readiness/runtime endpoints, and lifespan hooks. Its console, rotating-file, and direct-uvicorn logging levels use the existing `LOG_LEVEL` environment toggle and default to `INFO`; invalid levels also fall back to `INFO`. `core/middleware.py` owns security headers, admin helpers, and internal-tool token constants.
 
 `src/app_initializer.initialize_managers()` owns shared manager construction. It creates memory, skills, sessions, uploads, personal docs, API keys, presets, chat processor/handler, research handler, model discovery, and optional memory vector store. Route modules receive these dependencies from `app.py`; they should not recreate manager singletons.
 

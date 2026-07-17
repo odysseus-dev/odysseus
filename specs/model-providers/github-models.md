@@ -9,7 +9,7 @@ inference endpoint observed in #2995; distinct from GitHub Copilot.
 
 ## Shape
 
-Use general model identity/structural fields. Deployment IDs and account access
+Use general identity-only inventory. Deployment IDs and account access
 can differ from upstream model IDs. Do not copy Copilot picker metadata,
 headers, plan rules, or capabilities into GitHub Models; they are separate
 providers despite shared GitHub branding.

@@ -10,8 +10,8 @@ curation/detection in `routes/model_routes.py` and runtime reasoning handling in
 
 ## Shape And Observations
 
-Use the general model-list identity shape unless the provider returns explicit
-modalities/capabilities. Cloud response history can use
+Use the general model-list inventory shape; capability-looking fields remain
+unknown until a DeepSeek-native reader maps them. Cloud response history can use
 `reasoning_content`; preserve it structurally for reasoning turns and tool
 continuation (#968, #3152). `deepseek-chat`, reasoning models, distilled local
 variants, and future V4 models do not share one capability record.

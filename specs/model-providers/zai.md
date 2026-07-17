@@ -10,7 +10,7 @@ vision/reasoning fixes such as #664.
 
 ## Shape And Observations
 
-Use general identity/structural mapping. Some working coding-plan models may be
+Use general identity-only inventory mapping. Some working coding-plan models may be
 absent from `/models`, so pinned/curated IDs are availability compatibility,
 not capability truth. GLM reasoning controls have appeared as structured
 objects or serving-template kwargs depending on direct cloud versus local

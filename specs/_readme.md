@@ -51,7 +51,7 @@ project documentation.
 - [compare.md](compare.md): model A/B comparison runs, voting/history, compare frontend panes, compare ownership.
 - [llm-models.md](llm-models.md): LLM provider calls, endpoint discovery, model context length, fallbacks, model endpoints.
 - [model-capability-canonical.md](model-capability-canonical.md): canonical provider/model capability shapes, evidence, payload resolution, and safe fallback.
-- [model-quirks.md](model-quirks.md): exact structured model/provider exceptions and the general-to-specific quirk contract.
+- [model-quirks.md](model-quirks.md): model-specific behavior observations, evidence, and promotion gates.
 - [model-providers/_readme.md](model-providers/_readme.md): provider-by-provider API/catalog shape index and compatibility status.
 - [agent-tools.md](agent-tools.md): agent loop, tool schemas, tool execution, tool retrieval, tool security, MCP tool exposure.
 - [context-building.md](context-building.md): URL/search/RAG/memory/skills/YouTube/email/tool-output context, untrusted wrapping, unavailable context, intent boundaries.

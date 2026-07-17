@@ -10,7 +10,8 @@ provider detection, catalog routing, and reasoning stream handling in
 
 ## Shape And Observations
 
-Model lists use the general identity shape unless explicit fields are present.
+Model lists use the general identity-only shape; capability-looking fields
+require a provider-native mapped shape.
 NIM/vLLM-style responses have emitted structured `reasoning` while older paths
 used `reasoning_content`; Odysseus routes either to the reasoning channel
 (#602). This response compatibility does not claim that every NIM model

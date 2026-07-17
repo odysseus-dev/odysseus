@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -119,7 +119,7 @@ HTTP import is best-effort and section-based. It rejects invalid top-level JSON,
 
 ## Diagnostics, Cleanup, And Wipe
 
-`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. URL-bearing diagnostics should use log-safety redaction helpers so credentials/query strings do not leak. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
+`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. URL-bearing diagnostics should use log-safety redaction helpers so credentials/query strings do not leak. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. The existing `LOG_LEVEL=DEBUG` toggle can add bounded capability-normalization summaries to that log; those summaries exclude model IDs and raw provider records. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
 
 `routes.cleanup_routes` is owner-scoped, not admin-only. It previews and applies session cleanup for the current user through `src.cleanup_service`; when auth is disabled, cleanup can operate as a single-user unscoped flow.
 

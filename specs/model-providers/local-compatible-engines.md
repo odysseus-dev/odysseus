@@ -11,8 +11,9 @@ covered by the native Ollama, LM Studio, llama.cpp, vLLM, or SGLang specs.
 ## Shape
 
 Use explicit endpoint kind when known; otherwise use only the general model
-list envelopes and structural fields. Local host and port do not distinguish
-these engines. MLX/Cookbook launch recipes, TGI task configuration, LMDeploy
+list envelopes for inventory identity. Capability-looking structural fields
+remain raw. Local host and port do not distinguish these engines.
+MLX/Cookbook launch recipes, TGI task configuration, LMDeploy
 adapters, and LiteLLM upstream routing can all change capability independently
 of the model ID.
 

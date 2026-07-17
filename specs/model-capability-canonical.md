@@ -6,160 +6,177 @@ Last updated: dev@28d27ee | 2026-07-17
 
 This spec covers:
 
-- canonical model data in `src/model_capabilities.py`;
-- provider/API/catalog data in `src/provider_capability_schemas.py`;
-- provider model-payload readers in `src/model_capability_readers/`;
-- exact model/provider exceptions in `src/model_behavior_quirks.py`;
+- canonical model values in `src/model_capabilities.py`;
+- provider identity and model-catalog detection in
+  `src/provider_capability_schemas.py`;
+- provider-native model-payload readers in `src/model_capability_readers/`;
 - regression coverage in `tests/test_model_capabilities.py`,
-  `tests/test_model_capability_readers.py`, and
-  `tests/test_provider_capability_schemas.py`;
-- future consumers in `routes/model_routes.py`, `src/endpoint_resolver.py`,
-  `src/model_context.py`, `src/llm_core.py`, model pickers, and capability
-  probes.
+  `tests/test_model_capability_readers.py`,
+  `tests/test_provider_capability_schemas.py`, and
+  `tests/test_model_capability_diagnostics.py`;
+- future consumers in model discovery, endpoint resolution, model context,
+  request routing, pickers, and capability probes.
 
 The layer normalizes already-fetched evidence. It performs no provider network
-I/O and does not authorize tool execution.
+I/O, does not shape provider requests, and does not authorize tool execution.
 
 ## Layer Boundaries
 
-Serving provider, API dialect, and model behavior are separate axes:
+- `ProviderCapabilitySchema` owns canonical provider identity, aliases, exact
+  host suffixes, and known native catalog shapes.
+- `ProviderCatalogShape` owns only catalog recognition: shape ID, provider,
+  envelope, identity paths, required discriminator paths/types/values,
+  detection priority, and whether the shape is fallback inventory.
+- `ProviderResolution` reports provider, provider source, detected catalog
+  shape, and fallback status.
+- Provider request/response paths remain in `src.llm_core` and its adapters.
+  They are not duplicated in the catalog detector.
+- `ModelCapabilityRecord` keeps the reader's internal capability/assertion and
+  control objects, endpoint-scoped stable identity, resolution evidence, and
+  optional raw provider record.
+- Model-specific behavior observations remain in
+  [model-quirks.md](model-quirks.md). There is no runtime quirk registry in this
+  layer until a real structured consumer exists.
 
-- `ProviderCapabilitySchema` describes provider identity, known API dialects,
-  versioned catalog shapes, host suffixes, and fallback. It does not grant
-  every model the provider's aggregate features.
-- `ProviderApiShape` describes stable request/response field paths for a
-  dialect such as OpenAI Chat, OpenAI Responses, Anthropic Messages, Google
-  GenerateContent, or Ollama native.
-- `ProviderCatalogShape` describes one exact catalog endpoint, envelope,
-  identity fields, discriminating fields and their JSON value types,
-  capability-bearing paths, version, and priority.
-- `ModelCapabilityRecord` binds endpoint-scoped model identity to canonical
-  model capability, assertions, controls, provider/model versions and family,
-  resolution metadata, and raw provider evidence.
-- `ModelBehaviorQuirk` narrows behavior for an exact structured selector. It
-  may constrain request fields, history fields, reasoning controls, or response
-  channels; it must not discover identity from arbitrary text.
+Provider transport support and per-model support are different facts. A
+provider may expose several APIs while individual model cards remain unknown.
 
-Provider transport facts can be true even when a model record is unknown.
-Conversely, a model registry can describe a model family while an endpoint
-uses a different dialect. Consumers must reconcile both axes.
+## Lean Canonical Record
 
-## Canonical Model Shape
+`ModelCapabilityRecord.to_dict()` emits canonical shape version 1:
 
-`ModelCapability` contains:
+```json
+{
+  "schema_version": 1,
+  "provider": "openrouter",
+  "model": "provider/model",
+  "stable_id": "openrouter|global|provider/model",
+  "family": "chat",
+  "task": "chat.completions",
+  "modalities": {
+    "input": ["text", "image"],
+    "output": ["text"]
+  },
+  "features": ["tool_call", "vision"],
+  "limits": {
+    "context_tokens": 131072
+  },
+  "controls": ["temperature", "top_p"],
+  "evidence": {
+    "source": "provider_reader",
+    "confidence": "provider_reported",
+    "provider_source": "explicit",
+    "shape": "openrouter.models.rich.v1",
+    "fallback": false
+  }
+}
+```
 
-- `family`: chat, embedding, image, video, audio, rerank, classification,
-  moderation, or unknown;
-- `primary_task`;
-- explicit input/output modalities;
-- normalized capabilities such as vision, files, reasoning, tool calls,
-  structured output, generation/editing, transcription, or TTS;
-- numeric or structured limits;
-- source and confidence.
+The serialized record deliberately has one name for each concept. It does not
+repeat `capability`, assertions, and controls in parallel nested structures.
+Display names and raw provider fields are reader evidence, not canonical
+identity. `raw` is included only when a caller explicitly requests it.
 
-Claims and negative evidence live in `CapabilityAssertion`; a missing claim is
-not an unsupported claim. `CapabilityProbeResult` stores endpoint/model-scoped
-pass, fail, or partial evidence and converts it to an assertion. Deterministic
-sampling/schema controls and `ReasoningControl` are separate from model
-capabilities because accepting a request parameter is not itself a task
-capability.
+`family`, `task`, modalities, features, limits, and controls remain empty or
+unknown when the provider did not report them through an intentionally mapped
+native field. Missing evidence is not an unsupported claim.
 
-`ReasoningControl` stores the canonical mechanism, canonical on/off/auto
-semantics, provider-native values, exact request path, exact response paths,
-and evidence. This accommodates native booleans, structured objects, budgets,
-template kwargs, message directives, and graded effort without flattening them
-into one boolean.
+## Evidence Rules
 
-## Evidence And Merge Rules
+Evidence must remain scoped to provider, endpoint, stable model identity, and
+observation source. Safe sources, from strongest local intent to weakest, are:
 
-Evidence remains scoped to provider, endpoint, stable model ID, API dialect,
-provider/model version when known, and observation time. Merge rules are:
+1. explicit admin override or endpoint configuration at that endpoint;
+2. a bounded endpoint/model capability probe;
+3. explicit native per-model provider fields;
+4. a scoped maintained registry;
+5. heuristic evidence, only where a consumer explicitly accepts it;
+6. unknown.
 
-1. explicit admin override or endpoint configuration applies only to that
-   configured endpoint;
-2. a fresh successful/failed capability probe is endpoint/model evidence;
-3. explicit native provider catalog fields are provider-reported model facts;
-4. structured serving-engine or model-registry metadata is registry evidence;
-5. maintained provider documentation can describe transport or a scoped model
-   quirk;
-6. heuristics are low-confidence compatibility evidence;
-7. otherwise remain unknown.
+Never use display names, descriptions, ownership labels, pricing text,
+provider marketing, serialized prompt/Modelfile text, or a default port as
+authoritative per-model capability.
 
-Higher-confidence evidence can supersede a weaker claim at the same scope, but
-an endpoint failure must not globally mark a model family unsupported. Preserve
-conflicting evidence for diagnosis; do not silently erase the losing source.
-Never use display names, descriptions, ownership labels, pricing text, or a
-provider's aggregate marketing page as authoritative per-model capability.
+## Provider Resolution
 
-## Provider Resolution And Fallback
-
-`resolve_provider()` uses this fixed ladder:
+Provider identity is resolved from:
 
 1. explicit provider;
 2. explicit endpoint kind;
-3. exact host or subdomain match;
+3. exact known host or subdomain;
 4. one unambiguous discriminating native payload shape;
-5. general structural `data`, `models`, or bare-list shape;
-6. unknown.
+5. unknown.
 
-Explicit identity wins over a conflicting payload because proxies can rewrite
-catalog bodies. Host matching rejects lookalikes. Ports such as 11434, 1234,
-8000, and 30000 are hints for discovery only, not provider identity.
+Explicit identity wins over payload inference because compatible proxies may
+rewrite catalog bodies. A previously unseen explicit provider ID is preserved
+in normalized form and uses the inventory fallback until a native reader is
+added. Host matching rejects lookalikes. Ports such as 11434, 1234, 8000, and
+30000 never identify a provider.
 
-The general structural reader accepts identity fields plus exact task/type,
-modality arrays, capability booleans, supported-parameter arrays, and numeric
-limit fields. Unknown keys stay in `raw`. Null/malformed envelopes return an
-empty or identity-only result. Names and descriptions do not participate.
+Catalog shape detection is separate from provider identity. A known provider
+with an unrecognized but list-shaped response keeps its provider identity and
+is marked with an explicit fallback shape.
 
-Provider-native latest shapes are preferred, followed by intentionally listed
-legacy shapes and then the general reader. A new provider shape can therefore
-retain identity and raw fields before Odysseus knows its new capabilities,
-without silently opting models into UI or request behavior.
+## Explicit Fallback Contract
 
-## Reader Contract
+The only general shapes are:
 
-Readers:
+- `fallback.models.data.v1` for `data[]`;
+- `fallback.models.envelope.v1` for `models[]`;
+- `fallback.models.list.v1` for a bare list.
+
+Fallback capability promotion is disabled. The inventory reader may recover
+identity from `id`, `name`, `model`, `key`, or `slug`, preserve the raw record,
+and return an unknown capability. It must ignore capability-looking fields
+such as `type`, `task`, `pipeline_tag`, modalities, `capabilities`,
+`supported_parameters`, and token limits.
+
+This is the forward-compatible behavior: a new provider or payload revision
+can still list stable endpoint-scoped model identities, but it cannot silently
+opt those models into UI surfaces or request parameters. Null, malformed, or
+mixed envelopes fail soft.
+
+## Provider-Native Reader Contract
+
+Native readers:
 
 - accept decoded JSON-compatible values and never make HTTP calls;
 - tolerate nulls, non-object entries, and unknown fields;
-- use exact provider fields and documented nested paths;
-- preserve stable endpoint-scoped identity;
-- keep identity-only records unknown;
-- never parse serialized prompt/Modelfile text for capability truth;
-- never infer capability from a model ID, display name, description, or port.
+- interpret only provider-owned fields with tested shapes and value types;
+- preserve endpoint-scoped stable identity;
+- keep identity-only cards unknown;
+- do not inherit provider-wide capability across all of its models.
 
-Ollama is the important compatibility example: `/api/tags` supplies identity
-and family, while `/api/show` supplies explicit capability tokens and
-`model_info.<architecture>.context_length`. The serialized `parameters` text
-is not reparsed. LM Studio similarly prefers native v1 capability objects and
-retains native v0 as an explicit compatibility shape.
+Ollama illustrates the split: `/api/tags` is inventory-only, while
+`/api/show.capabilities` and structured `model_info.*.context_length` can
+describe a selected model. Hugging Face `pipeline_tag` is interpreted only in
+the Hugging Face reader; a similarly named field in a generic payload has no
+canonical meaning.
+
+## Diagnostics
+
+Capability diagnostics use Odysseus's existing `LOG_LEVEL` environment
+toggle; it does not add a capability-specific CLI argument. At
+`LOG_LEVEL=DEBUG`, normalization emits one bounded summary with canonical
+version, provider/source, catalog shape, fallback state, record count, and the
+set of normalized families/features/controls. It never logs model IDs or raw
+payload values.
 
 ## Tests
 
-Tests pin:
-
-- shape resolution order and host-lookalike rejection;
-- native catalog signatures for current providers and local engines;
-- general bare-list/null/future-field behavior;
-- no model-name or default-port inference;
-- identity-only provider behavior;
-- rich Mistral, Cohere, Copilot, SGLang, OpenRouter, Google, LM Studio,
-  Ollama, and llama.cpp mappings;
-- source/confidence, controls, stable IDs, and model quirks;
-- exact structured model/version selection rather than regex matching.
-
-Fixture payloads should be minimal excerpts that exercise shape contracts, not
-large copied provider responses. Live-provider tests require explicit opt-in
-and sanitized credentials; deterministic unit fixtures remain the merge gate.
+Tests pin native shape discrimination, exact host matching, provider/model
+separation, unregistered explicit provider identity, malformed payloads,
+identity-only fallback, native provider mappings, the exact canonical v1
+serialization, and safe diagnostics. Dangerous-looking generic fields are
+negative fixtures: they must not promote capability.
 
 ## Current Gaps
 
-- The canonical registry/readers are not yet the single source for runtime
-  provider dispatch, model picker filtering, model context, or request-builder
-  quirks.
-- Not every provider publishes per-model capability metadata. Those providers
-  correctly remain identity-only until scoped registry/probe evidence exists.
-- Structured provider/model version identity is not yet persisted on every
-  endpoint, so version-gated quirks cannot safely replace all runtime name
-  heuristics yet.
-- Probe merge/persistence and evidence expiry remain later integration work.
+- The canonical readers are not yet the single source for runtime provider
+  dispatch, model picker filtering, context lookup, or request shaping.
+- Probe merge/persistence, override layering, evidence expiry, and conflict
+  presentation remain later integration work.
+- Some providers expose useful metadata only through detail or probe endpoints;
+  list-only discovery must keep those fields unknown.
+- Runtime request builders still contain model-name heuristics. This catalog
+  does not reproduce them as a second matching system.
