@@ -92,7 +92,12 @@ import logging.handlers
 from core.constants import DATA_DIR
 
 _root_logger = logging.getLogger()
-_root_logger.setLevel(logging.INFO)
+_log_level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+_log_level = getattr(logging, _log_level_name, logging.INFO)
+if not isinstance(_log_level, int):
+    _log_level_name = "INFO"
+    _log_level = logging.INFO
+_root_logger.setLevel(_log_level)
 _formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Clear existing handlers to avoid duplicates
@@ -100,6 +105,7 @@ for _h in list(_root_logger.handlers):
     _root_logger.removeHandler(_h)
 
 _console_h = logging.StreamHandler()
+_console_h.setLevel(_log_level)
 _console_h.setFormatter(_formatter)
 _root_logger.addHandler(_console_h)
 
@@ -114,6 +120,7 @@ try:
     _file_h = logging.handlers.RotatingFileHandler(
         _log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
+    _file_h.setLevel(_log_level)
     _file_h.setFormatter(_formatter)
     _root_logger.addHandler(_file_h)
 except Exception as e:
@@ -1302,4 +1309,4 @@ if __name__ == "__main__":
     bind_host = os.getenv("APP_BIND", "127.0.0.1")
     bind_port = int(os.getenv("APP_PORT", "7000"))
 
-    uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")
+    uvicorn.run(app, host=bind_host, port=bind_port, log_level=_log_level_name.lower())
