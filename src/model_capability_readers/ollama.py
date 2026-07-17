@@ -59,17 +59,11 @@ def _family_from_ollama_capabilities(values: Any) -> str:
 
 
 def _parameters_mapping(value: Any) -> Mapping[str, Any]:
-    if isinstance(value, Mapping):
-        return value
-    text = compact_str(value)
-    if not text:
-        return {}
-    parsed: dict[str, str] = {}
-    for line in text.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2:
-            parsed[parts[0]] = parts[1]
-    return parsed
+    # `/api/show` currently serializes this field as Modelfile text.  Do not
+    # recover capability truth by reparsing that late text; prefer the native
+    # structured `model_info.*.context_length` shape.  Mapping support remains
+    # for compatible servers that already return structured parameters.
+    return value if isinstance(value, Mapping) else {}
 
 
 def _modalities_for_family(family: str, capabilities: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -148,6 +142,7 @@ def record_from_show_payload(
         stable_model_id=stable_model_id_for(VENDOR_OLLAMA, model_id, endpoint_id=endpoint_id, base_url=base_url),
         display_name=model_id,
         capability=capability,
+        model_family=compact_str(as_mapping(payload.get("details")).get("family")),
         raw=payload,
     )
 
@@ -180,6 +175,7 @@ def records_from_tags_payload(
                     source=mc.SOURCE_PROVIDER_READER,
                     confidence=mc.CONFIDENCE_UNKNOWN,
                 ),
+                model_family=compact_str(as_mapping(item.get("details")).get("family")),
                 raw=item,
             )
         )
