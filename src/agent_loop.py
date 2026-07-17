@@ -3828,9 +3828,8 @@ async def stream_agent_loop(
                 and _intent_match is not None
                 and len(_intent_text) < 400
                 and "```" not in _intent_text
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
             )
-            if _looks_like_promise:
+            if _looks_like_promise and _intent_nudge_count < _MAX_INTENT_NUDGES:
                 _intent_nudge_count += 1
                 _matched_phrase = _intent_match.group(0).strip()
                 logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
@@ -3859,6 +3858,31 @@ async def stream_agent_loop(
                 # Visible signal in the stream so the user knows we caught it.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
                 continue
+            if _looks_like_promise:
+                _matched_phrase = _intent_match.group(0).strip()
+                _guard_message = (
+                    "The agent stopped because it repeatedly announced a tool "
+                    "action without making the tool call."
+                )
+                logger.warning(
+                    "[agent] intent-without-action guard exhausted on round %d after %d nudges: %r",
+                    round_num,
+                    _intent_nudge_count,
+                    _matched_phrase,
+                )
+                yield (
+                    "data: "
+                    + json.dumps({
+                        "type": "intent_nudge_exhausted",
+                        "reason": "intent_without_action_nudge_cap",
+                        "message": _guard_message,
+                        "round": round_num,
+                        "nudges": _intent_nudge_count,
+                        "matched": _matched_phrase,
+                    })
+                    + "\n\n"
+                )
+                break
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -3895,6 +3919,21 @@ async def stream_agent_loop(
             reason = (f"calling {_runaway} with identical arguments over and over" if _runaway
                       else "repeating the same tool calls without new progress")
             logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
+            yield (
+                "data: "
+                    + json.dumps({
+                    "type": "loop_breaker_triggered",
+                    "reason": "loop_breaker_stall",
+                    "message": (
+                        "The loop-breaker detected repeated tool calls without "
+                        "new progress, so the agent is being forced to stop "
+                        "using tools and give its best final answer."
+                    ),
+                    "round": round_num,
+                    "detail": reason,
+                })
+                + "\n\n"
+            )
             # The model has been executing tools, so its results are already
             # in context. Force ONE tool-free round to converge: write the
             # answer from what it has, or state plainly what's blocking it.
@@ -4013,16 +4052,31 @@ async def stream_agent_loop(
                         await _progress_q.put(None)
 
                 _tool_task = asyncio.create_task(_run_tool())
-                # Drain progress events as they arrive — block until the
-                # next event OR the tool finishes (sentinel = None).
-                while True:
-                    evt = await _progress_q.get()
-                    if evt is None:
-                        break
-                    yield (
-                        f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
-                    )
-                desc, result = await _tool_task
+                try:
+                    # Drain progress events as they arrive — block until the
+                    # next event OR the tool finishes (sentinel = None).
+                    while True:
+                        evt = await _progress_q.get()
+                        if evt is None:
+                            break
+                        yield (
+                            f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
+                        )
+                    desc, result = await _tool_task
+                finally:
+                    # If the SSE client disconnects (or this generator is
+                    # otherwise closed) while we're awaiting a progress event
+                    # above, GeneratorExit is thrown in right here and the
+                    # `await _tool_task` on the line above never runs — the
+                    # task (and any subprocess execute_tool_block spawned for
+                    # bash/python tools) would otherwise keep running
+                    # orphaned with nothing left to await or cancel it.
+                    if not _tool_task.done():
+                        _tool_task.cancel()
+                        try:
+                            await _tool_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
 
             # A skill the model just loaded can prescribe tools that weren't
             # RAG-selected this turn (declared via requires_toolsets in its
