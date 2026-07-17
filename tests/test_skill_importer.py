@@ -71,7 +71,7 @@ def test_fetch_bytes_rejects_cross_host_redirect(monkeypatch):
     monkeypatch.setattr("services.memory.skill_importer.httpx.Client", _Client)
     monkeypatch.setattr(
         "services.memory.skill_importer.check_outbound_url",
-        lambda url: (True, ""),
+        lambda url, **kwargs: (True, ""),
     )
     with pytest.raises(SkillImportError, match="redirect target"):
         _fetch_bytes("https://raw.githubusercontent.com/o/r/main/SKILL.md")
@@ -91,7 +91,7 @@ def test_list_github_dir_accepts_api_github_response(monkeypatch):
     )
     monkeypatch.setattr(
         "services.memory.skill_importer.check_outbound_url",
-        lambda url: (True, ""),
+        lambda url, **kwargs: (True, ""),
     )
 
     class _Resp:
@@ -146,7 +146,7 @@ def _mock_httpx_client(monkeypatch, response):
     monkeypatch.setattr("services.memory.skill_importer.httpx.Client", _Client)
     monkeypatch.setattr(
         "services.memory.skill_importer.check_outbound_url",
-        lambda url: (True, ""),
+        lambda url, **kwargs: (True, ""),
     )
 
 
