@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@28d27ee | 2026-07-17
 
 ## Scope
 
@@ -10,6 +10,8 @@ This spec covers model/provider behavior in:
 - `src/endpoint_resolver.py`;
 - `src/model_discovery.py`;
 - `src/model_context.py`;
+- `src/model_capabilities.py`, `src/provider_capability_schemas.py`, and `src/model_behavior_quirks.py`;
+- `src/model_capability_readers/`;
 - `src/task_endpoint.py`;
 - `src/tls_overrides.py`;
 - `src/copilot.py`;
@@ -35,6 +37,33 @@ await each candidate, so header negotiation does not block the event loop; both
 paths share the accepted-value cache and 403 fallback policy.
 
 Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit `temperature` where required, reasoning models omit or clamp unsupported temperature values, and self-hosted compatible endpoints keep normal OpenAI-compatible parameters unless detected otherwise. Mistral/Moonshot/Kimi reasoning content, `gpt-oss` harmony channel output, and native/OpenAI-compatible Ollama thinking formats are normalized so hidden reasoning and visible text stay separated where the provider exposes that structure. Copilot request metadata is treated defensively; malformed/non-dict `request_flags` in the last message must not crash payload construction.
+
+## Canonical Provider And Model Shape
+
+`src.model_capabilities` owns canonical model family, modality, capability,
+limit, evidence, deterministic-control, probe-result, reasoning-control, and
+display-query types. `src.provider_capability_schemas` owns serving-provider
+identity, API dialects, versioned model-catalog envelopes, stable request and
+response paths, and deterministic provider-resolution stages.
+`src.model_capability_readers` maps already-fetched provider payloads into
+`ModelCapabilityRecord`; readers do no network I/O. `src.model_behavior_quirks`
+owns exact structured provider/model exceptions, but does not parse identity
+from display names.
+
+Provider support and model support are different facts. A provider may expose
+tools, reasoning, vision, or multiple APIs while individual models differ.
+Provider schemas describe transport and where evidence can appear; only
+per-model catalog fields, explicit endpoint configuration, a scoped registry,
+or a probe can claim a model capability. Identity-only model lists remain
+unknown.
+
+Resolution order is explicit provider, explicit endpoint kind, exact provider
+host, discriminating native payload shape, general structural model shape,
+then unknown. Default ports are not provider identity. Unknown future fields
+remain available in raw evidence but do not become capabilities until their
+shape is intentionally mapped. See [model-capability-canonical.md](model-capability-canonical.md),
+[model-quirks.md](model-quirks.md), and the
+[provider map](model-providers/_readme.md).
 
 Route-level probe helpers in `routes/model_routes.py` are the current exception: they build minimal provider-specific probe payloads using `llm_core` detection helpers. Keep probe behavior aligned with `llm_core` provider adapters. LLM provider HTTP clients and endpoint probes share `src.tls_overrides.llm_verify()`, which can add an operator-provided `LLM_CA_BUNDLE` on top of normal certificate verification without turning verification off or widening that trust to arbitrary URL fetches.
 
@@ -111,8 +140,9 @@ Provider tool calls are untrusted requests, not authorization. `supports_tools` 
 
 ## Current Gaps
 
-- Provider identity, model curation, and frontend logos are split across `llm_core`, `model_routes`, and `providers.js`; there is no canonical provider registry.
+- Runtime provider detection, model curation, and frontend logos are still split across `llm_core`, `model_routes`, and `providers.js`; the canonical schema registry is not yet their single consumer.
 - Provider-specific behavior is concentrated in `llm_core.py`, which is large and easy to regress.
+- Several runtime request builders still use model-name heuristics. They should migrate only after endpoint/provider code can supply the structured family, version, capability, and API-dialect identity required by the canonical quirk selectors.
 - Endpoint identity and fallback behavior need careful review when new OAuth/subscription providers are added.
 - Owner must continue to be threaded through new utility/research/default endpoint-resolution call sites so provider keys stay isolated.
 - `/api/models` owner-scoped listing/cache behavior, shared/private endpoint dedupe, endpoint-kind refresh policy, fallback-chain owner scope, and image endpoint create/list/update lifecycle need stronger route-level regression coverage.
