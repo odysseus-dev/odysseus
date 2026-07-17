@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -54,6 +55,9 @@ from src.model_capability_readers.base import (
     detect_vendor,
     stable_model_id_for,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 READER_MODULES = {
@@ -114,7 +118,7 @@ def records_from_payload(
         )
     else:
         records = reader.records_from_payload(payload, endpoint_id=endpoint_id, base_url=base_url)
-    return tuple(
+    normalized = tuple(
         replace(
             record,
             provider_source=resolution.provider_source,
@@ -123,6 +127,38 @@ def records_from_payload(
         )
         for record in records
     )
+    if logger.isEnabledFor(logging.DEBUG):
+        families = sorted({record.capability.family for record in normalized})
+        features = sorted(
+            {
+                feature
+                for record in normalized
+                for feature in record.capability.capabilities
+            }
+        )
+        controls = sorted(
+            {
+                control.control
+                for record in normalized
+                for control in record.deterministic_controls
+                if control.control
+            }
+        )
+        logger.debug(
+            "[model-capability] normalized: canonical_version=%s provider=%s "
+            "provider_source=%s catalog_shape=%s fallback=%s records=%d "
+            "families=%s features=%s controls=%s",
+            CANONICAL_MODEL_SHAPE_VERSION,
+            resolution.provider_id,
+            resolution.provider_source,
+            resolution.shape_id or "unknown",
+            resolution.fallback,
+            len(normalized),
+            families,
+            features,
+            controls,
+        )
+    return normalized
 
 
 __all__ = [
