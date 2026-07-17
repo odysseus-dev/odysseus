@@ -150,6 +150,51 @@ scripts/check-docker-gpu.sh --enable-nvidia-overlay
 # Full assisted setup — install toolkit, then enable overlay if passthrough works:
 scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
 ```
+#### Arch Linux NVIDIA Docker notes
+
+On Arch Linux, verify the host NVIDIA driver and Docker GPU passthrough before enabling the Odysseus NVIDIA overlay.
+
+Install the required packages:
+
+```bash
+sudo pacman -Syu
+sudo pacman -S docker docker-compose nvidia-container-toolkit nvidia-utils
+sudo systemctl enable --now docker
+```
+
+Configure Docker to use the NVIDIA container runtime:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Verify the host GPU:
+
+```bash
+nvidia-smi
+```
+
+Verify Docker GPU passthrough:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu22.04 nvidia-smi
+```
+
+Then enable the Odysseus NVIDIA compose overlay:
+
+```env
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+```
+
+Rebuild and verify the GPU inside the Odysseus container:
+
+```bash
+docker compose up -d --build
+docker compose exec odysseus nvidia-smi -L
+```
+
+For first-time local model testing on 8 GB laptop GPUs, start with GGUF/Q4 models on llama.cpp before trying GPTQ/AWQ models on vLLM or SGLang. This keeps the first run simpler while confirming GPU passthrough works.
 
 Safety notes:
 - The app never installs host GPU runtime automatically.
