@@ -160,6 +160,7 @@ def record_from_native_model(
         ),
         display_name=compact_str(raw.get("display_name") or raw.get("name")) or model_id,
         capability=capability,
+        model_family=compact_str(raw.get("architecture") or raw.get("arch")),
         raw=raw,
     )
 
