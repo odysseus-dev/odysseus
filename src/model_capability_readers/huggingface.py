@@ -6,11 +6,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from src import model_capabilities as mc
-from src.model_capability_readers import generic_openai
 from src.model_capability_readers.base import (
     ModelCapabilityRecord,
     VENDOR_HUGGINGFACE,
-    as_mapping,
+    build_capability,
     compact_str,
     openai_model_items,
     stable_model_id_for,
@@ -18,6 +17,86 @@ from src.model_capability_readers.base import (
 
 
 vendor = VENDOR_HUGGINGFACE
+
+
+# Hugging Face publishes ``pipeline_tag`` as a provider-owned task enum.  Keep
+# its interpretation here, rather than teaching the inventory fallback that a
+# similarly named field has the same meaning for every provider.
+_PIPELINE_SHAPES = {
+    "text-generation": (mc.FAMILY_CHAT, (mc.MODALITY_TEXT,), (mc.MODALITY_TEXT,), ()),
+    "image-text-to-text": (
+        mc.FAMILY_CHAT,
+        (mc.MODALITY_TEXT, mc.MODALITY_IMAGE),
+        (mc.MODALITY_TEXT,),
+        (mc.CAP_VISION,),
+    ),
+    "image-question-answering": (
+        mc.FAMILY_CHAT,
+        (mc.MODALITY_TEXT, mc.MODALITY_IMAGE),
+        (mc.MODALITY_TEXT,),
+        (mc.CAP_VISION,),
+    ),
+    "feature-extraction": (
+        mc.FAMILY_EMBEDDING,
+        (mc.MODALITY_TEXT,),
+        (mc.MODALITY_EMBEDDING,),
+        (),
+    ),
+    "text-to-image": (
+        mc.FAMILY_IMAGE,
+        (mc.MODALITY_TEXT,),
+        (mc.MODALITY_IMAGE,),
+        (mc.CAP_IMAGE_GENERATION,),
+    ),
+    "image-to-image": (
+        mc.FAMILY_IMAGE,
+        (mc.MODALITY_IMAGE,),
+        (mc.MODALITY_IMAGE,),
+        (mc.CAP_IMAGE_GENERATION, mc.CAP_IMAGE_EDITING),
+    ),
+    "text-to-video": (
+        mc.FAMILY_VIDEO,
+        (mc.MODALITY_TEXT,),
+        (mc.MODALITY_VIDEO,),
+        (mc.CAP_VIDEO_GENERATION,),
+    ),
+    "automatic-speech-recognition": (
+        mc.FAMILY_AUDIO,
+        (mc.MODALITY_AUDIO,),
+        (mc.MODALITY_TEXT,),
+        (mc.CAP_TRANSCRIPTION,),
+    ),
+    "text-to-speech": (
+        mc.FAMILY_AUDIO,
+        (mc.MODALITY_TEXT,),
+        (mc.MODALITY_AUDIO,),
+        (mc.CAP_TTS,),
+    ),
+    "text-classification": (
+        mc.FAMILY_CLASSIFICATION,
+        (mc.MODALITY_TEXT,),
+        (mc.MODALITY_TEXT,),
+        (),
+    ),
+}
+
+
+def _capability_from_pipeline_tag(value: Any) -> mc.ModelCapability:
+    shape = _PIPELINE_SHAPES.get(compact_str(value).lower())
+    if not shape:
+        return mc.unknown_capability(
+            source=mc.SOURCE_COOKBOOK_HF,
+            confidence=mc.CONFIDENCE_UNKNOWN,
+        )
+    family, input_modalities, output_modalities, capabilities = shape
+    return build_capability(
+        family=family,
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+        capabilities=capabilities,
+        source=mc.SOURCE_COOKBOOK_HF,
+        confidence=mc.CONFIDENCE_REGISTRY,
+    )
 
 
 def record_from_model(
@@ -29,25 +108,6 @@ def record_from_model(
     model_id = compact_str(raw.get("modelId") or raw.get("id"))
     if not model_id:
         return None
-    structural = generic_openai.record_from_model(
-        {**raw, "id": model_id},
-        vendor_id=VENDOR_HUGGINGFACE,
-        endpoint_id=endpoint_id,
-        base_url=base_url,
-    )
-    if not structural:
-        return None
-    capability = mc.ModelCapability.build(
-        family=structural.capability.family,
-        primary_task=structural.capability.primary_task,
-        input_modalities=structural.capability.modalities.input,
-        output_modalities=structural.capability.modalities.output,
-        capabilities=structural.capability.capabilities,
-        limits=dict(structural.capability.limits),
-        source=mc.SOURCE_COOKBOOK_HF,
-        confidence=mc.CONFIDENCE_REGISTRY,
-    )
-    config = as_mapping(raw.get("config"))
     return ModelCapabilityRecord(
         vendor=VENDOR_HUGGINGFACE,
         model_id=model_id,
@@ -65,9 +125,7 @@ def record_from_model(
             )
             or model_id
         ),
-        capability=capability,
-        deterministic_controls=structural.deterministic_controls,
-        model_family=compact_str(config.get("model_type")),
+        capability=_capability_from_pipeline_tag(raw.get("pipeline_tag")),
         raw=raw,
     )
 

@@ -44,6 +44,8 @@ VENDOR_XAI = "xai"
 VENDOR_ZAI = "zai"
 VENDOR_UNKNOWN = "unknown"
 
+CANONICAL_MODEL_SHAPE_VERSION = 1
+
 
 @dataclass(frozen=True)
 class ModelCapabilityRecord:
@@ -54,14 +56,9 @@ class ModelCapabilityRecord:
     stable_model_id: str = ""
     capability_assertions: tuple[mc.CapabilityAssertion, ...] = ()
     deterministic_controls: tuple[mc.DeterministicControl, ...] = ()
-    reasoning_controls: tuple[mc.ReasoningControl, ...] = ()
-    model_family: str = ""
-    model_version: tuple[int, ...] = ()
-    provider_version: tuple[int, ...] = ()
-    api_dialect: str = ""
-    provider_schema_id: str = ""
+    provider_source: str = "unknown"
     catalog_shape_id: str = ""
-    provider_resolution: str = ""
+    fallback: bool = False
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -80,22 +77,31 @@ class ModelCapabilityRecord:
             )
 
     def to_dict(self, *, include_raw: bool = False) -> dict[str, Any]:
+        controls = tuple(
+            dict.fromkeys(
+                control.control
+                for control in self.deterministic_controls
+                if control.control
+            )
+        )
         data = {
-            "vendor": self.vendor,
-            "model_id": self.model_id,
-            "stable_model_id": self.stable_model_id,
-            "display_name": self.display_name,
-            "capability": self.capability.to_dict(),
-            "capability_assertions": [assertion.to_dict() for assertion in self.capability_assertions],
-            "deterministic_controls": [control.to_dict() for control in self.deterministic_controls],
-            "reasoning_controls": [control.to_dict() for control in self.reasoning_controls],
-            "model_family": self.model_family,
-            "model_version": list(self.model_version),
-            "provider_version": list(self.provider_version),
-            "api_dialect": self.api_dialect,
-            "provider_schema_id": self.provider_schema_id,
-            "catalog_shape_id": self.catalog_shape_id,
-            "provider_resolution": self.provider_resolution,
+            "schema_version": CANONICAL_MODEL_SHAPE_VERSION,
+            "provider": self.vendor,
+            "model": self.model_id,
+            "stable_id": self.stable_model_id,
+            "family": self.capability.family,
+            "task": self.capability.primary_task,
+            "modalities": self.capability.modalities.to_dict(),
+            "features": list(self.capability.capabilities),
+            "limits": dict(self.capability.limits),
+            "controls": list(controls),
+            "evidence": {
+                "source": self.capability.source,
+                "confidence": self.capability.confidence,
+                "provider_source": self.provider_source,
+                "shape": self.catalog_shape_id,
+                "fallback": self.fallback,
+            },
         }
         if include_raw:
             data["raw"] = dict(self.raw)
@@ -314,5 +320,4 @@ def detect_vendor(base_url: Any = "", endpoint_kind: Any = "") -> str:
     )
     if resolution.provider_id != pcs.PROVIDER_UNKNOWN:
         return resolution.provider_id
-    parsed = urlparse(compact_str(base_url))
-    return VENDOR_GENERIC_OPENAI if parsed.hostname else VENDOR_UNKNOWN
+    return VENDOR_UNKNOWN
