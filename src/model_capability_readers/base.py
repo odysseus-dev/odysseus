@@ -178,9 +178,11 @@ def model_id_from(raw: Mapping[str, Any], *keys: str) -> str:
 
 
 def int_limit(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
     try:
         limit = int(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return None
     return limit if limit > 0 else None
 
