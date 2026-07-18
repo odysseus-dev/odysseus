@@ -3996,7 +3996,7 @@ async function _toggleCardPreview(card, em) {
     // Mark as read locally
     _syncEmailReadState(em.uid, true);
     _prefetchAdjacentEmails(card);
-    _stampReaderContext(reader, { ...em, ...data }, state._libFolder, state._libAccountId);
+    _stampReaderContext(reader, { ...em, ...data }, folderAtStart, accountAtStart);
 
     // Build the attachments wrap using the shared helper so the signature-
     // image filter (small inline PNGs/JPGs, Outlook image001 placeholders,
@@ -6688,6 +6688,16 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   const _newTabIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const _checkIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const _translateIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>';
+  const folder = reader?.dataset?.emailFolder || em?.folder || state._libFolder || 'INBOX';
+  const account = reader?.dataset?.emailAccount || state._libAccountId || '';
+  const accountQs = account ? `&account_id=${encodeURIComponent(account)}` : '';
+  const emailUrl = (path) => `${API_BASE}${path}?folder=${encodeURIComponent(folder)}${accountQs}`;
+  const requireEmailOk = async (res) => {
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || data?.success === false) throw new Error(data?.error || `HTTP ${res.status}`);
+    return data;
+  };
 
   const closeAndRemove = async () => {
     // Pick the next neighbour BEFORE we re-render so we know which email to
@@ -6721,7 +6731,6 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       label: 'Open in new tab',
       icon: _newTabIcon,
       action: async () => {
-        const folder = state._libFolder || 'INBOX';
         await _openEmailAsTab(em, folder);
       },
     },
@@ -6744,9 +6753,9 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         _syncEmailReadState(em.uid, newRead);
         try {
           if (newRead) {
-            await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+            await requireEmailOk(await fetch(emailUrl(`/api/email/mark-read/${em.uid}`), { method: 'POST' }));
           } else {
-            await fetch(`${API_BASE}/api/email/mark-unread/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+            await requireEmailOk(await fetch(emailUrl(`/api/email/mark-unread/${em.uid}`), { method: 'POST' }));
           }
         } catch (e) { console.error(e); }
         _renderGrid();
@@ -6764,7 +6773,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         em.is_flagged = next;
         _renderGrid();
         try {
-          await fetch(`${API_BASE}/api/email/flag/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&on=${next ? 'true' : 'false'}`, { method: 'POST' });
+          await requireEmailOk(await fetch(`${emailUrl(`/api/email/flag/${em.uid}`)}&on=${next ? 'true' : 'false'}`, { method: 'POST' }));
         } catch (e) {
           // Roll back the optimistic flip if the server didn't take it.
           em.is_flagged = !next;
@@ -6785,10 +6794,10 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         }
         try {
           if (newState) {
-            await fetch(`${API_BASE}/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-            await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+            await requireEmailOk(await fetch(emailUrl(`/api/email/mark-answered/${em.uid}`), { method: 'POST' }));
+            await requireEmailOk(await fetch(emailUrl(`/api/email/mark-read/${em.uid}`), { method: 'POST' }));
           } else {
-            await fetch(`${API_BASE}/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+            await requireEmailOk(await fetch(emailUrl(`/api/email/clear-answered/${em.uid}`), { method: 'POST' }));
           }
         } catch (e) { console.error('Failed to toggle done:', e); }
         _renderGrid();
@@ -6799,8 +6808,12 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       icon: _archIcon,
       action: async () => {
         try {
-          await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-        } catch (e) { console.error(e); }
+          await requireEmailOk(await fetch(emailUrl(`/api/email/archive/${em.uid}`), { method: 'POST' }));
+        } catch (e) {
+          console.error(e);
+          showToast('Failed to archive email');
+          return;
+        }
         await closeAndRemove();
       },
     },
@@ -6840,8 +6853,12 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       icon: _spamIcon,
       action: async () => {
         try {
-          await fetch(`${API_BASE}/api/email/move/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&dest=Junk`, { method: 'POST' });
-        } catch (e) { console.error(e); }
+          await requireEmailOk(await fetch(`${emailUrl(`/api/email/move/${em.uid}`)}&dest=Junk`, { method: 'POST' }));
+        } catch (e) {
+          console.error(e);
+          showToast('Failed to move email');
+          return;
+        }
         await closeAndRemove();
       },
     },
@@ -6852,7 +6869,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         const busy = _showEmailDeleteOverlay(card);
         await busy?.ready;
         try {
-          await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+          await requireEmailOk(await fetch(emailUrl(`/api/email/delete/${em.uid}`), { method: 'DELETE' }));
         } catch (e) {
           console.error(e);
           busy?.remove?.();
@@ -6877,7 +6894,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         const busy = _showEmailDeleteOverlay(card);
         await busy?.ready;
         try {
-          await fetch(`${API_BASE}/api/email/delete-permanent/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+          await requireEmailOk(await fetch(emailUrl(`/api/email/delete-permanent/${em.uid}`), { method: 'DELETE' }));
         } catch (e) {
           console.error(e);
           busy?.remove?.();
