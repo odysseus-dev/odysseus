@@ -122,7 +122,11 @@ class ProviderCatalogShape:
         if self.envelope == ENVELOPE_SINGLE:
             return item
         if isinstance(payload, Mapping):
-            narrowed = dict(payload)
+            narrowed = {
+                key: value
+                for key, value in payload.items()
+                if key not in {ENVELOPE_DATA, ENVELOPE_MODELS}
+            }
             narrowed[self.envelope] = [item]
             return narrowed
         return {self.envelope: [item]}
@@ -613,8 +617,14 @@ def catalog_shape_for_id(shape_id: Any) -> ProviderCatalogShape | None:
     return next(
         (
             shape
-            for schema in PROVIDER_SCHEMAS.values()
-            for shape in schema.catalog_shapes
+            for shape in (
+                *FALLBACK_CATALOG_SHAPES,
+                *(
+                    provider_shape
+                    for schema in PROVIDER_SCHEMAS.values()
+                    for provider_shape in schema.catalog_shapes
+                ),
+            )
             if shape.shape_id == shape_id
         ),
         None,

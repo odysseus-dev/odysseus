@@ -128,7 +128,7 @@ def records_from_payload(
         )
 
     shape = pcs.catalog_shape_for_id(resolution.shape_id)
-    if resolution.fallback or reader is generic_openai or shape is None:
+    if shape is None:
         records = generic_openai.records_from_payload(
             payload,
             vendor_id=record_vendor,
@@ -140,16 +140,42 @@ def records_from_payload(
             shape_id=resolution.shape_id,
             fallback=resolution.fallback,
         )
+    elif resolution.fallback:
+        normalized_records: list[ModelCapabilityRecord] = []
+        for item in shape.items(payload):
+            fallback_record = generic_openai.record_from_model(
+                item,
+                vendor_id=record_vendor,
+                endpoint_id=endpoint_id,
+                base_url=base_url,
+            )
+            if fallback_record:
+                normalized_records.extend(
+                    annotate(
+                        (fallback_record,),
+                        shape_id=shape.shape_id,
+                        fallback=True,
+                    )
+                )
+        normalized = tuple(normalized_records)
     else:
         normalized_records: list[ModelCapabilityRecord] = []
         for item in shape.items(payload):
             item_payload = shape.payload_for_item(payload, item)
             if shape.item_matches(item):
-                native_records = reader.records_from_payload(
-                    item_payload,
-                    endpoint_id=endpoint_id,
-                    base_url=base_url,
-                )
+                if reader is generic_openai:
+                    native_records = reader.records_from_payload(
+                        item_payload,
+                        vendor_id=record_vendor,
+                        endpoint_id=endpoint_id,
+                        base_url=base_url,
+                    )
+                else:
+                    native_records = reader.records_from_payload(
+                        item_payload,
+                        endpoint_id=endpoint_id,
+                        base_url=base_url,
+                    )
                 if native_records:
                     normalized_records.extend(
                         annotate(native_records, shape_id=shape.shape_id, fallback=False)
