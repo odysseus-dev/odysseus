@@ -50,6 +50,7 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "get_workspace",
     "search_chats",
     "manage_memory",
+    "manage_rag",
     "manage_skills",
     "manage_tasks",
     "manage_endpoints",

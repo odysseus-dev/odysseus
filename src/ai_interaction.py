@@ -1124,6 +1124,11 @@ async def dispatch_ai_tool(
         desc = f"manage_memory: {action}"
         result = await do_manage_memory(content, session_id, owner=owner)
 
+    elif tool == "manage_rag":
+        action = content.split("\n")[0].strip()[:40]
+        desc = f"manage_rag: {action}"
+        result = await do_manage_rag(content, session_id)
+
     elif tool == "ui_control":
         action = content.split("\n")[0].strip()[:60]
         desc = f"ui_control: {action}"
