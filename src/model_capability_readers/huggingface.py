@@ -136,7 +136,7 @@ def records_from_payload(
     endpoint_id: Any = "",
     base_url: Any = "",
 ) -> tuple[ModelCapabilityRecord, ...]:
-    if isinstance(payload, Mapping) and "pipeline_tag" in payload:
+    if isinstance(payload, Mapping):
         record = record_from_model(payload, endpoint_id=endpoint_id, base_url=base_url)
         return (record,) if record else ()
     if not isinstance(payload, (list, tuple)):
