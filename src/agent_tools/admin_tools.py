@@ -730,6 +730,27 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                     "exit_code": 0,
                 }
 
+            if action == "enable_tool":
+                # Re-enabling a globally disabled tool loosens the admin's only
+                # hard permission boundary. This handler runs with no admin
+                # check and its arguments can be steered by prompt injection
+                # (any page or document the agent reads), so clearing entries
+                # from disabled_tools would let a compromised turn hand itself
+                # bash/web/etc. Enabling is therefore an admin action, done in
+                # Settings -> Agent Tools (POST /tools, require_admin). Disabling
+                # (tightening) and listing stay available here, mirroring how
+                # secrets in this same handler are read-only/panel-only.
+                current = get_setting("disabled_tools", []) or []
+                return {
+                    "response": (
+                        "Re-enabling a globally disabled tool is an admin action - "
+                        "turn it back on in Settings -> Agent Tools. "
+                        f"Currently disabled: {', '.join(current) if current else '(none)'}."
+                    ),
+                    "disabled": list(current),
+                    "exit_code": 0,
+                }
+
             tool_name = (args.get("tool") or args.get("name") or "").strip().lower()
             if not tool_name:
                 return {"error": "tool name required (e.g. 'shell', 'search', 'bash')", "exit_code": 1}
@@ -738,21 +759,17 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             settings = load_settings()
             current = list(settings.get("disabled_tools") or [])
             before = set(current)
-            if action == "disable_tool":
-                for t in targets:
-                    if t not in current:
-                        current.append(t)
-            else:  # enable_tool
-                current = [t for t in current if t not in targets]
+            for t in targets:  # disable_tool only; enable_tool handled above
+                if t not in current:
+                    current.append(t)
             after = set(current)
             settings["disabled_tools"] = current
             save_settings(settings)
 
-            verb = "Disabled" if action == "disable_tool" else "Enabled"
             changed = sorted(after.symmetric_difference(before))
             return {
                 "response": (
-                    f"{verb} {tool_name} ({', '.join(targets)}). "
+                    f"Disabled {tool_name} ({', '.join(targets)}). "
                     f"Now disabled: {', '.join(current) if current else '(none)'}."
                 ),
                 "changed": changed,

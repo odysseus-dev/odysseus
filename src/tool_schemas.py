@@ -780,7 +780,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_settings",
-            "description": "Manage user preferences and settings. Use `disable_tool`/`enable_tool`/`list_tools` to turn individual tools on or off globally (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Use list/get/set/delete for free-form preferences.",
+            "description": "Manage user preferences and settings. Use `disable_tool` to turn a tool off globally and `list_tools` to see what is disabled (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Re-enabling a globally disabled tool is an admin action done in Settings, not from here — `enable_tool` reports this rather than loosening the denylist. Use list/get/set/delete for free-form preferences.",
             "parameters": {
                 "type": "object",
                 "properties": {
