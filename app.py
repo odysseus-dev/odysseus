@@ -94,12 +94,14 @@ from core.log_safety import (
     CAPABILITY_DIAGNOSTICS_LOGGER,
     ScopedDiagnosticsFilter,
     application_log_settings,
+    configure_uvicorn_log_levels,
 )
 
 _root_logger = logging.getLogger()
 _log_level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 _application_log_level, _capability_debug = application_log_settings(_log_level_name)
 _root_logger.setLevel(_application_log_level)
+configure_uvicorn_log_levels(_application_log_level)
 logging.getLogger(CAPABILITY_DIAGNOSTICS_LOGGER).setLevel(
     logging.DEBUG if _capability_debug else logging.NOTSET
 )
