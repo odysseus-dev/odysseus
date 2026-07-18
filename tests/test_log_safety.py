@@ -1,13 +1,18 @@
 import logging
+import subprocess
+import sys
+from textwrap import dedent
 
 import pytest
 
 from core.log_safety import (
     CAPABILITY_DIAGNOSTICS_LOGGER,
     ScopedDiagnosticsFilter,
+    UVICORN_LOGGER_NAMES,
     application_log_settings,
     configure_uvicorn_log_levels,
     redact_url,
+    uvicorn_log_config,
 )
 
 
@@ -67,7 +72,7 @@ def test_application_log_settings_scope_debug_and_fail_closed(
 
 
 def test_configure_uvicorn_log_levels_clamps_non_propagating_loggers():
-    logger_names = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    logger_names = UVICORN_LOGGER_NAMES
     previous_levels = {
         name: logging.getLogger(name).level for name in logger_names
     }
@@ -83,6 +88,61 @@ def test_configure_uvicorn_log_levels_clamps_non_propagating_loggers():
     finally:
         for name, level in previous_levels.items():
             logging.getLogger(name).setLevel(level)
+
+
+def test_uvicorn_log_config_sets_all_named_loggers_without_mutating_default():
+    from uvicorn.config import LOGGING_CONFIG
+
+    configured = uvicorn_log_config(logging.ERROR)
+
+    assert all(
+        configured["loggers"][name]["level"] == logging.ERROR
+        for name in UVICORN_LOGGER_NAMES
+    )
+    assert LOGGING_CONFIG["loggers"]["uvicorn"]["level"] == "INFO"
+
+
+def test_uvicorn_levels_hold_across_external_and_direct_config_order():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            dedent(
+                """
+                import logging
+                import uvicorn
+
+                from core.log_safety import (
+                    UVICORN_LOGGER_NAMES,
+                    configure_uvicorn_log_levels,
+                    uvicorn_log_config,
+                )
+
+                uvicorn.Config("app:app", log_level="debug")
+                configure_uvicorn_log_levels(logging.INFO)
+                assert all(
+                    logging.getLogger(name).level == logging.INFO
+                    for name in UVICORN_LOGGER_NAMES
+                )
+
+                uvicorn.Config(
+                    "app:app",
+                    log_level=logging.ERROR,
+                    log_config=uvicorn_log_config(logging.ERROR),
+                )
+                assert all(
+                    logging.getLogger(name).level == logging.ERROR
+                    for name in UVICORN_LOGGER_NAMES
+                )
+                """
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _record(name: str, level: int) -> logging.LogRecord:

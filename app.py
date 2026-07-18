@@ -88,6 +88,7 @@ from core.log_safety import (
     ScopedDiagnosticsFilter,
     application_log_settings,
     configure_uvicorn_log_levels,
+    uvicorn_log_config,
 )
 
 _root_logger = logging.getLogger()
@@ -1298,4 +1299,10 @@ if __name__ == "__main__":
     bind_host = os.getenv("APP_BIND", "127.0.0.1")
     bind_port = int(os.getenv("APP_PORT", "7000"))
 
-    uvicorn.run(app, host=bind_host, port=bind_port, log_level=_application_log_level)
+    uvicorn.run(
+        app,
+        host=bind_host,
+        port=bind_port,
+        log_level=_application_log_level,
+        log_config=uvicorn_log_config(_application_log_level),
+    )
