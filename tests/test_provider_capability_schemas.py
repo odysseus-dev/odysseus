@@ -240,7 +240,12 @@ def test_native_catalog_shapes_resolve_with_required_provider_context():
         ),
     )
 
-    explicit_context_providers = {"cohere", "lmstudio", "mistral"}
+    explicit_context_providers = {
+        "chatgpt_subscription",
+        "cohere",
+        "lmstudio",
+        "mistral",
+    }
     for payload, expected_provider, expected_shape in cases:
         explicit_provider = (
             expected_provider if expected_provider in explicit_context_providers else None
@@ -273,6 +278,10 @@ def test_ambiguous_common_fields_do_not_infer_provider_from_payload_alone():
             {"models": [{"name": "generic", "endpoints": ["chat"], "context_length": 4096}]},
             "cohere",
         ),
+        (
+            {"models": [{"slug": "generic", "visibility": "list", "priority": 1}]},
+            "chatgpt_subscription",
+        ),
     )
 
     for payload, provider_id in cases:
@@ -282,6 +291,26 @@ def test_ambiguous_common_fields_do_not_infer_provider_from_payload_alone():
         assert inferred.provider_id == pcs.PROVIDER_UNKNOWN
         assert inferred.fallback is True
         assert contextual.provider_id == provider_id
+
+
+def test_payload_matching_multiple_providers_degrades_to_fallback():
+    payload = _openrouter_payload(
+        {
+            **_openrouter_payload()["data"][0],
+            "model_picker_enabled": True,
+            "capabilities": {"supports": {"tool_calls": True}},
+        }
+    )
+    resolution = pcs.resolve_provider(payload)
+    record = records_from_payload(payload)[0]
+
+    assert resolution.provider_id == pcs.PROVIDER_UNKNOWN
+    assert resolution.shape_id == "fallback.models.data.v1"
+    assert resolution.fallback is True
+    assert record.vendor == pcs.PROVIDER_UNKNOWN
+    assert record.capability.family == mc.FAMILY_UNKNOWN
+    assert record.capability.capabilities == ()
+    assert record.fallback is True
 
 
 def test_openrouter_payload_detection_requires_the_compound_official_shape():
@@ -574,18 +603,21 @@ def test_sglang_openai_catalog_preserves_only_valid_native_context_limit():
             ]
         }
     )[0]
-    nonpositive = sglang.records_from_payload(
-        {
-            "data": [
-                {
-                    "id": "served-model",
-                    "owned_by": "sglang",
-                    "root": "org/model",
-                    "max_model_len": 0,
-                }
-            ]
-        }
-    )[0]
+    malformed = [
+        records_from_payload(
+            {
+                "data": [
+                    {
+                        "id": "served-model",
+                        "owned_by": "sglang",
+                        "root": "org/model",
+                        "max_model_len": value,
+                    }
+                ]
+            }
+        )[0]
+        for value in (0, True, float("inf"))
+    ]
 
     assert valid.vendor == "sglang"
     assert valid.capability.family == mc.FAMILY_UNKNOWN
@@ -593,7 +625,7 @@ def test_sglang_openai_catalog_preserves_only_valid_native_context_limit():
     assert dict(valid.capability.limits) == {"context_tokens": 131072}
     assert valid.catalog_shape_id == "sglang.models.openai.v1"
     assert valid.fallback is False
-    assert dict(nonpositive.capability.limits) == {}
+    assert all(dict(record.capability.limits) == {} for record in malformed)
 
 
 def test_identity_only_native_catalogs_remain_unknown():
