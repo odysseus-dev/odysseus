@@ -394,8 +394,10 @@ HUGGINGFACE_MODEL_SHAPE = ProviderCatalogShape(
     provider_id="huggingface",
     envelope=ENVELOPE_SINGLE,
     identity_paths=("modelId", "id"),
-    required_item_paths=("pipeline_tag",),
-    item_types=(("pipeline_tag", (str,)),),
+    # Hub ModelInfo exposes pipeline_tag as optional metadata.  Provider/host
+    # context is still required because this shape has priority zero, so an
+    # identity-only card can stay native without making generic ``id`` payloads
+    # look like Hugging Face catalogs.
     detection_priority=0,
 )
 HUGGINGFACE_MODELS_LIST_SHAPE = ProviderCatalogShape(
@@ -403,8 +405,6 @@ HUGGINGFACE_MODELS_LIST_SHAPE = ProviderCatalogShape(
     provider_id="huggingface",
     envelope=ENVELOPE_BARE_LIST,
     identity_paths=("modelId", "id"),
-    required_item_paths=("pipeline_tag",),
-    item_types=(("pipeline_tag", (str,)),),
     detection_priority=0,
 )
 COHERE_MODELS_SHAPE = ProviderCatalogShape(
