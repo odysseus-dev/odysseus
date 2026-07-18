@@ -19,6 +19,7 @@ from src.model_capability_readers.base import (
     build_capability,
     compact_str,
     deterministic_controls_from_supported_parameters,
+    identity_str,
     int_limit,
     stable_model_id_for,
 )
@@ -60,7 +61,7 @@ def record_from_model(
     endpoint_id: Any = "",
     base_url: Any = "",
 ) -> ModelCapabilityRecord | None:
-    model_id = compact_str(raw.get("name"))
+    model_id = identity_str(raw.get("name"))
     if not model_id:
         return None
     family = _family(raw)

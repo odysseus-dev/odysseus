@@ -229,6 +229,15 @@ GOOGLE_MODELS_SHAPE = ProviderCatalogShape(
     item_types=(("supportedGenerationMethods", (list, tuple)),),
     detection_priority=100,
 )
+GOOGLE_MODEL_SHAPE = ProviderCatalogShape(
+    shape_id="google.generative-language.model.v1beta",
+    provider_id="google",
+    envelope=ENVELOPE_SINGLE,
+    identity_paths=("baseModelId", "name"),
+    required_item_paths=("supportedGenerationMethods",),
+    item_types=(("supportedGenerationMethods", (list, tuple)),),
+    detection_priority=100,
+)
 OLLAMA_TAGS_SHAPE = ProviderCatalogShape(
     shape_id="ollama.tags.v1",
     provider_id="ollama",
@@ -290,6 +299,17 @@ LLAMACPP_PROPS_SHAPE = ProviderCatalogShape(
     item_types=(("default_generation_settings", (Mapping,)),),
     detection_priority=100,
 )
+LLAMACPP_MODELS_SHAPE = ProviderCatalogShape(
+    shape_id="llamacpp.models.native.v1",
+    provider_id="llamacpp",
+    envelope=ENVELOPE_MODELS,
+    identity_paths=("id", "name", "model"),
+    required_item_paths=("capabilities",),
+    item_types=(("capabilities", (list, tuple)),),
+    # Model/capability fields are not globally provider-specific. Interpret
+    # them only after explicit llama.cpp endpoint/provider selection.
+    detection_priority=0,
+)
 MISTRAL_MODELS_SHAPE = ProviderCatalogShape(
     shape_id="mistral.models.rich.v1",
     provider_id="mistral",
@@ -325,7 +345,9 @@ ANTHROPIC_MODELS_SHAPE = ProviderCatalogShape(
     identity_paths=("id",),
     required_item_paths=("type", "display_name", "created_at"),
     item_values=(("type", ("model",)),),
-    detection_priority=70,
+    # These model-resource fields are not globally provider-specific. Require
+    # explicit Anthropic endpoint/provider context before assigning identity.
+    detection_priority=0,
 )
 CHATGPT_MODELS_SHAPE = ProviderCatalogShape(
     shape_id="chatgpt-subscription.codex-models.v1",
@@ -371,6 +393,15 @@ HUGGINGFACE_MODEL_SHAPE = ProviderCatalogShape(
     shape_id="huggingface.hub.model-info.v1",
     provider_id="huggingface",
     envelope=ENVELOPE_SINGLE,
+    identity_paths=("modelId", "id"),
+    required_item_paths=("pipeline_tag",),
+    item_types=(("pipeline_tag", (str,)),),
+    detection_priority=0,
+)
+HUGGINGFACE_MODELS_LIST_SHAPE = ProviderCatalogShape(
+    shape_id="huggingface.hub.model-info-list.v1",
+    provider_id="huggingface",
+    envelope=ENVELOPE_BARE_LIST,
     identity_paths=("modelId", "id"),
     required_item_paths=("pipeline_tag",),
     item_types=(("pipeline_tag", (str,)),),
@@ -432,7 +463,7 @@ PROVIDER_SCHEMAS = {
         "google",
         aliases=("gemini", "google_ai_studio"),
         hosts=("generativelanguage.googleapis.com",),
-        shapes=(GOOGLE_MODELS_SHAPE,),
+        shapes=(GOOGLE_MODELS_SHAPE, GOOGLE_MODEL_SHAPE),
     ),
     "anthropic": _provider(
         "anthropic",
@@ -452,7 +483,7 @@ PROVIDER_SCHEMAS = {
     "llamacpp": _provider(
         "llamacpp",
         aliases=("llama.cpp", "llama_cpp", "llama_server"),
-        shapes=(LLAMACPP_PROPS_SHAPE,),
+        shapes=(LLAMACPP_PROPS_SHAPE, LLAMACPP_MODELS_SHAPE),
     ),
     "mistral": _provider(
         "mistral",
@@ -480,7 +511,7 @@ PROVIDER_SCHEMAS = {
         "huggingface",
         aliases=("hf", "hugging_face"),
         hosts=("huggingface.co",),
-        shapes=(HUGGINGFACE_MODEL_SHAPE,),
+        shapes=(HUGGINGFACE_MODEL_SHAPE, HUGGINGFACE_MODELS_LIST_SHAPE),
     ),
     "cohere": _provider(
         "cohere",

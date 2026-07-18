@@ -241,6 +241,7 @@ def test_native_catalog_shapes_resolve_with_required_provider_context():
     )
 
     explicit_context_providers = {
+        "anthropic",
         "chatgpt_subscription",
         "cohere",
         "huggingface",
@@ -608,6 +609,139 @@ def test_structured_identity_values_are_not_stringified_into_fallback_records():
         assert records_from_payload(payload, vendor="future-provider") == ()
 
 
+def test_native_readers_skip_structured_identity_candidates():
+    google_record = records_from_payload(
+        {
+            "models": [
+                {
+                    "baseModelId": {"nested": "bad"},
+                    "name": "models/good-google-id",
+                    "supportedGenerationMethods": ["embedContent"],
+                }
+            ]
+        }
+    )[0]
+    huggingface_record = records_from_payload(
+        {
+            "modelId": {"nested": "bad"},
+            "id": "org/good-hf-id",
+            "pipeline_tag": "text-to-image",
+        },
+        vendor="huggingface",
+    )[0]
+    llamacpp_record = records_from_payload(
+        {
+            "model_alias": {"nested": "bad"},
+            "model_path": "/models/good-llama.gguf",
+            "default_generation_settings": {},
+            "chat_template_caps": {"supports_vision": True},
+        },
+        vendor="llamacpp",
+    )[0]
+    sglang_record = records_from_payload(
+        {
+            "served_model_name": {"nested": "bad"},
+            "model_path": "/models/good-sglang",
+            "is_generation": True,
+            "has_image_understanding": True,
+        },
+        vendor="sglang",
+    )[0]
+
+    assert google_record.model_id == "good-google-id"
+    assert huggingface_record.model_id == "org/good-hf-id"
+    assert llamacpp_record.model_id == "good-llama.gguf"
+    assert sglang_record.model_id == "good-sglang"
+    assert chatgpt_subscription.record_from_model({"slug": {"nested": "bad"}}) is None
+    assert cohere.record_from_model(
+        {"name": {"nested": "bad"}, "endpoints": ["chat"]}
+    ) is None
+
+
+def test_native_singleton_and_bare_list_shapes_reach_their_readers():
+    google_records = records_from_payload(
+        {
+            "name": "models/gemini-embed",
+            "supportedGenerationMethods": ["embedContent"],
+        },
+        vendor="google",
+    )
+    huggingface_records = records_from_payload(
+        [{"modelId": "org/model", "pipeline_tag": "text-generation"}],
+        vendor="huggingface",
+    )
+    llamacpp_records = records_from_payload(
+        {
+            "models": [
+                {
+                    "id": "served-model",
+                    "capabilities": ["chat", "tools"],
+                }
+            ]
+        },
+        vendor="llamacpp",
+    )
+
+    assert google_records[0].model_id == "gemini-embed"
+    assert google_records[0].capability.family == mc.FAMILY_EMBEDDING
+    assert google_records[0].catalog_shape_id == (
+        "google.generative-language.model.v1beta"
+    )
+    assert huggingface_records[0].model_id == "org/model"
+    assert huggingface_records[0].capability.family == mc.FAMILY_CHAT
+    assert huggingface_records[0].catalog_shape_id == (
+        "huggingface.hub.model-info-list.v1"
+    )
+    assert llamacpp_records[0].model_id == "served-model"
+    assert llamacpp_records[0].capability.family == mc.FAMILY_CHAT
+    assert llamacpp_records[0].capability.capabilities == (mc.CAP_TOOL_CALL,)
+    assert llamacpp_records[0].catalog_shape_id == "llamacpp.models.native.v1"
+
+
+def test_huggingface_openai_serving_envelope_stays_identity_only():
+    payload = {
+        "data": [
+            {
+                "id": "served-model",
+                "pipeline_tag": "text-to-image",
+            }
+        ]
+    }
+
+    direct = huggingface.records_from_payload(payload)
+    wrapped = records_from_payload(payload, vendor="huggingface")
+
+    assert direct == ()
+    assert wrapped[0].model_id == "served-model"
+    assert wrapped[0].capability.family == mc.FAMILY_UNKNOWN
+    assert wrapped[0].capability.capabilities == ()
+    assert wrapped[0].fallback is True
+
+
+def test_generic_model_resource_fields_do_not_infer_anthropic_identity():
+    payload = {
+        "data": [
+            {
+                "id": "foreign-model",
+                "type": "model",
+                "display_name": "Foreign Model",
+                "created_at": "2026-01-01T00:00:00Z",
+                "capabilities": {"tools": True},
+            }
+        ]
+    }
+
+    resolution = pcs.resolve_provider(payload)
+    records = records_from_payload(payload)
+
+    assert resolution.provider_id == pcs.PROVIDER_UNKNOWN
+    assert resolution.shape_id == "fallback.models.data.v1"
+    assert resolution.fallback is True
+    assert records[0].vendor == pcs.PROVIDER_UNKNOWN
+    assert records[0].fallback is True
+    assert records[0].capability.capabilities == ()
+
+
 def test_mistral_reader_maps_per_model_capabilities_without_provider_inheritance():
     records = mistral.records_from_payload(
         {
@@ -686,6 +820,60 @@ def test_copilot_reader_ignores_unverified_support_aliases():
     assert record.capability.capabilities == ()
 
 
+def test_copilot_catalog_uses_picker_selection_with_no_picker_fallback():
+    def payload(*picker_values):
+        return {
+            "data": [
+                {
+                    "id": f"model-{index}",
+                    "model_picker_enabled": picker_enabled,
+                    "capabilities": {"supports": {}},
+                }
+                for index, picker_enabled in enumerate(picker_values)
+            ]
+        }
+
+    selected = records_from_payload(payload(False, True, False), vendor="copilot")
+    fallback = records_from_payload(payload(False, False), vendor="copilot")
+
+    assert [record.model_id for record in selected] == ["model-1"]
+    assert [record.model_id for record in fallback] == ["model-0", "model-1"]
+
+
+def test_chatgpt_catalog_applies_visibility_priority_and_slug_deduplication():
+    records = records_from_payload(
+        {
+            "models": [
+                {"slug": "hidden", "visibility": "hidden", "priority": 0},
+                {"slug": "later", "visibility": "list", "priority": 20},
+                {
+                    "slug": "duplicate",
+                    "visibility": "list",
+                    "priority": 30,
+                    "title": "lower-precedence",
+                },
+                {"slug": "first", "visibility": "list", "priority": 1},
+                {
+                    "slug": "duplicate",
+                    "visibility": "list",
+                    "priority": 5,
+                    "title": "selected",
+                },
+                {"slug": "unranked", "visibility": "list", "priority": float("inf")},
+            ]
+        },
+        vendor="chatgpt_subscription",
+    )
+
+    assert [record.model_id for record in records] == [
+        "first",
+        "duplicate",
+        "later",
+        "unranked",
+    ]
+    assert records[1].display_name == "selected"
+
+
 def test_sglang_model_info_maps_native_generation_flags_only():
     generation = sglang.records_from_payload(
         {
@@ -746,7 +934,7 @@ def test_sglang_openai_catalog_preserves_only_valid_native_context_limit():
                 ]
             }
         )[0]
-        for value in (0, True, float("inf"))
+        for value in (0, True, 1.5, float("inf"))
     ]
 
     assert valid.vendor == "sglang"

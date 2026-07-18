@@ -11,7 +11,7 @@ from src.model_capability_readers.base import (
     VENDOR_HUGGINGFACE,
     build_capability,
     compact_str,
-    openai_model_items,
+    model_id_from,
     stable_model_id_for,
 )
 
@@ -105,7 +105,7 @@ def record_from_model(
     endpoint_id: Any = "",
     base_url: Any = "",
 ) -> ModelCapabilityRecord | None:
-    model_id = compact_str(raw.get("modelId") or raw.get("id"))
+    model_id = model_id_from(raw, "modelId", "id")
     if not model_id:
         return None
     return ModelCapabilityRecord(
@@ -136,11 +136,15 @@ def records_from_payload(
     endpoint_id: Any = "",
     base_url: Any = "",
 ) -> tuple[ModelCapabilityRecord, ...]:
-    if isinstance(payload, Mapping) and (payload.get("modelId") or payload.get("pipeline_tag")):
+    if isinstance(payload, Mapping) and "pipeline_tag" in payload:
         record = record_from_model(payload, endpoint_id=endpoint_id, base_url=base_url)
         return (record,) if record else ()
+    if not isinstance(payload, (list, tuple)):
+        return ()
     records: list[ModelCapabilityRecord] = []
-    for item in openai_model_items(payload):
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
         record = record_from_model(item, endpoint_id=endpoint_id, base_url=base_url)
         if record:
             records.append(record)
