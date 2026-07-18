@@ -18,15 +18,27 @@ import os
 from typing import Any, Optional
 
 
-def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
+def atomic_write_json(
+    path: str, data: Any, *, indent: Optional[int] = None, mode: Optional[int] = None
+) -> None:
     """Atomically persist `data` as JSON at `path`.
 
     The temp file uses the live PID as a suffix so two processes saving the
     same file (e.g. unit tests) don't collide on the rename target.
+
+    When *mode* is given (e.g. ``0o600`` for files holding secrets), the
+    temp file is chmod'ed before the rename so the restricted permissions
+    are in place atomically with the content — there is no window where
+    the target exists with default-umask permissions.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.tmp.{os.getpid()}"
     with open(tmp, "w", encoding="utf-8") as f:
+        if mode is not None:
+            try:
+                os.fchmod(f.fileno(), mode)
+            except AttributeError:  # Windows has no fchmod
+                os.chmod(tmp, mode)
         json.dump(data, f, indent=indent)
         f.flush()
         os.fsync(f.fileno())

@@ -51,6 +51,16 @@ logger = logging.getLogger(__name__)
 
 _STATE_TTL = 600  # 10 minutes
 
+# DESIGN NOTE — state tokens are deliberately NOT single-use.  Enforcing
+# one-time consumption would require shared server-side storage, which
+# this stateless design intentionally avoids (multi-worker support with
+# no session store).  Replay of a state within its TTL is mitigated by:
+#   - the authorization code being single-use at the IdP (a replayed
+#     callback fails the token exchange),
+#   - the nonce being bound into the signed id_token and verified,
+#   - the PKCE verifier being bound to the same encrypted state, and
+#   - the CSRF cookie requiring the completing browser to hold the state.
+
 _state_fernet_lock = threading.Lock()
 _state_fernet = None
 

@@ -140,6 +140,15 @@ class AuthManager:
         # detect sessions written by other uvicorn workers (see
         # _reload_sessions_if_changed).
         self._sessions_mtime_ns = -1
+        # Tokens present in sessions.json at the last disk sync.  Used to
+        # distinguish "revoked by another worker" (was on disk, now gone —
+        # drop it) from "issued locally moments ago, racing its own save"
+        # (never seen on disk — keep it).
+        self._disk_tokens: set = set()
+        # Tokens this worker revoked whose removal may not yet be visible
+        # on disk.  A disk sync must never re-add these; pruned once the
+        # on-disk file no longer contains them.
+        self._revoked_tokens: set = set()
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -149,6 +158,12 @@ class AuthManager:
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
+                # Contains password hashes — restrict pre-existing files
+                # written before the 0600 policy.
+                try:
+                    os.chmod(self.auth_path, 0o600)
+                except OSError:
+                    pass
                 with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
                 # Normalize all stored usernames to lowercase so they match
@@ -172,11 +187,19 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
+                # Session tokens are bearer credentials — never leave the
+                # file readable by other local users (same policy as
+                # data/app.db, #4420).
+                try:
+                    os.chmod(self._sessions_path, 0o600)
+                except OSError:
+                    pass
                 self._sessions_mtime_ns = os.stat(self._sessions_path).st_mtime_ns
                 with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
                 self._sessions = {k: v for k, v in data.items() if v.get("expiry", 0) > now}
+                self._disk_tokens = set(data)
                 pruned = len(data) - len(self._sessions)
                 if pruned > 0:
                     self._save_sessions()
@@ -186,19 +209,23 @@ class AuthManager:
             self._sessions = {}
 
     def _reload_sessions_if_changed(self):
-        """Merge sessions written by other uvicorn workers.
+        """Sync session state written by other uvicorn workers.
 
-        The OIDC callback (or a password login) may run on one worker while
-        the browser's next request lands on another; each worker loads
-        sessions.json only at startup, so the new token would be rejected.
-        Called on a token miss: when the file's mtime has changed since the
-        last load, re-read it and add unknown unexpired tokens to the
-        in-memory map.  The mtime gate keeps unknown-token spam at one
-        os.stat per request, not a JSON parse.
+        The OIDC callback (or a password login/logout) may run on one
+        worker while the browser's next request lands on another; each
+        worker loads sessions.json only at startup, so cross-worker
+        issuance and revocation would otherwise be invisible.  Called on
+        every token validation: when the file's mtime has changed since
+        the last sync, re-read it and
 
-        Additive only — tokens missing from disk are NOT dropped from
-        memory, so a token issued moments ago on this worker can't be lost
-        to a reload racing its own _save_sessions.
+        - add unknown unexpired tokens (issued by another worker), and
+        - drop in-memory tokens that were on disk at the last sync but
+          are gone now (revoked by another worker).
+
+        A token never yet seen on disk is kept — it was issued locally
+        moments ago and may be racing its own _save_sessions.  The mtime
+        gate keeps the steady-state cost at one os.stat per validation,
+        not a JSON parse.
         """
         try:
             stat = os.stat(self._sessions_path)
@@ -216,21 +243,76 @@ class AuthManager:
             self._sessions_mtime_ns = stat.st_mtime_ns
             if not isinstance(data, dict):
                 return
-            now = time.time()
-            for tok, sess in data.items():
-                if (
-                    tok not in self._sessions
-                    and isinstance(sess, dict)
-                    and sess.get("expiry", 0) > now
-                ):
-                    self._sessions[tok] = sess
+            self._apply_disk_sessions(data)
+
+    def _apply_disk_sessions(self, data: Dict[str, Any]) -> None:
+        """Merge parsed sessions.json content into memory.
+
+        Caller must hold ``_sessions_lock``.  Adds unknown unexpired
+        tokens (unless this worker revoked them and the removal hasn't
+        reached disk yet), drops tokens revoked by other workers, and
+        refreshes the disk-snapshot bookkeeping.
+        """
+        now = time.time()
+        for tok, sess in data.items():
+            if (
+                tok not in self._sessions
+                and tok not in self._revoked_tokens
+                and isinstance(sess, dict)
+                and sess.get("expiry", 0) > now
+            ):
+                self._sessions[tok] = sess
+        revoked_elsewhere = [
+            tok for tok in self._sessions
+            if tok not in data and tok in self._disk_tokens
+        ]
+        for tok in revoked_elsewhere:
+            self._sessions.pop(tok, None)
+        self._disk_tokens = set(data)
+        # A tombstone is only needed while the token is still on disk.
+        self._revoked_tokens &= self._disk_tokens
+
+    @contextmanager
+    def _interprocess_sessions_lock(self):
+        """Serialise sessions.json read-merge-write cycles across uvicorn
+        workers.  Separate lock file from the auth.json IPC lock so a
+        session save can never deadlock a caller already holding the auth
+        lock (flock is not re-entrant across file descriptors)."""
+        if not HAS_FCNTL:
+            yield
+            return
+        fd = os.open(self._sessions_path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
     def _save_sessions(self):
-        """Persist session tokens to disk (atomic, lock-guarded)."""
+        """Persist session tokens to disk (atomic, merge-on-write).
+
+        Merges the current on-disk state before writing, under an
+        inter-process flock — a plain overwrite would clobber sessions
+        issued by other workers since this worker's last sync (lost
+        update).  Tombstones in ``_revoked_tokens`` keep just-revoked
+        tokens from being re-merged and resurrected.
+        """
         try:
-            with self._sessions_lock:
+            with self._interprocess_sessions_lock(), self._sessions_lock:
+                try:
+                    with open(self._sessions_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, dict):
+                        self._apply_disk_sessions(data)
+                except OSError:
+                    pass  # first save — no file yet
+                except Exception as e:
+                    logger.error(f"Failed to merge sessions before save: {e}")
                 snapshot = dict(self._sessions)
-            _atomic_write_json(self._sessions_path, snapshot)
+                _atomic_write_json(self._sessions_path, snapshot, mode=0o600)
+                self._disk_tokens = set(snapshot)
+                self._revoked_tokens &= self._disk_tokens
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}")
 
@@ -295,7 +377,8 @@ class AuthManager:
             self._save()
 
     def _save(self):
-        _atomic_write_json(self.auth_path, self._config, indent=2)
+        # Password hashes — owner-only, same policy as sessions.json.
+        _atomic_write_json(self.auth_path, self._config, indent=2, mode=0o600)
 
     @property
     def users(self) -> Dict[str, Any]:
@@ -622,6 +705,7 @@ class AuthManager:
                        if (sess or {}).get("username") == username]
             for tok in to_drop:
                 self._sessions.pop(tok, None)
+                self._revoked_tokens.add(tok)
                 revoked += 1
         if revoked:
             self._save_sessions()
@@ -923,11 +1007,8 @@ class AuthManager:
     def validate_token(self, token: Optional[str]) -> bool:
         if not token:
             return False
-        with self._sessions_lock:
-            known = token in self._sessions
-        if not known:
-            # May have been issued by another worker — read through to disk.
-            self._reload_sessions_if_changed()
+        # Sync issuance/revocation from other workers (mtime-gated).
+        self._reload_sessions_if_changed()
         expired = False
         deleted_user = False
         with self._sessions_lock:
@@ -944,6 +1025,7 @@ class AuthManager:
                 # silently authenticating against a non-existent account.
                 if session.get("username") not in self.users:
                     self._sessions.pop(token, None)
+                    self._revoked_tokens.add(token)
                     deleted_user = True
         if expired or deleted_user:
             self._save_sessions()
@@ -954,11 +1036,8 @@ class AuthManager:
         """Return the username associated with a valid token."""
         if not token:
             return None
-        with self._sessions_lock:
-            known = token in self._sessions
-        if not known:
-            # May have been issued by another worker — read through to disk.
-            self._reload_sessions_if_changed()
+        # Sync issuance/revocation from other workers (mtime-gated).
+        self._reload_sessions_if_changed()
         expired = False
         deleted_user = False
         with self._sessions_lock:
@@ -973,6 +1052,7 @@ class AuthManager:
                 # SECURITY: orphan check — same rationale as validate_token.
                 if _u not in self.users:
                     self._sessions.pop(token, None)
+                    self._revoked_tokens.add(token)
                     deleted_user = True
                 else:
                     return _u
@@ -983,6 +1063,7 @@ class AuthManager:
     def revoke_token(self, token: str):
         with self._sessions_lock:
             self._sessions.pop(token, None)
+            self._revoked_tokens.add(token)
         self._save_sessions()
 
     def revoke_user_sessions(self, username: str, except_token: Optional[str] = None) -> int:
@@ -996,9 +1077,13 @@ class AuthManager:
             ]
             for token in to_drop:
                 self._sessions.pop(token, None)
+                self._revoked_tokens.add(token)
                 revoked += 1
-            if revoked:
-                self._save_sessions()
+        # Save outside _sessions_lock: _save_sessions acquires the
+        # inter-process flock before _sessions_lock, and taking them in
+        # the opposite order here could deadlock two threads.
+        if revoked:
+            self._save_sessions()
         return revoked
 
     def status(self, token: Optional[str]) -> Dict[str, Any]:
