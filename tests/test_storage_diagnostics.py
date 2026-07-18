@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sqlite3
@@ -11,6 +12,20 @@ import src.storage_diagnostics as storage_diagnostics
 from src.storage_diagnostics import (
     collect_configured_storage_bloat_diagnostics,
     collect_storage_bloat_diagnostics,
+)
+
+
+EXPECTED_UNCOVERED_REFERENCE_SOURCES = (
+    "gallery_images.filename",
+    "gallery_images.file_hash",
+    "notes.image_url",
+    "notes.color",
+    "notes.content",
+    "notes.items",
+    "calendars.color",
+    "calendar_events.color",
+    "calendar_events.description",
+    "calendar_events.location",
 )
 
 
@@ -240,12 +255,17 @@ def test_manifest_present_but_unreferenced_upload_is_suspected_orphan(tmp_path):
     assert uploads["manifest_entries"]["sample"] == [
         {"stored_name_hash": storage_diagnostics._hash_upload_identifier(kept)}
     ]
-    assert uploads["suspected_orphans"]["count"] == 2
-    assert uploads["suspected_orphans"]["definitive"] is True
-    assert uploads["suspected_orphans"]["complete"] is True
-    assert uploads["suspected_orphans"]["observed_only"] is False
+    assert uploads["suspected_orphans"]["count"] is None
+    assert uploads["suspected_orphans"]["definitive"] is False
+    assert uploads["suspected_orphans"]["complete"] is False
+    assert uploads["suspected_orphans"]["observed_only"] is True
     assert uploads["suspected_orphans"]["observed_count"] == 2
-    assert uploads["suspected_orphans"]["reason_incomplete"] is None
+    assert uploads["suspected_orphans"]["reason_incomplete"] == [
+        "durable_reference_sources_incomplete"
+    ]
+    assert uploads["suspected_orphans"]["sample_scope"] == (
+        "candidates_observed_within_incomplete_reference_scope"
+    )
     samples = {
         row["path_hash"]: row
         for row in uploads["suspected_orphans"]["sample"]
@@ -254,7 +274,6 @@ def test_manifest_present_but_unreferenced_upload_is_suspected_orphan(tmp_path):
     orphan_hash = storage_diagnostics._hash_upload_identifier(f"2026/06/26/{orphan}")
     assert set(samples) == {kept_hash, orphan_hash}
     assert samples[kept_hash]["manifest_present"] is True
-    assert samples[kept_hash]["live_db_reference_found"] is False
     assert samples[orphan_hash]["manifest_present"] is False
     assert samples[orphan_hash]["relative_dir_bucket"] == "2026/06/26"
     assert samples[orphan_hash]["size_bytes"] == len(b"orphan")
@@ -288,7 +307,8 @@ def test_manifest_present_and_live_db_referenced_upload_is_not_orphan(tmp_path):
     uploads = report["uploads"]
 
     assert report["database"]["upload_references"]["live_reference_count"] == 1
-    assert uploads["suspected_orphans"]["count"] == 0
+    assert uploads["suspected_orphans"]["count"] is None
+    assert uploads["suspected_orphans"]["observed_count"] == 0
     assert uploads["suspected_orphans"]["sample"] == []
     assert live not in json.dumps(uploads)
     assert "uploaded file reference" not in json.dumps(report)
@@ -324,7 +344,8 @@ def test_metadata_attachment_reference_is_not_suspected_orphan(tmp_path):
     references = report["database"]["upload_references"]
     assert references["live_reference_count"] == 1
     assert "chat_messages.metadata" in references["sources"]
-    assert report["uploads"]["suspected_orphans"]["count"] == 0
+    assert report["uploads"]["suspected_orphans"]["count"] is None
+    assert report["uploads"]["suspected_orphans"]["observed_count"] == 0
     assert live not in json.dumps(report)
     assert "summarize the attachment" not in json.dumps(report)
 
@@ -364,13 +385,18 @@ def test_reference_beyond_scan_limit_makes_orphans_observed_only(
     report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
     suspected = report["uploads"]["suspected_orphans"]
 
-    assert report["database"]["upload_references"]["complete"] is False
+    references = report["database"]["upload_references"]
+    assert references["attempted_scan_complete"] is False
+    assert references["complete"] is False
     assert suspected["definitive"] is False
     assert suspected["complete"] is False
     assert suspected["observed_only"] is True
     assert suspected["count"] is None
     assert suspected["observed_count"] == 1
-    assert suspected["reason_incomplete"] == ["db_reference_scan_incomplete"]
+    assert suspected["reason_incomplete"] == [
+        "db_reference_scan_incomplete",
+        "durable_reference_sources_incomplete",
+    ]
     assert len(suspected["sample"]) == 1
     assert live not in json.dumps(report)
 
@@ -402,9 +428,174 @@ def test_document_pdf_source_reference_is_not_suspected_orphan(tmp_path):
 
     references = report["database"]["upload_references"]
     assert "documents.current_content.pdf_source_marker" in references["sources"]
-    assert report["uploads"]["suspected_orphans"]["count"] == 0
+    assert report["uploads"]["suspected_orphans"]["count"] is None
+    assert report["uploads"]["suspected_orphans"]["observed_count"] == 0
     assert live not in json.dumps(report)
     assert "Private title" not in json.dumps(report)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    EXPECTED_UNCOVERED_REFERENCE_SOURCES,
+)
+def test_uncovered_durable_reference_keeps_orphans_observed_only(
+    tmp_path,
+    surface,
+):
+    db_path = tmp_path / "app.db"
+    upload_id = "abababababababababababababababab.png"
+    upload_bytes = b"durably referenced upload"
+    upload_hash = hashlib.sha256(upload_bytes).hexdigest()
+    conn = _init_db(db_path)
+
+    table, column = surface.split(".")
+    if table == "notes":
+        conn.execute(
+            """
+            CREATE TABLE notes (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                image_url TEXT,
+                color TEXT,
+                content TEXT,
+                items TEXT
+            )
+            """
+        )
+        if column == "items":
+            value = json.dumps(
+                [{"text": f"Private checklist item /api/upload/{upload_id}"}]
+            )
+        elif column == "content":
+            value = f"Private note text /api/upload/{upload_id}"
+        else:
+            value = f"odysseus://attachment/{upload_id}"
+        conn.execute(
+            f"INSERT INTO notes(id, title, {column}) VALUES (?, ?, ?)",
+            ("note-1", "Private note", value),
+        )
+    elif table == "calendars":
+        conn.execute(
+            """
+            CREATE TABLE calendars (
+                id TEXT PRIMARY KEY,
+                owner TEXT,
+                name TEXT NOT NULL,
+                color TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO calendars(id, owner, name, color)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                "calendar-1",
+                "alice",
+                "Private calendar",
+                f"odysseus://attachment/{upload_id}",
+            ),
+        )
+    elif table == "calendar_events":
+        conn.execute(
+            """
+            CREATE TABLE calendar_events (
+                uid TEXT PRIMARY KEY,
+                calendar_id TEXT,
+                summary TEXT,
+                description TEXT,
+                location TEXT,
+                color TEXT
+            )
+            """
+        )
+        value = f"Private event value odysseus://attachment/{upload_id}"
+        conn.execute(
+            f"""
+            INSERT INTO calendar_events(uid, calendar_id, summary, {column})
+            VALUES (?, ?, ?, ?)
+            """,
+            ("event-1", "calendar-1", "Private event", value),
+        )
+    else:
+        conn.execute(
+            """
+            CREATE TABLE gallery_images (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                prompt TEXT,
+                file_hash TEXT
+            )
+            """
+        )
+        filename = upload_id if column == "filename" else "abcdef123456.png"
+        file_hash = upload_hash if column == "file_hash" else None
+        conn.execute(
+            """
+            INSERT INTO gallery_images(id, filename, prompt, file_hash)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("gallery-1", filename, "Private prompt", file_hash),
+        )
+    conn.commit()
+    conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    (upload_dir / upload_id).write_bytes(upload_bytes)
+
+    report = collect_storage_bloat_diagnostics(
+        db_path=db_path,
+        upload_dir=upload_dir,
+    )
+    references = report["database"]["upload_references"]
+    coverage = references["reference_coverage"]
+    suspected = report["uploads"]["suspected_orphans"]
+
+    assert references["attempted_scan_complete"] is True
+    assert references["complete"] is False
+    assert coverage["complete"] is False
+    assert surface in coverage["uncovered_sources"]
+    assert set(coverage["uncovered_sources"]) == set(
+        EXPECTED_UNCOVERED_REFERENCE_SOURCES
+    )
+    assert {
+        "chat_messages.content",
+        "chat_messages.attachment_metadata",
+        "documents.current_content.pdf_source_marker",
+        "document_versions.content.pdf_source_marker",
+    } <= set(coverage["covered_sources"])
+    assert suspected["definitive"] is False
+    assert suspected["complete"] is False
+    assert suspected["observed_only"] is True
+    assert suspected["count"] is None
+    assert suspected["observed_count"] == 1
+    assert suspected["reason_incomplete"] == [
+        "durable_reference_sources_incomplete"
+    ]
+    assert suspected["sample_scope"] == (
+        "candidates_observed_within_incomplete_reference_scope"
+    )
+    assert len(suspected["sample"]) == 1
+    assert set(suspected["sample"][0]) == {
+        "path_hash",
+        "relative_dir_bucket",
+        "size_bytes",
+        "manifest_present",
+    }
+    assert "live_db_reference_found" not in suspected["sample"][0]
+    serialized = json.dumps(report)
+    assert upload_id not in serialized
+    assert upload_hash not in serialized
+    assert str(db_path) not in serialized
+    assert str(upload_dir) not in serialized
+    assert "abcdef123456.png" not in serialized
+    assert "Private note" not in serialized
+    assert "Private checklist item" not in serialized
+    assert "Private calendar" not in serialized
+    assert "Private event" not in serialized
+    assert "Private prompt" not in serialized
 
 
 def test_upload_traversal_is_bounded_and_reports_truncation(monkeypatch, tmp_path):
@@ -435,6 +626,7 @@ def test_upload_traversal_is_bounded_and_reports_truncation(monkeypatch, tmp_pat
     assert uploads["suspected_orphans"]["count"] is None
     assert uploads["suspected_orphans"]["observed_count"] == 2
     assert uploads["suspected_orphans"]["reason_incomplete"] == [
+        "durable_reference_sources_incomplete",
         "upload_traversal_truncated"
     ]
     assert "upload_traversal_truncated" in report["warnings"]
@@ -484,14 +676,76 @@ def test_orphan_sample_does_not_expose_raw_upload_filename(tmp_path):
         "relative_dir_bucket",
         "size_bytes",
         "manifest_present",
-        "live_db_reference_found",
     }
+    assert "live_db_reference_found" not in sample
     assert sample["path_hash"] == storage_diagnostics._hash_upload_identifier(
         f"2026/06/26/{raw_name}"
     )
     assert sample["relative_dir_bucket"] == "2026/06/26"
     assert sample["size_bytes"] == len(b"orphan")
     assert raw_name not in json.dumps(report["uploads"])
+
+
+@pytest.mark.parametrize(
+    ("incomplete_state", "expected_reason"),
+    (
+        (
+            {
+                "reference_scan_complete": False,
+                "upload_traversal_complete": True,
+            },
+            "db_reference_scan_incomplete",
+        ),
+        (
+            {
+                "reference_scan_complete": True,
+                "upload_traversal_complete": False,
+                "upload_traversal_truncated": True,
+            },
+            "upload_traversal_truncated",
+        ),
+        (
+            {
+                "reference_scan_complete": True,
+                "upload_traversal_complete": False,
+                "upload_traversal_unreadable": True,
+            },
+            "upload_traversal_unreadable",
+        ),
+    ),
+)
+def test_orphan_sample_scope_follows_overall_incompleteness(
+    incomplete_state,
+    expected_reason,
+):
+    report = storage_diagnostics._suspected_orphan_report(
+        observed_count=1,
+        sample=[{"path_hash": "privacy-safe-hash"}],
+        durable_reference_coverage_complete=True,
+        **incomplete_state,
+    )
+
+    assert report["definitive"] is False
+    assert report["complete"] is False
+    assert report["observed_only"] is True
+    assert report["count"] is None
+    assert report["reason_incomplete"] == [expected_reason]
+    assert report["sample_scope"] == (
+        "candidates_observed_within_incomplete_reference_scope"
+    )
+
+
+def test_complete_orphan_evidence_uses_candidate_sample_scope():
+    report = storage_diagnostics._suspected_orphan_report(
+        observed_count=0,
+        sample=[],
+        reference_scan_complete=True,
+        durable_reference_coverage_complete=True,
+        upload_traversal_complete=True,
+    )
+
+    assert report["complete"] is True
+    assert report["sample_scope"] == "suspected_orphan_candidates"
 
 
 def test_storage_bloat_route_requires_admin_and_returns_report(monkeypatch, tmp_path):
@@ -728,9 +982,14 @@ def test_live_pdf_form_field_sidecar_is_not_suspected_orphan(tmp_path):
     assert report["database"]["upload_references"]["live_reference_count"] == 1
     assert uploads["file_count"] == 2
     assert uploads["file_count_observed"] == 2
-    assert orphans["definitive"] is True
-    assert orphans["count"] == 0
+    assert orphans["definitive"] is False
+    assert orphans["complete"] is False
+    assert orphans["observed_only"] is True
+    assert orphans["count"] is None
     assert orphans["observed_count"] == 0
+    assert orphans["reason_incomplete"] == [
+        "durable_reference_sources_incomplete"
+    ]
     assert orphans["sample"] == []
 
 
@@ -900,9 +1159,17 @@ def test_document_version_pdf_source_keeps_upload_live(
 
     assert source in references["sources"]
     assert references["source_scan_rows"][source] == 1
-    assert references["complete"] is True
-    assert orphans["definitive"] is True
-    assert orphans["count"] == 0
+    assert references["attempted_scan_complete"] is True
+    assert references["complete"] is False
+    assert references["reference_coverage"]["complete"] is False
+    assert orphans["definitive"] is False
+    assert orphans["complete"] is False
+    assert orphans["observed_only"] is True
+    assert orphans["count"] is None
+    assert orphans["observed_count"] == 0
+    assert orphans["reason_incomplete"] == [
+        "durable_reference_sources_incomplete"
+    ]
 
 
 def test_document_version_row_bound_is_observed_only(

@@ -49,6 +49,28 @@ CHAT_REFERENCE_COLUMNS = (
     "extra",
     "attachments",
 )
+REFERENCE_COVERED_SOURCES = (
+    "chat_messages.content",
+    "chat_messages.attachment_metadata",
+    "documents.current_content.pdf_source_marker",
+    "document_versions.content.pdf_source_marker",
+)
+REFERENCE_UNCOVERED_SOURCES = (
+    "gallery_images.filename",
+    "gallery_images.file_hash",
+    "notes.image_url",
+    "notes.color",
+    "notes.content",
+    "notes.items",
+    "calendars.color",
+    "calendar_events.color",
+    "calendar_events.description",
+    "calendar_events.location",
+)
+DURABLE_REFERENCE_SOURCES_INCOMPLETE = "durable_reference_sources_incomplete"
+INCOMPLETE_REFERENCE_SAMPLE_SCOPE = (
+    "candidates_observed_within_incomplete_reference_scope"
+)
 REFERENCE_CONTAINER_KEYS = {
     "attachment",
     "attachments",
@@ -96,7 +118,8 @@ def collect_storage_bloat_diagnostics(
     upload_report = _collect_upload_report(
         Path(upload_dir or UPLOAD_DIR),
         live_upload_ids,
-        db_report["upload_references"]["complete"],
+        db_report["upload_references"]["attempted_scan_complete"],
+        db_report["upload_references"]["reference_coverage"]["complete"],
         warnings,
     )
     return {
@@ -201,6 +224,15 @@ def _connect_readonly(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _durable_reference_coverage_report() -> dict[str, Any]:
+    """Describe implemented reference scans without exposing persisted values."""
+    return {
+        "complete": not REFERENCE_UNCOVERED_SOURCES,
+        "covered_sources": list(REFERENCE_COVERED_SOURCES),
+        "uncovered_sources": list(REFERENCE_UNCOVERED_SOURCES),
+    }
+
+
 def _collect_db_report(
     db_path: Path | None,
     warnings: list[str],
@@ -221,7 +253,9 @@ def _collect_db_report(
             "scan_limit_scope": "per_source",
             "value_char_scan_limit": MAX_REFERENCE_CONTENT_CHARS,
             "json_node_scan_limit": MAX_REFERENCE_JSON_NODES,
+            "attempted_scan_complete": False,
             "complete": False,
+            "reference_coverage": _durable_reference_coverage_report(),
         },
     }
     live_upload_ids: set[str] = set()
@@ -491,7 +525,9 @@ def _live_upload_reference_report(
         "scan_limit_scope": "per_source",
         "value_char_scan_limit": MAX_REFERENCE_CONTENT_CHARS,
         "json_node_scan_limit": MAX_REFERENCE_JSON_NODES,
+        "attempted_scan_complete": False,
         "complete": False,
+        "reference_coverage": _durable_reference_coverage_report(),
     }
     live_ids: set[str] = set()
     scans_complete: list[bool] = []
@@ -575,7 +611,11 @@ def _live_upload_reference_report(
             )
 
     report["live_reference_count"] = len(live_ids)
-    report["complete"] = bool(scans_complete) and all(scans_complete)
+    attempted_scan_complete = bool(scans_complete) and all(scans_complete)
+    report["attempted_scan_complete"] = attempted_scan_complete
+    report["complete"] = (
+        attempted_scan_complete and report["reference_coverage"]["complete"]
+    )
     return report, live_ids
 
 
@@ -788,6 +828,7 @@ def _collect_upload_report(
     upload_dir: Path,
     live_upload_ids: set[str],
     reference_scan_complete: bool,
+    durable_reference_coverage_complete: bool,
     warnings: list[str],
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
@@ -813,6 +854,9 @@ def _collect_upload_report(
             observed_count=0,
             sample=[],
             reference_scan_complete=reference_scan_complete,
+            durable_reference_coverage_complete=(
+                durable_reference_coverage_complete
+            ),
             upload_traversal_complete=False,
         ),
     }
@@ -831,6 +875,7 @@ def _collect_upload_report(
         manifest_ids,
         live_upload_ids,
         reference_scan_complete,
+        durable_reference_coverage_complete,
         warnings,
     )
     report.update(file_report)
@@ -845,6 +890,7 @@ def _upload_file_report(
     manifest_ids: set[str],
     live_upload_ids: set[str],
     reference_scan_complete: bool,
+    durable_reference_coverage_complete: bool,
     warnings: list[str],
 ) -> dict[str, Any]:
     state = UploadTraversalState(visited_dirs=1)
@@ -861,7 +907,7 @@ def _upload_file_report(
         orphan_count += 1
         if len(orphan_sample) < MAX_ORPHAN_ROWS:
             orphan_sample.append(
-                _upload_sample(record, upload_dir, manifest_ids, live_upload_ids)
+                _upload_sample(record, upload_dir, manifest_ids)
             )
 
     traversal_unreadable = state.skipped_unreadable_count > 0
@@ -884,6 +930,9 @@ def _upload_file_report(
             observed_count=orphan_count,
             sample=orphan_sample,
             reference_scan_complete=reference_scan_complete,
+            durable_reference_coverage_complete=(
+                durable_reference_coverage_complete
+            ),
             upload_traversal_complete=not traversal_incomplete,
             upload_traversal_truncated=state.truncated,
             upload_traversal_unreadable=traversal_unreadable,
@@ -896,6 +945,7 @@ def _suspected_orphan_report(
     observed_count: int,
     sample: list[dict[str, Any]],
     reference_scan_complete: bool,
+    durable_reference_coverage_complete: bool,
     upload_traversal_complete: bool,
     upload_traversal_truncated: bool = False,
     upload_traversal_unreadable: bool = False,
@@ -903,6 +953,8 @@ def _suspected_orphan_report(
     reasons: list[str] = []
     if not reference_scan_complete:
         reasons.append("db_reference_scan_incomplete")
+    if not durable_reference_coverage_complete:
+        reasons.append(DURABLE_REFERENCE_SOURCES_INCOMPLETE)
     if upload_traversal_truncated or (
         not upload_traversal_complete and not upload_traversal_unreadable
     ):
@@ -917,6 +969,11 @@ def _suspected_orphan_report(
         "count": observed_count if complete else None,
         "observed_count": observed_count,
         "reason_incomplete": reasons or None,
+        "sample_scope": (
+            "suspected_orphan_candidates"
+            if complete
+            else INCOMPLETE_REFERENCE_SAMPLE_SCOPE
+        ),
         "sample": sample,
     }
 
@@ -1024,14 +1081,12 @@ def _upload_sample(
     record: UploadFileRecord,
     upload_dir: Path,
     manifest_ids: set[str],
-    live_upload_ids: set[str],
 ) -> dict[str, Any]:
     return {
         "path_hash": _hash_upload_identifier(_relative_upload_path(upload_dir, record.path)),
         "relative_dir_bucket": _safe_relative_dir_bucket(upload_dir, record.path),
         "size_bytes": record.size_bytes,
         "manifest_present": _upload_file_in_manifest(record.path, manifest_ids),
-        "live_db_reference_found": _upload_file_is_live(record.path, live_upload_ids),
     }
 
 

@@ -1,5 +1,6 @@
 """Diagnostics routes — /api/db/stats, /api/rag/stats, /api/test/youtube, /api/test-research."""
 
+import asyncio
 import logging
 import os
 from typing import Dict, Any
@@ -58,7 +59,8 @@ def setup_diagnostics_routes(
     async def get_storage_bloat_diagnostics(request: Request) -> Dict[str, Any]:
         require_admin(request)
         try:
-            return collect_configured_storage_bloat_diagnostics(
+            return await asyncio.to_thread(
+                collect_configured_storage_bloat_diagnostics,
                 default_db_path=APP_DB,
                 upload_dir=UPLOAD_DIR,
             )
