@@ -482,6 +482,125 @@ export function processWithThinking(text) {
   return _useSvgEmoji() ? svgifyEmoji(html) : html;
 }
 
+// ---------------------------------------------------------------------------
+// Nested markdown lists.
+//
+// Ordered (`1.`), unordered (`- ` / `* `) and GitHub task (`- [ ] `) items are
+// grouped into properly nested <ul>/<ol> by walking the lines and driving an
+// INDENTATION STACK: an item indented past its predecessor opens a child list
+// INSIDE the open parent <li> (`<li>...<ul>...</ul></li>`), and a dedent closes
+// levels until the indentation matches an open one. Indent is compared
+// RELATIVELY to the parent on the stack (never bucketed by a fixed width), so
+// the 2-/3-/4-space and tab indentations that models emit inconsistently all
+// nest the same way, and mixed ordered/unordered nesting produces valid HTML.
+// This replaces the old flatten-and-group passes, which anchored on the
+// absolute start of the line and rendered any indented item as flat literal
+// text (and emitted an <ol> inside a <p> for the ordered-nested case).
+// ---------------------------------------------------------------------------
+
+const _LIST_ORDERED_RE = /^([ \t]*)(\d+)\. (.*)$/;
+const _LIST_TASK_RE = /^([ \t]*)(?:- |\* )\[([ xX])\] (.*)$/;
+const _LIST_UNORDERED_RE = /^([ \t]*)(?:- |\* )(.*)$/;
+
+// Indentation width in columns: a tab counts as four columns so a tab-indented
+// child still reads as "deeper" than a space-indented parent (and vice versa).
+function _listIndentWidth(ws) {
+  return ws.replace(/\t/g, '    ').length;
+}
+
+// Parse one line into a list item, or null when it is not one. Precedence
+// mirrors the old passes: ordered, then task (before generic unordered so the
+// "- " prefix is not consumed first), then unordered. `attr` is the attribute
+// string for the emitted <li> (the task-item class); `html` is its inner HTML.
+function _parseListItem(line) {
+  let m;
+  if ((m = _LIST_ORDERED_RE.exec(line))) {
+    return { indent: _listIndentWidth(m[1]), type: 'ol', html: m[3], attr: '' };
+  }
+  if ((m = _LIST_TASK_RE.exec(line))) {
+    const done = m[2].toLowerCase() === 'x';
+    const inner = `<span class="task-check" aria-hidden="true"></span><span class="task-text">${m[3]}</span>`;
+    return {
+      indent: _listIndentWidth(m[1]),
+      type: 'ul',
+      html: inner,
+      attr: ` class="task-item${done ? ' task-done' : ''}"`,
+    };
+  }
+  if ((m = _LIST_UNORDERED_RE.exec(line))) {
+    return { indent: _listIndentWidth(m[1]), type: 'ul', html: m[2], attr: '' };
+  }
+  return null;
+}
+
+// Build the HTML for one maximal run of consecutive list-item lines by driving
+// the indentation stack. Emitted as a single line (no internal newlines) that
+// starts with <ul>/<ol>, so the later paragraph pass leaves the block untouched.
+function _renderListRun(items) {
+  let html = '';
+  const stack = []; // { type, indent }, outermost first
+  for (const it of items) {
+    let popped = false;
+    while (stack.length && it.indent < stack[stack.length - 1].indent) {
+      html += `</li></${stack.pop().type}>`;
+      popped = true;
+    }
+    const top = stack.length ? stack[stack.length - 1] : null;
+    if (top && it.indent > top.indent && !popped) {
+      // Deeper: open a child list INSIDE the still-open parent <li>.
+      html += `<${it.type}>`;
+      stack.push({ type: it.type, indent: it.indent });
+      html += `<li${it.attr}>`;
+    } else if (top) {
+      // Sibling at this level: equal indent, or a dedent that overshot between
+      // two open levels. A marker-type switch closes this list and opens the
+      // other kind at the same level.
+      if (top.type === it.type) {
+        html += `</li><li${it.attr}>`;
+      } else {
+        html += `</li></${stack.pop().type}>`;
+        html += `<${it.type}>`;
+        stack.push({ type: it.type, indent: it.indent });
+        html += `<li${it.attr}>`;
+      }
+    } else {
+      // Stack empty: open the root list. The first item sets the baseline, so a
+      // whole run that happens to be indented still renders as a top-level list.
+      html += `<${it.type}>`;
+      stack.push({ type: it.type, indent: it.indent });
+      html += `<li${it.attr}>`;
+    }
+    html += it.html;
+  }
+  while (stack.length) html += `</li></${stack.pop().type}>`;
+  return html;
+}
+
+// Group the source into maximal runs of consecutive list-item lines (a blank or
+// non-list line breaks a run, matching the old "consecutive sentinels" grouping
+// so loose lists keep their current one-block-per-run rendering) and convert
+// each run to nested-list HTML.
+function _buildLists(src) {
+  const lines = src.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!_parseListItem(lines[i])) {
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
+    const items = [];
+    let it;
+    while (i < lines.length && (it = _parseListItem(lines[i]))) {
+      items.push(it);
+      i++;
+    }
+    out.push(_renderListRun(items));
+  }
+  return out.join('\n');
+}
+
 /**
  * Convert markdown to HTML
  */
@@ -721,24 +840,14 @@ export function mdToHtml(src, opts) {
        .replace(/^## (.*)$/gm, '<h2>$1</h2>')
        .replace(/^# (.*)$/gm, '<h1>$1</h1>');
 
-  // Ordered lists (1. 2. 3. etc.)
-  s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
-  s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
-
-  // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
-  // the generic unordered-list rule so the "- " prefix isn't consumed first.
-  // Emits <uli> (with a class) so the unordered-list wrapper below treats it
-  // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
-    const done = mark.toLowerCase() === 'x';
-    return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
-  });
-
-  // Unordered lists. <uli> may carry attributes (task-item class), so the
-  // wrapper preserves them when converting <uli ...> → <li ...>.
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
-  s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
-    `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
+  // Ordered (1.), unordered (- / *) and GitHub task (- [ ] / - [x]) lists,
+  // grouped into properly nested <ul>/<ol> by the indentation-stack builder
+  // (see _buildLists above). Task items carry the task-item class on their
+  // <li>; the "- " prefix of a checkbox is matched before the generic
+  // unordered rule so it is not consumed first. Nested items render as
+  // <li>...<ul>...</ul></li>, including mixed ordered/unordered nesting and
+  // nested checkboxes, as valid HTML.
+  s = _buildLists(s);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');

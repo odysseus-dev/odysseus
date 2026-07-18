@@ -2504,6 +2504,21 @@ body.bg-pattern-sparkles {
       display: flex;
       align-items: flex-start;
       gap: 8px;
+      flex-wrap: wrap;
+    }
+    /* A sub-list nested under a task item is a third flex child; force it onto
+       its own full-width line (below the checkbox + label row) so it reads as a
+       nested list rather than sitting inline after the label. */
+    li.task-item > ul,
+    li.task-item > ol {
+      flex-basis: 100%;
+    }
+    /* The label grows from basis 0 (NOT auto/max-content) so a long label stays
+       on the checkbox's row instead of wrapping below it under flex-wrap, while a
+       nested sub-list still takes its own full-width line (rule above). */
+    li.task-item > .task-text {
+      flex: 1 1 0;
+      min-width: 0;
     }
     li.task-item .task-check {
       flex: 0 0 auto;

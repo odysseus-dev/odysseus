@@ -256,3 +256,172 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+# --- Nested markdown lists (indentation-stack builder) ----------------------
+# The old flatten-and-group passes anchored each list regex on the ABSOLUTE
+# start of the line, so an indented item (e.g. "  - Sub") never matched and fell
+# through to the paragraph pass as literal "- Sub" text, while the parent list
+# fragmented. The ordered-nested case additionally emitted an <ol> inside a <p>
+# (invalid HTML). These pin the fix: items nest as <li>...<ul>...</ul></li>
+# (valid HTML), for unordered, ordered, mixed and task lists at arbitrary depth.
+
+
+def test_nested_unordered_list_nests_sublist_inside_parent_li(node_available):
+    html = _run_markdown_case(
+        "- Item one\n"
+        "- Item two\n"
+        "  - Nested sub-item"
+    )
+
+    # The sublist lives INSIDE the parent <li>, not loose after it.
+    assert (
+        "<ul><li>Item one</li><li>Item two"
+        "<ul><li>Nested sub-item</li></ul></li></ul>"
+    ) in html
+    # Exactly one level of nesting (two <ul>, two </ul>).
+    assert html.count("<ul>") == 2
+    assert html.count("</ul>") == 2
+    # The sub-item is NOT rendered as literal text or a stray paragraph.
+    assert "- Nested sub-item" not in html
+    assert "<p>- Nested sub-item" not in html
+    assert "<p><ul>" not in html
+    # No leftover sentinels.
+    assert "<uli" not in html
+    assert "<oli" not in html
+
+
+def test_nested_ordered_list_is_valid_html_not_ol_in_p(node_available):
+    # THE invalid-HTML bug: an indented "   1. Sub" used to drop out of the list
+    # passes and get wrapped as <p><ol>...</ol></p>. It must nest inside the
+    # parent <li> as valid HTML instead.
+    html = _run_markdown_case(
+        "1. First\n"
+        "2. Second\n"
+        "   1. Sub"
+    )
+
+    assert (
+        "<ol><li>First</li><li>Second"
+        "<ol><li>Sub</li></ol></li></ol>"
+    ) in html
+    assert html.count("<ol>") == 2
+    assert html.count("</ol>") == 2
+    # No <ol> is ever wrapped in / adjacent-inside a paragraph.
+    assert "<p><ol>" not in html
+    assert "<ol></p>" not in html
+    assert "<p>" not in html  # no surrounding prose in this sample
+    assert "<ul>" not in html
+
+
+def test_mixed_unordered_under_ordered_nests_ul_inside_ol_li(node_available):
+    html = _run_markdown_case(
+        "1. Parent\n"
+        "   - bullet child\n"
+        "2. Second"
+    )
+
+    assert (
+        "<ol><li>Parent<ul><li>bullet child</li></ul></li>"
+        "<li>Second</li></ol>"
+    ) in html
+    assert html.count("<ol>") == 1
+    assert html.count("<ul>") == 1
+    assert "<p>" not in html
+
+
+def test_nested_ordered_under_unordered_nests_ol_inside_ul_li(node_available):
+    html = _run_markdown_case(
+        "- Parent bullet\n"
+        "  1. numbered child\n"
+        "- Sibling bullet"
+    )
+
+    assert (
+        "<ul><li>Parent bullet<ol><li>numbered child</li></ol></li>"
+        "<li>Sibling bullet</li></ul>"
+    ) in html
+    assert html.count("<ul>") == 1
+    assert html.count("<ol>") == 1
+
+
+def test_nested_task_checkbox_preserves_class_and_structure(node_available):
+    html = _run_markdown_case(
+        "- [ ] parent task\n"
+        "  - [x] child done"
+    )
+
+    # Parent keeps its task-item <li>, child keeps task-done, and the child list
+    # is nested inside the parent <li>.
+    assert (
+        '<ul><li class="task-item">'
+        '<span class="task-check" aria-hidden="true"></span>'
+        '<span class="task-text">parent task</span>'
+        '<ul><li class="task-item task-done">'
+        '<span class="task-check" aria-hidden="true"></span>'
+        '<span class="task-text">child done</span>'
+        "</li></ul></li></ul>"
+    ) in html
+    assert html.count("<ul>") == 2
+    assert "task-text\">child done</span>" in html
+
+
+def test_three_level_deep_nesting(node_available):
+    html = _run_markdown_case(
+        "- A\n"
+        "  - B\n"
+        "    - C"
+    )
+
+    assert (
+        "<ul><li>A<ul><li>B<ul><li>C</li></ul></li></ul></li></ul>"
+    ) in html
+    assert html.count("<ul>") == 3
+    assert html.count("</ul>") == 3
+
+
+def test_inconsistent_indent_widths_still_nest_consistently(node_available):
+    # Models emit inconsistent indent (here 3 then 6 spaces). Depth must follow
+    # the RELATIVE increase, not a fixed bucket width.
+    html = _run_markdown_case(
+        "- top\n"
+        "   - mid\n"
+        "      - deep"
+    )
+
+    assert (
+        "<ul><li>top<ul><li>mid<ul><li>deep</li></ul></li></ul></li></ul>"
+    ) in html
+    assert html.count("<ul>") == 3
+
+
+def test_nested_list_after_prose_keeps_paragraph_and_indent(node_available):
+    # A lead-in paragraph, then a bullet list whose last item carries a nested
+    # sub-item, then a trailing paragraph.
+    html = _run_markdown_case(
+        "Bullet list:\n\n"
+        "- Item one\n"
+        "- Item two\n"
+        "  - Nested sub-item\n\n"
+        "After."
+    )
+
+    assert "<p>Bullet list:</p>" in html
+    assert "<p>After.</p>" in html
+    assert (
+        "<li>Item two<ul><li>Nested sub-item</li></ul></li></ul>"
+    ) in html
+    # The sub-item never leaks out as a literal-text paragraph (the old bug).
+    assert "<p>- Nested sub-item" not in html
+    assert "- Nested sub-item" not in html
+
+
+def test_flat_unordered_list_still_renders_as_one_ul(node_available):
+    # Guard the flat path the builder must not regress.
+    html = _run_markdown_case("- one\n- two\n- three")
+
+    assert "<ul><li>one</li><li>two</li><li>three</li></ul>" in html
+    assert html.count("<ul>") == 1
+    assert html.count("<li>") == 3
+    assert "<oli>" not in html
+    assert "<uli>" not in html
