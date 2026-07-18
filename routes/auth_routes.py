@@ -13,7 +13,13 @@ from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
-from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
+from src.constants import (
+    DEEP_RESEARCH_DIR,
+    MEMORY_FILE,
+    PASSWORD_MIN_LENGTH,
+    PROXY_TUNNEL_HEADERS,
+    SKILLS_DIR,
+)
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src.settings import (
@@ -85,15 +91,6 @@ SESSION_COOKIE = "odysseus_session"
 
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
-_PROXY_HEADERS = (
-    "forwarded",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-real-ip",
-)
-
-
 def _request_from_loopback(request: Request) -> bool:
     """Return true only for a direct localhost request.
 
@@ -119,7 +116,7 @@ def _request_from_loopback(request: Request) -> bool:
         .lower()
     )
 
-    if any(request.headers.get(name) for name in _PROXY_HEADERS):
+    if any(name in request.headers for name in PROXY_TUNNEL_HEADERS):
         return False
 
     return (

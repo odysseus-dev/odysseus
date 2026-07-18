@@ -33,6 +33,7 @@ from src.task_endpoint import resolve_task_candidates, task_llm_call_async
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
+    _account_visible_to_owner,
     _send_smtp_message,
     _imap_connect, _imap, _decode_header,
     _detect_sent_folder, _detect_spam_folder, _imap_move,
@@ -98,6 +99,20 @@ def _owner_for_email_account(account_id: str | None) -> str:
             db.close()
     except Exception:
         return ""
+
+
+def _account_visible_to_task_owner(account_id: str | None, owner: str) -> bool:
+    """Check an explicit task account against the canonical visibility policy."""
+    if not account_id or not owner:
+        return True
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+
+    db = _SL()
+    try:
+        row = db.query(_EA).filter(_EA.id == account_id).first()
+        return row is not None and _account_visible_to_owner(row, owner)
+    finally:
+        db.close()
 
 
 # ── Routes ──
@@ -197,7 +212,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                     .all()
                 )
                 if owner:
-                    rows = [r for r in rows if (getattr(r, "owner", "") or "") == owner]
+                    rows = [r for r in rows if _account_visible_to_owner(r, owner)]
                 ids = [r.id for r in rows]
                 names = {r.id: r.name for r in rows}
             finally:
@@ -260,16 +275,14 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     # another tenant's mailbox, or it could disclose/mutate that tenant's data.
     # One resolution feeds both the mailbox path (account_owner) and upstream's
     # calendar path (_acct_owner, which expects None rather than "").
-    account_owner = _owner_for_email_account(account_id)
-
-    if owner and account_id and account_owner != owner:
+    if owner and account_id and not _account_visible_to_task_owner(account_id, owner):
         raise PermissionError(
             "Email account is not available to this task owner"
         )
 
     # A scheduled task owner is authoritative. Only trusted legacy/system
     # callers without an owner may derive authority from the account row.
-    account_owner = owner or account_owner
+    account_owner = owner or _owner_for_email_account(account_id)
     _acct_owner = account_owner or None
 
     conn = None

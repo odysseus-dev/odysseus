@@ -77,6 +77,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join, serve_html_with_nonce
+from src.constants import PROXY_TUNNEL_HEADERS
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
@@ -328,15 +329,6 @@ if AUTH_ENABLED:
         _token_cache.update(new_map)
         app.state._token_cache_dirty = False
 
-    # Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
-    # nginx, Caddy, Tailscale Funnel, …). cloudflared connects to the app FROM
-    # 127.0.0.1, so without this check every tunneled request would look like
-    # loopback and could bypass auth.
-    _PROXY_FWD_HEADERS = (
-        "cf-connecting-ip", "cf-ray", "cf-visitor",
-        "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
-    )
-
     def _is_trusted_loopback(request: Request) -> bool:
         """True ONLY for a DIRECT loopback connection with no proxy/tunnel
         forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
@@ -348,8 +340,8 @@ if AUTH_ENABLED:
         host = request.client.host if request.client else None
         if host not in ("127.0.0.1", "::1"):
             return False
-        for _h in _PROXY_FWD_HEADERS:
-            if request.headers.get(_h):
+        for _h in PROXY_TUNNEL_HEADERS:
+            if _h in request.headers:
                 return False
         return True
 

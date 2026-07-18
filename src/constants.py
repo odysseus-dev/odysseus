@@ -105,6 +105,21 @@ CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
 # Auth policy
 PASSWORD_MIN_LENGTH = 8
 
+# Headers added by reverse proxies and tunnels. A loopback TCP peer carrying
+# any of these headers is not a direct localhost request.
+PROXY_TUNNEL_HEADERS = (
+    "cf-connecting-ip",
+    "cf-connecting-ipv6",
+    "cf-pseudo-ipv4",
+    "cf-ray",
+    "cf-visitor",
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+)
+
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0

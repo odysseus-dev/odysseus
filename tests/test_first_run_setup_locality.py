@@ -52,6 +52,21 @@ def test_first_run_setup_allows_direct_localhost():
             "localhost",
             {"x-real-ip": "203.0.113.44"},
         ),
+        (
+            "127.0.0.1",
+            "localhost",
+            {"cf-connecting-ip": "203.0.113.44"},
+        ),
+        (
+            "127.0.0.1",
+            "localhost",
+            {"cf-connecting-ipv6": "2001:db8::44"},
+        ),
+        (
+            "127.0.0.1",
+            "localhost",
+            {"cf-pseudo-ipv4": "203.0.113.44"},
+        ),
     ],
 )
 def test_first_run_setup_rejects_remote_or_proxied_requests(
