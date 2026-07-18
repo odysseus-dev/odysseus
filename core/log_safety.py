@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 
 CAPABILITY_DIAGNOSTICS_LOGGER = "src.model_capability_readers"
+UVICORN_LOGGER_NAMES = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -39,6 +40,17 @@ def application_log_settings(value: object) -> tuple[int, bool]:
 
     requested = _LOG_LEVELS.get(str(value or "INFO").strip().upper(), logging.INFO)
     return max(requested, logging.INFO), requested == logging.DEBUG
+
+
+def configure_uvicorn_log_levels(application_level: int) -> None:
+    """Apply the mapped app level to Uvicorn's non-propagating loggers.
+
+    External entrypoints configure these loggers before importing ``app`` and
+    otherwise bypass the root logger's level and scoped diagnostics filter.
+    """
+
+    for logger_name in UVICORN_LOGGER_NAMES:
+        logging.getLogger(logger_name).setLevel(application_level)
 
 
 class ScopedDiagnosticsFilter(logging.Filter):
