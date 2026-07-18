@@ -171,7 +171,10 @@ def stable_model_id_for(vendor: Any, model_id: Any, *, endpoint_id: Any = "", ba
 
 def model_id_from(raw: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
-        value = compact_str(raw.get(key))
+        raw_value = raw.get(key)
+        if not isinstance(raw_value, str):
+            continue
+        value = raw_value.strip()
         if value:
             return value.removeprefix("models/")
     return ""
