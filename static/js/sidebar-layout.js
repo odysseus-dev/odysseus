@@ -490,6 +490,19 @@ function _initChatSwipeToOpenSidebar() {
     'input', 'textarea', 'select',
   ].join(', ');
 
+  // Swipe-to-open arms ONLY from a narrow strip at the screen's left/right
+  // edge. A horizontal drag that STARTS over chat content (e.g. dragging to
+  // extend a text selection in a message body) must never be captured as an
+  // edge-swipe — otherwise selecting text to copy yanks the drawer open.
+  const EDGE_ZONE = 24; // px from the screen edge that arms the gesture
+
+  // A held/growing text selection means the user is copying text, not opening
+  // the drawer — bail so the native selection wins.
+  const hasTextSelection = () => {
+    const sel = window.getSelection && window.getSelection();
+    return !!(sel && !sel.isCollapsed && String(sel).trim());
+  };
+
   let sx = 0, sy = 0, track = false, decided = false;
 
   const reset = () => { track = false; decided = false; };
@@ -516,7 +529,17 @@ function _initChatSwipeToOpenSidebar() {
     if (t && t.closest && t.closest(EXCLUDE)) return;
     // The gesture must start within the chat area itself.
     if (!(t && t.closest && t.closest('#chat-container'))) return;
-    sx = e.touches[0].clientX;
+    const startX = e.touches[0].clientX;
+    // Arm the swipe ONLY from the narrow edge strip. A drag that starts over a
+    // message body (mid-screen) is left alone for native text selection — the
+    // icon rail is hidden on mobile, so #chat-container reaches the edge and a
+    // genuine edge-swipe still lands here.
+    const vw = window.innerWidth;
+    if (startX > EDGE_ZONE && startX < vw - EDGE_ZONE) return;
+    // Even from the edge strip, never hijack an in-progress selection (e.g. a
+    // selection handle dragged up against the edge).
+    if (hasTextSelection()) return;
+    sx = startX;
     sy = e.touches[0].clientY;
     track = true;
   }, { passive: true, capture: true });
@@ -531,6 +554,9 @@ function _initChatSwipeToOpenSidebar() {
     if (!decided) {
       if (adx < 10 && ady < 10) return;          // not enough travel to judge
       if (ady > adx) { track = false; return; }   // vertical-dominant → let it scroll
+      // A selection appeared/grew during the drag: the user is extending a
+      // text selection, not swiping. Bail before we preventDefault or open.
+      if (hasTextSelection()) { track = false; return; }
       decided = true;                             // locked into a horizontal swipe
     }
     // Claim the gesture from the browser so it doesn't scroll/navigate instead.
