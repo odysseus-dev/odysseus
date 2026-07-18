@@ -362,6 +362,32 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
       setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
     }
+
+    // Keep the send/stop button's ACCESSIBLE NAME tracking its action. The
+    // button's `title` is already kept in sync per mode (Send message / Stop
+    // generation / Queue message), but `title` alone is not reliably announced
+    // by iOS VoiceOver on an icon-only button, so a screen-reader user can miss
+    // "Stop generation" while a response streams. Mirror the live title into
+    // aria-label (which IS announced) — same single source of truth (the
+    // mode-synced title), just made reliable. One element, attribute-filtered,
+    // so the observer is cheap and never loops (it sets a DIFFERENT attribute).
+    const _wireSendBtnAria = (btn) => {
+      if (!btn) return false;
+      if (btn.dataset.ariaMirror) return true;
+      btn.dataset.ariaMirror = '1';
+      const _mirror = () => {
+        const t = btn.getAttribute('title');
+        if (t && btn.getAttribute('aria-label') !== t) btn.setAttribute('aria-label', t);
+      };
+      _mirror(); // seed from the initial title before any mode switch
+      try {
+        new MutationObserver(_mirror).observe(btn, { attributes: true, attributeFilter: ['title'] });
+      } catch (_) { /* no observer — the seed above still names the button */ }
+      return true;
+    };
+    if (!_wireSendBtnAria(document.querySelector('.send-btn'))) {
+      setTimeout(() => _wireSendBtnAria(document.querySelector('.send-btn')), 250);
+    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -1771,7 +1797,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               // Force-close thinking if still open (model never output boundary)
               if (isThinking) {
                 isThinking = false;
-                cancelAnimationFrame(_thinkTimerRAF);
+                clearInterval(_thinkTimerId); _thinkTimerId = 0;
                 var _elapsedDone = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                 if (_elapsedDone) {
                   accumulated = accumulated.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
@@ -1982,16 +2008,30 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   _liveThinkSpinnerSlot = thinkContent.querySelector('.live-think-spinner-slot');
                   _liveThinkTimerEl = thinkContent.querySelector('.live-think-timer');
                   _liveThinkToggle = thinkContent.querySelector('.live-think-toggle');
-                  // Live timer
+                  // Live timer. The previous implementation self-perpetuated a
+                  // requestAnimationFrame that rewrote textContent ~60x/second for
+                  // the entire thinking duration and ignored prefers-reduced-motion.
+                  // Drive it from a matchMedia-gated setInterval instead: reduced
+                  // motion shows whole seconds at 1Hz, a coarse pointer ticks at
+                  // 250ms and a fine pointer at 100ms (a tenths readout cannot
+                  // change faster than 100ms anyway). The tick self-clears when the
+                  // timer element is gone, matching the old rAF's self-terminating
+                  // behaviour so the short-thinking teardown path still stops it.
                   var _thinkTimerStart = Date.now();
-                  var _thinkTimerRAF = 0;
+                  var _thinkTimerRM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+                  var _thinkTimerCoarse = matchMedia('(pointer: coarse)').matches;
+                  var _thinkTimerId = 0;
                   function _tickThinkTimer() {
-                    if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) return;
-                    var s = ((Date.now() - _thinkTimerStart) / 1000).toFixed(1);
+                    if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) {
+                      if (_thinkTimerId) { clearInterval(_thinkTimerId); _thinkTimerId = 0; }
+                      return;
+                    }
+                    var _sec = (Date.now() - _thinkTimerStart) / 1000;
+                    var s = _thinkTimerRM ? String(Math.floor(_sec)) : _sec.toFixed(1);
                     _liveThinkTimerEl.textContent = _formatThinkStats(s, _liveThinkTokenCount);
-                    _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
                   }
-                  _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
+                  _tickThinkTimer();
+                  _thinkTimerId = setInterval(_tickThinkTimer, _thinkTimerRM ? 1000 : (_thinkTimerCoarse ? 250 : 100));
                   // Whirlpool spinner
                   if (_liveThinkSpinnerSlot) {
                     var _wp = spinnerModule.createWhirlpool(12);
@@ -2053,7 +2093,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
                   // Thinking ended — smooth transition: update header, pause, then collapse
                   // Stop live timer and spinner
-                  cancelAnimationFrame(_thinkTimerRAF);
+                  clearInterval(_thinkTimerId); _thinkTimerId = 0;
                   var elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   // Embed thinking time in the <think> tag for persistence on reload
                   if (elapsed) {
@@ -2474,7 +2514,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // Force-close thinking if still open — tools are real content, not thinking
                 if (isThinking) {
                   isThinking = false;
-                  cancelAnimationFrame(_thinkTimerRAF);
+                  clearInterval(_thinkTimerId); _thinkTimerId = 0;
                   var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
                   if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
