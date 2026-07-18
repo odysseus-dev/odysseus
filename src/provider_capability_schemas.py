@@ -83,36 +83,49 @@ class ProviderCatalogShape:
     def items(self, payload: Any) -> tuple[Mapping[str, Any], ...]:
         return _items_for_envelope(payload, self.envelope)
 
+    def item_matches(self, item: Mapping[str, Any]) -> bool:
+        if self.identity_paths and not any(
+            (value := _path_value(item, path)) is not _MISSING
+            and value is not None
+            and value != ""
+            for path in self.identity_paths
+        ):
+            return False
+        if not all(_path_present(item, path) for path in self.required_item_paths):
+            return False
+        if self.required_item_any_paths and not any(
+            _path_present(item, path) for path in self.required_item_any_paths
+        ):
+            return False
+        if any(
+            not isinstance(_path_value(item, path), expected_types)
+            for path, expected_types in self.item_types
+        ):
+            return False
+        if any(_path_value(item, path) not in expected for path, expected in self.item_values):
+            return False
+        return True
+
     def matches(self, payload: Any) -> bool:
         if self.required_root_paths:
             if not isinstance(payload, Mapping):
                 return False
             if not all(_path_present(payload, path) for path in self.required_root_paths):
                 return False
+        return any(self.item_matches(item) for item in self.items(payload))
 
-        for item in self.items(payload):
-            if self.identity_paths and not any(
-                (value := _path_value(item, path)) is not _MISSING
-                and value is not None
-                and value != ""
-                for path in self.identity_paths
-            ):
-                continue
-            if not all(_path_present(item, path) for path in self.required_item_paths):
-                continue
-            if self.required_item_any_paths and not any(
-                _path_present(item, path) for path in self.required_item_any_paths
-            ):
-                continue
-            if any(
-                not isinstance(_path_value(item, path), expected_types)
-                for path, expected_types in self.item_types
-            ):
-                continue
-            if any(_path_value(item, path) not in expected for path, expected in self.item_values):
-                continue
-            return True
-        return False
+    def payload_for_item(self, payload: Any, item: Mapping[str, Any]) -> Any:
+        """Return a one-item payload in the same provider-native envelope."""
+
+        if self.envelope == ENVELOPE_BARE_LIST:
+            return [item]
+        if self.envelope == ENVELOPE_SINGLE:
+            return item
+        if isinstance(payload, Mapping):
+            narrowed = dict(payload)
+            narrowed[self.envelope] = [item]
+            return narrowed
+        return {self.envelope: [item]}
 
 
 @dataclass(frozen=True)
@@ -183,11 +196,19 @@ OPENROUTER_MODELS_SHAPE = ProviderCatalogShape(
     provider_id="openrouter",
     envelope=ENVELOPE_DATA,
     identity_paths=("id",),
-    required_item_any_paths=(
+    required_item_paths=(
         "architecture",
+        "canonical_slug",
+        "pricing",
         "supported_parameters",
         "top_provider",
-        "canonical_slug",
+    ),
+    item_types=(
+        ("architecture", (Mapping,)),
+        ("canonical_slug", (str,)),
+        ("pricing", (Mapping,)),
+        ("supported_parameters", (list, tuple)),
+        ("top_provider", (Mapping,)),
     ),
     detection_priority=90,
 )
@@ -232,7 +253,7 @@ LMSTUDIO_MODELS_V1_SHAPE = ProviderCatalogShape(
         "quantization",
     ),
     item_types=(("type", (str,)),),
-    detection_priority=100,
+    detection_priority=0,
 )
 LMSTUDIO_MODELS_V0_SHAPE = ProviderCatalogShape(
     shape_id="lmstudio.models.native.v0",
@@ -242,7 +263,7 @@ LMSTUDIO_MODELS_V0_SHAPE = ProviderCatalogShape(
     required_item_paths=("type",),
     required_item_any_paths=("arch", "compatibility_type", "state", "max_context_length"),
     item_types=(("type", (str,)),),
-    detection_priority=80,
+    detection_priority=0,
 )
 LLAMACPP_PROPS_SHAPE = ProviderCatalogShape(
     shape_id="llamacpp.props.v1",
@@ -268,7 +289,7 @@ MISTRAL_MODELS_SHAPE = ProviderCatalogShape(
         "capabilities.classification",
     ),
     item_types=(("capabilities", (Mapping,)),),
-    detection_priority=100,
+    detection_priority=0,
 )
 COPILOT_MODELS_SHAPE = ProviderCatalogShape(
     shape_id="github-copilot.models.v1",
@@ -353,7 +374,7 @@ COHERE_MODELS_SHAPE = ProviderCatalogShape(
         "sampling_defaults",
     ),
     item_types=(("endpoints", (list, tuple)),),
-    detection_priority=100,
+    detection_priority=0,
 )
 MINIMAX_MODELS_SHAPE = ProviderCatalogShape(
     shape_id="minimax.models.identity.v1",
@@ -527,6 +548,18 @@ def schema_for_provider(value: Any) -> ProviderCapabilitySchema:
     return PROVIDER_SCHEMAS.get(normalize_provider_id(value), UNKNOWN_SCHEMA)
 
 
+def provider_from_endpoint_kind(value: Any) -> str:
+    """Return a provider only for registered provider-valued endpoint kinds.
+
+    Endpoint configuration normally stores transport categories such as
+    ``auto``, ``local``, ``api``, and ``proxy``.  Those categories and unknown
+    values must not preempt provider identity from a host or native payload.
+    """
+
+    provider_id = normalize_provider_id(value)
+    return provider_id if provider_id in PROVIDER_SCHEMAS else PROVIDER_UNKNOWN
+
+
 def _host_matches(host: str, suffix: str) -> bool:
     return host == suffix or host.endswith("." + suffix)
 
@@ -576,6 +609,18 @@ def native_shape_for_payload(
     return sorted(best, key=lambda shape: shape.shape_id)[0]
 
 
+def catalog_shape_for_id(shape_id: Any) -> ProviderCatalogShape | None:
+    return next(
+        (
+            shape
+            for schema in PROVIDER_SCHEMAS.values()
+            for shape in schema.catalog_shapes
+            if shape.shape_id == shape_id
+        ),
+        None,
+    )
+
+
 def fallback_shape_for_payload(payload: Any) -> ProviderCatalogShape | None:
     return next((shape for shape in FALLBACK_CATALOG_SHAPES if shape.matches(payload)), None)
 
@@ -591,7 +636,7 @@ def resolve_provider(
     provider_source = PROVIDER_SOURCE_EXPLICIT
 
     if provider_id == PROVIDER_UNKNOWN:
-        provider_id = normalize_provider_id(endpoint_kind)
+        provider_id = provider_from_endpoint_kind(endpoint_kind)
         provider_source = PROVIDER_SOURCE_ENDPOINT_KIND
     if provider_id == PROVIDER_UNKNOWN:
         provider_id = provider_from_host(base_url)
@@ -647,9 +692,11 @@ __all__ = [
     "ProviderCapabilitySchema",
     "ProviderCatalogShape",
     "ProviderResolution",
+    "catalog_shape_for_id",
     "fallback_shape_for_payload",
     "native_shape_for_payload",
     "normalize_provider_id",
+    "provider_from_endpoint_kind",
     "provider_from_host",
     "resolve_provider",
     "schema_for_provider",
