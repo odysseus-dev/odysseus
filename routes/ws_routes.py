@@ -63,6 +63,19 @@ def _validate_api_token(raw_token: str) -> str | None:
         return None
     if len(raw_token) < 12 or len(raw_token) > 100:
         return None
+    match = _find_matching_token(raw_token)
+    if match is None:
+        return None
+    row, _ = match
+    scopes = [s.strip() for s in (row.scopes or "").split(",") if s.strip()]
+    if "notifications:read" not in scopes:
+        return None
+    return row.owner
+
+
+def _find_matching_token(raw_token: str) -> tuple | None:
+    """Find the ApiToken row matching *raw_token* among active rows with the
+    same 8-char prefix.  Returns ``(row, raw_token)`` on match or ``None``."""
     prefix = raw_token[:8]
     try:
         with get_db_session() as db:
@@ -73,35 +86,26 @@ def _validate_api_token(raw_token: str) -> str | None:
             )
             for row in rows:
                 if bcrypt.checkpw(raw_token.encode(), row.token_hash.encode()):
-                    scopes = [s.strip() for s in (row.scopes or "").split(",") if s.strip()]
-                    if "notifications:read" not in scopes:
-                        return None
-                    return row.owner
+                    return row, raw_token
     except Exception:
-        logger.warning("API token validation failed", exc_info=True)
+        logger.warning("API token lookup failed", exc_info=True)
     return None
 
 
 def _revalidate_api_token(raw_token: str, expected_owner: str) -> bool:
-    """Re-validate an API token is still active and maps to *expected_owner*
-    and still has the ``notifications:read`` scope."""
-    prefix = raw_token[:8]
-    try:
-        with get_db_session() as db:
-            row = (
-                db.query(ApiToken)
-                .filter(
-                    ApiToken.token_prefix == prefix,
-                    ApiToken.is_active == True,
-                )
-                .first()
-            )
-            if row and bcrypt.checkpw(raw_token.encode(), row.token_hash.encode()):
-                scopes = [s.strip() for s in (row.scopes or "").split(",") if s.strip()]
-                return row.owner == expected_owner and "notifications:read" in scopes
-    except Exception:
-        logger.warning("API token re-validation failed", exc_info=True)
-    return False
+    """Re-validate an API token is still active, maps to *expected_owner*,
+    and still has the ``notifications:read`` scope.
+
+    Iterates *all* prefix-matched rows (same as ``_validate_api_token``) so
+    that a valid token whose 8-char prefix collides with another active token
+    is not wrongly rejected on the first per-delivery check.
+    """
+    match = _find_matching_token(raw_token)
+    if match is None:
+        return False
+    row, _ = match
+    scopes = [s.strip() for s in (row.scopes or "").split(",") if s.strip()]
+    return row.owner == expected_owner and "notifications:read" in scopes
 
 
 def setup_ws_routes():
@@ -158,13 +162,14 @@ def setup_ws_routes():
                     owner = auth_mgr.get_username_for_token(session_id)
                     used_credential = session_id
 
-        # Fallback: if auth is disabled, allow anonymous
-        if not owner and not (auth_mgr and auth_mgr.is_configured):
-            owner = _ANONYMOUS_OWNER
-
-        if owner is None:
-            await websocket.close(code=4001)
-            return
+        # Fallback: if auth is explicitly disabled at the app level, allow anonymous
+        if not owner:
+            _auth_disabled = not getattr(websocket.app.state, "auth_enabled", True)
+            if _auth_disabled:
+                owner = _ANONYMOUS_OWNER
+            else:
+                await websocket.close(code=4001)
+                return
 
         # ── Subscribe and stream ─────────────────────────────────────────
         q = _subscribe(owner)
@@ -188,7 +193,9 @@ def setup_ws_routes():
                 except WebSocketDisconnect:
                     raise
                 except Exception:
-                    pass
+                    # Any send failure means the client is gone; exit the loop
+                    # so the finally block removes the subscriber queue.
+                    return
         except WebSocketDisconnect:
             pass
         finally:
