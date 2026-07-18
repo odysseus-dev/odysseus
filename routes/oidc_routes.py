@@ -1,6 +1,7 @@
 """OpenID Connect authentication routes — login, callback, config."""
 
 import asyncio
+import functools
 import logging
 import os
 import secrets
@@ -319,10 +320,17 @@ def _oidc_cookie_secure() -> bool:
     downgrade OIDC cookies.
     """
     if os.getenv("OIDC_ALLOW_INSECURE_COOKIES", "").strip().lower() in ("true", "1", "yes"):
-        logger.warning(
-            "OIDC_ALLOW_INSECURE_COOKIES=true — OIDC session and CSRF "
-            "cookies are issued without the Secure flag. Never use this "
-            "outside plain-HTTP local development."
-        )
+        _warn_insecure_cookies_once()
         return False
     return True
+
+
+@functools.lru_cache(maxsize=1)
+def _warn_insecure_cookies_once() -> None:
+    # Once per process, not once per login — the flag doesn't change at
+    # runtime and repeating the warning twice per flow is pure log spam.
+    logger.warning(
+        "OIDC_ALLOW_INSECURE_COOKIES=true — OIDC session and CSRF "
+        "cookies are issued without the Secure flag. Never use this "
+        "outside plain-HTTP local development."
+    )
