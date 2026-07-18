@@ -666,6 +666,13 @@ def test_native_singleton_and_bare_list_shapes_reach_their_readers():
         },
         vendor="google",
     )
+    google_base_id_records = records_from_payload(
+        {
+            "baseModelId": "gemini-base-only",
+            "supportedGenerationMethods": ["embedContent"],
+        },
+        vendor="google",
+    )
     huggingface_records = records_from_payload(
         [{"modelId": "org/model", "pipeline_tag": "text-generation"}],
         vendor="huggingface",
@@ -687,6 +694,8 @@ def test_native_singleton_and_bare_list_shapes_reach_their_readers():
     assert google_records[0].catalog_shape_id == (
         "google.generative-language.model.v1beta"
     )
+    assert google_base_id_records[0].model_id == "gemini-base-only"
+    assert google_base_id_records[0].capability.family == mc.FAMILY_EMBEDDING
     assert huggingface_records[0].model_id == "org/model"
     assert huggingface_records[0].capability.family == mc.FAMILY_CHAT
     assert huggingface_records[0].catalog_shape_id == (
