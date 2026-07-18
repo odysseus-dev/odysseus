@@ -9,13 +9,18 @@ also doubles as a sanitizer barrier for CodeQL's clear-text-logging query.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
-
 from urllib.parse import urlparse, urlunparse
 
 
 CAPABILITY_DIAGNOSTICS_LOGGER = "src.model_capability_readers"
-UVICORN_LOGGER_NAMES = ("uvicorn", "uvicorn.error", "uvicorn.access")
+UVICORN_LOGGER_NAMES = (
+    "uvicorn",
+    "uvicorn.error",
+    "uvicorn.access",
+    "uvicorn.asgi",
+)
 
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -51,6 +56,18 @@ def configure_uvicorn_log_levels(application_level: int) -> None:
 
     for logger_name in UVICORN_LOGGER_NAMES:
         logging.getLogger(logger_name).setLevel(application_level)
+
+
+def uvicorn_log_config(application_level: int) -> dict:
+    """Return a Uvicorn config that preserves the mapped level on direct runs."""
+
+    from uvicorn.config import LOGGING_CONFIG
+
+    config = deepcopy(LOGGING_CONFIG)
+    loggers = config.setdefault("loggers", {})
+    for logger_name in UVICORN_LOGGER_NAMES:
+        loggers.setdefault(logger_name, {})["level"] = application_level
+    return config
 
 
 class ScopedDiagnosticsFilter(logging.Filter):
