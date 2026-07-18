@@ -4,7 +4,7 @@ import os
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")

@@ -25,6 +25,14 @@ from urllib.parse import urlparse
 
 ALLOWED_SCHEMES = ("http", "https")
 
+# RFC 6598 shared address space (carrier-grade NAT). It is not globally
+# routable, but CPython does not classify it as ``is_private`` (it is "shared",
+# not "private"), so the is_private/is_loopback checks miss it. Reject the range
+# explicitly. This closes exactly the shared-space gap without coupling strict
+# mode to ``is_global``'s broader definition, which has shifted across CPython
+# versions for other special ranges.
+_SHARED_ADDRESS_SPACE_V4 = ipaddress.ip_network("100.64.0.0/10")
+
 
 def _default_resolver(host: str) -> List[str]:
     """Resolve a hostname to the list of IP strings it maps to (A + AAAA)."""
@@ -40,8 +48,12 @@ def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[st
         return f"link-local address blocked (SSRF metadata risk): {ip}"
     if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
         return f"disallowed address: {ip}"
-    if block_private and (ip.is_private or ip.is_loopback):
-        return f"private/loopback address blocked: {ip}"
+    if block_private and (
+        ip.is_private
+        or ip.is_loopback
+        or (isinstance(ip, ipaddress.IPv4Address) and ip in _SHARED_ADDRESS_SPACE_V4)
+    ):
+        return f"private/shared/loopback address blocked: {ip}"
     return None
 
 

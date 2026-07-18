@@ -54,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /var/run/docker.sock mount). The Debian `docker.io` package ships
 # dockerd but not the client binary on slim, so grab the static client
 # tarball from download.docker.com instead.
-ARG DOCKER_CLI_VERSION=27.5.1
+ARG DOCKER_CLI_VERSION=29.6.2
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
          amd64) DARCH=x86_64 ;; \
