@@ -9,6 +9,7 @@ labels.
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -139,6 +140,12 @@ def compact_str(value: Any) -> str:
     return str(value or "").strip()
 
 
+def identity_str(value: Any) -> str:
+    """Return a provider identity only when the payload supplied a string."""
+
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _identity_part(value: Any) -> str:
     text = compact_str(value).lower()
     out = []
@@ -171,10 +178,7 @@ def stable_model_id_for(vendor: Any, model_id: Any, *, endpoint_id: Any = "", ba
 
 def model_id_from(raw: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
-        raw_value = raw.get(key)
-        if not isinstance(raw_value, str):
-            continue
-        value = raw_value.strip()
+        value = identity_str(raw.get(key))
         if value:
             return value.removeprefix("models/")
     return ""
@@ -182,6 +186,10 @@ def model_id_from(raw: Mapping[str, Any], *keys: str) -> str:
 
 def int_limit(value: Any) -> int | None:
     if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and (
+        not math.isfinite(value) or not value.is_integer()
+    ):
         return None
     try:
         limit = int(value)

@@ -160,7 +160,11 @@ def records_from_payload(
         normalized = tuple(normalized_records)
     else:
         normalized_records: list[ModelCapabilityRecord] = []
-        for item in shape.items(payload):
+        catalog_items = shape.items(payload)
+        select_catalog_items = getattr(reader, "select_catalog_items", None)
+        if callable(select_catalog_items):
+            catalog_items = tuple(select_catalog_items(catalog_items))
+        for item in catalog_items:
             item_payload = shape.payload_for_item(payload, item)
             if shape.item_matches(item):
                 if reader is generic_openai:
