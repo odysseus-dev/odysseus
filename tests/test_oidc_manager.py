@@ -268,6 +268,10 @@ class TestAuthorizationUrl:
         parsed = parse_qs(urlparse(url).query)
         assert parsed.get("state") == [state]
         assert f"nonce={nonce}" in url
+        # PKCE (RFC 7636) — S256 challenge must always be sent
+        assert parsed.get("code_challenge_method") == ["S256"]
+        challenge = parsed.get("code_challenge", [""])[0]
+        assert len(challenge) == 43  # unpadded base64url SHA-256
         # State is now a Fernet-encrypted token (base64, variable length)
         assert len(state) > 60  # Fernet tokens are always >60 chars
         assert len(nonce) == 64  # nonce is still 32 hex bytes
@@ -293,6 +297,33 @@ class TestAuthorizationUrl:
         assert decoded is not None
         assert decoded["nonce"] == nonce
         assert decoded["redirect_uri"] == "https://app.example.com/callback"
+        # The PKCE verifier rides in the encrypted state and must S256-hash
+        # to the code_challenge sent in the authorization URL.
+        import base64
+        import hashlib
+        from urllib.parse import urlparse, parse_qs
+        challenge = parse_qs(urlparse(url).query)["code_challenge"][0]
+        verifier = decoded["code_verifier"]
+        assert 43 <= len(verifier) <= 128  # RFC 7636 §4.1 bounds
+        expected = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
+        assert challenge == expected
+
+    def test_state_without_code_verifier_rejected(self):
+        """Legacy/forged state payloads lacking a PKCE verifier are invalid."""
+        import core.oidc as mod
+
+        fernet = mod._get_state_fernet()
+        payload = json.dumps({
+            "nonce": "n" * 64,
+            "redirect_uri": "https://app.example.com/callback",
+            "created": time.time(),
+        })
+        state = fernet.encrypt(payload.encode()).decode()
+        assert mod._decode_state(state) is None
 
 
 class TestExchangeCode:
@@ -324,7 +355,7 @@ class TestExchangeCode:
             url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
 
             # Override: build our own state with the nonce that matches the id_token
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
 
             # Token exchange — mock first the JWKS fetch, then the token POST
             mock_post.return_value = _mock_token_response(id_token)
@@ -376,7 +407,7 @@ class TestExchangeCode:
             )
 
         # Build an already-expired state token
-        token = mod._encode_state("nonce", "https://app.example.com/callback")
+        token = mod._encode_state("nonce", "https://app.example.com/callback", "test-code-verifier")
         # Decode to verify it's valid, then re-encode with old timestamp
         fernet = mod._get_state_fernet()
         expired_data = json.dumps({
@@ -405,7 +436,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state("nonce", "https://app.example.com/callback")
+            state = mod._encode_state("nonce", "https://app.example.com/callback", "test-code-verifier")
 
             # Token response without id_token
             mock_post.return_value = _FakeResponse(200, {"access_token": "fake"})
@@ -429,7 +460,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state("nonce", "https://app.example.com/callback")
+            state = mod._encode_state("nonce", "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _FakeResponse(400, {"error": "invalid_grant"})
 
             with pytest.raises(mod.OidcError):
@@ -453,7 +484,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -481,7 +512,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -510,7 +541,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -551,7 +582,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -580,7 +611,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -612,7 +643,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -640,7 +671,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -670,7 +701,7 @@ class TestExchangeCode:
             )
 
             # State carries a different nonce than the id_token
-            state = mod._encode_state(different_nonce, "https://app.example.com/callback")
+            state = mod._encode_state(different_nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -701,7 +732,7 @@ class TestUserInfoProtection:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
 
             # UserInfo returns a different sub
@@ -733,7 +764,7 @@ class TestUserInfoProtection:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
 
             # UserInfo matches sub, adds extra profile data
@@ -807,7 +838,7 @@ class TestJwksCache:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
 
             # First exchange — cache is populated
             mock_post.return_value = _mock_token_response(id_token)
@@ -821,7 +852,7 @@ class TestJwksCache:
             # Second exchange with same kid — cached, no extra JWKS fetch.
             # But userinfo still tries to call GET on the userinfo endpoint
             # (which fails gracefully — logged as a warning, not a crash).
-            state2 = mod._encode_state(nonce, "https://app.example.com/callback")
+            state2 = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             # Provide a userinfo mock so it doesn't count as a real failure
@@ -855,7 +886,7 @@ class TestJwksCache:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
 
             # Simulate a network failure on the JWKS fetch inside _verify_id_token
@@ -889,7 +920,7 @@ class TestJwksCache:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
 
             # Simulate a bad JSON response from the JWKS endpoint
@@ -922,7 +953,7 @@ class TestJwksCache:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
 
             # Simulate HTTP 500 from the JWKS endpoint
@@ -958,7 +989,7 @@ class TestStateKeyPersistence:
         assert not key_file.exists()
 
         # Worker A: encode state (this must create the shared key)
-        state_a = mod._encode_state("nonce-abc", "https://app.example.com/callback")
+        state_a = mod._encode_state("nonce-abc", "https://app.example.com/callback", "test-code-verifier")
         assert key_file.exists(), "Shared app key must be created on first state encode"
         assert key_file.stat().st_size > 0
 
@@ -988,7 +1019,7 @@ class TestStateKeyPersistence:
         # Simulate worker A: encode state (creates key file atomically)
         monkeypatch.setattr(mod, "_state_fernet", None)
         monkeypatch.setattr(ss, "_fernet", None)
-        state_a = mod._encode_state("nonce-a", "https://cb1.example.com/")
+        state_a = mod._encode_state("nonce-a", "https://cb1.example.com/", "test-code-verifier")
         assert key_file.exists()
         key_bytes_a = key_file.read_bytes()
 
@@ -1000,7 +1031,7 @@ class TestStateKeyPersistence:
         assert decoded_b["nonce"] == "nonce-a"
 
         # Worker B encodes its own state — must use the same key
-        state_b = mod._encode_state("nonce-b", "https://cb2.example.com/")
+        state_b = mod._encode_state("nonce-b", "https://cb2.example.com/", "test-code-verifier")
         # After B's encode, the file must still contain worker A's key
         assert key_file.read_bytes() == key_bytes_a, \
             "Worker B must not overwrite the key file created by worker A"
@@ -1039,7 +1070,7 @@ class TestJwksCooldown:
 
             # Step 1: do one successful exchange with "test-key-1" so the
             # JWKS cache is populated and _fetch_jwks() returns cached data.
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token_known_kid)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -1079,7 +1110,7 @@ class TestJwksCooldown:
             ).decode()
 
             # First unknown-kid attempt: JWKS refresh FAILS → cooldown set
-            state1 = mod._encode_state(nonce, "https://app.example.com/callback")
+            state1 = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token_unknown_kid)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -1094,7 +1125,7 @@ class TestJwksCooldown:
             # Second unknown-kid attempt: cooldown still active → throttled,
             # _refresh_jwks must NOT be called.  The exchange will fail
             # because the key for "test-key-2" is not in the stale cache.
-            state2 = mod._encode_state(nonce, "https://app.example.com/callback")
+            state2 = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token_unknown_kid)
             mock_get.reset_mock()
             # If _refresh_jwks were called, it would hit this side_effect.
@@ -1128,7 +1159,7 @@ class TestRedirectUriBinding:
             )
 
         # State encodes "https://original.example.com/callback"
-        state = mod._encode_state("nonce", "https://original.example.com/callback")
+        state = mod._encode_state("nonce", "https://original.example.com/callback", "test-code-verifier")
 
         # But the callback derives a different redirect_uri
         with pytest.raises(mod.OidcError, match="redirect_uri mismatch"):
@@ -1157,7 +1188,7 @@ class TestRedirectUriBinding:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            state = mod._encode_state(nonce, stored_uri)
+            state = mod._encode_state(nonce, stored_uri, "test-code-verifier")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -1206,7 +1237,7 @@ class TestUserinfoEndpointMissing:
             # _mock_token_response already includes an access_token.
             mock_post.return_value = _mock_token_response(id_token)
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
 
             assert claims["sub"] == "user-no-ui"
@@ -1240,7 +1271,7 @@ class TestUserinfoEndpointMissing:
 
             mock_post.return_value = _mock_token_response(id_token)
 
-            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
             claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
 
             assert claims["sub"] == "user-with-ui"
@@ -1389,7 +1420,7 @@ def _exchange_with_userinfo(userinfo):
 
     mgr = _new_security_test_manager()
     nonce = "u" * 64
-    state = mod._encode_state(nonce, "https://app.example.com/callback")
+    state = mod._encode_state(nonce, "https://app.example.com/callback", "test-code-verifier")
     mgr._token_request = MagicMock(return_value={
         "access_token": "access-token",
         "id_token": "unused-in-this-unit-test",
@@ -1476,10 +1507,13 @@ class TestNumericDateClaimValidation:
         with pytest.raises(mod.OidcError):
             mgr._verify_id_token(token, "f" * 64)
 
-    def test_iat_none_accepted(self):
+    def test_iat_missing_rejected(self):
+        # OIDC Core §2: iat is REQUIRED — a token without it must not verify.
+        import core.oidc as mod
         mgr = _new_security_test_manager()
         token = _make_claim_test_token("user123", "g" * 64, iat=None)
-        mgr._verify_id_token(token, "g" * 64)
+        with pytest.raises(mod.OidcError, match="missing iat"):
+            mgr._verify_id_token(token, "g" * 64)
 
     def test_iat_valid_accepted(self):
         mgr = _new_security_test_manager()
@@ -1487,6 +1521,120 @@ class TestNumericDateClaimValidation:
             "user123", "h" * 64, iat=time.time() - 10,
         )
         mgr._verify_id_token(token, "h" * 64)
+
+
+def _make_manager(discovery_doc=None):
+    """Build an OidcManager against a mocked discovery endpoint."""
+    import core.oidc as mod
+    jwt_jwks, _ = _make_test_jwks_and_key()
+    with patch.object(mod.httpx, "get") as mock_get:
+        mock_get.side_effect = [
+            _FakeResponse(200, discovery_doc or DISCOVERY_DOC),
+            _mock_jwks_response(jwt_jwks),
+        ]
+        return mod.OidcManager(
+            issuer=FAKE_ISSUER,
+            client_id=FAKE_CLIENT_ID,
+            client_secret=FAKE_CLIENT_SECRET,
+        )
+
+
+class TestPkceTokenRequest:
+    def test_code_verifier_sent_to_token_endpoint(self):
+        """The verifier recovered from state must be POSTed to the token
+        endpoint and must hash to the challenge from the auth URL."""
+        import base64
+        import hashlib
+        from urllib.parse import urlparse, parse_qs
+        import core.oidc as mod
+
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        mgr = _make_manager()
+        url, state, nonce = mgr.get_authorization_url("https://app.example.com/callback")
+        challenge = parse_qs(urlparse(url).query)["code_challenge"][0]
+        id_token = _make_id_token("user123", nonce)
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [_mock_jwks_response(jwt_jwks)]
+            mock_post.return_value = _mock_token_response(id_token)
+            mgr.exchange_code("auth_code_xyz", state, "https://app.example.com/callback")
+
+            posted = mock_post.call_args.kwargs["data"]
+            verifier = posted["code_verifier"]
+            expected = (
+                base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+                .rstrip(b"=")
+                .decode()
+            )
+            assert challenge == expected
+
+
+class TestTokenEndpointAuth:
+    def _exchange(self, discovery_doc):
+        """Run a full exchange and return the httpx.post call kwargs."""
+        import core.oidc as mod
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        mgr = _make_manager(discovery_doc)
+        _, state, nonce = mgr.get_authorization_url("https://app.example.com/callback")
+        id_token = _make_id_token("user123", nonce)
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [_mock_jwks_response(jwt_jwks)]
+            mock_post.return_value = _mock_token_response(id_token)
+            mgr.exchange_code("code", state, "https://app.example.com/callback")
+            return mock_post.call_args.kwargs
+
+    def test_default_uses_client_secret_basic(self):
+        """No token_endpoint_auth_methods_supported in discovery → the OIDC
+        default client_secret_basic: HTTP Basic auth, no secret in the body."""
+        kwargs = self._exchange(DISCOVERY_DOC)
+        assert kwargs["auth"] == (FAKE_CLIENT_ID, FAKE_CLIENT_SECRET)
+        assert "client_secret" not in kwargs["data"]
+        assert "client_id" not in kwargs["data"]
+
+    def test_basic_preferred_when_advertised(self):
+        doc = dict(DISCOVERY_DOC)
+        doc["token_endpoint_auth_methods_supported"] = [
+            "client_secret_post", "client_secret_basic",
+        ]
+        kwargs = self._exchange(doc)
+        assert kwargs["auth"] == (FAKE_CLIENT_ID, FAKE_CLIENT_SECRET)
+        assert "client_secret" not in kwargs["data"]
+
+    def test_post_fallback_when_basic_unsupported(self):
+        doc = dict(DISCOVERY_DOC)
+        doc["token_endpoint_auth_methods_supported"] = ["client_secret_post"]
+        kwargs = self._exchange(doc)
+        assert kwargs["auth"] is None
+        assert kwargs["data"]["client_secret"] == FAKE_CLIENT_SECRET
+        assert kwargs["data"]["client_id"] == FAKE_CLIENT_ID
+
+
+class TestHttpsEnforcement:
+    def test_http_issuer_rejected(self):
+        import core.oidc as mod
+        with patch.object(mod.httpx, "get") as mock_get:
+            mock_get.return_value = _mock_discovery_response()
+            with pytest.raises(mod.OidcError, match="issuer must use HTTPS"):
+                mod.OidcManager(
+                    issuer="http://idp.example.com",
+                    client_id=FAKE_CLIENT_ID,
+                    client_secret=FAKE_CLIENT_SECRET,
+                )
+
+    def test_http_authorization_endpoint_rejected(self):
+        import core.oidc as mod
+        doc = dict(DISCOVERY_DOC)
+        doc["authorization_endpoint"] = "http://idp.example.com/authorize"
+        with patch.object(mod.httpx, "get") as mock_get:
+            mock_get.return_value = _FakeResponse(200, doc)
+            with pytest.raises(mod.OidcError, match="authorization_endpoint must use HTTPS"):
+                mod.OidcManager(
+                    issuer=FAKE_ISSUER,
+                    client_id=FAKE_CLIENT_ID,
+                    client_secret=FAKE_CLIENT_SECRET,
+                )
 
 
 class TestMaxAgeConfiguration:
