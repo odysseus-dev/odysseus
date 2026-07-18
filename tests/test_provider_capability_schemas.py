@@ -246,10 +246,13 @@ def test_native_catalog_shapes_resolve_with_required_provider_context():
         "huggingface",
         "lmstudio",
         "mistral",
+        "ollama",
     }
     for payload, expected_provider, expected_shape in cases:
         explicit_provider = (
-            expected_provider if expected_provider in explicit_context_providers else None
+            expected_provider
+            if expected_provider in explicit_context_providers
+            else None
         )
         resolution = pcs.resolve_provider(payload, provider=explicit_provider)
         assert resolution.provider_id == expected_provider
@@ -260,6 +263,59 @@ def test_native_catalog_shapes_resolve_with_required_provider_context():
         )
         assert resolution.shape_id == expected_shape
         assert resolution.fallback is False
+
+
+def test_generic_ollama_like_fields_require_provider_context():
+    show_payload = {
+        "name": "foreign-model",
+        "capabilities": ["vision"],
+        "parameters": {},
+    }
+    tags_payload = {"models": [{"name": "foreign-model", "digest": None}]}
+
+    inferred = pcs.resolve_provider(show_payload)
+    contextual = pcs.resolve_provider(show_payload, provider="ollama")
+
+    assert inferred.provider_id == pcs.PROVIDER_UNKNOWN
+    assert inferred.shape_id == ""
+    assert inferred.fallback is False
+    assert records_from_payload(show_payload) == ()
+    assert contextual.provider_id == "ollama"
+    assert contextual.shape_id == "ollama.show.v1"
+    assert contextual.fallback is False
+    contextual_record = records_from_payload(show_payload, vendor="ollama")[0]
+    assert contextual_record.capability.capabilities == (mc.CAP_VISION,)
+
+    inferred_tags = pcs.resolve_provider(tags_payload)
+    contextual_tags = pcs.resolve_provider(tags_payload, provider="ollama")
+    assert inferred_tags.provider_id == pcs.PROVIDER_UNKNOWN
+    assert inferred_tags.shape_id == "fallback.models.envelope.v1"
+    assert inferred_tags.fallback is True
+    assert contextual_tags.provider_id == "ollama"
+    assert contextual_tags.shape_id == "ollama.tags.v1"
+    assert contextual_tags.fallback is False
+
+
+def test_singleton_native_reader_ignores_competing_list_envelopes():
+    record = records_from_payload(
+        {
+            "model": "show-model",
+            "capabilities": ["completion", "vision"],
+            "model_info": {"family.context_length": 4096},
+            "models": [
+                {
+                    "name": "shadow-model",
+                    "digest": "abc",
+                    "details": {"family": "shadow"},
+                }
+            ],
+        },
+        vendor="ollama",
+    )[0]
+
+    assert record.model_id == "show-model"
+    assert record.catalog_shape_id == "ollama.show.v1"
+    assert record.capability.capabilities == (mc.CAP_VISION,)
 
 
 def test_ambiguous_common_fields_do_not_infer_provider_from_payload_alone():
@@ -436,6 +492,32 @@ def test_selected_native_envelope_ignores_an_unrelated_alternate_envelope():
     assert record.fallback is False
 
 
+def test_same_provider_shape_tie_prefers_declared_modern_envelope():
+    record = records_from_payload(
+        {
+            "data": [
+                {
+                    "id": "legacy-v0-card",
+                    "type": "vlm",
+                    "arch": "legacy",
+                }
+            ],
+            "models": [
+                {
+                    "key": "modern-v1-card",
+                    "type": "llm",
+                    "capabilities": {"vision": True},
+                }
+            ],
+        },
+        vendor="lmstudio",
+    )[0]
+
+    assert record.model_id == "modern-v1-card"
+    assert record.catalog_shape_id == "lmstudio.models.native.v1"
+    assert record.capability.capabilities == (mc.CAP_VISION,)
+
+
 def test_selected_fallback_envelope_is_not_shadowed_by_empty_data():
     record = records_from_payload(
         {
@@ -517,6 +599,15 @@ def test_fallback_reader_fails_soft_for_null_and_malformed_envelopes():
         assert generic_openai.records_from_payload(payload) == ()
 
 
+def test_structured_identity_values_are_not_stringified_into_fallback_records():
+    for key in ("id", "name", "model", "key", "slug"):
+        payload = [{key: {"nested": "model"}}]
+
+        assert pcs.resolve_provider(payload).shape_id == ""
+        assert generic_openai.records_from_payload(payload) == ()
+        assert records_from_payload(payload, vendor="future-provider") == ()
+
+
 def test_mistral_reader_maps_per_model_capabilities_without_provider_inheritance():
     records = mistral.records_from_payload(
         {
@@ -569,6 +660,30 @@ def test_copilot_reader_uses_picker_and_nested_supports_shape():
     assert record.capability.family == mc.FAMILY_CHAT
     assert record.capability.capabilities == (mc.CAP_TOOL_CALL, mc.CAP_VISION)
     assert dict(record.capability.limits) == {"input_tokens": 64000, "output_tokens": 8192}
+
+
+def test_copilot_reader_ignores_unverified_support_aliases():
+    record = records_from_payload(
+        {
+            "data": [
+                {
+                    "id": "future-supports-model",
+                    "model_picker_enabled": True,
+                    "capabilities": {
+                        "supports": {
+                            "tools": True,
+                            "reasoning": True,
+                            "structured_outputs": True,
+                        }
+                    },
+                }
+            ]
+        },
+        vendor="copilot",
+    )[0]
+
+    assert record.capability.family == mc.FAMILY_CHAT
+    assert record.capability.capabilities == ()
 
 
 def test_sglang_model_info_maps_native_generation_flags_only():

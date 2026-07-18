@@ -24,10 +24,7 @@ vendor = VENDOR_COPILOT
 
 _SUPPORT_CAPABILITIES = {
     "tool_calls": mc.CAP_TOOL_CALL,
-    "tools": mc.CAP_TOOL_CALL,
     "vision": mc.CAP_VISION,
-    "reasoning": mc.CAP_REASONING,
-    "structured_outputs": mc.CAP_STRUCTURED_OUTPUT,
 }
 
 

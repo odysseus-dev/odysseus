@@ -86,8 +86,8 @@ class ProviderCatalogShape:
     def item_matches(self, item: Mapping[str, Any]) -> bool:
         if self.identity_paths and not any(
             (value := _path_value(item, path)) is not _MISSING
-            and value is not None
-            and value != ""
+            and isinstance(value, str)
+            and bool(value.strip())
             for path in self.identity_paths
         ):
             return False
@@ -120,7 +120,11 @@ class ProviderCatalogShape:
         if self.envelope == ENVELOPE_BARE_LIST:
             return [item]
         if self.envelope == ENVELOPE_SINGLE:
-            return item
+            return {
+                key: value
+                for key, value in item.items()
+                if key not in {ENVELOPE_DATA, ENVELOPE_MODELS}
+            }
         if isinstance(payload, Mapping):
             narrowed = {
                 key: value
@@ -231,7 +235,10 @@ OLLAMA_TAGS_SHAPE = ProviderCatalogShape(
     envelope=ENVELOPE_MODELS,
     identity_paths=("model", "name"),
     required_item_any_paths=("digest", "details.family", "details.families"),
-    detection_priority=90,
+    # `name` plus a digest/details field is not globally provider-specific.
+    # Configured provider context remains authoritative for local Ollama
+    # inventories; payload-only detection would create false provider identity.
+    detection_priority=0,
 )
 OLLAMA_SHOW_SHAPE = ProviderCatalogShape(
     shape_id="ollama.show.v1",
@@ -241,7 +248,11 @@ OLLAMA_SHOW_SHAPE = ProviderCatalogShape(
     required_item_paths=("capabilities",),
     required_item_any_paths=("model_info", "details", "template", "parameters"),
     item_types=(("capabilities", (list, tuple)),),
-    detection_priority=100,
+    # `/api/show` capability and parameter fields are not sufficiently unique
+    # to identify an otherwise unknown provider.  Local/default ports are also
+    # deliberately non-authoritative, so require configured provider context
+    # before interpreting this singleton response as Ollama-native metadata.
+    detection_priority=0,
 )
 LMSTUDIO_MODELS_V1_SHAPE = ProviderCatalogShape(
     shape_id="lmstudio.models.native.v1",
@@ -610,7 +621,10 @@ def native_shape_for_payload(
         return None
     priority = max(shape.detection_priority for shape in matches)
     best = [shape for shape in matches if shape.detection_priority == priority]
-    return sorted(best, key=lambda shape: shape.shape_id)[0]
+    # Registry declaration order expresses preference between revisions of the
+    # same provider shape (for example LM Studio v1 before v0).  Alphabetical
+    # shape ids invert that version preference for otherwise equal evidence.
+    return best[0]
 
 
 def catalog_shape_for_id(shape_id: Any) -> ProviderCatalogShape | None:
