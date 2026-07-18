@@ -828,6 +828,12 @@ export function renderMermaid(container) {
   const target = container || document;
   const pending = target.querySelectorAll('pre.mermaid:not([data-processed])');
   if (pending.length === 0) return;
+  pending.forEach((node) => {
+    // Capture the diagram source before Mermaid replaces the <pre> content with
+    // an SVG. Mermaid bakes the palette into that SVG at render time, so a later
+    // theme switch needs the original source to re-render with the new colors.
+    if (!_mermaidSource.has(node)) _mermaidSource.set(node, node.textContent);
+  });
   try {
     window.mermaid.run({ nodes: pending });
   } catch (e) {
@@ -852,14 +858,196 @@ const markdownModule = {
 
 export default markdownModule;
 
-// Mermaid is loaded async so it cannot delay the app shell.
+// ── Mermaid diagram theming ────────────────────────────────────────────────
+// Mermaid is loaded async (see index.html) so it cannot delay the app shell.
+// It renders each diagram to an SVG with the palette baked in at render time,
+// so a plain CSS cascade can't retheme an already-drawn diagram. Instead of the
+// canned 'dark' theme we drive Mermaid's themeable 'base' theme from the app's
+// live CSS variables — the same tokens that colour the rest of the UI — so
+// diagrams follow whichever preset (or custom palette) is active, and a live
+// theme switch re-renders them (see the listener at the bottom).
+
+// Read a CSS custom property off :root, trimmed, with a fallback.
+function _cssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (v && v.trim()) || fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+// Perceived luminance (0..1) of a hex or rgb() colour. Used to tell Mermaid
+// whether the active palette is light or dark so it derives sensible shades for
+// anything the explicit variables below don't cover.
+function _luminance01(color) {
+  const c = String(color || '').trim();
+  let r, g, b;
+  const hex = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    let h = hex[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    r = parseInt(h.slice(0, 2), 16);
+    g = parseInt(h.slice(2, 4), 16);
+    b = parseInt(h.slice(4, 6), 16);
+  } else {
+    const m = c.match(/[\d.]+/g);
+    if (!m || m.length < 3) return 0;
+    [r, g, b] = m.map(Number);
+  }
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+function _isLightColor(color) {
+  return _luminance01(color) >= 0.5;
+}
+
+// Read the palette Mermaid should follow from the app's live theme tokens.
+function _readMermaidPalette() {
+  return {
+    bg:     _cssVar('--bg', '#282c34'),
+    panel:  _cssVar('--panel', '#111111'),
+    fg:     _cssVar('--fg', '#9cdef2'),
+    border: _cssVar('--border', '#355a66'),
+    accent: _cssVar('--accent', '') || _cssVar('--red', '#e06c75'),
+    font:   _cssVar('--font-family', "'Fira Code', ui-monospace, monospace"),
+  };
+}
+
+// Map an app palette onto Mermaid's 'base' theme variables. Pure (colours in,
+// object out) so the mapping is unit-testable without a DOM. Exported for the
+// node-driven test suite; not part of the public markdown API.
+export function _mermaidThemeVariables(palette) {
+  const { bg, panel, fg, border, accent, font } = palette;
+  const darkMode = !_isLightColor(bg);
+  return {
+    darkMode,
+    fontFamily: font,
+    background: bg,
+    // Node fills use the panel colour; clusters and alternate fills use the
+    // page background so grouped and plain nodes stay distinct within the palette.
+    primaryColor: panel,
+    mainBkg: panel,
+    secondaryColor: bg,
+    tertiaryColor: bg,
+    // All text tracks the foreground colour.
+    primaryTextColor: fg,
+    secondaryTextColor: fg,
+    tertiaryTextColor: fg,
+    textColor: fg,
+    nodeTextColor: fg,
+    titleColor: fg,
+    // Edges and lines use the border colour; node outlines pick up the accent.
+    lineColor: border,
+    primaryBorderColor: accent,
+    secondaryBorderColor: border,
+    tertiaryBorderColor: border,
+    nodeBorder: accent,
+    clusterBkg: bg,
+    clusterBorder: border,
+    edgeLabelBackground: panel,
+    // Sequence / flowchart specifics.
+    actorBkg: panel,
+    actorBorder: accent,
+    actorTextColor: fg,
+    actorLineColor: border,
+    signalColor: fg,
+    signalTextColor: fg,
+    labelBoxBkgColor: panel,
+    labelBoxBorderColor: border,
+    labelTextColor: fg,
+    loopTextColor: fg,
+    noteBkgColor: panel,
+    noteBorderColor: accent,
+    noteTextColor: fg,
+  };
+}
+
+// Full Mermaid config for the active palette. securityLevel stays 'loose' to
+// preserve existing behaviour — only the theming changes here.
+function _mermaidThemeConfig() {
+  const palette = _readMermaidPalette();
+  return {
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: 'base',
+    fontFamily: palette.font,
+    themeVariables: _mermaidThemeVariables(palette),
+  };
+}
+
+// Signature of the palette Mermaid was last initialised with. Because colours
+// are baked into the SVG at render time, a palette change requires a fresh
+// initialize() (and re-render) rather than a CSS update.
+let _mermaidThemeKey = null;
+function _themeKey() {
+  const p = _readMermaidPalette();
+  return [p.bg, p.panel, p.fg, p.border, p.accent, p.font].join('|');
+}
+
+// Diagram source keyed by its <pre> node, captured in renderMermaid() before
+// Mermaid overwrites the node with an SVG, so we can re-render on theme change.
+const _mermaidSource = new WeakMap();
+
 function initMermaid() {
-  if (!window.mermaid || window.__odysseusMermaidReady) return;
-  window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+  if (!window.mermaid) return;
+  const key = _themeKey();
+  if (_mermaidThemeKey === key) return;
+  try {
+    window.mermaid.initialize(_mermaidThemeConfig());
+  } catch (err) {
+    // A theme variable Mermaid's colour parser rejects must never abort every
+    // diagram. Fall back to the plain base theme (still on the app font).
+    console.warn('Mermaid theme init failed, using safe defaults:', err);
+    try {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'loose',
+        theme: 'base',
+        fontFamily: _cssVar('--font-family', "'Fira Code', ui-monospace, monospace"),
+      });
+    } catch (_) { /* leave Mermaid at its own defaults */ }
+  }
+  _mermaidThemeKey = key;
   window.__odysseusMermaidReady = true;
 }
 window.odysseusInitMermaid = initMermaid;
 initMermaid();
+
+// Re-render every already-drawn diagram with the current palette. Fired
+// (debounced) on a live theme switch; a no-op when nothing is on screen.
+function _reRenderMermaidForTheme() {
+  if (!window.mermaid) return;
+  const rendered = document.querySelectorAll('pre.mermaid[data-processed]');
+  if (rendered.length === 0) return;
+  _mermaidThemeKey = null; // force re-initialise with the new palette
+  initMermaid();
+  const nodes = [];
+  rendered.forEach((node) => {
+    const src = _mermaidSource.get(node);
+    if (!src) return;
+    node.removeAttribute('data-processed');
+    node.textContent = src; // restore source so mermaid.run re-reads it
+    nodes.push(node);
+  });
+  if (nodes.length === 0) return;
+  try {
+    window.mermaid.run({ nodes });
+  } catch (e) {
+    console.warn('Mermaid re-render error:', e);
+  }
+}
+
+// theme.js dispatches this on every palette apply, including the live-preview
+// colour sliders — debounce so a drag re-renders once, and only touch diagrams
+// that already exist.
+let _mermaidThemeTimer = null;
+document.addEventListener('odysseus-theme-changed', () => {
+  if (_mermaidThemeTimer) clearTimeout(_mermaidThemeTimer);
+  _mermaidThemeTimer = setTimeout(() => {
+    _mermaidThemeTimer = null;
+    _reRenderMermaidForTheme();
+  }, 200);
+});
 
 // Persist which thinking sections were expanded across page refreshes.
 // IDs are render-generated (Date.now-based) so we key by a stable hash of

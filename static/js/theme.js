@@ -289,6 +289,16 @@ export function applyColors(colors) {
 
   // Update favicon to match theme accent color
   _updateFavicon(colors.red || '#e06c75');
+
+  // Notify theme-reactive renderers that bake colors into their output and so
+  // cannot follow the palette through CSS alone. Mermaid diagrams draw an SVG
+  // with fixed fills at render time; the markdown module listens for this event
+  // and (debounced) re-renders any on-screen diagram with the new palette.
+  // Fire-and-forget — a missing CustomEvent constructor must never break a
+  // theme switch.
+  try {
+    document.dispatchEvent(new CustomEvent('odysseus-theme-changed', { detail: colors }));
+  } catch (_) { /* older engines: non-fatal */ }
 }
 
 // Per-route SVG shape registry — kept in sync with the inline favicon
