@@ -13,6 +13,7 @@ from src.model_capability_readers.base import (
     as_mapping,
     build_capability,
     compact_str,
+    identity_str,
     int_limit,
     merge_unique,
     model_id_from,
@@ -116,7 +117,7 @@ def record_from_show_payload(
     endpoint_id: Any = "",
     base_url: Any = "",
 ) -> ModelCapabilityRecord | None:
-    model_id = compact_str(model_id) or model_id_from(payload, "model", "name")
+    model_id = identity_str(model_id) or model_id_from(payload, "model", "name")
     if not model_id:
         return None
     capability_values = payload.get("capabilities")
