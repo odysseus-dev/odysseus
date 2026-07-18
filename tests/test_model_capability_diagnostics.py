@@ -57,7 +57,9 @@ def test_fallback_debug_log_is_explicit_and_has_no_capability_claims(caplog):
 
 
 def test_web_app_logging_uses_existing_log_level_environment_toggle():
-    source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "app.py").read_text(encoding="utf-8")
+    launcher_source = (root / "launcher.py").read_text(encoding="utf-8")
 
     assert 'os.getenv("LOG_LEVEL", "INFO")' in source
     assert "application_log_settings(_log_level_name)" in source
@@ -66,3 +68,7 @@ def test_web_app_logging_uses_existing_log_level_environment_toggle():
     assert "_console_h.addFilter(_diagnostics_filter)" in source
     assert "_file_h.addFilter(_diagnostics_filter)" in source
     assert "log_level=_application_log_level" in source
+    assert "log_config=uvicorn_log_config(_application_log_level)" in source
+    assert "application_log_settings(" in launcher_source
+    assert "log_level=application_log_level" in launcher_source
+    assert "log_config=uvicorn_log_config(application_log_level)" in launcher_source
