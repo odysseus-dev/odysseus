@@ -58,7 +58,7 @@ async def _cookbook_servers() -> Dict[str, Any]:
                 "platform": s.get("platform") or "",
                 "env": s.get("env") or "",
                 "envPath": s.get("envPath") or "",
-                "port": s.get("port") or "",
+                "port": s.get("port") or s.get("sshPort") or "",
             })
     return {"default_host": env.get("remoteHost") or "", "hosts": hosts}
 
@@ -130,7 +130,13 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
     env_kind = per_host.get("env") or env_root.get("env") or "none"
     env_path = per_host.get("envPath") or env_root.get("envPath") or ""
     platform = per_host.get("platform") or env_root.get("platform") or "linux"
-    ssh_port = per_host.get("sshPort") or env_root.get("sshPort") or ""
+    ssh_port = (
+        per_host.get("sshPort")
+        or per_host.get("port")
+        or env_root.get("sshPort")
+        or env_root.get("port")
+        or ""
+    )
 
     env_prefix = ""
     if env_kind == "venv" and env_path:
@@ -240,6 +246,8 @@ async def _cookbook_register_task(
     cmd: str,
     task_type: str = "serve",
     *,
+    platform: str = "",
+    ssh_port: str = "",
     endpoint_added: bool = False,
     endpoint_id: str = "",
 ) -> bool:
@@ -273,6 +281,8 @@ async def _cookbook_register_task(
     # placeholder gives the user something to see immediately; it gets
     # replaced by real tmux output within a few seconds.
     target = f"{host}:" if host else "local:"
+    task_platform = (platform or "").strip().lower()
+    task_ssh_port = str(ssh_port or "").strip()
     placeholder = (
         f"Launched via agent — waiting for tmux output…\n"
         f"  session: {session_id}\n"
@@ -288,10 +298,16 @@ async def _cookbook_register_task(
         "status": "running",
         "output": placeholder,
         "ts": int(_time.time() * 1000),
-        "payload": {"repo_id": model, "remote_host": host or "", "_cmd": cmd},
+        "payload": {
+            "repo_id": model,
+            "remote_host": host or "",
+            "ssh_port": task_ssh_port,
+            "platform": task_platform,
+            "_cmd": cmd,
+        },
         "remoteHost": host or "",
-        "sshPort": "",
-        "platform": "linux",
+        "sshPort": task_ssh_port,
+        "platform": task_platform,
         "_serveReady": False,
         "_endpointAdded": bool(endpoint_added),
         "_endpointId": endpoint_id or "",
@@ -468,6 +484,8 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
                 session_id=sid, model=repo_id, host=host,
                 cmd=(f"ollama pull {repo_id}" if backend == "ollama" else f"hf download {repo_id}"),
                 task_type="download",
+                platform=env_cfg.get("platform") or "",
+                ssh_port=env_cfg.get("ssh_port") or "",
             )
             note = "" if registered else " (state-write failed — download may not show in UI)"
             where = host or "local"
@@ -559,6 +577,8 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id,
                 host=host, cmd=cmd, task_type="serve",
+                platform=env_cfg.get("platform") or "",
+                ssh_port=env_cfg.get("ssh_port") or "",
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
@@ -754,27 +774,31 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             repo_id = payload.get("repo_id") or ""
             break
 
-    if remote:
-        try:
-            remote, sport = _validate_cookbook_ssh_target(remote, sport)
-        except HTTPException as e:
-            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
-
     if not platform and not remote:
         env = state.get("env") if isinstance(state.get("env"), dict) else {}
         platform = env.get("hostPlatform") or ""
 
-    # Resolve platform from configured server profile when task metadata is stale/missing
-    # so remote Windows stops hit taskkill rather than tmux.
-    if not platform and remote:
+    # The configured remote profile is authoritative. Older agent task entries
+    # hard-coded platform="linux" and omitted the profile port, so reconcile
+    # stale as well as missing metadata before selecting the stop path.
+    if remote:
         try:
             servers = await _cookbook_servers()
             for h in servers.get("hosts") or []:
-                if (h.get("host") or "") == remote and (h.get("platform") or "").strip():
-                    platform = (h.get("platform") or "").strip()
-                    break
+                if (h.get("host") or "") != remote:
+                    continue
+                configured_platform = (h.get("platform") or "").strip()
+                if configured_platform:
+                    platform = configured_platform
+                if not sport:
+                    sport = str(h.get("port") or "").strip()
+                break
         except Exception as e:
             logger.debug(f"cookbook platform lookup failed for {remote}: {e}")
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
 
     target_label = f"{session_id} on {remote}" if remote else session_id
     body: Dict[str, Any] = {
@@ -1353,6 +1377,8 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id, host=host,
                 cmd=cmd, task_type="serve",
+                platform=env_cfg.get("platform") or "",
+                ssh_port=env_cfg.get("ssh_port") or "",
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"

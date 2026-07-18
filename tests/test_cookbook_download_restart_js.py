@@ -70,12 +70,16 @@ def test_download_stopped_is_terminal_for_active_output():
     assert "DOWNLOAD_STOPPED" in block
 
 
-def test_failed_stop_rolls_back_live_serve_statuses():
+def test_failed_stop_rolls_back_live_serve_and_download_statuses():
     source = RUNNING_JS.read_text(encoding="utf-8")
     idx = source.index("async function _onTaskStop")
-    block = source[idx:idx + 700]
+    block = source[idx:idx + 1000]
     assert "_RECONNECT_STATUSES.includes(priorStatus)" in block
+    assert "task.type === 'download' && priorStatus === 'running'" in block
+    failed = block[block.index("if (!stopOk)"):block.index("if (removeAfter)")]
     assert "el.dataset.status = priorStatus" in block
+    assert "_userStopped: false, status: priorStatus" in failed
+    assert "_applyStoppedTaskCard" not in failed
 
 
 def test_running_tab_reconnect_survives_rerender():

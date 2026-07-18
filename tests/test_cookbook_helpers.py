@@ -996,6 +996,16 @@ def test_cmdline_references_hf_repo_exact_match_not_prefix():
     assert _cmdline_references_hf_repo(
         r"python -u 'C:\app\scripts\hf_download.py' org/model", short
     )
+    assert _cmdline_references_hf_repo(
+        "python -c \"from huggingface_hub import snapshot_download; "
+        "snapshot_download('org/model', max_workers=8)\"",
+        short,
+    )
+    assert _cmdline_references_hf_repo(
+        'python -c "import huggingface_hub; '
+        "huggingface_hub.snapshot_download(repo_id='org/model')\"",
+        short,
+    )
     assert not _cmdline_references_hf_repo(f"python hf_download.py {long_repo}", short)
     assert not _cmdline_references_hf_repo(f"hf download {long_repo}", short)
     assert not _cmdline_references_hf_repo(
@@ -1003,6 +1013,16 @@ def test_cmdline_references_hf_repo_exact_match_not_prefix():
     )
     assert not _cmdline_references_hf_repo(
         r'"C:\path\hf.exe" download org/model-large', short
+    )
+    assert not _cmdline_references_hf_repo(
+        "python -c \"from huggingface_hub import snapshot_download; "
+        "snapshot_download('org/model-large', max_workers=8)\"",
+        short,
+    )
+    assert not _cmdline_references_hf_repo(
+        'python -c "import huggingface_hub; '
+        "huggingface_hub.snapshot_download(repo_id='org/model-large')\"",
+        short,
     )
 
 
@@ -1240,6 +1260,7 @@ def test_server_platform_for_host_reads_cookbook_state(tmp_path, monkeypatch):
     assert resolve("winbox", "") == "windows"
     assert resolve("linuxbox", "") == "linux"
     assert resolve("winbox", "windows") == "windows"
+    assert resolve("winbox", "linux") == "windows"
 
 
 @pytest.mark.asyncio

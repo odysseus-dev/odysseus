@@ -380,6 +380,11 @@ def _cmdline_references_hf_repo(text: str, repo_id: str) -> bool:
         rf"\bhf(?:\.exe)?[\"']?\s+download\s+{escaped}{boundary}",
         # hf_download.py script arg — quoted/unquoted, optional python -u prefix
         rf"\bhf_download\.py[\"']?\s+{escaped}{boundary}",
+        # Python huggingface_hub fallback — positional and repo_id= forms.
+        # Require the matching closing quote plus ',' or ')' so org/model
+        # never matches a concurrently downloading org/model-large.
+        rf"\bsnapshot_download\s*\(\s*([\"']){escaped}\1\s*(?:,|\))",
+        rf"\bsnapshot_download\s*\(\s*repo_id\s*=\s*([\"']){escaped}\1\s*(?:,|\))",
     )
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
@@ -1163,11 +1168,14 @@ def setup_cookbook_routes() -> APIRouter:
 
     def _resolve_windows_platform(remote_host: str | None, platform: str | None) -> str:
         plat = (platform or "").strip().lower()
-        if plat:
-            return plat
         if remote_host:
-            return _server_platform_for_host(remote_host)
-        return "windows" if IS_WINDOWS else ""
+            # The configured host profile is authoritative. Older agent-created
+            # tasks were persisted with platform="linux" even for Windows hosts,
+            # so only consulting the profile when metadata is empty leaves those
+            # sessions on the tmux stop path.
+            configured = _server_platform_for_host(remote_host)
+            return configured or plat
+        return plat or ("windows" if IS_WINDOWS else "")
 
     def _unlink_session_artifacts(session_id: str) -> None:
         for pattern in (f"{session_id}.*", f"{session_id}_run.*"):
@@ -1408,7 +1416,6 @@ def setup_cookbook_routes() -> APIRouter:
         repo_id: str | None = None,
     ) -> dict:
         """Kill a remote Windows detached cookbook session and orphan downloaders."""
-        _write_session_stop_marker(session_id, repo_id)
         # Pid-file kill + session cmdline sweep + artifact cleanup in one hop.
         # Orphan repo matching stays in Python so exact HF id boundaries apply.
         ps = (
@@ -1416,27 +1423,56 @@ def setup_cookbook_routes() -> APIRouter:
             f"$sid = '{session_id}'; "
             "$pidPath = Join-Path $sd ($sid + '.pid'); "
             "$p = Get-Content $pidPath -ErrorAction SilentlyContinue; "
-            "if ($p -match '^\\d+$') { taskkill /F /T /PID $p 2>$null | Out-Null }; "
-            "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $sid + '*') } | "
-            "ForEach-Object { taskkill /F /T /PID $_.ProcessId 2>$null | Out-Null }; "
-            "Remove-Item (Join-Path $sd ($sid + '.*')) -Force -ErrorAction SilentlyContinue"
+            "$failed = $false; "
+            "if (($p -match '^\\d+$') -and (([int]$p) -ne $PID)) { "
+            "$target = Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue; "
+            "if ($target) { taskkill /F /T /PID $p 2>$null | Out-Null; "
+            "if ($LASTEXITCODE -ne 0) { $failed = $true } } }; "
+            "try { $sessionPids = @(Get-CimInstance Win32_Process -ErrorAction Stop | "
+            "Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and "
+            "$_.CommandLine -like ('*' + $sid + '*') } | "
+            "ForEach-Object { $_.ProcessId }) } catch { exit 1 }; "
+            "foreach ($sessionPid in $sessionPids) { "
+            "taskkill /F /T /PID $sessionPid 2>$null | Out-Null; "
+            "if ($LASTEXITCODE -ne 0) { $failed = $true } }; "
+            "if ($failed) { exit 1 }; "
+            "Remove-Item (Join-Path $sd ($sid + '.*')) -Force -ErrorAction SilentlyContinue; "
+            "exit 0"
         )
         rc, _out = await _ssh_powershell(remote, ssh_port, ps)
         detail: list[str] = []
-        if rc == 0:
-            detail.append("remote session tree stopped")
-        else:
-            detail.append(f"remote stop exit {rc}")
+        if rc != 0:
+            # Keep the local runner/PID metadata and do not mark the repo stopped:
+            # callers need that state to reconnect or retry the stop safely.
+            return {
+                "ok": False,
+                "stopped": False,
+                "error": f"remote session stop failed (exit {rc})",
+                "detail": f"remote stop exit {rc}",
+                "exit_code": rc,
+            }
+        detail.append("remote session tree stopped")
         if repo_id:
             for _ in range(3):
                 orphan = await _scan_remote_windows_download_processes(remote, ssh_port, repo_id)
                 if not orphan:
                     break
-                await _ssh_powershell(
-                    remote, ssh_port, f"taskkill /F /T /PID {int(orphan)} 2>$null | Out-Null"
+                kill_rc, _kill_out = await _ssh_powershell(
+                    remote,
+                    ssh_port,
+                    f"taskkill /F /T /PID {int(orphan)} 2>$null | Out-Null; "
+                    "exit $LASTEXITCODE",
                 )
+                if kill_rc != 0:
+                    return {
+                        "ok": False,
+                        "stopped": False,
+                        "error": f"remote orphan downloader stop failed (exit {kill_rc})",
+                        "detail": f"failed to kill remote orphan downloader pid {orphan}",
+                        "exit_code": kill_rc,
+                    }
                 detail.append(f"killed remote orphan downloader pid {orphan}")
+        _write_session_stop_marker(session_id, repo_id)
         _unlink_session_artifacts(session_id)
         return {
             "ok": True,
@@ -1693,30 +1729,30 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" } else { Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }')
             else:
                 # Try hf CLI, fall back to Python huggingface_hub, then auto-install
-                ps_lines.append('try {{')
+                ps_lines.append('try {')
                 ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
-                ps_lines.append('  if ($hfPath) {{')
+                ps_lines.append('  if ($hfPath) {')
                 # Pipe $null to stdin to suppress interactive "update available? [Y/n]" prompt
                 ps_lines.append(f'    $null | {hf_cmd}')
-                ps_lines.append('  }} else {{')
+                ps_lines.append('  } else {')
                 ps_lines.append('    python -c "import huggingface_hub" 2>$null')
-                ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
+                ps_lines.append('    if ($LASTEXITCODE -eq 0) {')
                 ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
                 ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
                 ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
                 ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-                ps_lines.append('    }} else {{')
+                ps_lines.append('    } else {')
                 ps_lines.append('      Write-Host "Installing huggingface-hub..."')
                 ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
                 ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
                 ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-                ps_lines.append('    }}')
-                ps_lines.append('  }}')
-                ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
-                ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
-                ps_lines.append('}} catch {{')
+                ps_lines.append('    }')
+                ps_lines.append('  }')
+                ps_lines.append('  if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
+                ps_lines.append('  else { Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }')
+                ps_lines.append('} catch {')
                 ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
-                ps_lines.append('}}')
+                ps_lines.append('}')
             ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_runner}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
