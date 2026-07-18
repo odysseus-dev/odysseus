@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -15,6 +16,7 @@ from src.model_capability_readers.base import (
     build_capability,
     compact_str,
     deterministic_controls_from_supported_parameters,
+    int_limit,
     openai_model_items,
     stable_model_id_for,
 )
@@ -95,5 +97,14 @@ def records_from_payload(
             base_url=base_url,
         )
         if record:
+            context_tokens = int_limit(item.get("max_model_len"))
+            if context_tokens:
+                record = replace(
+                    record,
+                    capability=build_capability(
+                        family=mc.FAMILY_UNKNOWN,
+                        limits={"context_tokens": context_tokens},
+                    ),
+                )
             records.append(record)
     return tuple(records)
