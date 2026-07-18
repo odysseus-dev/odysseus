@@ -28,6 +28,18 @@ _SUPPORT_CAPABILITIES = {
 }
 
 
+def select_catalog_items(
+    items: tuple[Mapping[str, Any], ...],
+) -> tuple[Mapping[str, Any], ...]:
+    """Keep picker-enabled models when the catalog advertises any of them."""
+
+    if any(item.get("model_picker_enabled") is True for item in items):
+        return tuple(
+            item for item in items if item.get("model_picker_enabled") is True
+        )
+    return items
+
+
 def _supports(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     return as_mapping(as_mapping(raw.get("capabilities")).get("supports"))
 
@@ -102,7 +114,7 @@ def records_from_payload(
     base_url: Any = "",
 ) -> tuple[ModelCapabilityRecord, ...]:
     records: list[ModelCapabilityRecord] = []
-    for item in openai_model_items(payload):
+    for item in select_catalog_items(openai_model_items(payload)):
         record = record_from_model(item, endpoint_id=endpoint_id, base_url=base_url)
         if record:
             records.append(record)

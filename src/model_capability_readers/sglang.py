@@ -14,8 +14,8 @@ from src.model_capability_readers.base import (
     VENDOR_SGLANG,
     as_mapping,
     build_capability,
-    compact_str,
     deterministic_controls_from_supported_parameters,
+    identity_str,
     int_limit,
     openai_model_items,
     stable_model_id_for,
@@ -26,7 +26,9 @@ vendor = VENDOR_SGLANG
 
 
 def _model_id(payload: Mapping[str, Any]) -> str:
-    value = compact_str(payload.get("served_model_name") or payload.get("model_path"))
+    value = identity_str(payload.get("served_model_name")) or identity_str(
+        payload.get("model_path")
+    )
     if not value:
         return ""
     return PurePosixPath(value).name if value.startswith("/") else value
