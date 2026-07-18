@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 import routes.cookbook_routes as cookbook_routes
@@ -51,6 +52,127 @@ class _ShellProc:
 
     async def wait(self):
         return 0
+
+
+@pytest.mark.asyncio
+async def test_local_windows_stop_failure_preserves_recovery_state(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(cookbook_routes, "TMUX_LOG_DIR", tmp_path)
+    monkeypatch.setattr(
+        cookbook_routes, "COOKBOOK_STATE_FILE", str(tmp_path / "state.json")
+    )
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(cookbook_routes, "pid_alive", lambda pid: True)
+    runner = tmp_path / "cookbook-deadbeef_run.ps1"
+    pid_file = tmp_path / "cookbook-deadbeef.pid"
+    runner.write_text("snapshot_download('org/model')", encoding="utf-8")
+    pid_file.write_text("1234", encoding="utf-8")
+
+    def failed_taskkill(args, **kwargs):
+        assert args[0] == "taskkill"
+        return SimpleNamespace(returncode=1, stdout="")
+
+    monkeypatch.setattr(cookbook_routes.subprocess, "run", failed_taskkill)
+    endpoint = _route_endpoint("/api/cookbook/stop-session", "POST")
+    req = SimpleNamespace(
+        session_id="cookbook-deadbeef",
+        remote_host=None,
+        ssh_port=None,
+        platform="windows",
+        repo_id="org/model",
+        task_type="download",
+    )
+
+    result = await endpoint(_admin_request("/api/cookbook/stop-session"), req)
+
+    assert result["ok"] is False
+    assert result["stopped"] is False
+    assert "failed to stop local Windows process tree" in result["error"]
+    assert runner.exists()
+    assert pid_file.exists()
+    assert not (tmp_path / "cookbook-deadbeef.stop").exists()
+    assert not (tmp_path / "cookbook-stopped-repos.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_local_windows_stop_requires_a_confirmed_process(monkeypatch, tmp_path):
+    monkeypatch.setattr(cookbook_routes, "TMUX_LOG_DIR", tmp_path)
+    monkeypatch.setattr(
+        cookbook_routes, "COOKBOOK_STATE_FILE", str(tmp_path / "state.json")
+    )
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(cookbook_routes, "pid_alive", lambda pid: False)
+    runner = tmp_path / "cookbook-deadbeef_run.ps1"
+    runner.write_text("snapshot_download('org/model')", encoding="utf-8")
+
+    def successful_empty_scan(args, **kwargs):
+        assert args[0] == "powershell"
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(cookbook_routes.subprocess, "run", successful_empty_scan)
+    endpoint = _route_endpoint("/api/cookbook/stop-session", "POST")
+    req = SimpleNamespace(
+        session_id="cookbook-deadbeef",
+        remote_host=None,
+        ssh_port=None,
+        platform="windows",
+        repo_id="org/model",
+        task_type="download",
+    )
+
+    result = await endpoint(_admin_request("/api/cookbook/stop-session"), req)
+
+    assert result["ok"] is False
+    assert result["stopped"] is False
+    assert "no live local Windows session process" in result["error"]
+    assert runner.exists()
+    assert not (tmp_path / "cookbook-deadbeef.stop").exists()
+
+
+@pytest.mark.asyncio
+async def test_local_windows_stop_cleans_artifacts_after_verified_kill(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(cookbook_routes, "TMUX_LOG_DIR", tmp_path)
+    monkeypatch.setattr(
+        cookbook_routes, "COOKBOOK_STATE_FILE", str(tmp_path / "state.json")
+    )
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+    alive_results = iter([True, False])
+    monkeypatch.setattr(
+        cookbook_routes, "pid_alive", lambda pid: next(alive_results, False)
+    )
+    runner = tmp_path / "cookbook-deadbeef_run.ps1"
+    pid_file = tmp_path / "cookbook-deadbeef.pid"
+    runner.write_text("snapshot_download('org/model')", encoding="utf-8")
+    pid_file.write_text("1234", encoding="utf-8")
+
+    def successful_commands(args, **kwargs):
+        assert args[0] in {"taskkill", "powershell"}
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(cookbook_routes.subprocess, "run", successful_commands)
+    endpoint = _route_endpoint("/api/cookbook/stop-session", "POST")
+    req = SimpleNamespace(
+        session_id="cookbook-deadbeef",
+        remote_host=None,
+        ssh_port=None,
+        platform="windows",
+        repo_id="org/model",
+        task_type="download",
+    )
+
+    result = await endpoint(_admin_request("/api/cookbook/stop-session"), req)
+
+    assert result["ok"] is True
+    assert result["stopped"] is True
+    assert not runner.exists()
+    assert not pid_file.exists()
+    assert (tmp_path / "cookbook-deadbeef.stop").exists()
+    assert "org/model" in (
+        tmp_path / "cookbook-stopped-repos.json"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -227,3 +349,24 @@ async def test_remote_windows_hf_runner_emits_real_powershell_blocks(
     assert "} catch {\n" in source
     assert "{{" not in source
     assert "}}" not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ssh_port", ["0", "65536", "99999"])
+async def test_server_setup_rejects_out_of_range_ssh_port(
+    monkeypatch, ssh_port
+):
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+
+    async def fail_if_shell_runs(*args, **kwargs):
+        raise AssertionError("invalid SSH port must be rejected before shell launch")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", fail_if_shell_runs)
+    endpoint = _route_endpoint("/api/cookbook/setup", "POST")
+    req = SimpleNamespace(host="winbox", ssh_port=ssh_port)
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint(_admin_request("/api/cookbook/setup"), req)
+
+    assert exc.value.status_code == 400
+    assert "ssh_port" in str(exc.value.detail)

@@ -1064,6 +1064,25 @@ def setup_cookbook_routes() -> APIRouter:
                     continue
         return None
 
+    def _scan_windows_download_processes_checked(
+        repo_id: str,
+    ) -> tuple[bool, int | None]:
+        """Return (scan_succeeded, downloader_pid) for a local Windows repo."""
+        try:
+            probe = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", _windows_download_process_scan_ps()],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            return False, None
+        if probe.returncode != 0:
+            return False, None
+        out = probe.stdout or ""
+        return True, _parse_windows_download_scan(out, repo_id)
+
     def _scan_windows_download_processes(repo_id: str) -> int | None:
         """PID of any live process downloading repo_id (Windows, best-effort).
 
@@ -1073,17 +1092,8 @@ def setup_cookbook_routes() -> APIRouter:
         orphans hold the HF cache file locks and deadlock any new download of
         the same repo.
         """
-        try:
-            out = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", _windows_download_process_scan_ps()],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            ).stdout or ""
-        except Exception:
-            return None
-        return _parse_windows_download_scan(out, repo_id)
+        _scan_ok, pid = _scan_windows_download_processes_checked(repo_id)
+        return pid
 
     def _ssh_powershell_argv(remote: str, ssh_port: str | None, ps: str) -> list[str]:
         ssh_args = [
@@ -1337,7 +1347,7 @@ def setup_cookbook_routes() -> APIRouter:
                 return {"orphan_pid": orphan_pid}
         return None
 
-    def _scan_windows_session_pids(session_id: str) -> list[int]:
+    def _scan_windows_session_pids(session_id: str) -> list[int] | None:
         """PIDs whose command line references this cookbook session's wrappers."""
         if not session_id:
             return []
@@ -1348,15 +1358,18 @@ def setup_cookbook_routes() -> APIRouter:
             "ForEach-Object { $_.ProcessId }"
         )
         try:
-            out = subprocess.run(
+            probe = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps],
                 capture_output=True,
                 text=True,
                 timeout=15,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            ).stdout or ""
+            )
         except Exception:
-            return []
+            return None
+        if probe.returncode != 0:
+            return None
+        out = probe.stdout or ""
         pids: list[int] = []
         for line in out.splitlines():
             try:
@@ -1365,48 +1378,101 @@ def setup_cookbook_routes() -> APIRouter:
                 continue
         return pids
 
+    def _kill_local_windows_pid(pid: int) -> bool:
+        """Kill a Windows process tree and verify that its root exited."""
+        try:
+            result = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            return False
+        if result.returncode != 0:
+            return False
+        for _ in range(10):
+            if not pid_alive(pid):
+                return True
+            time.sleep(0.05)
+        return not pid_alive(pid)
+
     def _stop_local_windows_session(session_id: str, repo_id: str | None = None) -> dict:
         """Kill a local Windows detached cookbook session and orphan downloaders."""
-        _write_session_stop_marker(session_id, repo_id)
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
-        stopped = False
+        found_process = False
         detail: list[str] = []
-        killed: set[int] = set()
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
             if pid_alive(pid):
-                kill_process_tree(pid)
-                killed.add(pid)
-                stopped = True
+                found_process = True
+                if not _kill_local_windows_pid(pid):
+                    return {
+                        "ok": False,
+                        "stopped": False,
+                        "error": f"failed to stop local Windows process tree pid {pid}",
+                        "detail": "recovery artifacts preserved",
+                    }
                 detail.append(f"killed pid {pid}")
         except (OSError, ValueError):
             pass
         for _ in range(3):
-            session_pids = [
-                p for p in _scan_windows_session_pids(session_id)
-                if p not in killed and pid_alive(p)
-            ]
+            scanned_pids = _scan_windows_session_pids(session_id)
+            if scanned_pids is None:
+                return {
+                    "ok": False,
+                    "stopped": False,
+                    "error": "failed to scan local Windows session processes",
+                    "detail": "recovery artifacts preserved",
+                }
+            session_pids = sorted({p for p in scanned_pids if pid_alive(p)})
             if not session_pids:
                 break
             for pid in session_pids:
-                kill_process_tree(pid)
-                killed.add(pid)
-                stopped = True
+                found_process = True
+                if not _kill_local_windows_pid(pid):
+                    return {
+                        "ok": False,
+                        "stopped": False,
+                        "error": f"failed to stop local Windows session process pid {pid}",
+                        "detail": "recovery artifacts preserved",
+                    }
                 detail.append(f"killed session process pid {pid}")
         if repo_id:
             for _ in range(3):
-                orphan = _scan_windows_download_processes(repo_id)
-                if not orphan or orphan in killed or not pid_alive(orphan):
+                scan_ok, orphan = _scan_windows_download_processes_checked(repo_id)
+                if not scan_ok:
+                    return {
+                        "ok": False,
+                        "stopped": False,
+                        "error": "failed to scan local Windows download processes",
+                        "detail": "recovery artifacts preserved",
+                    }
+                if not orphan or not pid_alive(orphan):
                     break
-                kill_process_tree(orphan)
-                killed.add(orphan)
-                stopped = True
+                found_process = True
+                if not _kill_local_windows_pid(orphan):
+                    return {
+                        "ok": False,
+                        "stopped": False,
+                        "error": f"failed to stop local Windows orphan downloader pid {orphan}",
+                        "detail": "recovery artifacts preserved",
+                    }
                 detail.append(f"killed orphan downloader pid {orphan}")
+        if not found_process:
+            return {
+                "ok": False,
+                "stopped": False,
+                "error": "no live local Windows session process could be confirmed",
+                "detail": "recovery artifacts preserved",
+            }
+        _write_session_stop_marker(session_id, repo_id)
         _unlink_session_artifacts(session_id)
         return {
             "ok": True,
-            "stopped": stopped,
-            "detail": "; ".join(detail) or "session artifacts removed",
+            "stopped": True,
+            "detail": "; ".join(detail),
         }
 
     async def _stop_remote_windows_session(
@@ -3237,9 +3303,7 @@ def setup_cookbook_routes() -> APIRouter:
         host = validate_remote_host(req.host)
         if not host:
             raise HTTPException(400, "host is required")
-        port = req.ssh_port
-        if port is not None and port != "" and not re.fullmatch(r"\d{1,5}", port):
-            raise HTTPException(400, "Invalid ssh_port")
+        port = validate_ssh_port(req.ssh_port)
         pf = f"-p {port} " if port and port != "22" else ""
 
         # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
