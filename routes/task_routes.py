@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
 from core.constants import internal_api_base
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, _auth_disabled
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_action_policy import (
     ADMIN_ONLY_TASK_ACTIONS,
@@ -565,6 +565,12 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         cross-tenant drain — see review CRIT-B)."""
         user = _owner(request)
         if not user:
+            # Auth-disabled installs use the anonymous channel for WS push,
+            # so serve the same channel via HTTP fallback too.
+            if _auth_disabled():
+                from routes.ws_routes import _ANONYMOUS_OWNER
+                notes = task_scheduler.pop_notifications(owner=_ANONYMOUS_OWNER)
+                return {"notifications": notes}
             return {"notifications": []}
         notes = task_scheduler.pop_notifications(owner=user)
         return {"notifications": notes}
