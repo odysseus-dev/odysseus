@@ -1383,6 +1383,51 @@ def _model_list_base(url: str) -> str:
     return base
 
 
+def _configured_numeric_reasoning_effort(endpoint_url: str, model: str) -> Optional[float]:
+    """Read an explicit float reasoning capability from the matching endpoint."""
+    target = _model_list_base(endpoint_url)
+    if not target:
+        return None
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+        db = SessionLocal()
+    except Exception:
+        return None
+    try:
+        rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        for endpoint in rows:
+            if _model_list_base(getattr(endpoint, "base_url", "")) != target:
+                continue
+            if getattr(endpoint, "reasoning_effort_type", None) != "float":
+                return None
+            value = getattr(endpoint, "reasoning_effort", None)
+            if value is None:
+                return None
+            value = float(value)
+            return value if 0.0 <= value <= 0.99 else None
+    except Exception:
+        return None
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return None
+
+
+def _apply_endpoint_reasoning_effort(payload: Dict, endpoint_url: str, model: str) -> None:
+    """Pass numeric effort through to model templates that support it."""
+    effort = _configured_numeric_reasoning_effort(endpoint_url, model)
+    if effort is None:
+        return
+    payload.pop("reasoning_effort", None)
+    template_kwargs = payload.get("chat_template_kwargs")
+    if not isinstance(template_kwargs, dict):
+        template_kwargs = {}
+        payload["chat_template_kwargs"] = template_kwargs
+    template_kwargs["reasoning_effort"] = effort
+
+
 def _parse_model_cache(raw) -> List[str]:
     if not raw:
         return []
@@ -1579,6 +1624,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             payload[tok_key] = max_tokens
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_endpoint_reasoning_effort(payload, target_url, model)
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -1787,6 +1833,7 @@ async def llm_call_async(
             payload["think"] = False
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_endpoint_reasoning_effort(payload, target_url, model)
         _apply_local_cache_affinity(payload, url, session_id)
 
     if _is_host_dead(target_url):
@@ -1911,6 +1958,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         # (high / medium / low / none); default "high".
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_endpoint_reasoning_effort(payload, target_url, model)
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.

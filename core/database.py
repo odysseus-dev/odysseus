@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, Float, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -384,6 +384,11 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # Optional endpoint-level numeric reasoning control. Some model templates
+    # accept a continuous value rather than OpenAI's named effort levels.
+    # ``float`` means the value is passed through chat_template_kwargs.
+    reasoning_effort_type = Column(String, nullable=True, default=None)
+    reasoning_effort = Column(Float, nullable=True, default=None)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
@@ -997,6 +1002,27 @@ def _migrate_add_supports_tools_column():
             conn.close()
         except Exception:
             pass
+
+
+def _migrate_add_reasoning_effort_columns():
+    """Add endpoint-scoped numeric reasoning controls to existing databases."""
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(model_endpoints)").fetchall()}
+        if columns and "reasoning_effort_type" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN reasoning_effort_type TEXT")
+        if columns and "reasoning_effort" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN reasoning_effort FLOAT")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"reasoning effort migration failed: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _migrate_add_cached_models_column():
@@ -1803,6 +1829,7 @@ def init_db():
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
     _migrate_add_supports_tools_column()
+    _migrate_add_reasoning_effort_columns()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()

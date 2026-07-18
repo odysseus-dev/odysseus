@@ -516,6 +516,15 @@ async function loadEndpoints() {
       const keyLabel = ep.has_key
         ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
         : '';
+      const numericEffort = ep.reasoning_effort_type === 'float'
+        ? Math.max(0, Math.min(0.99, Number(ep.reasoning_effort ?? 0.9)))
+        : null;
+      const reasoningControl = numericEffort === null ? '' : `
+          <div class="admin-ep-detail" style="display:flex;align-items:center;gap:8px;padding-top:5px;" data-adm-reasoning-row="${ep.id}">
+            <label for="adm-reasoning-${ep.id}" title="Continuous reasoning effort sent to this model endpoint">Thinking effort</label>
+            <input id="adm-reasoning-${ep.id}" type="range" min="0" max="0.99" step="0.01" value="${numericEffort.toFixed(2)}" data-adm-reasoning-effort="${ep.id}" style="width:150px;">
+            <output data-adm-reasoning-output="${ep.id}" style="min-width:2.7rem;font-variant-numeric:tabular-nums;">${numericEffort.toFixed(2)}</output>
+          </div>`;
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -535,6 +544,7 @@ async function loadEndpoints() {
             </div>
           </div>
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          ${reasoningControl}
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -572,6 +582,22 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-reasoning-effort]').forEach(input => {
+      const output = queryAll(`[data-adm-reasoning-output="${input.dataset.admReasoningEffort}"]`)[0];
+      input.addEventListener('input', () => {
+        if (output) output.value = Number(input.value).toFixed(2);
+      });
+      input.addEventListener('change', async () => {
+        const value = Number(input.value);
+        const res = await fetch(`/api/model-endpoints/${input.dataset.admReasoningEffort}`, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reasoning_effort_type: 'float', reasoning_effort: value }),
+        });
+        if (!res.ok) loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
