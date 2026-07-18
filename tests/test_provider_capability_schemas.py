@@ -1001,6 +1001,48 @@ def test_huggingface_reader_maps_provider_specific_pipeline_metadata():
     assert record.capability.confidence == mc.CONFIDENCE_REGISTRY
 
 
+def test_huggingface_optional_pipeline_tag_preserves_identity_only_records():
+    cases = (
+        (
+            {"modelId": "org/no-pipeline-tag"},
+            "huggingface.hub.model-info.v1",
+        ),
+        (
+            {"modelId": "org/null-pipeline-tag", "pipeline_tag": None},
+            "huggingface.hub.model-info.v1",
+        ),
+        (
+            [{"modelId": "org/list-no-pipeline-tag"}],
+            "huggingface.hub.model-info-list.v1",
+        ),
+        (
+            [{"modelId": "org/list-null-pipeline-tag", "pipeline_tag": None}],
+            "huggingface.hub.model-info-list.v1",
+        ),
+    )
+
+    for payload, shape_id in cases:
+        resolution = pcs.resolve_provider(payload, provider="huggingface")
+        direct = huggingface.records_from_payload(payload)
+        wrapped = records_from_payload(payload, vendor="huggingface")
+
+        assert resolution.shape_id == shape_id
+        assert resolution.fallback is False
+        assert len(direct) == 1
+        assert len(wrapped) == 1
+        assert wrapped[0].model_id == direct[0].model_id
+        assert wrapped[0].capability.family == mc.FAMILY_UNKNOWN
+        assert wrapped[0].capability.capabilities == ()
+        assert wrapped[0].catalog_shape_id == shape_id
+        assert wrapped[0].fallback is False
+
+    # An identity-only singleton remains insufficient to infer Hugging Face
+    # without configured provider or host context.
+    unscoped = {"modelId": "org/unscoped"}
+    assert pcs.resolve_provider(unscoped).provider_id == pcs.PROVIDER_UNKNOWN
+    assert records_from_payload(unscoped) == ()
+
+
 def test_cohere_reader_maps_only_native_endpoint_and_limit_fields():
     chat, ambiguous = cohere.records_from_payload(
         {
