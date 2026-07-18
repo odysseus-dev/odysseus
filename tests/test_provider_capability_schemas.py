@@ -243,6 +243,7 @@ def test_native_catalog_shapes_resolve_with_required_provider_context():
     explicit_context_providers = {
         "chatgpt_subscription",
         "cohere",
+        "huggingface",
         "lmstudio",
         "mistral",
     }
@@ -311,6 +312,20 @@ def test_payload_matching_multiple_providers_degrades_to_fallback():
     assert record.capability.family == mc.FAMILY_UNKNOWN
     assert record.capability.capabilities == ()
     assert record.fallback is True
+
+
+def test_generic_pipeline_tag_does_not_select_huggingface_without_provider_context():
+    payload = {"id": "generic-model", "pipeline_tag": "image-text-to-text"}
+    inferred = pcs.resolve_provider(payload)
+    contextual = pcs.resolve_provider(payload, provider="huggingface")
+
+    assert inferred.provider_id == pcs.PROVIDER_UNKNOWN
+    assert inferred.shape_id == ""
+    assert inferred.fallback is False
+    assert records_from_payload(payload) == ()
+    assert contextual.provider_id == "huggingface"
+    assert contextual.shape_id == "huggingface.hub.model-info.v1"
+    assert contextual.fallback is False
 
 
 def test_openrouter_payload_detection_requires_the_compound_official_shape():
