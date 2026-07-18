@@ -322,7 +322,7 @@ CHATGPT_MODELS_SHAPE = ProviderCatalogShape(
     envelope=ENVELOPE_MODELS,
     identity_paths=("slug",),
     required_item_any_paths=("visibility", "priority"),
-    detection_priority=90,
+    detection_priority=0,
 )
 SGLANG_MODEL_INFO_SHAPE = ProviderCatalogShape(
     shape_id="sglang.model-info.v2",
@@ -605,11 +605,11 @@ def native_shape_for_payload(
     matches = [shape for shape in shapes if shape.matches(payload)]
     if not matches:
         return None
-    priority = max(shape.detection_priority for shape in matches)
-    best = [shape for shape in matches if shape.detection_priority == priority]
-    providers = {shape.provider_id for shape in best}
+    providers = {shape.provider_id for shape in matches}
     if len(providers) != 1:
         return None
+    priority = max(shape.detection_priority for shape in matches)
+    best = [shape for shape in matches if shape.detection_priority == priority]
     return sorted(best, key=lambda shape: shape.shape_id)[0]
 
 
