@@ -6,6 +6,7 @@ from core.log_safety import (
     CAPABILITY_DIAGNOSTICS_LOGGER,
     ScopedDiagnosticsFilter,
     application_log_settings,
+    configure_uvicorn_log_levels,
     redact_url,
 )
 
@@ -63,6 +64,25 @@ def test_application_log_settings_scope_debug_and_fail_closed(
         expected_level,
         expected_capability_debug,
     )
+
+
+def test_configure_uvicorn_log_levels_clamps_non_propagating_loggers():
+    logger_names = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    previous_levels = {
+        name: logging.getLogger(name).level for name in logger_names
+    }
+    try:
+        for name in logger_names:
+            logging.getLogger(name).setLevel(logging.DEBUG)
+
+        configure_uvicorn_log_levels(logging.ERROR)
+
+        assert all(
+            logging.getLogger(name).level == logging.ERROR for name in logger_names
+        )
+    finally:
+        for name, level in previous_levels.items():
+            logging.getLogger(name).setLevel(level)
 
 
 def _record(name: str, level: int) -> logging.LogRecord:

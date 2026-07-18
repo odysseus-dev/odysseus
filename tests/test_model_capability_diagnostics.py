@@ -62,6 +62,7 @@ def test_web_app_logging_uses_existing_log_level_environment_toggle():
     assert 'os.getenv("LOG_LEVEL", "INFO")' in source
     assert "application_log_settings(_log_level_name)" in source
     assert "_root_logger.setLevel(_application_log_level)" in source
+    assert "configure_uvicorn_log_levels(_application_log_level)" in source
     assert "_console_h.addFilter(_diagnostics_filter)" in source
     assert "_file_h.addFilter(_diagnostics_filter)" in source
     assert "log_level=_application_log_level" in source
