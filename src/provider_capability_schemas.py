@@ -363,7 +363,7 @@ HUGGINGFACE_MODEL_SHAPE = ProviderCatalogShape(
     identity_paths=("modelId", "id"),
     required_item_paths=("pipeline_tag",),
     item_types=(("pipeline_tag", (str,)),),
-    detection_priority=80,
+    detection_priority=0,
 )
 COHERE_MODELS_SHAPE = ProviderCatalogShape(
     shape_id="cohere.models.rich.v1",
