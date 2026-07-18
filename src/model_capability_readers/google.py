@@ -20,7 +20,11 @@ vendor = VENDOR_GOOGLE
 
 def _model_items(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     models = payload.get("models") if isinstance(payload, Mapping) else None
-    if models is None and isinstance(payload, Mapping) and payload.get("name"):
+    if (
+        models is None
+        and isinstance(payload, Mapping)
+        and ai_studio.google_model_id(payload)
+    ):
         models = [payload]
     return tuple(item for item in as_list(models) if isinstance(item, Mapping))
 
