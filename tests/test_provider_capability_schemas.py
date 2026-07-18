@@ -369,6 +369,45 @@ def test_provider_specific_reader_is_not_used_for_a_different_fallback_envelope(
     assert record.fallback is True
 
 
+def test_selected_native_envelope_ignores_an_unrelated_alternate_envelope():
+    record = records_from_payload(
+        {
+            "data": [{"id": "unrelated-openai-card"}],
+            "models": [
+                {
+                    "key": "native-lmstudio-card",
+                    "type": "llm",
+                    "capabilities": {"vision": True},
+                }
+            ],
+        },
+        vendor="lmstudio",
+    )[0]
+
+    assert record.model_id == "native-lmstudio-card"
+    assert record.vendor == "lmstudio"
+    assert record.capability.family == mc.FAMILY_CHAT
+    assert record.capability.capabilities == (mc.CAP_VISION,)
+    assert record.catalog_shape_id == "lmstudio.models.native.v1"
+    assert record.fallback is False
+
+
+def test_selected_fallback_envelope_is_not_shadowed_by_empty_data():
+    record = records_from_payload(
+        {
+            "data": [],
+            "models": [{"id": "fallback-model", "capabilities": {"tools": True}}],
+        }
+    )[0]
+
+    assert record.model_id == "fallback-model"
+    assert record.vendor == pcs.PROVIDER_UNKNOWN
+    assert record.capability.family == mc.FAMILY_UNKNOWN
+    assert record.capability.capabilities == ()
+    assert record.catalog_shape_id == "fallback.models.envelope.v1"
+    assert record.fallback is True
+
+
 def test_fallback_reader_is_identity_only_even_for_dangerous_looking_fields():
     payload = [
         {
