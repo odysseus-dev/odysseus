@@ -108,25 +108,71 @@ def records_from_payload(
     if vendor_id == pcs.PROVIDER_UNKNOWN:
         vendor_id = detect_vendor(base_url, endpoint_kind)
     reader = reader_for_vendor(vendor_id)
-    if reader is generic_openai:
-        record_vendor = vendor_id if vendor_id else VENDOR_UNKNOWN
-        records = reader.records_from_payload(
+
+    record_vendor = vendor_id if vendor_id else VENDOR_UNKNOWN
+
+    def annotate(
+        records: tuple[ModelCapabilityRecord, ...],
+        *,
+        shape_id: str,
+        fallback: bool,
+    ) -> tuple[ModelCapabilityRecord, ...]:
+        return tuple(
+            replace(
+                record,
+                provider_source=resolution.provider_source,
+                catalog_shape_id=shape_id,
+                fallback=fallback,
+            )
+            for record in records
+        )
+
+    shape = pcs.catalog_shape_for_id(resolution.shape_id)
+    if resolution.fallback or reader is generic_openai or shape is None:
+        records = generic_openai.records_from_payload(
             payload,
             vendor_id=record_vendor,
             endpoint_id=endpoint_id,
             base_url=base_url,
         )
-    else:
-        records = reader.records_from_payload(payload, endpoint_id=endpoint_id, base_url=base_url)
-    normalized = tuple(
-        replace(
-            record,
-            provider_source=resolution.provider_source,
-            catalog_shape_id=resolution.shape_id,
+        normalized = annotate(
+            records,
+            shape_id=resolution.shape_id,
             fallback=resolution.fallback,
         )
-        for record in records
-    )
+    else:
+        normalized_records: list[ModelCapabilityRecord] = []
+        for item in shape.items(payload):
+            item_payload = shape.payload_for_item(payload, item)
+            if shape.item_matches(item):
+                native_records = reader.records_from_payload(
+                    item_payload,
+                    endpoint_id=endpoint_id,
+                    base_url=base_url,
+                )
+                if native_records:
+                    normalized_records.extend(
+                        annotate(native_records, shape_id=shape.shape_id, fallback=False)
+                    )
+                    continue
+
+            fallback_record = generic_openai.record_from_model(
+                item,
+                vendor_id=record_vendor,
+                endpoint_id=endpoint_id,
+                base_url=base_url,
+            )
+            if fallback_record:
+                fallback_shape = pcs.fallback_shape_for_payload(item_payload)
+                normalized_records.extend(
+                    annotate(
+                        (fallback_record,),
+                        shape_id=fallback_shape.shape_id if fallback_shape else "",
+                        fallback=True,
+                    )
+                )
+        normalized = tuple(normalized_records)
+
     if logger.isEnabledFor(logging.DEBUG):
         families = sorted({record.capability.family for record in normalized})
         features = sorted(
@@ -144,16 +190,27 @@ def records_from_payload(
                 if control.control
             }
         )
+        fallback_count = sum(record.fallback for record in normalized)
+        diagnostic_provider = (
+            resolution.provider_id
+            if resolution.provider_id in pcs.PROVIDER_SCHEMAS
+            else "unknown"
+            if resolution.provider_id == pcs.PROVIDER_UNKNOWN
+            else "unregistered"
+        )
         logger.debug(
             "[model-capability] normalized: canonical_version=%s provider=%s "
             "provider_source=%s catalog_shape=%s fallback=%s records=%d "
+            "native_records=%d fallback_records=%d "
             "families=%s features=%s controls=%s",
             CANONICAL_MODEL_SHAPE_VERSION,
-            resolution.provider_id,
+            diagnostic_provider,
             resolution.provider_source,
             resolution.shape_id or "unknown",
-            resolution.fallback,
+            bool(fallback_count),
             len(normalized),
+            len(normalized) - fallback_count,
+            fallback_count,
             families,
             features,
             controls,

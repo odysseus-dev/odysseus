@@ -7,7 +7,61 @@ raw leaks those secrets, so route/diagnostic logs run URLs through
 also doubles as a sanitizer barrier for CodeQL's clear-text-logging query.
 """
 
+from __future__ import annotations
+
+import logging
+
 from urllib.parse import urlparse, urlunparse
+
+
+CAPABILITY_DIAGNOSTICS_LOGGER = "src.model_capability_readers"
+
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARN": logging.WARNING,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "FATAL": logging.CRITICAL,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
+def application_log_settings(value: object) -> tuple[int, bool]:
+    """Return the safe app level and whether scoped capability debug is on.
+
+    Application-wide DEBUG logging can expose request bodies, provider
+    responses, or credentials from unrelated libraries.  The model capability
+    catalog has a deliberately bounded DEBUG summary, so a DEBUG request is
+    translated into INFO for the application and enabled only for that logger.
+    Unknown values also fail closed to INFO.
+    """
+
+    requested = _LOG_LEVELS.get(str(value or "INFO").strip().upper(), logging.INFO)
+    return max(requested, logging.INFO), requested == logging.DEBUG
+
+
+class ScopedDiagnosticsFilter(logging.Filter):
+    """Allow normal application records plus one explicitly scoped DEBUG log."""
+
+    def __init__(
+        self,
+        application_level: int,
+        *,
+        capability_debug: bool = False,
+    ) -> None:
+        super().__init__()
+        self.application_level = application_level
+        self.capability_debug = capability_debug
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= self.application_level:
+            return True
+        return (
+            self.capability_debug
+            and record.levelno >= logging.DEBUG
+            and record.name == CAPABILITY_DIAGNOSTICS_LOGGER
+        )
 
 
 def redact_url(url: str) -> str:

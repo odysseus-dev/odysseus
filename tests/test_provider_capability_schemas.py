@@ -14,6 +14,22 @@ from src.model_capability_readers import (
 )
 
 
+def _openrouter_payload(*items):
+    return {
+        "data": list(items)
+        or [
+            {
+                "id": "provider/model",
+                "architecture": {"modality": "text->text"},
+                "canonical_slug": "provider/model",
+                "pricing": {"prompt": "0.1", "completion": "0.2"},
+                "supported_parameters": ["tools", "temperature"],
+                "top_provider": {"context_length": 32768},
+            }
+        ]
+    }
+
+
 def test_provider_identity_and_catalog_shape_are_resolved_separately():
     google_payload = {
         "models": [
@@ -71,6 +87,27 @@ def test_provider_host_matching_rejects_lookalikes_and_does_not_use_ports():
     assert pcs.provider_from_host("http://127.0.0.1:30000") == pcs.PROVIDER_UNKNOWN
 
 
+def test_transport_endpoint_kinds_do_not_preempt_host_or_payload_provider_identity():
+    payload = _openrouter_payload()
+
+    for endpoint_kind in ("auto", "local", "api", "proxy", "future-transport"):
+        from_host = pcs.resolve_provider(
+            payload,
+            endpoint_kind=endpoint_kind,
+            base_url="https://api.openrouter.ai/v1",
+        )
+        from_payload = pcs.resolve_provider(payload, endpoint_kind=endpoint_kind)
+
+        assert from_host.provider_id == "openrouter"
+        assert from_host.provider_source == pcs.PROVIDER_SOURCE_HOST
+        assert from_payload.provider_id == "openrouter"
+        assert from_payload.provider_source == pcs.PROVIDER_SOURCE_PAYLOAD
+
+    assert pcs.provider_from_endpoint_kind("ollama") == "ollama"
+    assert pcs.provider_from_endpoint_kind("llama.cpp") == "llamacpp"
+    assert pcs.provider_from_endpoint_kind("proxy") == pcs.PROVIDER_UNKNOWN
+
+
 def test_provider_aliases_only_normalize_explicit_identity():
     assert pcs.normalize_provider_id("opencode-go") == "opencode"
     assert pcs.normalize_provider_id("opencode-zen") == "opencode"
@@ -102,8 +139,13 @@ def test_unregistered_explicit_provider_is_preserved_but_stays_on_fallback():
     assert records[0].capability.capabilities == ()
 
 
-def test_current_native_catalog_shapes_are_discriminating():
+def test_native_catalog_shapes_resolve_with_required_provider_context():
     cases = (
+        (
+            _openrouter_payload(),
+            "openrouter",
+            "openrouter.models.rich.v1",
+        ),
         (
             {"models": [{"key": "local/model", "type": "llm", "capabilities": {"vision": True}}]},
             "lmstudio",
@@ -198,28 +240,133 @@ def test_current_native_catalog_shapes_are_discriminating():
         ),
     )
 
+    explicit_context_providers = {"cohere", "lmstudio", "mistral"}
     for payload, expected_provider, expected_shape in cases:
-        resolution = pcs.resolve_provider(payload)
+        explicit_provider = (
+            expected_provider if expected_provider in explicit_context_providers else None
+        )
+        resolution = pcs.resolve_provider(payload, provider=explicit_provider)
         assert resolution.provider_id == expected_provider
-        assert resolution.provider_source == pcs.PROVIDER_SOURCE_PAYLOAD
+        assert resolution.provider_source == (
+            pcs.PROVIDER_SOURCE_EXPLICIT
+            if explicit_provider
+            else pcs.PROVIDER_SOURCE_PAYLOAD
+        )
         assert resolution.shape_id == expected_shape
         assert resolution.fallback is False
 
 
-def test_wrong_native_field_types_degrade_to_explicit_fallback_inventory():
-    malformed_cohere = pcs.resolve_provider(
-        {"models": [{"name": "future", "endpoints": "chat", "context_length": 4096}]}
-    )
-    malformed_mistral = pcs.resolve_provider(
-        {"data": [{"id": "future", "capabilities": ["completion_chat"]}]}
+def test_ambiguous_common_fields_do_not_infer_provider_from_payload_alone():
+    cases = (
+        ({"data": [{"id": "generic", "architecture": {}}]}, "openrouter"),
+        ({"data": [{"id": "generic", "supported_parameters": ["tools"]}]}, "openrouter"),
+        (
+            {"data": [{"id": "generic", "capabilities": {"completion_chat": True}}]},
+            "mistral",
+        ),
+        ({"data": [{"id": "generic", "type": "llm", "arch": "future"}]}, "lmstudio"),
+        (
+            {"models": [{"key": "generic", "type": "llm", "capabilities": {}}]},
+            "lmstudio",
+        ),
+        (
+            {"models": [{"name": "generic", "endpoints": ["chat"], "context_length": 4096}]},
+            "cohere",
+        ),
     )
 
-    assert malformed_cohere.provider_id == pcs.PROVIDER_UNKNOWN
+    for payload, provider_id in cases:
+        inferred = pcs.resolve_provider(payload)
+        contextual = pcs.resolve_provider(payload, provider=provider_id)
+
+        assert inferred.provider_id == pcs.PROVIDER_UNKNOWN
+        assert inferred.fallback is True
+        assert contextual.provider_id == provider_id
+
+
+def test_openrouter_payload_detection_requires_the_compound_official_shape():
+    complete = _openrouter_payload()
+    assert pcs.resolve_provider(complete).shape_id == "openrouter.models.rich.v1"
+
+    item = complete["data"][0]
+    for required_field in (
+        "architecture",
+        "canonical_slug",
+        "pricing",
+        "supported_parameters",
+        "top_provider",
+    ):
+        partial = _openrouter_payload(
+            {key: value for key, value in item.items() if key != required_field}
+        )
+        resolution = pcs.resolve_provider(partial)
+
+        assert resolution.provider_id == pcs.PROVIDER_UNKNOWN
+        assert resolution.shape_id == "fallback.models.data.v1"
+        assert resolution.fallback is True
+
+
+def test_wrong_native_field_types_degrade_to_explicit_fallback_inventory():
+    malformed_cohere = pcs.resolve_provider(
+        {"models": [{"name": "future", "endpoints": "chat", "context_length": 4096}]},
+        provider="cohere",
+    )
+    malformed_mistral = pcs.resolve_provider(
+        {"data": [{"id": "future", "capabilities": ["completion_chat"]}]},
+        provider="mistral",
+    )
+
+    assert malformed_cohere.provider_id == "cohere"
     assert malformed_cohere.shape_id == "fallback.models.envelope.v1"
     assert malformed_cohere.fallback is True
-    assert malformed_mistral.provider_id == pcs.PROVIDER_UNKNOWN
+    assert malformed_mistral.provider_id == "mistral"
     assert malformed_mistral.shape_id == "fallback.models.data.v1"
     assert malformed_mistral.fallback is True
+
+
+def test_explicit_fallback_and_mixed_native_payloads_are_normalized_per_item():
+    malformed = {"models": [{"name": "unsafe", "endpoints": "chat", "context_length": 4096}]}
+    malformed_record = records_from_payload(malformed, vendor="cohere")[0]
+
+    assert malformed_record.vendor == "cohere"
+    assert malformed_record.capability.family == mc.FAMILY_UNKNOWN
+    assert dict(malformed_record.capability.limits) == {}
+    assert malformed_record.catalog_shape_id == "fallback.models.envelope.v1"
+    assert malformed_record.fallback is True
+
+    valid_item = {
+        "name": "native",
+        "endpoints": ["chat"],
+        "context_length": 131072,
+    }
+    native, fallback = records_from_payload(
+        {"models": [valid_item, malformed["models"][0]]},
+        vendor="cohere",
+    )
+
+    assert native.model_id == "native"
+    assert native.capability.family == mc.FAMILY_CHAT
+    assert dict(native.capability.limits) == {"context_tokens": 131072}
+    assert native.catalog_shape_id == "cohere.models.rich.v1"
+    assert native.fallback is False
+    assert fallback.model_id == "unsafe"
+    assert fallback.capability.family == mc.FAMILY_UNKNOWN
+    assert dict(fallback.capability.limits) == {}
+    assert fallback.catalog_shape_id == "fallback.models.envelope.v1"
+    assert fallback.fallback is True
+
+
+def test_provider_specific_reader_is_not_used_for_a_different_fallback_envelope():
+    record = records_from_payload(
+        [{"id": "untrusted", "architecture": {"modality": "text+image->text"}}],
+        vendor="openrouter",
+    )[0]
+
+    assert record.vendor == "openrouter"
+    assert record.capability.family == mc.FAMILY_UNKNOWN
+    assert record.capability.capabilities == ()
+    assert record.catalog_shape_id == "fallback.models.list.v1"
+    assert record.fallback is True
 
 
 def test_fallback_reader_is_identity_only_even_for_dangerous_looking_fields():
@@ -375,6 +522,41 @@ def test_sglang_model_info_maps_native_generation_flags_only():
     assert pooling.capability.family == mc.FAMILY_UNKNOWN
 
 
+def test_sglang_openai_catalog_preserves_only_valid_native_context_limit():
+    valid = records_from_payload(
+        {
+            "data": [
+                {
+                    "id": "served-model",
+                    "owned_by": "sglang",
+                    "root": "org/model",
+                    "max_model_len": 131072,
+                }
+            ]
+        }
+    )[0]
+    nonpositive = sglang.records_from_payload(
+        {
+            "data": [
+                {
+                    "id": "served-model",
+                    "owned_by": "sglang",
+                    "root": "org/model",
+                    "max_model_len": 0,
+                }
+            ]
+        }
+    )[0]
+
+    assert valid.vendor == "sglang"
+    assert valid.capability.family == mc.FAMILY_UNKNOWN
+    assert valid.capability.capabilities == ()
+    assert dict(valid.capability.limits) == {"context_tokens": 131072}
+    assert valid.catalog_shape_id == "sglang.models.openai.v1"
+    assert valid.fallback is False
+    assert dict(nonpositive.capability.limits) == {}
+
+
 def test_identity_only_native_catalogs_remain_unknown():
     anthropic_record = anthropic.records_from_payload(
         {
@@ -461,7 +643,8 @@ def test_reader_wrapper_adds_one_lean_evidence_object():
                     "capabilities": {"completion_chat": True, "function_calling": True},
                 }
             ]
-        }
+        },
+        base_url="https://api.mistral.ai/v1",
     )[0]
     serialized = record.to_dict()
 
@@ -472,7 +655,7 @@ def test_reader_wrapper_adds_one_lean_evidence_object():
     assert serialized["evidence"] == {
         "source": mc.SOURCE_PROVIDER_READER,
         "confidence": mc.CONFIDENCE_PROVIDER_REPORTED,
-        "provider_source": pcs.PROVIDER_SOURCE_PAYLOAD,
+        "provider_source": pcs.PROVIDER_SOURCE_HOST,
         "shape": "mistral.models.rich.v1",
         "fallback": False,
     }

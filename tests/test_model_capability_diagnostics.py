@@ -10,7 +10,10 @@ def test_normalization_debug_log_reports_shape_without_payload_identity(caplog):
             {
                 "id": "sensitive-model-id",
                 "architecture": {"modality": "text+image->text"},
+                "canonical_slug": "provider/sensitive-model-id",
+                "pricing": {"prompt": "0.1", "completion": "0.2"},
                 "supported_parameters": ["tools", "temperature"],
+                "top_provider": {"context_length": 32768},
                 "private_field": "secret-value",
             }
         ]
@@ -28,6 +31,8 @@ def test_normalization_debug_log_reports_shape_without_payload_identity(caplog):
     assert "catalog_shape=openrouter.models.rich.v1" in message
     assert "fallback=False" in message
     assert "records=1" in message
+    assert "native_records=1" in message
+    assert "fallback_records=0" in message
     assert "families=['chat']" in message
     assert "features=['tool_call', 'vision']" in message
     assert "controls=['temperature']" in message
@@ -43,9 +48,11 @@ def test_fallback_debug_log_is_explicit_and_has_no_capability_claims(caplog):
 
     assert records[0].capability.capabilities == ()
     message = caplog.messages[-1]
-    assert "provider=future_provider" in message
+    assert "provider=unregistered" in message
     assert "catalog_shape=fallback.models.list.v1" in message
     assert "fallback=True" in message
+    assert "native_records=0" in message
+    assert "fallback_records=1" in message
     assert "features=[]" in message
 
 
@@ -53,7 +60,8 @@ def test_web_app_logging_uses_existing_log_level_environment_toggle():
     source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
 
     assert 'os.getenv("LOG_LEVEL", "INFO")' in source
-    assert "_root_logger.setLevel(_log_level)" in source
-    assert "_console_h.setLevel(_log_level)" in source
-    assert "_file_h.setLevel(_log_level)" in source
-    assert "log_level=_log_level_name.lower()" in source
+    assert "application_log_settings(_log_level_name)" in source
+    assert "_root_logger.setLevel(_application_log_level)" in source
+    assert "_console_h.addFilter(_diagnostics_filter)" in source
+    assert "_file_h.addFilter(_diagnostics_filter)" in source
+    assert "log_level=_application_log_level" in source
