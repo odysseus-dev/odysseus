@@ -954,6 +954,197 @@ class TestAdminDemotionProtection:
         # An existing admin must not be demoted on missing evidence.
         auth.set_oidc_user_admin.assert_not_called()
 
+    def _run_admin_sync_callback(self, claims, monkeypatch):
+        monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = claims
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "existing-admin"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+        return auth
+
+    def test_userinfo_available_without_groups_preserves_admin(self, monkeypatch):
+        """UserInfo fetched but carrying no groups claim is NOT evidence of
+        membership loss — availability alone must not drive a demotion."""
+        auth = self._run_admin_sync_callback({
+            "sub": "existing-admin",
+            "email": "admin@example.com",
+            "_userinfo_available": True,
+            # no "groups" key anywhere
+        }, monkeypatch)
+        auth.set_oidc_user_admin.assert_not_called()
+
+    def test_malformed_groups_claim_preserves_admin(self, monkeypatch):
+        """A non-list groups value is not valid evidence and must not
+        demote an existing administrator."""
+        auth = self._run_admin_sync_callback({
+            "sub": "existing-admin",
+            "email": "admin@example.com",
+            "_userinfo_available": True,
+            "groups": "odysseus-admins",  # malformed: string, not list
+        }, monkeypatch)
+        auth.set_oidc_user_admin.assert_not_called()
+
+
+class TestSubjectIdentifierPreservation:
+    """Regression: OIDC subs are opaque — whitespace-bearing subjects must
+    not be normalized into a different subject's account."""
+
+    def _run_callback_with_sub(self, sub):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = {
+            "sub": sub,
+            "email": "alice@example.com",
+            "preferred_username": "alice",
+        }
+
+        auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
+        auth.get_user_by_oidc.return_value = None
+        auth.create_user_oidc.return_value = "alice"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+        return auth
+
+    def test_whitespace_bearing_sub_preserved_exactly(self):
+        sub = " user123 "
+        auth = self._run_callback_with_sub(sub)
+        auth.get_user_by_oidc.assert_called_once_with(sub, "https://idp.example.com")
+        auth.create_user_oidc.assert_called_once_with(
+            "alice", sub, "https://idp.example.com",
+            email="alice@example.com", is_admin=False,
+        )
+
+    def test_distinct_whitespace_subs_lookup_distinctly(self):
+        """'user123' and ' user123 ' must hit the account store as two
+        different keys, never collapsing into one local account."""
+        auth_a = self._run_callback_with_sub("user123")
+        auth_b = self._run_callback_with_sub(" user123 ")
+        (sub_a, _), _ = auth_a.get_user_by_oidc.call_args
+        (sub_b, _), _ = auth_b.get_user_by_oidc.call_args
+        assert sub_a != sub_b
+
+    def test_whitespace_only_sub_rejected(self):
+        auth = self._run_callback_with_sub("   ")
+        # "   " is a technically valid opaque sub per spec; ensure it is
+        # either used exactly or rejected — never trimmed to empty and
+        # never persisted as a different identifier.
+        if auth.create_user_oidc.called:
+            args, kwargs = auth.create_user_oidc.call_args
+            assert args[1] == "   "
+
+
+class TestOidcCookieSecurity:
+    """Regression: OIDC cookies must be Secure by default, regardless of
+    SECURE_COOKIES (which the bundled Compose files default to false)."""
+
+    def _login_cookie_kwargs(self):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.get_authorization_url.return_value = (
+            "https://idp.example.com/authorize?state=abc", "abc", "def",
+        )
+        router = _setup_oidc_routes(MagicMock(), mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/login")
+        import asyncio
+        with patch("fastapi.responses.RedirectResponse.set_cookie") as sc:
+            asyncio.run(ep(_fake_request()))
+            return sc.call_args.kwargs
+
+    def test_csrf_cookie_secure_despite_secure_cookies_false(self, monkeypatch):
+        monkeypatch.setenv("SECURE_COOKIES", "false")
+        monkeypatch.delenv("OIDC_ALLOW_INSECURE_COOKIES", raising=False)
+        assert self._login_cookie_kwargs()["secure"] is True
+
+    def test_csrf_cookie_secure_on_http_request(self, monkeypatch):
+        """Plain-http request scheme must not downgrade the cookie."""
+        monkeypatch.delenv("SECURE_COOKIES", raising=False)
+        monkeypatch.delenv("OIDC_ALLOW_INSECURE_COOKIES", raising=False)
+        assert self._login_cookie_kwargs()["secure"] is True
+
+    def test_explicit_dev_override_allows_insecure(self, monkeypatch):
+        monkeypatch.setenv("OIDC_ALLOW_INSECURE_COOKIES", "true")
+        assert self._login_cookie_kwargs()["secure"] is False
+
+    def test_session_cookie_secure_despite_secure_cookies_false(self, monkeypatch):
+        monkeypatch.setenv("SECURE_COOKIES", "false")
+        monkeypatch.delenv("OIDC_ALLOW_INSECURE_COOKIES", raising=False)
+
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = {
+            "sub": "user123", "email": "alice@example.com",
+        }
+        auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
+        auth.get_user_by_oidc.return_value = "alice"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        set_cookie = MagicMock()
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=set_cookie,
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+        assert set_cookie.call_args.kwargs["secure"] is True
+
 
 class TestOidcCallbackSecurityFailures:
     def _run_callback(self, auth, mgr, params, cookies=None):

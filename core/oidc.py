@@ -26,6 +26,8 @@ JWKS keys are cached after first fetch and refreshed only when an unknown
 60-second cooldown throttles both successful and failed refreshes.
 """
 
+import base64
+import hashlib
 import json
 import logging
 import math
@@ -74,12 +76,13 @@ def _get_state_fernet():
         return _state_fernet
 
 
-def _encode_state(nonce: str, redirect_uri: str) -> str:
+def _encode_state(nonce: str, redirect_uri: str, code_verifier: str) -> str:
     """Return a Fernet-encrypted state token containing nonce + metadata."""
     fernet = _get_state_fernet()
     payload = json.dumps({
         "nonce": nonce,
         "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
         "created": time.time(),
     })
     return fernet.encrypt(payload.encode()).decode()
@@ -97,10 +100,13 @@ def _decode_state(state: str) -> Optional[Dict[str, Any]]:
         return None
     nonce = data.get("nonce")
     redirect_uri = data.get("redirect_uri")
+    code_verifier = data.get("code_verifier")
     created = data.get("created")
     if not isinstance(nonce, str) or not nonce:
         return None
     if not isinstance(redirect_uri, str):
+        return None
+    if not isinstance(code_verifier, str) or not code_verifier:
         return None
     if not _is_numericdate(created):
         return None
@@ -164,7 +170,18 @@ class OidcManager:
         self._jwks_cache: Dict[str, Dict[str, Any]] = {}
         self._jwks_cache_lock = threading.Lock()
         self._allowed_algs: Optional[List[str]] = None
+        self._token_auth_methods: List[str] = ["client_secret_basic"]
         self._discover()
+
+    def _use_basic_auth(self) -> bool:
+        """True when the token endpoint should use client_secret_basic."""
+        if "client_secret_basic" in self._token_auth_methods:
+            return True
+        if "client_secret_post" in self._token_auth_methods:
+            return False
+        # Provider advertises neither shared-secret method — use the OIDC
+        # default rather than silently leaking the secret in the body.
+        return True
 
     # -- discovery -----------------------------------------------------------
 
@@ -176,6 +193,15 @@ class OidcManager:
         well_known_url = self.issuer + "/.well-known/openid-configuration"
         if not well_known_url.startswith(("http://", "https://")):
             well_known_url = f"https://{well_known_url}"
+        # The issuer (and therefore the discovery document) must be HTTPS:
+        # the authorization redirect carries state/nonce, and an http://
+        # issuer lets an active network attacker substitute authorization
+        # codes or rewrite the discovery document entirely.
+        if not well_known_url.startswith("https://"):
+            raise OidcError(
+                f"OIDC issuer must use HTTPS, got {self.issuer!r}. "
+                "Configure the IdP with TLS or set OIDC_ENABLED=false."
+            )
 
         try:
             resp = httpx.get(well_known_url, timeout=15.0)
@@ -204,10 +230,12 @@ class OidcManager:
                 f"discovery doc returned {doc_issuer!r}"
             )
 
-        # Client credentials and bearer tokens must never be sent over
-        # cleartext transport. Authorization is browser-facing and is not
-        # included because it does not carry those secrets.
-        for name in ("token_endpoint", "jwks_uri", "userinfo_endpoint"):
+        # No OIDC endpoint may use cleartext transport.  The back-channel
+        # endpoints carry client credentials and bearer tokens; the browser-
+        # facing authorization endpoint carries state/nonce and returns the
+        # authorization code, so an http:// endpoint enables code
+        # substitution by an active network observer.
+        for name in ("authorization_endpoint", "token_endpoint", "jwks_uri", "userinfo_endpoint"):
             url = self._config.get(name)
             if url and not isinstance(url, str):
                 raise OidcError(f"OIDC {name} must be a URL string")
@@ -223,6 +251,13 @@ class OidcManager:
         supported = self._config.get("id_token_signing_alg_values_supported", [])
         safe = [a for a in supported if a in ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512")]
         self._allowed_algs = safe or ["RS256"]
+
+        # Token-endpoint auth methods.  Per OIDC Discovery §3, an omitted
+        # token_endpoint_auth_methods_supported means client_secret_basic.
+        methods = self._config.get("token_endpoint_auth_methods_supported")
+        if not isinstance(methods, list) or not methods:
+            methods = ["client_secret_basic"]
+        self._token_auth_methods = methods
 
         logger.info(
             "OIDC provider discovered: issuer=%r auth=%r token=%r algs=%s",
@@ -264,9 +299,19 @@ class OidcManager:
         """
         nonce = secrets.token_hex(32)
 
+        # PKCE (RFC 7636, S256).  The verifier travels inside the encrypted
+        # state token, so the callback can recover it without server-side
+        # storage — same carrier as the nonce.
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+
         # Encode the nonce + metadata into the state parameter (Fernet-
         # encrypted, stateless — works across multiple workers/processes).
-        state = _encode_state(nonce, redirect_uri)
+        state = _encode_state(nonce, redirect_uri, code_verifier)
 
         from urllib.parse import urlencode
         params = {
@@ -276,6 +321,8 @@ class OidcManager:
             "scope": self.scopes,
             "state": state,
             "nonce": nonce,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
         # Request forced re-authentication when OIDC_MAX_AGE is configured.
         # The claim is later verified in _verify_id_token against auth_time.
@@ -300,6 +347,7 @@ class OidcManager:
             raise OidcError("OIDC state not found — may be expired, reused, or from a different worker")
         nonce = stored.get("nonce", "")
         stored_redirect_uri = stored.get("redirect_uri", "")
+        code_verifier = stored.get("code_verifier", "")
 
         # Bind the token exchange to the redirect_uri that was used in the
         # authorization request (carried in the signed state token).  Reject
@@ -312,7 +360,9 @@ class OidcManager:
             )
 
         # 2. Exchange code for tokens (using the stored redirect_uri)
-        token_data = self._token_request(code, stored_redirect_uri or redirect_uri)
+        token_data = self._token_request(
+            code, stored_redirect_uri or redirect_uri, code_verifier
+        )
 
         # 3. Verify id_token
         id_token = token_data.get("id_token")
@@ -349,9 +399,13 @@ class OidcManager:
                     )
                     userinfo = {}
                 else:
-                    # Require a non-empty sub that matches the verified
-                    # id_token subject before trusting any UserInfo claims.
-                    ui_sub = (userinfo.get("sub") or "").strip()
+                    # Require a non-empty sub that exactly matches the
+                    # verified id_token subject before trusting any UserInfo
+                    # claims.  No normalization: subs are opaque identifiers
+                    # and trimming could equate two distinct subjects.
+                    ui_sub = userinfo.get("sub")
+                    if not isinstance(ui_sub, str):
+                        ui_sub = ""
                     if not ui_sub:
                         logger.warning(
                             "UserInfo response missing sub claim — "
@@ -388,18 +442,34 @@ class OidcManager:
         claims["_userinfo_available"] = userinfo_available
         return claims
 
-    def _token_request(self, code: str, redirect_uri: str) -> Dict[str, Any]:
+    def _token_request(
+        self, code: str, redirect_uri: str, code_verifier: str
+    ) -> Dict[str, Any]:
         """POST the token endpoint to exchange code for tokens."""
         token_endpoint = self._config["token_endpoint"]
         payload = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
+            "code_verifier": code_verifier,
         }
+        # client_secret_basic is the OIDC default and the method the
+        # conformance suite expects; use it whenever the provider supports
+        # it (or doesn't advertise methods at all, which per Discovery §3
+        # means client_secret_basic).  Fall back to client_secret_post only
+        # when the provider explicitly excludes basic.
+        auth = None
+        if self._use_basic_auth():
+            from urllib.parse import quote
+            auth = (
+                quote(self.client_id, safe=""),
+                quote(self.client_secret, safe=""),
+            )
+        else:
+            payload["client_id"] = self.client_id
+            payload["client_secret"] = self.client_secret
         try:
-            resp = httpx.post(token_endpoint, data=payload, timeout=15.0)
+            resp = httpx.post(token_endpoint, data=payload, auth=auth, timeout=15.0)
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as exc:
@@ -583,15 +653,17 @@ class OidcManager:
                     f"{self.max_age} s (now={now:.0f}, age={now - auth_time:.0f} s)"
                 )
 
-        # Verify iat (issued-at) is not in the far future.
+        # Verify iat (issued-at): required by OIDC Core §2, must be numeric
+        # and not in the far future.
         iat = claims.get("iat")
-        if iat is not None:
-            if not _is_numericdate(iat):
-                raise OidcError(f"id_token iat claim is non-numeric: {iat!r}")
-            if iat > time.time() + 60:
-                raise OidcError(
-                    f"id_token iat {iat} is more than 60 s in the future"
-                )
+        if iat is None:
+            raise OidcError("id_token missing iat claim")
+        if not _is_numericdate(iat):
+            raise OidcError(f"id_token iat claim is non-numeric: {iat!r}")
+        if iat > time.time() + 60:
+            raise OidcError(
+                f"id_token iat {iat} is more than 60 s in the future"
+            )
 
         return claims
 

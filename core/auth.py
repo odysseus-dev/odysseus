@@ -136,6 +136,10 @@ class AuthManager:
         # all uvicorn workers so first-admin bootstrap and auth.json mutations
         # are serialised across processes, not just threads within one worker.
         self._ipc_lock_path = auth_path + ".lock"
+        # mtime of sessions.json at last load — lets validate_token cheaply
+        # detect sessions written by other uvicorn workers (see
+        # _reload_sessions_if_changed).
+        self._sessions_mtime_ns = -1
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -168,6 +172,7 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
+                self._sessions_mtime_ns = os.stat(self._sessions_path).st_mtime_ns
                 with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
@@ -179,6 +184,46 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to load sessions: {e}")
             self._sessions = {}
+
+    def _reload_sessions_if_changed(self):
+        """Merge sessions written by other uvicorn workers.
+
+        The OIDC callback (or a password login) may run on one worker while
+        the browser's next request lands on another; each worker loads
+        sessions.json only at startup, so the new token would be rejected.
+        Called on a token miss: when the file's mtime has changed since the
+        last load, re-read it and add unknown unexpired tokens to the
+        in-memory map.  The mtime gate keeps unknown-token spam at one
+        os.stat per request, not a JSON parse.
+
+        Additive only — tokens missing from disk are NOT dropped from
+        memory, so a token issued moments ago on this worker can't be lost
+        to a reload racing its own _save_sessions.
+        """
+        try:
+            stat = os.stat(self._sessions_path)
+        except OSError:
+            return
+        with self._sessions_lock:
+            if stat.st_mtime_ns == self._sessions_mtime_ns:
+                return
+            try:
+                with open(self._sessions_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to reload sessions: {e}")
+                return
+            self._sessions_mtime_ns = stat.st_mtime_ns
+            if not isinstance(data, dict):
+                return
+            now = time.time()
+            for tok, sess in data.items():
+                if (
+                    tok not in self._sessions
+                    and isinstance(sess, dict)
+                    and sess.get("expiry", 0) > now
+                ):
+                    self._sessions[tok] = sess
 
     def _save_sessions(self):
         """Persist session tokens to disk (atomic, lock-guarded)."""
@@ -878,6 +923,11 @@ class AuthManager:
     def validate_token(self, token: Optional[str]) -> bool:
         if not token:
             return False
+        with self._sessions_lock:
+            known = token in self._sessions
+        if not known:
+            # May have been issued by another worker — read through to disk.
+            self._reload_sessions_if_changed()
         expired = False
         deleted_user = False
         with self._sessions_lock:
@@ -904,6 +954,11 @@ class AuthManager:
         """Return the username associated with a valid token."""
         if not token:
             return None
+        with self._sessions_lock:
+            known = token in self._sessions
+        if not known:
+            # May have been issued by another worker — read through to disk.
+            self._reload_sessions_if_changed()
         expired = False
         deleted_user = False
         with self._sessions_lock:

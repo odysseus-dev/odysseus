@@ -104,7 +104,7 @@ def setup_oidc_routes(
             value=_state,
             httponly=True,
             samesite="lax",
-            secure=_is_secure_context(request),
+            secure=_oidc_cookie_secure(),
             path="/api/auth/oidc/callback",
             max_age=OIDC_CSRF_MAX_AGE,
         )
@@ -164,14 +164,20 @@ def setup_oidc_routes(
         name = claims.get("name", "")
         groups_claim_present = "groups" in claims
         groups = claims.get("groups", [])
-        id_token_groups_valid = groups_claim_present and isinstance(groups, list)
+        # Authoritative group evidence = a well-formed (list) groups claim
+        # from the verified id_token or the sub-bound UserInfo response.
+        # A missing or malformed claim is not evidence of membership loss.
+        groups_evidence_valid = groups_claim_present and isinstance(groups, list)
 
         # Validate claim types before use — malformed IdP claims must not
         # cause 500s or unsafe persistence operations.
-        if not isinstance(sub, str) or not sub.strip():
+        # The sub is an opaque identifier (OIDC Core §8): it is validated
+        # for type and bounds but never normalized — trimming whitespace
+        # could collapse two distinct verified subjects into one local
+        # account and hand one subject the other's session and privileges.
+        if not isinstance(sub, str) or not sub:
             logger.error("OIDC id_token sub is not a non-empty string: %r", sub)
             return _build_oidc_error_redirect("oidc_failed")
-        sub = sub.strip()
         if len(sub) > 512:
             logger.error("OIDC id_token sub exceeds maximum length")
             return _build_oidc_error_redirect("oidc_failed")
@@ -201,14 +207,7 @@ def setup_oidc_routes(
                         clean_groups.append(normalized_group)
             groups = clean_groups
 
-        # Was UserInfo successfully fetched?  When UserInfo is unavailable
-        # and the id_token does not carry a groups claim, we do not have
-        # authoritative group-membership evidence — existing admins must
-        # not be demoted based on missing data.
         userinfo_available = claims.pop("_userinfo_available", False)
-        # A malformed non-list groups claim is not authoritative evidence and
-        # must not demote an existing administrator.
-        id_token_has_groups = id_token_groups_valid
 
         # Determine admin status from IdP group membership.
         # OIDC_ADMIN_GROUPS is a comma-separated list; the user gets
@@ -244,19 +243,20 @@ def setup_oidc_routes(
             # Otherwise the bootstrap (or manual grant) would be undone
             # on the next login.
             if admin_groups:
-                # Only sync admin status when we have authoritative group
-                # evidence.  UserInfo is the primary source for groups;
-                # if it's unavailable and the id_token didn't carry a
-                # groups claim, skip the sync — a transient provider
-                # failure must not silently demote an existing admin.
-                if userinfo_available or id_token_has_groups:
+                # Only sync admin status when a trusted source (verified
+                # id_token or sub-bound UserInfo) supplied a well-formed
+                # groups claim.  A missing or malformed claim — e.g. a
+                # transient provider failure or a scope/configuration
+                # change — must not silently demote an existing admin.
+                if groups_evidence_valid:
                     logger.info("OIDC login for existing user '%s' (admin=%s)", username, is_admin)
                     auth_manager.set_oidc_user_admin(username, is_admin)
                 else:
                     logger.info(
                         "OIDC login for existing user '%s' — skipping admin sync "
-                        "(UserInfo unavailable and id_token has no groups claim)",
+                        "(no valid groups claim; userinfo_available=%s)",
                         username,
+                        userinfo_available,
                     )
             else:
                 logger.info("OIDC login for existing user '%s'", username)
@@ -285,17 +285,12 @@ def setup_oidc_routes(
             logger.error("Failed to create OIDC session for '%s'", username)
             return _build_oidc_error_redirect("oidc_failed")
 
-        # Default secure=true for OIDC flows (SSO implies a real deployment).
-        # Fall back to SECURE_COOKIES env var if explicitly set, then request
-        # scheme detection.
-        secure_val = _is_secure_context(request)
-
         cookie_kwargs = dict(
             key=SESSION_COOKIE,
             value=token,
             httponly=True,
             samesite="lax",
-            secure=secure_val,
+            secure=_oidc_cookie_secure(),
             path="/",
             max_age=60 * 60 * 24 * 7,  # 7 days
         )
@@ -309,22 +304,25 @@ def setup_oidc_routes(
     return router
 
 
-def _is_secure_context(request: Request) -> bool:
-    """Determine whether the session cookie should have the Secure flag.
+def _oidc_cookie_secure() -> bool:
+    """Determine whether OIDC cookies get the Secure flag.
 
-    Uses the SECURE_COOKIES env var if explicitly true/false; otherwise
-    derives from the request scheme (https → secure, http → not).
+    OIDC cookies are Secure by default: SSO implies a real deployment
+    behind TLS, and deriving the flag from SECURE_COOKIES (which the
+    bundled Compose files default to false) or the request scheme (which
+    is http behind a TLS-terminating proxy) would silently issue bearer
+    session cookies eligible for cleartext transmission.
+
+    The only opt-out is the explicit development override
+    OIDC_ALLOW_INSECURE_COOKIES=true, for plain-HTTP local testing.
+    Nothing else — not SECURE_COOKIES, not the request scheme — can
+    downgrade OIDC cookies.
     """
-    explicit = os.getenv("SECURE_COOKIES", "").strip().lower()
-    if explicit in ("true", "1", "yes"):
-        return True
-    if explicit in ("false", "0", "no"):
+    if os.getenv("OIDC_ALLOW_INSECURE_COOKIES", "").strip().lower() in ("true", "1", "yes"):
+        logger.warning(
+            "OIDC_ALLOW_INSECURE_COOKIES=true — OIDC session and CSRF "
+            "cookies are issued without the Secure flag. Never use this "
+            "outside plain-HTTP local development."
+        )
         return False
-    # Not explicitly set — derive from the request. Forwarded headers are
-    # trusted only when the deployment explicitly opts into proxy headers;
-    # otherwise a client cannot influence the cookie policy via a header.
-    forwarded = ""
-    if os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in ("true", "1", "yes"):
-        forwarded = request.headers.get("x-forwarded-proto", "")
-    scheme = forwarded or request.url.scheme or "http"
-    return scheme == "https"
+    return True
