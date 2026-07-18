@@ -1,4 +1,13 @@
-from core.log_safety import redact_url
+import logging
+
+import pytest
+
+from core.log_safety import (
+    CAPABILITY_DIAGNOSTICS_LOGGER,
+    ScopedDiagnosticsFilter,
+    application_log_settings,
+    redact_url,
+)
 
 
 def test_strips_userinfo():
@@ -30,3 +39,48 @@ def test_empty_and_none():
 def test_garbage_does_not_raise():
     # urlparse is lenient; just assert no credential-looking userinfo survives.
     assert "@" not in redact_url("::::not a url::::")
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected_level", "expected_capability_debug"),
+    (
+        ("DEBUG", logging.INFO, True),
+        ("debug", logging.INFO, True),
+        ("INFO", logging.INFO, False),
+        ("WARNING", logging.WARNING, False),
+        ("ERROR", logging.ERROR, False),
+        ("CRITICAL", logging.CRITICAL, False),
+        ("not-a-level", logging.INFO, False),
+        (None, logging.INFO, False),
+    ),
+)
+def test_application_log_settings_scope_debug_and_fail_closed(
+    configured,
+    expected_level,
+    expected_capability_debug,
+):
+    assert application_log_settings(configured) == (
+        expected_level,
+        expected_capability_debug,
+    )
+
+
+def _record(name: str, level: int) -> logging.LogRecord:
+    return logging.LogRecord(name, level, __file__, 1, "message", (), None)
+
+
+def test_scoped_diagnostics_filter_allows_only_bounded_debug_logger():
+    log_filter = ScopedDiagnosticsFilter(logging.INFO, capability_debug=True)
+
+    assert log_filter.filter(_record(CAPABILITY_DIAGNOSTICS_LOGGER, logging.DEBUG))
+    assert log_filter.filter(_record("unrelated.library", logging.INFO))
+    assert not log_filter.filter(_record("unrelated.library", logging.DEBUG))
+    assert not log_filter.filter(_record(f"{CAPABILITY_DIAGNOSTICS_LOGGER}.raw", logging.DEBUG))
+
+
+def test_scoped_diagnostics_filter_respects_higher_application_level():
+    log_filter = ScopedDiagnosticsFilter(logging.WARNING, capability_debug=False)
+
+    assert log_filter.filter(_record("application", logging.WARNING))
+    assert not log_filter.filter(_record("application", logging.INFO))
+    assert not log_filter.filter(_record(CAPABILITY_DIAGNOSTICS_LOGGER, logging.DEBUG))
