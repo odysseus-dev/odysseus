@@ -682,10 +682,24 @@ export function mdToHtml(src, opts) {
     const rows = table.trim().split('\n');
     if (rows.length < 2) return table;
 
+    // Per-column text alignment from the GFM separator row (row index 1):
+    //   :--- -> left   :---: -> center   ---: -> right   --- -> default (left,
+    // matching the previous behaviour). Columns without a spec stay left.
+    const hasSeparator = /^[\s|:\-]+$/.test(rows[1]);
+    const aligns = hasSeparator
+      ? splitTableRow(rows[1]).map((spec) => {
+          const left = spec.startsWith(':');
+          const right = spec.endsWith(':');
+          if (left && right) return 'center';
+          if (right) return 'right';
+          return 'left';
+        })
+      : [];
+
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
     rows.forEach((row, idx) => {
-      if (idx === 1 && /^[\s|:\-]+$/.test(row)) {
+      if (idx === 1 && hasSeparator) {
         html += '<tbody>';
         return;
       }
@@ -694,9 +708,10 @@ export function mdToHtml(src, opts) {
 
       html += '<tr>';
 
-      cells.forEach(cell => {
+      cells.forEach((cell, i) => {
         const tag = idx === 0 ? 'th' : 'td';
-        html += `<${tag} style="padding: 8px; text-align: left; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
+        const align = aligns[i] || 'left';
+        html += `<${tag} style="padding: 8px; text-align: ${align}; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
       });
 
       html += '</tr>';

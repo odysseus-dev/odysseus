@@ -136,6 +136,43 @@ def test_table_separator_row_not_rendered_as_data(node_available):
     assert "---" not in html
 
 
+def test_table_column_alignment_from_separator(node_available):
+    # GFM alignment markers in the separator row set per-column text-align:
+    #   :--- -> left   :---: -> centre   ---: -> right. It applies to the header
+    #   cells and every body cell in the column.
+    html = _run_markdown_case(
+        "| Name | Score | Amount |\n"
+        "| :--- | :---: | ---: |\n"
+        "| Alpha | 12 | 3.50 |\n"
+        "| Bravo | 7 | 128.00 |"
+    )
+
+    # Header cells carry the column's alignment.
+    assert 'text-align: left; border-bottom: 1px solid var(--border);">Name</th>' in html
+    assert 'text-align: center; border-bottom: 1px solid var(--border);">Score</th>' in html
+    assert 'text-align: right; border-bottom: 1px solid var(--border);">Amount</th>' in html
+    # Body cells inherit the same per-column alignment.
+    assert 'text-align: left; border-bottom: 1px solid var(--border);">Alpha</td>' in html
+    assert 'text-align: center; border-bottom: 1px solid var(--border);">12</td>' in html
+    assert 'text-align: right; border-bottom: 1px solid var(--border);">3.50</td>' in html
+    # One header + two body cells per column.
+    assert html.count("text-align: left") == 3
+    assert html.count("text-align: center") == 3
+    assert html.count("text-align: right") == 3
+
+
+def test_table_default_alignment_column_stays_left(node_available):
+    # A column whose separator has no colon (`---`) keeps the previous default,
+    # left alignment; a `---:` column is right-aligned; nothing becomes centre.
+    html = _run_markdown_case("| Key | Value |\n| --- | ---: |\n| id | 42 |")
+
+    assert 'text-align: left; border-bottom: 1px solid var(--border);">Key</th>' in html
+    assert 'text-align: right; border-bottom: 1px solid var(--border);">Value</th>' in html
+    assert 'text-align: left; border-bottom: 1px solid var(--border);">id</td>' in html
+    assert 'text-align: right; border-bottom: 1px solid var(--border);">42</td>' in html
+    assert "text-align: center" not in html
+
+
 def test_process_with_thinking_handles_gemma4_thought_channel(node_available):
     html = _run_markdown_case(
         "<|channel>thought\ninternal reasoning<channel|>Final answer.",
