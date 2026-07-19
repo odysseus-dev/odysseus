@@ -446,6 +446,21 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("true", "1", "yes", "on")
 
 
+def _coerce_supports_tools(value: Any) -> Optional[bool]:
+    """Map a PATCH `supports_tools` value to the stored tri-state flag.
+
+    True / "true" / 1 map to True (force native schemas); False / "false" / 0
+    map to False (force text parsing). Anything unrecognized maps to None,
+    including JSON null, which is how the UI clears the flag back to Auto (the
+    heuristic default).
+    """
+    try:
+        return {True: True, False: False, "true": True, "false": False, 1: True, 0: False}.get(value)
+    except TypeError:
+        # An unhashable value (a JSON array/object) is unrecognized, not a crash.
+        return None
+
+
 _ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
 _REFRESH_MODES = {"auto", "manual", "disabled"}
 
@@ -2311,8 +2326,7 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(404, "Endpoint not found")
             if body:
                 if "supports_tools" in body:
-                    v = body["supports_tools"]
-                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
+                    ep.supports_tools = _coerce_supports_tools(body["supports_tools"])
                 if "is_enabled" in body:
                     v_ie = body['is_enabled']
                     ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)

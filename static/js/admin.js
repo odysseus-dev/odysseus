@@ -581,12 +581,16 @@ async function loadEndpoints() {
         // Cycle Auto -> On -> Off -> Auto (supports_tools null -> true -> false -> null).
         const cur = btn.dataset.admToolsState;
         const next = cur === 'auto' ? true : cur === 'on' ? false : null;
-        await fetch(`/api/model-endpoints/${btn.dataset.admToolsEp}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ supports_tools: next }),
-        });
+        try {
+          await fetch(`/api/model-endpoints/${btn.dataset.admToolsEp}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ supports_tools: next }),
+          });
+        } catch (err) { /* network error: re-sync from the server below */ }
+        // Always re-sync from the server, even on a failed PATCH, so the label
+        // reverts to the true stored value instead of being left stale.
         loadEndpoints();
       });
     });
