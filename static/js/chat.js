@@ -945,7 +945,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
-      uiModule.scrollHistoryInstant();
       // Clear completed dot now that user is interacting
       if (sessionModule.clearStreamComplete) sessionModule.clearStreamComplete(sessionModule.getCurrentSessionId());
 
@@ -987,6 +986,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!skipBubble) {
         _userMsgEl = addMessage('user', userDisplay, null, _pendingAttachInfo ? { attachments: _pendingAttachInfo } : null);
       }
+      // Scroll to the user message now that it's in the DOM
+      uiModule.scrollHistoryInstant();
       _sendPerf.mark('user_bubble_visible');
       messageInput.value = '';
       messageInput.style.height = '';
