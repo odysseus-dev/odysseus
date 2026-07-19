@@ -1682,10 +1682,10 @@ async function initAgentSettings() {
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
-    if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
+    if (settings.agent_max_tool_calls !== undefined) toolsInput.value = settings.agent_max_tool_calls;
+    if (roundsInput && settings.agent_max_rounds !== undefined) roundsInput.value = settings.agent_max_rounds;
     if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
-    if (budgetInput && settings.agent_input_token_budget) budgetInput.value = settings.agent_input_token_budget;
+    if (budgetInput && settings.agent_input_token_budget !== undefined) budgetInput.value = settings.agent_input_token_budget;
   } catch (e) {}
 
   // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
@@ -1699,7 +1699,7 @@ async function initAgentSettings() {
   async function save() {
     var tools = clampInt(toolsInput.value, 0, 1000, 0);
     var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
-    var budget = budgetInput ? clampInt(budgetInput.value, 0, 1000000, 0) : null;
+    var budget = budgetInput ? clampInt(budgetInput.value, -1, 1000000, -1) : null;
     toolsInput.value = tools;                       // reflect the clamped value
     if (roundsInput) roundsInput.value = rounds;
     if (budgetInput) budgetInput.value = budget;
@@ -1714,7 +1714,7 @@ async function initAgentSettings() {
       });
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
         (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
-        (budget != null ? ' · budget: ' + budget : '') +
+        (budget != null ? ' · budget: ' + (budget === -1 ? 'auto' : budget) : '') +
         (supInput && supInput.checked ? ' · supervisor on' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }

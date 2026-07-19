@@ -32,14 +32,19 @@ logger = logging.getLogger(__name__)
 SAFE_DEFAULTABLE_TOOLS = frozenset({
     "ask_user",
     "ui_control",
-    "chat_with_model",
-    "ask_teacher",
     "list_sessions",
     "search_chats",
     "list_models",
     "web_search",
     "web_fetch",
     "generate_image",
+})
+
+# Core tools that are always available by default regardless of user settings.
+CORE_DEFAULT_TOOLS = frozenset({
+    "manage_memory",
+    "ask_user",
+    "update_plan",
 })
 
 # Tools that are ALWAYS included regardless of retrieval results.
@@ -49,10 +54,9 @@ SAFE_DEFAULTABLE_TOOLS = frozenset({
 # domain's schemas and rules.
 def get_always_available_tools() -> frozenset:
     from src.settings import get_setting
-    # Default matches the original hardcoded list
-    default_tools = ["manage_memory", "ask_user", "update_plan"]
-    enabled = get_setting("enabled_tools", default_tools)
-    return frozenset([t for t in enabled if t in SAFE_DEFAULTABLE_TOOLS])
+    enabled = get_setting("enabled_tools", [])
+    optional = frozenset([t for t in enabled if t in SAFE_DEFAULTABLE_TOOLS])
+    return CORE_DEFAULT_TOOLS.union(optional)
 
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.

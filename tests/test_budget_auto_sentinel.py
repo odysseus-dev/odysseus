@@ -67,6 +67,15 @@ def test_nondefault_value_is_an_explicit_cap():
     assert compute_input_token_budget(200000, 32000, explicit=True) == 32000      # clamped to window
 
 
+def test_budget_is_explicit_distinguishes_modes():
+    # -1 is auto (default)
+    assert budget_is_explicit(-1) is False
+    # 0 is disabled (explicit choice to disable soft-trimming)
+    assert budget_is_explicit(0) is True
+    # >0 is explicit cap
+    assert budget_is_explicit(5000) is True
+
+
 def test_get_context_length_known_surfaces_endpoint_proven_vs_fallback():
     mc._context_cache.clear()
     with patch.object(mc, "_query_context_length", return_value=(131072, True)):
