@@ -167,6 +167,25 @@ class TestLookupKnown:
     def test_unknown_model(self):
         assert _lookup_known("totally-unknown-model-xyz") is None
 
+    def test_qwen3_8b_tag_does_not_inherit_family_window(self):
+        """qwen3:8b serves 40960, not the 131072 of the larger qwen3 models.
+
+        Without a specific entry it matched the generic 'qwen3' key and was
+        reported as 131072 — 3.2x too large. num_ctx is derived from this value,
+        so an over-claim asks the runtime to allocate a KV cache far larger than
+        the model can use.
+        """
+        assert _lookup_known("qwen3:8b") == 40960
+
+    def test_qwen25_coder_14b_tag_does_not_inherit_family_window(self):
+        """qwen2.5-coder:14b serves 32768, not the 131072 of the qwen2.5 family."""
+        assert _lookup_known("qwen2.5-coder:14b") == 32768
+
+    def test_qwen_family_fallback_still_applies_to_hosted_variants(self):
+        """The specific tags must not regress the family entries they shadow."""
+        assert _lookup_known("qwen3-235b-a22b") == 131072
+        assert _lookup_known("qwen3") == 131072
+
     def test_namespaced_model(self):
         """Models prefixed with provider/ should still match."""
         result = _lookup_known("openrouter/deepseek-r1")

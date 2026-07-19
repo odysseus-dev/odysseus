@@ -181,6 +181,12 @@ KNOWN_CONTEXT_WINDOWS = {
     'llama-3': 131072,
 
     # --- Qwen ---
+    # Specific Ollama tags must precede the family entries below. _lookup_known is
+    # longest-key-wins, so these shadow 'qwen3'/'qwen2.5' for the local tags only and
+    # leave the hosted variants (which really do serve 131072) untouched.
+    # Windows below are what each tag reports via `ollama show <tag>`.
+    'qwen3:8b': 40960,
+    'qwen2.5-coder:14b': 32768,
     'qwen3': 131072,
     'qwen2.5': 131072,
     'qwen2': 32768,
