@@ -454,6 +454,7 @@ export function showError(msg) {
  * Throttled during streaming so it doesn't fight user scrolling.
  */
 let _scrollThrottleTimer = null;
+let _lastTargetHeight = 0;
 export function scrollHistory() {
   if (!autoScrollEnabled) return;
   if (!_scrollBox) {
@@ -462,6 +463,7 @@ export function scrollHistory() {
   // Throttle: only start a new scroll animation every 500ms
   if (_scrollThrottleTimer) return;
   _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
+  _lastTargetHeight = _scrollBox.scrollHeight - _scrollBox.clientHeight;
   if (!_scrollRafId) {
     _scrollRafId = requestAnimationFrame(_smoothScrollStep);
   }
@@ -477,6 +479,16 @@ function _smoothScrollStep() {
   const current = box.scrollTop;
   const diff = target - current;
 
+  // If content grew substantially since we started (tool output, images),
+  // skip to bottom — don't mistake this for a user scroll-up.
+  const contentGrew = target - _lastTargetHeight;
+  if (diff > 300 && contentGrew > 200) {
+    box.scrollTop = target;
+    _lastTargetHeight = target;
+    _scrollRafId = requestAnimationFrame(_smoothScrollStep);
+    return;
+  }
+
   // If user scrolled up significantly, don't force them down
   if (diff > 300) {
     _scrollRafId = null;
@@ -485,6 +497,7 @@ function _smoothScrollStep() {
 
   if (diff <= 1) {
     box.scrollTop = target;
+    _lastTargetHeight = target;
     _scrollRafId = null;
     return;
   }
@@ -492,6 +505,7 @@ function _smoothScrollStep() {
   // Lerp: gentle catch-up
   const factor = window.innerWidth <= 768 ? 0.4 : 0.2;
   box.scrollTop = current + diff * factor;
+  _lastTargetHeight = target;
   _scrollRafId = requestAnimationFrame(_smoothScrollStep);
 }
 
