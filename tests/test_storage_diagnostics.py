@@ -632,6 +632,95 @@ def test_upload_traversal_is_bounded_and_reports_truncation(monkeypatch, tmp_pat
     assert "upload_traversal_truncated" in report["warnings"]
 
 
+def test_vision_cache_contributes_to_upload_totals_without_orphan_evidence(tmp_path):
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    conn.close()
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    primary_upload = upload_dir / "normal-primary-upload.txt"
+    primary_upload.write_bytes(b"primary")
+    attachment_id = "vision-private-attachment-id"
+    vision_file = upload_dir / ".vision" / f"{attachment_id}.txt"
+    vision_file.parent.mkdir()
+    vision_file.write_bytes(b"cached OCR")
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+    uploads = report["uploads"]
+    orphans = uploads["suspected_orphans"]
+
+    assert uploads["file_count"] == 2
+    assert uploads["file_count_observed"] == 2
+    assert uploads["total_size_bytes"] == len(b"primarycached OCR")
+    assert uploads["total_size_bytes_observed"] == len(b"primarycached OCR")
+    assert uploads["visited_dirs"] == 2
+    assert uploads["truncated"] is False
+    assert uploads["skipped_hidden_count"] == 0
+    assert "upload_traversal_hidden" not in (orphans["reason_incomplete"] or [])
+    assert orphans["observed_count"] == 1
+    serialized = json.dumps(report)
+    assert attachment_id not in serialized
+    assert vision_file.name not in serialized
+    assert str(vision_file) not in serialized
+
+
+def test_unknown_hidden_upload_subtree_makes_totals_and_orphans_incomplete(tmp_path):
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    conn.close()
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    visible_upload = upload_dir / "visible-upload.txt"
+    visible_upload.write_bytes(b"visible")
+    hidden_file = upload_dir / ".unexpected-cache" / "secret.bin"
+    hidden_file.parent.mkdir()
+    hidden_file.write_bytes(b"hidden")
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+    uploads = report["uploads"]
+    orphans = uploads["suspected_orphans"]
+
+    assert uploads["skipped_hidden_count"] == 1
+    assert uploads["truncated"] is False
+    assert uploads["file_count"] is None
+    assert uploads["total_size_bytes"] is None
+    assert uploads["file_count_observed"] == 1
+    assert uploads["total_size_bytes_observed"] == len(b"visible")
+    assert "upload_traversal_hidden" in report["warnings"]
+    assert orphans["complete"] is False
+    assert orphans["observed_only"] is True
+    assert "upload_traversal_hidden" in orphans["reason_incomplete"]
+    assert "upload_traversal_truncated" not in orphans["reason_incomplete"]
+    serialized = json.dumps(report)
+    assert ".unexpected-cache" not in serialized
+    assert hidden_file.name not in serialized
+    assert str(hidden_file) not in serialized
+
+
+def test_vision_cache_files_participate_in_upload_traversal_bounds(monkeypatch, tmp_path):
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    conn.close()
+    upload_dir = tmp_path / "uploads"
+    vision_dir = upload_dir / ".vision"
+    vision_dir.mkdir(parents=True)
+    (vision_dir / "first.txt").write_bytes(b"x")
+    (vision_dir / "second.txt").write_bytes(b"x")
+
+    monkeypatch.setattr(storage_diagnostics, "MAX_UPLOAD_TRAVERSAL_FILES", 1)
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+    uploads = report["uploads"]
+
+    assert uploads["truncated"] is True
+    assert uploads["visited_dirs"] == 2
+    assert uploads["visited_files"] == 1
+    assert uploads["file_count"] is None
+    assert uploads["file_count_observed"] == 1
+    assert uploads["total_size_bytes"] is None
+    assert uploads["total_size_bytes_observed"] == 1
+    assert "upload_traversal_truncated" in report["warnings"]
+
+
 def test_symlinked_upload_file_is_skipped_without_target_metadata(tmp_path):
     db_path = tmp_path / "app.db"
     conn = _init_db(db_path)

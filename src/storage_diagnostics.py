@@ -94,6 +94,7 @@ REFERENCE_ID_KEYS = {
 class UploadFileRecord:
     path: Path
     size_bytes: int
+    is_primary_upload: bool
 
 
 @dataclass
@@ -102,6 +103,7 @@ class UploadTraversalState:
     visited_dirs: int = 0
     skipped_symlink_count: int = 0
     skipped_unreadable_count: int = 0
+    skipped_hidden_count: int = 0
     truncated: bool = False
 
 
@@ -847,6 +849,7 @@ def _collect_upload_report(
         "visited_dirs": 0,
         "skipped_symlink_count": 0,
         "skipped_unreadable_count": 0,
+        "skipped_hidden_count": 0,
         "manifest_present": False,
         "manifest_entry_count": 0,
         "manifest_entries": {"count": 0, "sample": []},
@@ -902,6 +905,8 @@ def _upload_file_report(
     for record in _iter_upload_files(upload_dir, state):
         file_count += 1
         total_size += record.size_bytes
+        if not record.is_primary_upload:
+            continue
         if _upload_file_is_live(record.path, live_upload_ids):
             continue
         orphan_count += 1
@@ -911,11 +916,14 @@ def _upload_file_report(
             )
 
     traversal_unreadable = state.skipped_unreadable_count > 0
-    traversal_incomplete = state.truncated or traversal_unreadable
+    traversal_hidden = state.skipped_hidden_count > 0
+    traversal_incomplete = state.truncated or traversal_unreadable or traversal_hidden
     if state.truncated:
         warnings.append("upload_traversal_truncated")
     if traversal_unreadable:
         warnings.append("upload_traversal_unreadable")
+    if traversal_hidden:
+        warnings.append("upload_traversal_hidden")
     return {
         "file_count": None if traversal_incomplete else file_count,
         "file_count_observed": file_count,
@@ -926,6 +934,7 @@ def _upload_file_report(
         "visited_dirs": state.visited_dirs,
         "skipped_symlink_count": state.skipped_symlink_count,
         "skipped_unreadable_count": state.skipped_unreadable_count,
+        "skipped_hidden_count": state.skipped_hidden_count,
         "suspected_orphans": _suspected_orphan_report(
             observed_count=orphan_count,
             sample=orphan_sample,
@@ -936,6 +945,7 @@ def _upload_file_report(
             upload_traversal_complete=not traversal_incomplete,
             upload_traversal_truncated=state.truncated,
             upload_traversal_unreadable=traversal_unreadable,
+            upload_traversal_hidden=traversal_hidden,
         ),
     }
 
@@ -949,6 +959,7 @@ def _suspected_orphan_report(
     upload_traversal_complete: bool,
     upload_traversal_truncated: bool = False,
     upload_traversal_unreadable: bool = False,
+    upload_traversal_hidden: bool = False,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     if not reference_scan_complete:
@@ -956,11 +967,15 @@ def _suspected_orphan_report(
     if not durable_reference_coverage_complete:
         reasons.append(DURABLE_REFERENCE_SOURCES_INCOMPLETE)
     if upload_traversal_truncated or (
-        not upload_traversal_complete and not upload_traversal_unreadable
+        not upload_traversal_complete
+        and not upload_traversal_unreadable
+        and not upload_traversal_hidden
     ):
         reasons.append("upload_traversal_truncated")
     if upload_traversal_unreadable:
         reasons.append("upload_traversal_unreadable")
+    if upload_traversal_hidden:
+        reasons.append("upload_traversal_hidden")
     complete = not reasons
     return {
         "definitive": complete,
@@ -982,13 +997,15 @@ def _iter_upload_files(
     upload_dir: Path,
     state: UploadTraversalState,
 ) -> Iterator[UploadFileRecord]:
-    stack = [upload_dir]
+    stack = [(upload_dir, False)]
     while stack:
-        current = stack.pop()
+        current, in_vision_cache = stack.pop()
         try:
             with os.scandir(current) as entries:
                 for entry in entries:
-                    result = _visit_upload_entry(entry, stack, state)
+                    result = _visit_upload_entry(
+                        entry, stack, state, in_vision_cache=in_vision_cache
+                    )
                     if state.truncated:
                         return
                     if result is not None:
@@ -999,16 +1016,31 @@ def _iter_upload_files(
 
 def _visit_upload_entry(
     entry: os.DirEntry[str],
-    stack: list[Path],
+    stack: list[tuple[Path, bool]],
     state: UploadTraversalState,
+    *,
+    in_vision_cache: bool,
 ) -> UploadFileRecord | None:
     if entry.name.startswith("."):
+        if entry.name == ".vision" and not in_vision_cache:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    _queue_upload_dir(
+                        Path(entry.path), stack, state, in_vision_cache=True
+                    )
+                    return None
+            except OSError:
+                state.skipped_unreadable_count += 1
+                return None
+        state.skipped_hidden_count += 1
         return None
     try:
         if entry.is_dir(follow_symlinks=False):
-            _queue_upload_dir(Path(entry.path), stack, state)
+            _queue_upload_dir(
+                Path(entry.path), stack, state, in_vision_cache=in_vision_cache
+            )
             return None
-        if not _is_upload_file_candidate(entry.name):
+        if not in_vision_cache and not _is_upload_file_candidate(entry.name):
             return None
         if state.visited_files >= MAX_UPLOAD_TRAVERSAL_FILES:
             state.truncated = True
@@ -1023,19 +1055,23 @@ def _visit_upload_entry(
     except OSError:
         state.skipped_unreadable_count += 1
         return None
-    return UploadFileRecord(Path(entry.path), int(stat_result.st_size))
+    return UploadFileRecord(
+        Path(entry.path), int(stat_result.st_size), not in_vision_cache
+    )
 
 
 def _queue_upload_dir(
     path: Path,
-    stack: list[Path],
+    stack: list[tuple[Path, bool]],
     state: UploadTraversalState,
+    *,
+    in_vision_cache: bool,
 ) -> None:
     if state.visited_dirs >= MAX_UPLOAD_TRAVERSAL_DIRS:
         state.truncated = True
         return
     state.visited_dirs += 1
-    stack.append(path)
+    stack.append((path, in_vision_cache))
 
 
 def _is_upload_file_candidate(filename: str) -> bool:
