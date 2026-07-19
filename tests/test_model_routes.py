@@ -1010,6 +1010,46 @@ def test_patch_models_pinned_does_not_clobber_hidden(monkeypatch):
     assert json.loads(ep.pinned_models) == ["deploy-1"]
 
 
+@pytest.mark.parametrize(
+    "initial, sent, expected",
+    [
+        (None, True, True),       # #5048: a NULL local endpoint can be forced tool-capable
+        (True, False, False),     # explicit force-off
+        (True, None, None),       # reset to auto-detect
+        (True, "unknown", None),  # unrecognized value falls back to auto-detect
+    ],
+)
+def test_patch_supports_tools_maps_tristate(monkeypatch, initial, sent, expected):
+    ep = _make_endpoint(supports_tools=initial)
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints/{ep_id}", "PATCH")
+
+    # toggle_model_endpoint only reads the JSON body when content-length > 0.
+    request = _PinnedFakeRequest(body={"supports_tools": sent}, headers={"content-length": "40"})
+    result = asyncio.run(endpoint("ep1", request))
+
+    assert ep.supports_tools is expected
+    assert result["supports_tools"] is expected
+
+
+def test_patch_without_body_toggles_enabled_and_keeps_supports_tools(monkeypatch):
+    # A bodyless PATCH is the legacy enable/disable toggle; it must leave a
+    # previously-set supports_tools flag untouched.
+    ep = _make_endpoint(is_enabled=True, supports_tools=True)
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints/{ep_id}", "PATCH")
+
+    result = asyncio.run(endpoint("ep1", _PinnedFakeRequest()))
+
+    assert ep.is_enabled is False
+    assert ep.supports_tools is True
+    assert result["supports_tools"] is True
+
+
 def test_get_models_returns_pinned_when_probe_empty(monkeypatch):
     ep = _make_endpoint(pinned_models=json.dumps(["deploy-1"]))
     db = _PinnedFakeDb([ep])

@@ -536,6 +536,7 @@ async function loadEndpoints() {
             </div>
           </div>
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          ${category === 'local' ? `<div class="admin-ep-detail" style="display:flex;align-items:center;gap:8px;margin-top:3px;"><span>Let this model use tools</span><label class="admin-switch" style="transform:scale(0.85);" title="Turn on so this model can actually use tools (read files, run commands) instead of just describing them."><input type="checkbox" aria-label="Let this model use tools" data-adm-tools-ep="${ep.id}" ${ep.supports_tools === true ? 'checked' : ''}><span class="admin-slider"></span></label></div>` : ''}
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -573,6 +574,13 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-tools-ep]').forEach(cb => {
+      cb.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        await _setEndpointSupportsTools(cb.dataset.admToolsEp, cb.checked);
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -774,6 +782,20 @@ async function _saveEpModelState(epId, panel) {
       settingsModule.refreshAiModelEndpoints();
     }
   } catch (e) { /* silent */ }
+}
+
+// Send true to force native tool schemas, null to fall back to auto-detect — never
+// false, so turning the switch off can't disable a cloud model the auto-detector
+// already handles.
+async function _setEndpointSupportsTools(epId, on) {
+  try {
+    await fetch(`/api/model-endpoints/${epId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ supports_tools: on ? true : null }),
+    });
+  } catch (e) { /* caller re-syncs via loadEndpoints(); a failed write is safe to swallow */ }
 }
 
 function initEndpointForm() {
