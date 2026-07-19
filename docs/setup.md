@@ -99,6 +99,33 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
+**Host Docker access (explicit opt-in).** Default Docker Compose intentionally
+does not mount `/var/run/docker.sock`. You can still connect Odysseus to
+existing Ollama, vLLM, and other OpenAI-compatible endpoints without Docker
+socket access.
+
+Cookbook/local Docker-daemon management requires the opt-in overlay below. Raw
+Docker socket access is high-trust because it can effectively grant broad
+control over the host Docker daemon. Remote server Docker workflows over SSH
+remain preferred.
+
+Place these values in `.env`, or export them in the shell before running
+`docker compose`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/host-docker.yml
+DOCKER_GID=<host docker group gid>
+```
+
+Combine host Docker access with a GPU overlay when both are intentionally
+required:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/host-docker.yml
+# or
+COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml:docker/host-docker.yml
+```
+
 **Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
 only detect GPUs that Docker exposes to the container — if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or
@@ -123,6 +150,51 @@ scripts/check-docker-gpu.sh --enable-nvidia-overlay
 # Full assisted setup — install toolkit, then enable overlay if passthrough works:
 scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
 ```
+#### Arch Linux NVIDIA Docker notes
+
+On Arch Linux, verify the host NVIDIA driver and Docker GPU passthrough before enabling the Odysseus NVIDIA overlay.
+
+Install the required packages:
+
+```bash
+sudo pacman -Syu
+sudo pacman -S docker docker-compose nvidia-container-toolkit nvidia-utils
+sudo systemctl enable --now docker
+```
+
+Configure Docker to use the NVIDIA container runtime:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Verify the host GPU:
+
+```bash
+nvidia-smi
+```
+
+Verify Docker GPU passthrough:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu22.04 nvidia-smi
+```
+
+Then enable the Odysseus NVIDIA compose overlay:
+
+```env
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+```
+
+Rebuild and verify the GPU inside the Odysseus container:
+
+```bash
+docker compose up -d --build
+docker compose exec odysseus nvidia-smi -L
+```
+
+For first-time local model testing on 8 GB laptop GPUs, start with GGUF/Q4 models on llama.cpp before trying GPTQ/AWQ models on vLLM or SGLang. This keeps the first run simpler while confirming GPU passthrough works.
 
 Safety notes:
 - The app never installs host GPU runtime automatically.
@@ -445,4 +517,4 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
 To back up or restore everything in `data/`, see the
-[Backup & Restore guide](docs/backup-restore.md).
+[Backup & Restore guide](backup-restore.md).

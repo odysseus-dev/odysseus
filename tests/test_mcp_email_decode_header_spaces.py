@@ -16,7 +16,20 @@ pytest.importorskip("mcp")
 import mcp_servers.email_server as es
 
 
-def _init_accounts_db(path):
+@pytest.fixture(autouse=True)
+def _clear_mcp_email_owner_env(monkeypatch):
+    for key in es._OWNER_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    es._ACCOUNT_CACHE.clear()
+    yield
+    es._ACCOUNT_CACHE.clear()
+
+
+def _init_accounts_db(path, rows=None):
+    rows = rows or [
+        ("acct-alice", "alice", "Alice Mail", 1, "alice@example.com", "alice@example.com", "alice@example.com", "2026-01-01"),
+        ("acct-bob", "bob", "Bob Mail", 1, "bob@example.com", "bob@example.com", "bob@example.com", "2026-01-02"),
+    ]
     conn = sqlite3.connect(path)
     conn.execute(
         """
@@ -50,10 +63,7 @@ def _init_accounts_db(path):
         VALUES (?, ?, ?, ?, 1, 'imap.example.com', 993, ?, '', 1,
                 'smtp.example.com', 465, 'ssl', ?, '', ?, ?)
         """,
-        [
-            ("acct-alice", "alice", "Alice Mail", 1, "alice@example.com", "alice@example.com", "alice@example.com", "2026-01-01"),
-            ("acct-bob", "bob", "Bob Mail", 1, "bob@example.com", "bob@example.com", "bob@example.com", "2026-01-02"),
-        ],
+        rows,
     )
     conn.commit()
     conn.close()
@@ -106,6 +116,37 @@ async def test_mcp_email_requires_owner_when_multiple_account_owners_exist(tmp_p
     assert "requires an authenticated owner" in out[0].text
 
 
+@pytest.mark.asyncio
+async def test_mcp_email_requires_owner_when_any_account_owner_exists(tmp_path, monkeypatch):
+    db_path = tmp_path / "app.db"
+    _init_accounts_db(
+        db_path,
+        rows=[
+            ("acct-alice", "alice", "Alice Mail", 1, "alice@example.com", "alice@example.com", "alice@example.com", "2026-01-01"),
+        ],
+    )
+    monkeypatch.setattr(es, "APP_DB", str(db_path))
+
+    out = await es.call_tool("list_email_accounts", {})
+
+    assert "requires an authenticated owner" in out[0].text
+    assert "Alice Mail" not in out[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_email_configured_owner_filters_accounts(tmp_path, monkeypatch):
+    db_path = tmp_path / "app.db"
+    _init_accounts_db(db_path)
+    monkeypatch.setattr(es, "APP_DB", str(db_path))
+    monkeypatch.setenv("ODYSSEUS_MCP_EMAIL_OWNER", "alice")
+
+    out = await es.call_tool("list_email_accounts", {})
+    text = out[0].text
+
+    assert "Alice Mail" in text
+    assert "Bob Mail" not in text
+
+
 def test_mcp_email_scoped_owner_without_visible_account_skips_legacy_fallback(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
     settings_path = tmp_path / "settings.json"
@@ -138,10 +179,80 @@ def test_mcp_email_scoped_owner_without_visible_account_skips_legacy_fallback(tm
 
 
 @pytest.mark.asyncio
+async def test_mcp_email_owner_cannot_use_other_owner_account_for_list_read_send_or_draft(tmp_path, monkeypatch):
+    import src.constants as constants
+
+    db_path = tmp_path / "app.db"
+    scheduled_path = tmp_path / "scheduled_emails.db"
+    _init_accounts_db(db_path)
+    monkeypatch.setattr(es, "APP_DB", str(db_path))
+    monkeypatch.setattr(constants, "SCHEDULED_EMAILS_DB", str(scheduled_path))
+    monkeypatch.setattr(es, "_read_agent_email_confirm_setting", lambda: True)
+
+    calls = [
+        ("list_emails", {"account": "Bob Mail"}),
+        ("read_email", {"uid": "1", "account": "Bob Mail"}),
+        ("send_email", {
+            "to": "recipient@example.com",
+            "subject": "Blocked",
+            "body": "Do not stage.",
+            "account": "Bob Mail",
+        }),
+        ("draft_email", {
+            "to": "recipient@example.com",
+            "subject": "Blocked",
+            "body": "Do not draft.",
+            "account": "Bob Mail",
+        }),
+    ]
+
+    for tool_name, args in calls:
+        out = await es.call_tool(tool_name, {**args, "_odysseus_owner": "alice"})
+        assert "Email account not found for selector" in out[0].text, tool_name
+        assert "Bob Mail" not in out[0].text or "Available accounts" in out[0].text
+
+    assert not scheduled_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_email_stages_with_visible_owner_account_id(tmp_path, monkeypatch):
+    import src.constants as constants
+
+    app_db_path = tmp_path / "app.db"
+    scheduled_path = tmp_path / "scheduled_emails.db"
+    _init_accounts_db(app_db_path)
+    monkeypatch.setattr(es, "APP_DB", str(app_db_path))
+    monkeypatch.setattr(constants, "SCHEDULED_EMAILS_DB", str(scheduled_path))
+    monkeypatch.setattr(es, "_read_agent_email_confirm_setting", lambda: True)
+
+    out = await es.call_tool(
+        "send_email",
+        {
+            "to": "recipient@example.com",
+            "subject": "Review",
+            "body": "Please review.",
+            "account": "Alice Mail",
+            "_odysseus_owner": "alice",
+        },
+    )
+
+    assert "Draft staged for approval" in out[0].text
+    conn = sqlite3.connect(scheduled_path)
+    try:
+        row = conn.execute(
+            "SELECT owner, status, account_id FROM scheduled_emails"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == ("alice", "agent_draft", "acct-alice")
+
+
+@pytest.mark.asyncio
 async def test_mcp_send_email_stages_owner_scoped_pending_draft(tmp_path, monkeypatch):
     import src.constants as constants
 
     db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(es, "APP_DB", str(tmp_path / "missing-app.db"))
     monkeypatch.setattr(constants, "SCHEDULED_EMAILS_DB", str(db_path))
     monkeypatch.setattr(es, "_read_agent_email_confirm_setting", lambda: True)
 

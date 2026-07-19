@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.log_safety import redact_url as _redact_url_for_log
 from core.middleware import require_admin
+from src.constants import COOKBOOK_STATE_FILE
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
@@ -136,6 +137,67 @@ def _clear_endpoint_settings_for_endpoint(settings: dict, ep_id: str, *, include
     return cleared
 
 
+_COOKBOOK_ACTIVE_SERVE_STATUSES = {
+    "starting", "loading", "ready", "running", "restarting",
+}
+
+
+def _active_cookbook_endpoint_ids() -> set[str]:
+    """Endpoint IDs owned by active Cookbook serve tasks.
+
+    Cookbook auto-registers endpoints with ids like ``local-*``. Those rows are
+    managed lifecycle state, not durable user configuration. If a tmux stream is
+    stopped or an old task lingers, the row must stop participating in model
+    selection and defaults.
+    """
+    try:
+        if not os.path.exists(COOKBOOK_STATE_FILE):
+            return set()
+        with open(COOKBOOK_STATE_FILE, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+        state = json.loads(raw)
+    except Exception:
+        return set()
+    out: set[str] = set()
+    for task in state.get("tasks") or []:
+        if not isinstance(task, dict) or task.get("type") != "serve":
+            continue
+        if str(task.get("status") or "").lower() not in _COOKBOOK_ACTIVE_SERVE_STATUSES:
+            continue
+        ep_id = task.get("_endpointId") or task.get("endpointId") or task.get("endpoint_id")
+        if ep_id:
+            out.add(str(ep_id))
+    return out
+
+
+def _disable_stale_cookbook_local_endpoints(db) -> int:
+    """Disable enabled cookbook endpoints whose serve task is no longer active."""
+    active_ids = _active_cookbook_endpoint_ids()
+    if not active_ids:
+        return 0
+    stale = (
+        db.query(ModelEndpoint)
+        .filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+        .filter(ModelEndpoint.id.like("local-%"))
+        .filter(~ModelEndpoint.id.in_(active_ids))
+        .all()
+    )
+    if not stale:
+        return 0
+    settings = _load_settings()
+    touched_settings = False
+    for ep in stale:
+        ep.is_enabled = False
+        ep.model_refresh_mode = "disabled"
+        if _clear_endpoint_settings_for_endpoint(settings, ep.id):
+            touched_settings = True
+        logger.info("Disabled stale Cookbook endpoint %s (%s @ %s)", ep.id, ep.name, ep.base_url)
+    if touched_settings:
+        _save_settings(settings)
+    db.commit()
+    return len(stale)
+
+
 def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
     """Remove endpoint references from scoped or legacy-flat user preferences."""
     if not isinstance(all_prefs, dict):
@@ -149,7 +211,24 @@ def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
     return cleared_users
 
 
-def _default_endpoint_needs_assignment(current_default_id: str, enabled_endpoint_ids) -> bool:
+def _endpoint_visible_model_ids(ep: Any) -> List[str]:
+    """Known visible model ids for an endpoint, including pinned/manual ids."""
+    if ep is None:
+        return []
+    return _visible_models(
+        getattr(ep, "cached_models", None),
+        getattr(ep, "hidden_models", None),
+        getattr(ep, "pinned_models", None),
+    )
+
+
+def _default_endpoint_needs_assignment(
+    current_default_id: str,
+    enabled_endpoint_ids,
+    *,
+    current_default_endpoint: Any = None,
+    current_default_model: str = "",
+) -> bool:
     """Whether the global default chat endpoint should be (re)assigned.
 
     True when nothing is configured yet, or the configured default no longer
@@ -161,7 +240,14 @@ def _default_endpoint_needs_assignment(current_default_id: str, enabled_endpoint
     """
     if not current_default_id:
         return True
-    return current_default_id not in enabled_endpoint_ids
+    if current_default_id not in enabled_endpoint_ids:
+        return True
+    if current_default_endpoint is None:
+        return False
+    if not (current_default_model or "").strip():
+        return True
+    visible = _endpoint_visible_model_ids(current_default_endpoint)
+    return bool(visible and current_default_model not in visible)
 
 
 # Loopback hosts a user might type for a local model server (LM Studio,
@@ -410,7 +496,11 @@ def _endpoint_kind(ep: Any) -> str:
 
 
 def _endpoint_refresh_mode(ep: Any, endpoint_kind: str | None = None) -> str:
-    return _normalize_refresh_mode(getattr(ep, "model_refresh_mode", None), endpoint_kind or _endpoint_kind(ep))
+    return _normalize_endpoint_refresh_mode(
+        getattr(ep, "model_refresh_mode", None),
+        endpoint_kind or _endpoint_kind(ep),
+        getattr(ep, "base_url", ""),
+    )
 
 
 def _endpoint_refresh_interval(ep: Any, category: str) -> float:
@@ -789,6 +879,99 @@ def _ollama_model_names(data: Any) -> List[str]:
     return out
 
 
+def _is_google_api_base(base_url: str) -> bool:
+    try:
+        return (urlparse(base_url).hostname or "").lower() == "generativelanguage.googleapis.com"
+    except Exception:
+        return False
+
+
+def _normalize_endpoint_refresh_mode(value: Any, endpoint_kind: str = "auto", base_url: str = "") -> str:
+    if not str(value or "").strip() and _is_google_api_base(base_url):
+        return "manual"
+    return _normalize_refresh_mode(value, endpoint_kind)
+
+
+def _google_native_root(base_url: str) -> str:
+    """Return the Gemini native API root for a Google endpoint.
+
+    Chat calls may be configured against Google's OpenAI-compatible
+    `/openai` path, but model catalog reads should use the native Models API
+    so we get Google's current Model resource shape.
+    """
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        return "https://generativelanguage.googleapis.com/v1beta"
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/openai"):
+        path = path[: -len("/openai")].rstrip("/")
+    if not path:
+        path = "/v1beta"
+    return urlunparse(parsed._replace(path=path, query="", fragment="")).rstrip("/")
+
+
+def _google_native_models_url(base_url: str) -> str:
+    return _google_native_root(base_url) + "/models"
+
+
+def _google_model_id_from_item(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    value = item.get("baseModelId") or item.get("name") or item.get("model") or ""
+    return str(value or "").strip().removeprefix("models/")
+
+
+def _google_model_supports_chat(item: Any) -> bool:
+    """Return whether a native Google Model resource supports chat generation."""
+    if not isinstance(item, dict):
+        return False
+    methods = item.get("supportedGenerationMethods")
+    if not isinstance(methods, list):
+        return False
+    chat_methods = {"generateContent", "generateMessage", "generateText", "generateAnswer"}
+    return any(method in chat_methods for method in methods)
+
+
+def _probe_google_models(base_url: str, api_key: str = None, timeout: int = 5, page_size: int = 1000) -> List[str]:
+    """Read Google's native paginated Models API.
+
+    This intentionally returns only provider-reported model IDs. Capability
+    mapping is handled by the model capability reader and must not infer from
+    names here.
+    """
+    url = _google_native_models_url(base_url)
+    try:
+        page_size = min(max(int(page_size or 1000), 1), 1000)
+    except Exception:
+        page_size = 1000
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["x-goog-api-key"] = api_key
+    params: Dict[str, Any] = {"pageSize": page_size}
+    models: List[str] = []
+    seen = set()
+    page_token = ""
+    for _ in range(20):
+        request_params = dict(params)
+        if page_token:
+            request_params["pageToken"] = page_token
+        r = httpx.get(url, headers=headers, params=request_params, timeout=timeout, verify=llm_verify())
+        r.raise_for_status()
+        data = r.json()
+        for item in data.get("models") or []:
+            if not _google_model_supports_chat(item):
+                continue
+            model_id = _google_model_id_from_item(item)
+            if model_id and model_id not in seen:
+                seen.add(model_id)
+                models.append(model_id)
+        page_token = str(data.get("nextPageToken") or "").strip()
+        if not page_token:
+            break
+    return models
+
+
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
@@ -800,6 +983,17 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         from src.chatgpt_subscription import fetch_available_models
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
+        return []
+    if _is_google_api_base(base):
+        try:
+            models = _probe_google_models(base, api_key, timeout=timeout)
+            if models:
+                return models
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else "unknown"
+            logger.warning(f"Google native models probe failed: HTTP {status}")
+        except Exception as e:
+            logger.warning(f"Google native models probe failed: {e}")
         return []
     if provider == "anthropic":
         # Try Anthropic's /v1/models endpoint first
@@ -1090,6 +1284,36 @@ def _merge_model_ids(*lists):
     return out
 
 
+def _is_mlx_deepseek_v4_repo_id(model_id: str) -> bool:
+    m = str(model_id or "").lower()
+    return "mlx-community/deepseek-v4" in m
+
+
+def _is_mlx_deepseek_v4_shim_id(model_id: str) -> bool:
+    m = str(model_id or "").lower()
+    return "/.cache/odysseus/mlx-shims/deepseek-v4" in m
+
+
+def _filter_mlx_deepseek_v4_repo_when_shimmed(model_ids):
+    """Hide the broken MLX repo id when a launch-specific shim id is available.
+
+    mlx_lm.server may advertise the original HF repo id even though generation
+    only works through Odysseus' sanitized local shim. Keep the shim as the
+    submitted model id and remove the raw repo id from the picker/default list.
+    """
+    ids = list(model_ids or [])
+    has_shim = any(_is_mlx_deepseek_v4_shim_id(m) for m in ids)
+    if not has_shim:
+        return ids
+    return [m for m in ids if not _is_mlx_deepseek_v4_repo_id(m)]
+
+
+def _model_display_name(model_id: str) -> str:
+    if _is_mlx_deepseek_v4_shim_id(model_id):
+        return str(model_id or "").rstrip("/").split("/")[-1] or "DeepSeek-V4-Flash-4bit"
+    return str(model_id or "").split("/")[-1]
+
+
 def _visible_models(cached_models, hidden_models, pinned_models=None):
     """Merge cached + pinned model IDs, then filter out hidden ones.
 
@@ -1103,6 +1327,7 @@ def _visible_models(cached_models, hidden_models, pinned_models=None):
         _normalize_model_ids(cached_models),
         _normalize_model_ids(pinned_models),
     )
+    merged = _filter_mlx_deepseek_v4_repo_when_shimmed(merged)
     if not hidden_models:
         return merged
     hidden = set(_normalize_model_ids(hidden_models))
@@ -1218,6 +1443,8 @@ def setup_model_routes(model_discovery):
                 db = SessionLocal()
                 changed = False
                 try:
+                    if _disable_stale_cookbook_local_endpoints(db):
+                        changed = True
                     endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
                     now = _time.time()
                     groups: Dict[str, Dict[str, Any]] = {}
@@ -1291,6 +1518,8 @@ def setup_model_routes(model_discovery):
 
         db = SessionLocal()
         try:
+            if _disable_stale_cookbook_local_endpoints(db):
+                _invalidate_models_cache()
             q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
             if owner and not is_admin:
                 # Regular users see: their own endpoints + null-owner
@@ -1330,9 +1559,9 @@ def setup_model_routes(model_discovery):
                     "port": 0,
                     "url": chat_url,
                     "models": curated,
-                    "models_display": [mid.split("/")[-1] for mid in curated],
+                    "models_display": [_model_display_name(mid) for mid in curated],
                     "models_extra": extra,
-                    "models_extra_display": [mid.split("/")[-1] for mid in extra],
+                    "models_extra_display": [_model_display_name(mid) for mid in extra],
                     "endpoint_id": ep.id,
                     "endpoint_name": ep.name,
                     "category": category,
@@ -1360,7 +1589,7 @@ def setup_model_routes(model_discovery):
         return {"hosts": [], "items": items}
 
     @router.get("/models")
-    def api_models(request: Request, refresh: bool = False):
+    def api_models(request: Request, refresh: bool = False, background: bool = False):
         """Get available models — per-user (caller sees only their endpoints +
         legacy/shared null-owner rows). Cached per-user for 30s."""
         # Require auth; "" is the unconfigured single-user mode, treated as
@@ -1402,8 +1631,11 @@ def setup_model_routes(model_discovery):
             return cache_entry["data"]
         result = _fetch_models(owner=owner, is_admin=_is_admin)
         _models_cache[_cache_key] = {"data": result, "time": now}
-        # Kick off background refresh to update caches from live endpoints
-        _refresh_caches_bg(force=refresh)
+        # Kick off background refresh to update caches from live endpoints.
+        # Page boot can opt out with background=false so opening Odysseus does
+        # not start endpoint probes against slow/offline model servers.
+        if background or refresh:
+            _refresh_caches_bg(force=refresh)
         return result
 
     # Brief cache for local-probe results so picker-open doesn't hammer
@@ -1412,6 +1644,7 @@ def setup_model_routes(model_discovery):
     # within ~8s of the user noticing.
     _LOCAL_PROBE_TTL = 8.0
     _local_probe_cache: Dict[str, Any] = {"data": None, "time": 0.0}
+    _local_probe_inflight: Dict[str, Any] = {"task": None}
 
     @router.get("/model-endpoints/probe-local")
     async def probe_local_endpoints(request: Request):
@@ -1426,58 +1659,72 @@ def setup_model_routes(model_discovery):
                 (now - _local_probe_cache["time"]) < _LOCAL_PROBE_TTL):
             return _local_probe_cache["data"]
 
-        db = SessionLocal()
-        try:
-            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
-            local_eps = []
-            for ep in endpoints:
-                base = _normalize_base(ep.base_url)
-                kind = _effective_endpoint_kind(ep, base)
-                if _classify_endpoint(base, kind) == "local":
-                    local_eps.append((ep.id, base, ep.api_key))
-        finally:
-            db.close()
-
-        grouped: Dict[str, Dict[str, Any]] = {}
-        for ep_id, base, api_key in local_eps:
-            key = _refresh_key(base, api_key)
-            grouped.setdefault(key, {"base": base, "api_key": api_key, "endpoint_ids": []})["endpoint_ids"].append(ep_id)
-
-        async def _probe_one(data: Dict[str, Any]) -> Dict[str, Any]:
-            t0 = _time.time()
-            try:
-                import asyncio as _asyncio
-                # Bumped 1.5s → 3.5s. The previous 1.5s budget was clipping
-                # local vLLM endpoints on Tailscale links where the model
-                # server is still loading (Qwen3.5-122B takes 2–3 min to
-                # warm); /v1/models can take 500–2500 ms on a busy box,
-                # which pushed _ping_endpoint's full path-discovery sweep
-                # past the cap and marked the row offline despite the
-                # user actively chatting with it.
-                ping = await _asyncio.to_thread(_ping_endpoint, data["base"], data.get("api_key"), 3.5)
-                lat = round((_time.time() - t0) * 1000)
-                return {
-                    "alive": bool(ping.get("reachable")),
-                    "latency_ms": lat,
-                    "status_code": ping.get("status_code"),
-                    "error": ping.get("error"),
-                }
-            except Exception as e:
-                return {"alive": False, "latency_ms": None, "status_code": None, "error": str(e)[:120]}
-
         import asyncio as _asyncio
-        results_list = await _asyncio.gather(
-            *[_probe_one(data) for data in grouped.values()],
-            return_exceptions=False,
-        )
-        results: Dict[str, Any] = {}
-        for data, r in zip(grouped.values(), results_list):
-            for eid in data["endpoint_ids"]:
-                results[eid] = r
+        task = _local_probe_inflight.get("task")
+        if task is not None and not task.done():
+            return await task
 
-        _local_probe_cache["data"] = results
-        _local_probe_cache["time"] = now
-        return results
+        async def _compute_local_probe() -> Dict[str, Any]:
+            db = SessionLocal()
+            try:
+                if _disable_stale_cookbook_local_endpoints(db):
+                    _invalidate_models_cache()
+                endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                local_eps = []
+                for ep in endpoints:
+                    base = _normalize_base(ep.base_url)
+                    kind = _effective_endpoint_kind(ep, base)
+                    if _classify_endpoint(base, kind) == "local":
+                        local_eps.append((ep.id, base, ep.api_key))
+            finally:
+                db.close()
+
+            grouped: Dict[str, Dict[str, Any]] = {}
+            for ep_id, base, api_key in local_eps:
+                key = _refresh_key(base, api_key)
+                grouped.setdefault(key, {"base": base, "api_key": api_key, "endpoint_ids": []})["endpoint_ids"].append(ep_id)
+
+            async def _probe_one(data: Dict[str, Any]) -> Dict[str, Any]:
+                t0 = _time.time()
+                try:
+                    # Bumped 1.5s → 3.5s. The previous 1.5s budget was clipping
+                    # local vLLM endpoints on Tailscale links where the model
+                    # server is still loading (Qwen3.5-122B takes 2–3 min to
+                    # warm); /v1/models can take 500–2500 ms on a busy box,
+                    # which pushed _ping_endpoint's full path-discovery sweep
+                    # past the cap and marked the row offline despite the
+                    # user actively chatting with it.
+                    ping = await _asyncio.to_thread(_ping_endpoint, data["base"], data.get("api_key"), 3.5)
+                    lat = round((_time.time() - t0) * 1000)
+                    return {
+                        "alive": bool(ping.get("reachable")),
+                        "latency_ms": lat,
+                        "status_code": ping.get("status_code"),
+                        "error": ping.get("error"),
+                    }
+                except Exception as e:
+                    return {"alive": False, "latency_ms": None, "status_code": None, "error": str(e)[:120]}
+
+            results_list = await _asyncio.gather(
+                *[_probe_one(data) for data in grouped.values()],
+                return_exceptions=False,
+            )
+            results: Dict[str, Any] = {}
+            for data, r in zip(grouped.values(), results_list):
+                for eid in data["endpoint_ids"]:
+                    results[eid] = r
+
+            _local_probe_cache["data"] = results
+            _local_probe_cache["time"] = _time.time()
+            return results
+
+        task = _asyncio.create_task(_compute_local_probe())
+        _local_probe_inflight["task"] = task
+        try:
+            return await task
+        finally:
+            if _local_probe_inflight.get("task") is task:
+                _local_probe_inflight["task"] = None
 
     @router.get("/ping")
     def ping_endpoints(request: Request):
@@ -1660,6 +1907,8 @@ def setup_model_routes(model_discovery):
         require_admin(request)
         db = SessionLocal()
         try:
+            if _disable_stale_cookbook_local_endpoints(db):
+                _invalidate_models_cache()
             rows = db.query(ModelEndpoint).order_by(ModelEndpoint.created_at).all()
             results = []
             for r in rows:
@@ -1667,69 +1916,11 @@ def setup_model_routes(model_discovery):
                 hidden = _hidden_model_ids(r)
                 pinned = _normalize_model_ids(getattr(r, "pinned_models", None))
                 visible = _visible_models(all_models, r.hidden_models, pinned)
-                # Endpoint counts as reachable if it has any model — including
-                # admin-pinned IDs that a probe would never surface.
-                status = "online" if (all_models or pinned) else "offline"
+                # Keep the list route cache-only. It feeds Settings →
+                # Added Models and must render immediately; explicit
+                # Refresh/Probe endpoints do the network work.
+                status = "online" if (all_models or pinned) else ("empty" if r.is_enabled else "offline")
                 ping = None
-                # When cached_models is empty, do a quick reachability probe.
-                # Bumped 1.0s → 3.5s because the user reported endpoints they
-                # were ACTIVELY chatting with showed "offline" — the previous
-                # 1s timeout was clipping live cloud endpoints (DeepSeek can
-                # take 1.5–2.5s on /v1/models when their region is under load,
-                # vLLM on a remote GPU box behind SSH can also push past 1s).
-                # 3.5s still keeps the picker render snappy in the common
-                # "everything's already cached" path because this branch only
-                # runs for endpoints with an empty cached_models.
-                if not all_models and not pinned and r.is_enabled:
-                    base_for_ping = _normalize_base(r.base_url)
-                    kind_for_ping = _effective_endpoint_kind(r, base_for_ping)
-                    ping_timeout = 10.0 if _classify_endpoint(base_for_ping, kind_for_ping) == "local" else 3.5
-                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=ping_timeout)
-                    if ping.get("reachable"):
-                        status = "loading" if ping.get("loading") else "empty"
-                        if ping.get("loading"):
-                            base = _normalize_base(r.base_url)
-                            kind = _effective_endpoint_kind(r, base)
-                            results.append({
-                                "id": r.id,
-                                "name": r.name,
-                                "base_url": r.base_url,
-                                "has_key": bool(r.api_key),
-                                "api_key_fingerprint": _api_key_fingerprint(r.api_key),
-                                "is_enabled": r.is_enabled,
-                                "models": visible,
-                                "pinned_models": pinned,
-                                "hidden_count": len(hidden),
-                                "online": True,
-                                "status": status,
-                                "ping_error": (ping or {}).get("error") if ping else None,
-                                "model_type": getattr(r, "model_type", None) or "llm",
-                                "supports_tools": getattr(r, "supports_tools", None),
-                                "reasoning_effort_type": getattr(r, "reasoning_effort_type", None),
-                                "reasoning_effort": getattr(r, "reasoning_effort", None),
-                                "endpoint_kind": kind,
-                                "category": _classify_endpoint(base, kind),
-                                "model_refresh_mode": _endpoint_refresh_mode(r, kind),
-                                "model_refresh_interval": getattr(r, "model_refresh_interval", None),
-                                "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
-                            })
-                            continue
-                        # Best-effort: if the probe came back reachable, try
-                        # to populate cached_models in the background so the
-                        # NEXT picker load shows "online" instead of "empty".
-                        # Failure here is silent — we already returned the
-                        # "empty" status, and the existing background refresh
-                        # path will eventually fill it in too.
-                        try:
-                            probed = _probe_endpoint(r.base_url, r.api_key, timeout=max(5, int(ping_timeout)))
-                            if probed:
-                                r.cached_models = json.dumps(probed)
-                                db.commit()
-                                all_models = probed
-                                visible = _visible_models(all_models, r.hidden_models, pinned)
-                                status = "online"
-                        except Exception as _refill_err:
-                            logger.debug(f"opportunistic cached_models refill failed for {r.id}: {_refill_err!r}")
                 base = _normalize_base(r.base_url)
                 kind = _effective_endpoint_kind(r, base)
                 results.append({
@@ -1797,7 +1988,7 @@ def setup_model_routes(model_discovery):
             name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
 
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
-        refresh_mode = _normalize_refresh_mode(model_refresh_mode, requested_kind)
+        refresh_mode = _normalize_endpoint_refresh_mode(model_refresh_mode, requested_kind, base_url)
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         require_model_list = _truthy(require_models)
@@ -1861,7 +2052,14 @@ def setup_model_routes(model_discovery):
                 if api_key.strip() and not existing.api_key:
                     existing.api_key = api_key.strip()
                     changed = True
-                if should_probe:
+                # Keep duplicate endpoint registration cheap. This path is hit
+                # by Cookbook/browser auto-register flows and can run while the
+                # user is sending a chat message. Probing a stale LAN endpoint
+                # here used to hold the request open for tens of seconds and
+                # contend with session creation, making "send" feel blocked.
+                # Explicit "require models" calls still probe; normal refresh
+                # belongs to /model-endpoints/{id}/models or /probe.
+                if require_model_list:
                     probed_models = _probe_endpoint(
                         base_url,
                         (api_key.strip() or existing.api_key or None),
@@ -1948,7 +2146,18 @@ def setup_model_routes(model_discovery):
                     ModelEndpoint.is_enabled == True  # noqa: E712
                 ).all()
             }
-            if _default_endpoint_needs_assignment(settings.get("default_endpoint_id") or "", enabled_ids):
+            current_default_id = settings.get("default_endpoint_id") or ""
+            current_default_ep = None
+            if current_default_id:
+                current_default_ep = db.query(ModelEndpoint).filter(
+                    ModelEndpoint.id == current_default_id
+                ).first()
+            if _default_endpoint_needs_assignment(
+                current_default_id,
+                enabled_ids,
+                current_default_endpoint=current_default_ep,
+                current_default_model=settings.get("default_model") or "",
+            ):
                 from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""
@@ -2298,7 +2507,11 @@ def setup_model_routes(model_discovery):
                 if "endpoint_kind" in body:
                     ep.endpoint_kind = _normalize_endpoint_kind(body.get("endpoint_kind"))
                 if "model_refresh_mode" in body:
-                    ep.model_refresh_mode = _normalize_refresh_mode(body.get("model_refresh_mode"), _endpoint_kind(ep))
+                    ep.model_refresh_mode = _normalize_endpoint_refresh_mode(
+                        body.get("model_refresh_mode"),
+                        _endpoint_kind(ep),
+                        ep.base_url,
+                    )
                 if "model_refresh_interval" in body:
                     interval = _parse_positive_int(body.get("model_refresh_interval"), minimum=30, maximum=86400)
                     ep.model_refresh_interval = interval
