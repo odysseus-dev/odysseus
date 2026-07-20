@@ -301,7 +301,7 @@ async def dispatch_reminder(
     email_error = ""
     if channel == "email":
         try:
-            from routes.email_routes import _get_email_config
+            from routes.email_routes import _get_email_config, _smtp_ready
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
             from datetime import datetime as _dt
@@ -311,7 +311,7 @@ async def dispatch_reminder(
             # account when no explicit choice is saved.
             _acc_id = (settings.get("reminder_email_account_id") or "").strip() or None
             cfg = _get_email_config(account_id=_acc_id, owner=owner or "")
-            if not (cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password")):
+            if not _smtp_ready(cfg):
                 try:
                     from core.database import SessionLocal as _SL, EmailAccount as _EA
                     from sqlalchemy import and_, or_
@@ -324,7 +324,7 @@ async def dispatch_reminder(
                             q = q.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
                         for row in q.order_by(_EA.is_default.desc(), _EA.created_at.asc()).all():
                             trial = _get_email_config(account_id=row.id, owner=owner or "")
-                            if trial.get("smtp_host") and trial.get("smtp_user") and trial.get("smtp_password"):
+                            if _smtp_ready(trial):
                                 cfg = trial
                                 break
                     finally:
@@ -347,8 +347,8 @@ async def dispatch_reminder(
                 missing.append("SMTP host")
             if not cfg.get("smtp_user"):
                 missing.append("SMTP user")
-            if not cfg.get("smtp_password"):
-                missing.append("SMTP password")
+            if not (cfg.get("smtp_password") or cfg.get("oauth_provider")):
+                missing.append("SMTP credentials")
             if not from_addr:
                 missing.append("from address")
             if not recipient:
