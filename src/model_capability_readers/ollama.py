@@ -8,6 +8,7 @@ from typing import Any
 from src import model_capabilities as mc
 from src.model_capability_readers.base import (
     ModelCapabilityRecord,
+    RuntimeContextAllocationRecord,
     VENDOR_OLLAMA,
     as_list,
     as_mapping,
@@ -22,6 +23,9 @@ from src.model_capability_readers.base import (
 
 
 vendor = VENDOR_OLLAMA
+
+
+OLLAMA_PS_SHAPE_ID = "ollama.ps.v1"
 
 
 _CAPABILITY_MAP = {
@@ -108,6 +112,65 @@ def _limits_from_show(raw: Mapping[str, Any]) -> dict[str, Any]:
     if context_tokens:
         limits["context_tokens"] = context_tokens
     return limits
+
+
+def _runtime_model_key(value: Any) -> str:
+    model_id = identity_str(value).casefold()
+    return model_id.removesuffix(":latest")
+
+
+def runtime_context_from_ps_payload(
+    model_id: str,
+    payload: Mapping[str, Any],
+    *,
+    endpoint_id: Any = "",
+    base_url: Any = "",
+) -> RuntimeContextAllocationRecord | None:
+    """Normalize one loaded model's allocation from Ollama ``GET /api/ps``.
+
+    Exact identity is preferred, with only Ollama's implicit ``:latest`` alias
+    normalized. Conflicting matching rows fail closed instead of choosing an
+    arbitrary allocation.
+    """
+
+    requested_id = identity_str(model_id)
+    requested_key = _runtime_model_key(requested_id)
+    if not requested_key:
+        return None
+
+    matches: list[tuple[int, Mapping[str, Any]]] = []
+    for item in as_list(as_mapping(payload).get("models")):
+        if not isinstance(item, Mapping):
+            continue
+        identities = tuple(
+            identity
+            for identity in (identity_str(item.get("model")), identity_str(item.get("name")))
+            if identity
+        )
+        if not any(_runtime_model_key(identity) == requested_key for identity in identities):
+            continue
+        context_tokens = int_limit(item.get("context_length"))
+        if context_tokens is not None:
+            matches.append((context_tokens, item))
+
+    allocations = {context_tokens for context_tokens, _item in matches}
+    if len(allocations) != 1:
+        return None
+
+    context_tokens, raw = matches[0]
+    return RuntimeContextAllocationRecord(
+        vendor=VENDOR_OLLAMA,
+        model_id=requested_id,
+        stable_model_id=stable_model_id_for(
+            VENDOR_OLLAMA,
+            requested_id,
+            endpoint_id=endpoint_id,
+            base_url=base_url,
+        ),
+        allocated_context_tokens=context_tokens,
+        runtime_shape_id=OLLAMA_PS_SHAPE_ID,
+        raw=raw,
+    )
 
 
 def record_from_show_payload(
