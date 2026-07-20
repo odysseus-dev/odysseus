@@ -201,16 +201,16 @@ async def test_urgency_state_transaction_serializes_decision_and_checkpoint(tmp_
     }
 
 
-def test_stale_complete_scan_preserves_newer_account_facts_and_checkpoints():
+def test_stale_complete_scan_preserves_newer_state_and_discards_stale_only_facts():
     from src.builtin_actions import _merge_email_urgency_state
 
     prior = {
         "owner": "alice",
         "per_uid": {
-            "acct:1": {"score": 3, "unread": True, "reason": "newer"},
+            "acct:1": {"score": 0, "unread": True, "reason": "newer"},
             "acct:2": {"score": 2, "unread": True, "reason": "new UID"},
         },
-        "notified_uids": ["acct:1", "acct:2"],
+        "notified_uids": ["acct:2"],
         "account_generations": {
             "acct": {"checkpoint": 1, "complete": 1},
         },
@@ -233,10 +233,10 @@ def test_stale_complete_scan_preserves_newer_account_facts_and_checkpoints():
     )
 
     assert merged["per_uid"]["acct:1"]["reason"] == "newer"
-    assert set(merged["per_uid"]) == {"acct:1", "acct:2", "acct:3"}
-    assert merged["notified_uids"] == ["acct:1", "acct:2", "acct:3"]
+    assert set(merged["per_uid"]) == {"acct:1", "acct:2"}
+    assert merged["notified_uids"] == ["acct:2"]
     assert merged["account_generations"]["acct"] == {
-        "checkpoint": 2,
+        "checkpoint": 1,
         "complete": 1,
     }
 
@@ -467,17 +467,27 @@ async def test_action_cancellation_rolls_back_without_checkpoint(
     }
 
 
+@pytest.mark.parametrize(
+    ("stale_uids", "newer_uids"),
+    [
+        (["1"], ["1", "2"]),
+        (["1", "2"], ["1"]),
+    ],
+    ids=["preserve-newer-addition", "reject-stale-only-delivery"],
+)
 @pytest.mark.asyncio
-async def test_older_same_account_scan_cannot_erase_newer_committed_uid(
+async def test_stale_same_account_scan_cannot_override_newer_commit(
     monkeypatch,
     tmp_path,
+    stale_uids,
+    newer_uids,
 ):
     import routes.note_routes as note_routes
 
     builtin_actions, runtime = _configure_action(
         monkeypatch, tmp_path, ["acct-a"]
     )
-    runtime["search_uids"]["acct-a"] = ["1"]
+    runtime["search_uids"]["acct-a"] = stale_uids
     deliveries = []
 
     async def delivered(**kwargs):
@@ -514,7 +524,7 @@ async def test_older_same_account_scan_cannot_erase_newer_committed_uid(
     )
     await asyncio.wait_for(stale_scan_ready.wait(), timeout=2)
 
-    runtime["search_uids"]["acct-a"] = ["1", "2"]
+    runtime["search_uids"]["acct-a"] = newer_uids
     newer_result = await asyncio.wait_for(
         builtin_actions.action_check_email_urgency("alice"),
         timeout=2,
@@ -528,13 +538,83 @@ async def test_older_same_account_scan_cannot_erase_newer_committed_uid(
     assert newer_result[1] is True
     assert stale_result[1] is True
     assert len(deliveries) == 1
-    assert "uid 2" in deliveries[0]
-    assert set(state["per_uid"]) == {"acct-a:1", "acct-a:2"}
-    assert state["notified_uids"] == ["acct-a:1", "acct-a:2"]
+    for uid in newer_uids:
+        assert f"uid {uid}" in deliveries[0]
+    for uid in set(stale_uids) - set(newer_uids):
+        assert f"uid {uid}" not in deliveries[0]
+    expected_keys = {f"acct-a:{uid}" for uid in newer_uids}
+    assert set(state["per_uid"]) == expected_keys
+    assert state["notified_uids"] == sorted(expected_keys)
     assert state["account_generations"]["acct-a"] == {
         "checkpoint": 1,
         "complete": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_mixed_stale_and_fresh_accounts_exclude_stale_rows_from_delivery(
+    monkeypatch,
+    tmp_path,
+):
+    import routes.note_routes as note_routes
+
+    builtin_actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a", "acct-b"]
+    )
+    deliveries = []
+
+    async def delivered(**kwargs):
+        deliveries.append(kwargs["note_body"])
+        return {
+            "browser_sent": True,
+            "email_sent": False,
+            "ntfy_sent": False,
+            "webhook_sent": False,
+        }
+
+    monkeypatch.setattr(note_routes, "dispatch_reminder", delivered)
+    original_transaction = builtin_actions._run_email_urgency_state_transaction
+    stale_scan_ready = asyncio.Event()
+    release_stale_scan = asyncio.Event()
+    transaction_count = 0
+
+    async def order_transactions(state_path, lock_db_path, operation):
+        nonlocal transaction_count
+        transaction_count += 1
+        if transaction_count == 1:
+            stale_scan_ready.set()
+            await release_stale_scan.wait()
+        return await original_transaction(state_path, lock_db_path, operation)
+
+    monkeypatch.setattr(
+        builtin_actions,
+        "_run_email_urgency_state_transaction",
+        order_transactions,
+    )
+
+    stale = asyncio.create_task(
+        builtin_actions.action_check_email_urgency("alice")
+    )
+    await asyncio.wait_for(stale_scan_ready.wait(), timeout=2)
+
+    runtime["accounts"] = ["acct-a"]
+    await asyncio.wait_for(
+        builtin_actions.action_check_email_urgency("alice"),
+        timeout=2,
+    )
+    release_stale_scan.set()
+    await asyncio.wait_for(stale, timeout=2)
+
+    state = json.loads(
+        (tmp_path / "email_urgency_state_alice.json").read_text(encoding="utf-8")
+    )
+    assert len(deliveries) == 2
+    assert "acct-a" in deliveries[0]
+    assert "acct-b" not in deliveries[0]
+    assert "acct-b" in deliveries[1]
+    assert "acct-a" not in deliveries[1]
+    assert set(state["per_uid"]) == {"acct-a:1", "acct-b:1"}
+    assert state["notified_uids"] == ["acct-a:1", "acct-b:1"]
 
 
 @pytest.mark.asyncio
