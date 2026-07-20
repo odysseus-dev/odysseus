@@ -11,6 +11,7 @@ import os
 import secrets
 import socket
 import uuid
+from urllib.parse import urlsplit
 
 import bcrypt
 
@@ -18,6 +19,53 @@ from src.constants import AUTH_FILE
 
 PAIRING_VERSION = 1
 COMPANION_SCOPE = "chat"
+
+
+def parse_companion_base_url(value: str) -> tuple[str, str, int]:
+    """Validate a trusted companion origin and return (origin, host, port).
+
+    Pairing credentials are sent to this origin, so accept only a canonical
+    HTTP(S) origin. Paths, credentials, and other URL components are rejected
+    instead of being silently discarded.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("COMPANION_BASE_URL must be an HTTP(S) origin")
+    if any(ord(char) <= 32 or ord(char) == 127 or char == "\\" for char in value):
+        raise ValueError(
+            "COMPANION_BASE_URL must not contain whitespace or control characters"
+        )
+
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("COMPANION_BASE_URL must be a valid HTTP(S) origin") from exc
+
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname
+    if scheme not in {"http", "https"} or not parsed.netloc or not host:
+        raise ValueError("COMPANION_BASE_URL must be an HTTP(S) origin")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("COMPANION_BASE_URL must not contain credentials")
+    if parsed.path or parsed.query or parsed.fragment:
+        raise ValueError("COMPANION_BASE_URL must not contain a path, query, or fragment")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("COMPANION_BASE_URL port must be between 1 and 65535")
+
+    display_host = f"[{host}]" if ":" in host else host
+    netloc = f"{display_host}:{port}" if port is not None else display_host
+    origin = f"{scheme}://{netloc}"
+    if value != origin:
+        raise ValueError("COMPANION_BASE_URL must be a canonical HTTP(S) origin")
+    return origin, host, port or (443 if scheme == "https" else 80)
+
+
+def configured_companion_origin() -> tuple[str, str, int] | None:
+    """Return the validated operator-configured pairing origin, if any."""
+    value = os.environ.get("COMPANION_BASE_URL")
+    if value is None or value == "":
+        return None
+    return parse_companion_base_url(value)
 
 
 def default_port() -> int:
@@ -106,9 +154,12 @@ def mint_token(owner: str, name: str = "companion") -> tuple[str, str]:
     return token_id, raw_token
 
 
-def pairing_payload(host: str, port: int, token: str) -> dict:
+def pairing_payload(host: str, port: int, token: str, *, base_url: str | None = None) -> dict:
     """The exact JSON a client scans / accepts. Keep keys stable."""
-    return {"v": PAIRING_VERSION, "host": host, "port": port, "token": token}
+    payload = {"v": PAIRING_VERSION, "host": host, "port": port, "token": token}
+    if base_url:
+        payload["base_url"] = base_url
+    return payload
 
 
 def pairing_qr_png_data_uri(payload: dict) -> str | None:

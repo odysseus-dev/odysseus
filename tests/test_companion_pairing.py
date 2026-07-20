@@ -55,6 +55,7 @@ _db.ApiToken = _ApiToken
 
 @pytest.fixture(autouse=True)
 def _companion_pairing_stubs(monkeypatch):
+    monkeypatch.delenv("COMPANION_BASE_URL", raising=False)
     monkeypatch.setitem(sys.modules, "core.database", _db)
     for _name, _attrs in {
         "core.auth": {"AuthManager": MagicMock()},
@@ -114,6 +115,59 @@ def test_mint_pairing_token_tolerates_no_invalidator(monkeypatch):
 def test_pairing_payload_shape():
     p = P.pairing_payload("192.168.1.9", 7000, "ody_x")
     assert p == {"v": 1, "host": "192.168.1.9", "port": 7000, "token": "ody_x"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("http://odysseus.local", ("http://odysseus.local", "odysseus.local", 80)),
+        ("https://odysseus.example", ("https://odysseus.example", "odysseus.example", 443)),
+        ("https://192.168.1.9:7443", ("https://192.168.1.9:7443", "192.168.1.9", 7443)),
+        ("http://[fd00::1]:7000", ("http://[fd00::1]:7000", "fd00::1", 7000)),
+    ],
+)
+def test_parse_companion_base_url_accepts_canonical_origins(value, expected):
+    assert P.parse_companion_base_url(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "odysseus.example",
+        "ftp://odysseus.example",
+        "https://user:password@odysseus.example",
+        "https://odysseus.example/",
+        "https://odysseus.example/path",
+        "https://odysseus.example?query=1",
+        "https://odysseus.example#fragment",
+        "https://odysseus.example:not-a-port",
+        "https://odysseus.example:0",
+        "https://odysseus.example:65536",
+        " https://odysseus.example",
+        "https://odysseus.example ",
+        "https://odysseus\\example",
+    ],
+)
+def test_parse_companion_base_url_rejects_non_origins(value):
+    with pytest.raises(ValueError):
+        P.parse_companion_base_url(value)
+
+
+def test_pairing_payload_can_include_configured_base_url():
+    p = P.pairing_payload(
+        "odysseus.example",
+        443,
+        "ody_x",
+        base_url="https://odysseus.example",
+    )
+    assert p == {
+        "v": 1,
+        "host": "odysseus.example",
+        "port": 443,
+        "token": "ody_x",
+        "base_url": "https://odysseus.example",
+    }
 
 
 @pytest.mark.parametrize("payload", ["[]", '{"users": []}'])
@@ -253,6 +307,52 @@ def test_pair_post_json_returns_pairing_payload(monkeypatch):
     for secret_key in ("token_hash", "token_prefix", "scopes", "is_active", "owner", "name"):
         assert secret_key not in response
         assert secret_key not in response["payload"]
+
+
+def test_pair_post_json_prefers_configured_origin(monkeypatch):
+    monkeypatch.setenv("COMPANION_BASE_URL", "https://odysseus.example")
+    mint = MagicMock(return_value=("tok123", "ody_raw"))
+    discovery = MagicMock(side_effect=AssertionError("configured origin must skip LAN discovery"))
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr(R, "mint_pairing_token", mint)
+    monkeypatch.setattr(R._pairing, "lan_ip_candidates", discovery)
+    monkeypatch.setattr(R._pairing, "pairing_qr_png_data_uri", lambda payload: None)
+
+    request = _fake_pair_request(format="json", port=7000)
+    response = _pair_route("POST")(request)
+
+    assert response["host"] == "odysseus.example"
+    assert response["port"] == 443
+    assert response["base_url"] == "https://odysseus.example"
+    assert response["hosts"] == ["odysseus.example"]
+    assert response["payload"] == {
+        "v": 1,
+        "host": "odysseus.example",
+        "port": 443,
+        "token": "ody_raw",
+        "base_url": "https://odysseus.example",
+    }
+    discovery.assert_not_called()
+
+
+def test_pair_post_rejects_invalid_config_before_mint_without_echoing_it(monkeypatch):
+    configured_secret = "secret-password"
+    monkeypatch.setenv(
+        "COMPANION_BASE_URL",
+        f"https://admin:{configured_secret}@odysseus.example",
+    )
+    mint = MagicMock(side_effect=AssertionError("invalid config must not mint a token"))
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "mint_pairing_token", mint)
+
+    with pytest.raises(HTTPException) as exc:
+        _pair_route("POST")(_fake_pair_request(format="json"))
+
+    assert exc.value.status_code == 500
+    assert "COMPANION_BASE_URL" in exc.value.detail
+    assert configured_secret not in exc.value.detail
+    mint.assert_not_called()
 
 
 def test_pair_post_json_qr_failure_returns_null_qr(monkeypatch):
