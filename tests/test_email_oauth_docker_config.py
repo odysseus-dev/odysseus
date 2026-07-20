@@ -20,7 +20,7 @@ ENV_EXAMPLE_PATH = ROOT / ".env.example"
 
 def _env_example():
     if not ENV_EXAMPLE_PATH.exists():
-        pytest.skip("the secretless review runner intentionally omits .env* files")
+        pytest.skip("this checkout does not include the optional .env.example file")
     return ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
 
 
