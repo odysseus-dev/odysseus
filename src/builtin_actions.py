@@ -2321,6 +2321,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # Register every account before IMAP work, including its first-ever
         # scan. A concurrent zero-account cleanup can then advance this marker
         # and fence delivery even before the scan has produced payload.
+        registered_state = None
         if initial_account_ids:
             async def _register_accounts(prior):
                 next_state = _merge_email_urgency_state(
@@ -2336,9 +2337,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     timestamp=_time.time(),
                     known_account_ids=initial_account_ids,
                 )
-                return None, next_state
+                # Return the exact state committed by registration. This is
+                # the scan's generation token: adopting a later checkpoint
+                # after account cleanup would let the stale scan appear fresh.
+                return next_state, next_state
 
-            await _run_email_urgency_state_transaction(
+            registered_state = await _run_email_urgency_state_transaction(
                 STATE_PATH,
                 STATE_LOCK_DB,
                 _register_accounts,
@@ -2365,7 +2369,11 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # only its selected missing/disabled account. Existing accounts remain
         # present even if their later network scan fails, so transient IMAP
         # failure never erases their last known state.
-        base_state = _read_email_urgency_state(STATE_PATH)
+        base_state = (
+            registered_state
+            if registered_state is not None
+            else _read_email_urgency_state(STATE_PATH)
+        )
         base_account_generations = _email_urgency_account_generations(
             base_state
         )
@@ -2403,13 +2411,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 STATE_LOCK_DB,
                 _retire_accounts,
             )
-            # Cleanup may have advanced tombstone generations. Capture the
-            # exact committed basis that the subsequent scan must compare.
-            base_state = _read_email_urgency_state(STATE_PATH)
-            base_account_generations = _email_urgency_account_generations(
-                base_state
-            )
-
         if not accounts:
             raise TaskNoop("no email accounts configured")
 
