@@ -20,6 +20,7 @@ import email as email_mod
 import email.header
 import email.utils
 import smtplib
+import ssl
 import json
 import re
 import html
@@ -47,6 +48,7 @@ from routes.email_helpers import (
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
+    _get_valid_google_token, _xoauth2_bytes, _xoauth2_raw,
     make_oauth_state, verify_oauth_state,
     EmailNotConfiguredError,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
@@ -65,6 +67,27 @@ logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
 EMAIL_READ_ATTACHMENT_VERSION = 2
+_GOOGLE_OAUTH_IMAP_HOST = "imap.gmail.com"
+_GOOGLE_OAUTH_SMTP_HOST = "smtp.gmail.com"
+_SERVER_OWNED_OAUTH_FIELDS = {
+    "oauth_provider",
+    "oauth_access_token",
+    "oauth_refresh_token",
+    "oauth_token_expiry",
+}
+
+
+def _normalized_mail_host(value) -> str:
+    """Normalize a mail hostname for exact provider-bound comparisons."""
+    return str(value or "").strip().lower().rstrip(".")
+
+
+def _google_oauth_imap_transport_allowed(port: int, starttls: bool) -> bool:
+    return (port == 993 and not starttls) or (port == 143 and starttls)
+
+
+def _google_oauth_smtp_transport_allowed(port: int, security: str) -> bool:
+    return (port == 465 and security == "ssl") or (port == 587 and security == "starttls")
 
 
 def _safe_attachment_zip_name(name: str, fallback: str) -> str:
@@ -5013,13 +5036,17 @@ def setup_email_routes():
                     "account_id": acc_id,
                 }
                 for key, value in body.items():
-                    if key == "account_id":
+                    if key == "account_id" or key in _SERVER_OWNED_OAUTH_FIELDS:
                         continue
                     if value not in (None, ""):
                         saved_body[key] = value
                 body = saved_body
             finally:
                 db.close()
+        else:
+            # OAuth state belongs to a saved, owner-checked account. Do not let
+            # inline test payloads select the OAuth branch or supply token data.
+            body = {key: value for key, value in body.items() if key not in _SERVER_OWNED_OAUTH_FIELDS}
 
         imap_result = {"ok": False}
         smtp_result = None
@@ -5031,10 +5058,31 @@ def setup_email_routes():
         imap_starttls = bool(body.get("imap_starttls"))
         oauth_provider = body.get("oauth_provider") or ""
 
+        google_token = None
+        google_token_loaded = False
+        google_ssl_context = (
+            ssl.create_default_context()
+            if oauth_provider == "google"
+            else None
+        )
+
+        def _google_token():
+            nonlocal google_token, google_token_loaded
+            if not google_token_loaded:
+                google_token = _get_valid_google_token(body.get("account_id"), body)
+                google_token_loaded = True
+            if not google_token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+            return google_token
+
         if imap_port_err:
             imap_result = {"ok": False, "error": imap_port_err}
         elif not (imap_host and imap_user and (imap_pass or oauth_provider == "google")):
             imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
+        elif oauth_provider == "google" and _normalized_mail_host(imap_host) != _GOOGLE_OAUTH_IMAP_HOST:
+            imap_result = {"ok": False, "error": "Google OAuth IMAP requires imap.gmail.com"}
+        elif oauth_provider == "google" and not _google_oauth_imap_transport_allowed(imap_port, imap_starttls):
+            imap_result = {"ok": False, "error": "Google OAuth IMAP requires TLS on port 993 or STARTTLS on port 143"}
         else:
             # Connection mode resolution:
             #   STARTTLS on  → plain IMAP4 + .starttls() (upgrade)
@@ -5044,18 +5092,20 @@ def setup_email_routes():
             # port (Dovecot on 31143, etc.) would always fail the SSL
             # handshake because they're not actually wrapped in TLS.
             try:
+                imap_kwargs = {
+                    "starttls": imap_starttls,
+                    "timeout": _IMAP_TIMEOUT_SECONDS,
+                }
+                if google_ssl_context:
+                    imap_kwargs["ssl_context"] = google_ssl_context
                 conn = _open_imap_connection(
                     imap_host,
                     imap_port,
-                    starttls=imap_starttls,
-                    timeout=_IMAP_TIMEOUT_SECONDS,
+                    **imap_kwargs,
                 )
                 try:
                     if oauth_provider == "google":
-                        from routes.email_helpers import _get_valid_google_token, _xoauth2_bytes
-                        token = _get_valid_google_token(body.get("account_id"), body)
-                        if not token:
-                            raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+                        token = _google_token()
                         conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(imap_user, token))
                     else:
                         conn.login(imap_user, imap_pass)
@@ -5070,33 +5120,70 @@ def setup_email_routes():
         smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
         if smtp_host and smtp_port_err:
             smtp_result = {"ok": False, "error": smtp_port_err}
+        elif oauth_provider == "google" and smtp_host and _normalized_mail_host(smtp_host) != _GOOGLE_OAUTH_SMTP_HOST:
+            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires smtp.gmail.com"}
+        elif (
+            oauth_provider == "google"
+            and smtp_host
+            and not _google_oauth_smtp_transport_allowed(
+                smtp_port,
+                _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port}),
+            )
+        ):
+            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires TLS on port 465 or STARTTLS on port 587"}
         elif smtp_host:
             smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
             smtp_user = (body.get("smtp_user") or imap_user).strip()
             smtp_pass = body.get("smtp_password") or imap_pass
+            smtp = None
             try:
                 if smtp_security == "ssl":
-                    smtp = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+                    smtp_kwargs = (
+                        {"context": google_ssl_context}
+                        if google_ssl_context
+                        else {}
+                    )
+                    smtp = smtplib.SMTP_SSL(
+                        smtp_host,
+                        smtp_port,
+                        timeout=10,
+                        **smtp_kwargs,
+                    )
                 else:
                     smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
                     if smtp_security == "starttls":
-                        smtp.starttls()
-                try:
-                    if oauth_provider == "google":
-                        from routes.email_helpers import _get_valid_google_token, _xoauth2_raw
-                        token = _get_valid_google_token(body.get("account_id"), body)
-                        if not token:
-                            raise RuntimeError("Google OAuth token unavailable — reconnect the account")
-                        smtp.ehlo()
-                        smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(smtp_user, token), initial_response_ok=True)
-                    else:
-                        smtp.login(smtp_user, smtp_pass)
-                    smtp_result = {"ok": True}
-                finally:
-                    try: smtp.quit()
-                    except Exception: pass
+                        try:
+                            if google_ssl_context:
+                                smtp.starttls(context=google_ssl_context)
+                            else:
+                                smtp.starttls()
+                        except Exception:
+                            # STARTTLS failed before the auth cleanup block.
+                            # Close the still-open plaintext socket explicitly.
+                            try:
+                                smtp.close()
+                            except Exception:
+                                pass
+                            smtp = None
+                            raise
+                if oauth_provider == "google":
+                    token = _google_token()
+                    smtp.ehlo()
+                    smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(smtp_user, token), initial_response_ok=True)
+                else:
+                    smtp.login(smtp_user, smtp_pass)
+                smtp_result = {"ok": True}
             except Exception as e:
                 smtp_result = {"ok": False, "error": _friendly_email_auth_error("SMTP", smtp_host, e)}
+            finally:
+                if smtp is not None:
+                    try:
+                        smtp.quit()
+                    except Exception:
+                        try:
+                            smtp.close()
+                        except Exception:
+                            pass
 
         return {
             "ok": imap_result["ok"] and (smtp_result is None or smtp_result["ok"]),
