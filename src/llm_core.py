@@ -1860,11 +1860,10 @@ def _dedupe_candidates(candidates):
     """Filter malformed entries and drop a later repeat of an already-seen
     ``(url, model)`` route, preserving order (first occurrence wins).
 
-    The chain is the primary target followed by the configured fallbacks, so a
-    fallback that repeats the session's current model — a common misconfiguration,
-    since callers prepend the live ``(url, model)`` to ``default_model_fallbacks``
-    — would otherwise make the chain re-attempt the very route that just failed:
-    a wasted round-trip plus a spurious ``fallback`` notice for a switch that did
+    The chain is the primary target followed by any caller-authorized
+    fallbacks.  A fallback that repeats the session's current model would
+    otherwise make the chain re-attempt the very route that just failed: a
+    wasted round-trip plus a spurious ``fallback`` notice for a switch that did
     not happen. Headers are not part of the key; the first tuple (with its
     headers) is the one kept.
     """
