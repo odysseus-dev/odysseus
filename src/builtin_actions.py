@@ -20,46 +20,216 @@ from src.interactive_gate import wait_for_interactive_quiet
 logger = logging.getLogger(__name__)
 
 
-def _run_email_urgency_state_transaction(state_path, lock_db_path, operation):
-    """Serialize one owner urgency checkpoint across worker processes.
-
-    ``operation`` receives the latest JSON state and returns
-    ``(result, next_state)``.  The scheduled-email database is used only as a
-    durable cross-process write lock; the UI-facing state remains the existing
-    JSON file.  Running the operation in a worker thread keeps the async event
-    loop free while reminder delivery is in flight.
-    """
+def _acquire_email_urgency_state_lock(
+    state_path,
+    lock_db_path,
+    cancel_event,
+    timeout_seconds=120,
+):
+    """Acquire the cross-process urgency lock without blocking the app loop."""
     import sqlite3
-    import uuid
+    import time
     from pathlib import Path
 
     state_path = Path(state_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(lock_db_path), timeout=120)
-    temp_path = state_path.with_name(
-        f".{state_path.name}.{uuid.uuid4().hex}.tmp"
-    )
-    try:
-        conn.execute("BEGIN IMMEDIATE")
+    deadline = time.monotonic() + timeout_seconds
+
+    while not cancel_event.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise sqlite3.OperationalError("timed out waiting for urgency state lock")
+        conn = sqlite3.connect(
+            str(lock_db_path),
+            timeout=min(0.25, max(0.01, remaining)),
+            check_same_thread=False,
+        )
         try:
-            prior = json.loads(state_path.read_text(encoding="utf-8")) \
-                if state_path.exists() else {}
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            if "locked" not in str(exc).lower():
+                raise
+            cancel_event.wait(min(0.05, max(0.0, remaining)))
+            continue
+        except BaseException:
+            conn.close()
+            raise
+
+        if cancel_event.is_set():
+            conn.rollback()
+            conn.close()
+            return None, None
+        try:
+            prior = (
+                json.loads(state_path.read_text(encoding="utf-8"))
+                if state_path.exists()
+                else {}
+            )
             if not isinstance(prior, dict):
                 prior = {}
         except Exception:
             prior = {}
+        return conn, prior
 
-        result, next_state = operation(prior)
+    return None, None
+
+
+def _close_email_urgency_state_lock(conn):
+    if conn is None:
+        return
+    try:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
+def _commit_email_urgency_state(conn, state_path, next_state):
+    """Atomically publish JSON before releasing the SQLite write lock."""
+    import uuid
+    from pathlib import Path
+
+    state_path = Path(state_path)
+    temp_path = state_path.with_name(
+        f".{state_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
         temp_path.write_text(json.dumps(next_state), encoding="utf-8")
         temp_path.replace(state_path)
         conn.commit()
-        return result
-    except Exception:
+    except BaseException:
         conn.rollback()
         raise
     finally:
         temp_path.unlink(missing_ok=True)
         conn.close()
+
+
+async def _run_email_urgency_state_transaction(
+    state_path,
+    lock_db_path,
+    operation,
+):
+    """Serialize one urgency decision while keeping async work on this loop.
+
+    Only lock acquisition waits in a worker thread. ``operation`` is awaited
+    on the caller's long-lived event loop, where shared async clients, locks,
+    and the browser-notification queue belong. Cancellation rolls back the
+    SQLite transaction and never publishes a checkpoint.
+    """
+    import asyncio
+    import threading
+
+    loop = asyncio.get_running_loop()
+    cancel_event = threading.Event()
+    acquire_future = loop.run_in_executor(
+        None,
+        _acquire_email_urgency_state_lock,
+        state_path,
+        lock_db_path,
+        cancel_event,
+    )
+    try:
+        conn, prior = await asyncio.shield(acquire_future)
+    except asyncio.CancelledError as cancelled:
+        cancel_event.set()
+        # The acquisition worker owns any connection until it returns. Wait
+        # for its short busy-poll to observe cancellation, then close a lock it
+        # may have won concurrently with the cancellation request.
+        while True:
+            try:
+                conn, _prior = await asyncio.shield(acquire_future)
+                break
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                conn = None
+                break
+        _close_email_urgency_state_lock(conn)
+        raise cancelled
+
+    if conn is None:
+        raise asyncio.CancelledError
+
+    try:
+        result, next_state = await operation(prior)
+        # Keep this small atomic publish synchronous. There is no await between
+        # the successful operation and commit, so cancellation cannot be
+        # observed and then followed by a checkpoint.
+        try:
+            _commit_email_urgency_state(conn, state_path, next_state)
+        finally:
+            conn = None
+        return result
+    except BaseException:
+        _close_email_urgency_state_lock(conn)
+        raise
+
+
+def _email_urgency_account_key(message_key):
+    return str(message_key).split(":", 1)[0]
+
+
+def _merge_email_urgency_state(
+    prior,
+    *,
+    owner,
+    per_uid_scores,
+    notified_uids,
+    all_unread_keys,
+    fully_scanned_account_ids,
+    timestamp,
+):
+    """Merge current scan knowledge without deleting unscanned accounts."""
+    prior_per_uid = prior.get("per_uid", {})
+    if not isinstance(prior_per_uid, dict):
+        prior_per_uid = {}
+    complete = {str(account_id) for account_id in fully_scanned_account_ids}
+
+    merged_per_uid = dict(prior_per_uid)
+    for key in list(merged_per_uid):
+        if _email_urgency_account_key(key) in complete:
+            merged_per_uid.pop(key, None)
+    # Partial scans may add or refresh facts, but absence from a partial scan
+    # is not evidence that another checkpoint or UI row is stale.
+    merged_per_uid.update(per_uid_scores)
+
+    merged_notified = set(notified_uids)
+    for key in list(merged_notified):
+        if (
+            _email_urgency_account_key(key) in complete
+            and key not in all_unread_keys
+        ):
+            merged_notified.discard(key)
+
+    total_unread = 0
+    total_urgent = 0
+    max_score = 0
+    for value in merged_per_uid.values():
+        if not isinstance(value, dict):
+            continue
+        try:
+            score = max(0, min(3, int(value.get("score", 0))))
+        except (TypeError, ValueError):
+            score = 0
+        max_score = max(max_score, score)
+        if value.get("unread"):
+            total_unread += 1
+            if score >= 2:
+                total_urgent += 1
+
+    return {
+        "ts": timestamp,
+        "owner": owner or "",
+        "total_unread": total_unread,
+        "total_urgent": total_urgent,
+        "max_score": max_score,
+        "per_uid": merged_per_uid,
+        "notified_uids": sorted(merged_notified),
+    }
 
 
 class TaskNoop(BaseException):
@@ -1903,6 +2073,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         failed_classifications = []
         tag_write_details = []
         scanned = 0
+        fully_scanned_account_ids = set()
 
         def _heuristic_email_verdict(item: dict) -> dict:
             blob = (
@@ -1998,16 +2169,27 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             def _scan_one(account=acc, cache_uids=cache.get("uids", {})):
                 """Sync IMAP work runs in a thread."""
                 results = []
+                scan_complete = True
                 conn = _imap_connect(account.id)
                 try:
-                    conn.select("INBOX", readonly=True)
+                    select_status, _select_data = conn.select("INBOX", readonly=True)
+                    if select_status != "OK":
+                        return results, False
                     # Tag recent inbox mail, not only unread mail. Urgency
                     # reminders below still only notify for unread messages.
                     since_str = AGE_CUTOFF.strftime("%d-%b-%Y")
                     status, data = conn.uid("SEARCH", None, f'(SINCE {since_str})')
-                    if status != "OK" or not data or not data[0]:
-                        return results
-                    uids = data[0].split()[-30:]
+                    if status != "OK":
+                        return results, False
+                    if not data or not data[0]:
+                        return results, True
+                    matching_uids = data[0].split()
+                    if len(matching_uids) > 30:
+                        # The scale guard deliberately processes only the most
+                        # recent 30. That is a partial account snapshot, so it
+                        # cannot justify pruning older checkpoint facts.
+                        scan_complete = False
+                    uids = matching_uids[-30:]
                     for uid_b in uids:
                         uid = uid_b.decode() if isinstance(uid_b, bytes) else str(uid_b)
                         key = f"{account.id}:{uid}"
@@ -2015,12 +2197,41 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                         cached_ok = isinstance(cached, dict) and cached.get("triage_version") == TRIAGE_VERSION
                         results.append({"key": key, "uid": uid, "cached": cached if cached_ok else None})
                         if cached_ok:
-                            # Already classified — skip the fetch.
+                            # Cached verdicts still need a lightweight FLAGS
+                            # refresh. Without it a cached unread message looks
+                            # read and its successful notification checkpoint
+                            # is pruned on the next pass.
+                            try:
+                                st, flag_data = conn.uid("FETCH", uid_b, "(UID FLAGS)")
+                                if st != "OK" or not flag_data:
+                                    scan_complete = False
+                                    results.pop()
+                                    continue
+                                flag_parts = []
+                                for part in flag_data:
+                                    if isinstance(part, (bytes, bytearray)):
+                                        flag_parts.append(bytes(part))
+                                    elif (
+                                        isinstance(part, tuple)
+                                        and part
+                                        and isinstance(part[0], (bytes, bytearray))
+                                    ):
+                                        flag_parts.append(bytes(part[0]))
+                                flags_blob = b" ".join(flag_parts)
+                                results[-1]["unread"] = b"\\Seen" not in flags_blob
+                            except Exception as _fe:
+                                scan_complete = False
+                                results.pop()
+                                logger.debug(
+                                    f"urgency: flag fetch for uid {uid} failed: {_fe}"
+                                )
                             continue
                         # Pull headers + first ~800 chars of plaintext body.
                         try:
                             st, msg_data = conn.uid("FETCH", uid_b, "(UID FLAGS RFC822.HEADER BODY.PEEK[TEXT]<0.800>)")
                             if st != "OK" or not msg_data:
+                                scan_complete = False
+                                results.pop()
                                 continue
                             flags_blob = b" ".join(
                                 part[0] for part in msg_data
@@ -2034,6 +2245,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                                 if isinstance(part, tuple) and part[1]:
                                     raw += part[1] + b"\n\n"
                             if not raw:
+                                scan_complete = False
+                                results.pop()
                                 continue
                             msg = _email_mod.message_from_bytes(raw)
                             # Skip Odysseus-generated reminders so the scanner
@@ -2089,17 +2302,21 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                                 "unread": is_unread,
                             })
                         except Exception as _fe:
+                            scan_complete = False
+                            results.pop()
                             logger.debug(f"urgency: header fetch for uid {uid} failed: {_fe}")
                 finally:
                     try: conn.logout()
                     except Exception: pass
-                return results
+                return results, scan_complete
 
             try:
-                items = await _aio.to_thread(_scan_one)
+                items, scan_complete = await _aio.to_thread(_scan_one)
             except Exception as e:
                 logger.warning(f"urgency: IMAP scan failed for account {acc.id}: {e}")
                 continue
+            if scan_complete:
+                fully_scanned_account_ids.add(str(acc.id))
 
             for item in items:
                 scanned += 1
@@ -2236,13 +2453,13 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     logger.debug(f"urgency: LLM classify failed for {key}: {e}")
                     continue
 
-            # ── Prune cache entries for UIDs that are no longer in the recent
-            # scan window. Read messages remain cached because tags are useful
-            # on read mail too; unread state is refreshed per scan above.
-            seen_uids = {it["uid"] for it in items}
-            cache_uids = cache.get("uids", {})
-            for stale in [u for u in cache_uids if u not in seen_uids]:
-                cache_uids.pop(stale, None)
+            if scan_complete:
+                # Only a complete account scan proves a cached UID left the
+                # recent window. Partial/failing scans preserve prior facts.
+                seen_uids = {it["uid"] for it in items}
+                cache_uids = cache.get("uids", {})
+                for stale in [u for u in cache_uids if u not in seen_uids]:
+                    cache_uids.pop(stale, None)
 
             try:
                 cache_file.write_text(_json.dumps(cache), encoding="utf-8")
@@ -2346,7 +2563,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 4. Aggregate state. urgent = score ≥ 2.
         urgent_keys = [k for k, v in per_uid_scores.items() if v.get("score", 0) >= 2 and v.get("unread")]
-        max_score = max((v.get("score", 0) for v in per_uid_scores.values()), default=0)
         total_urgent = len(urgent_keys)
 
         # ── 5. Fire a reminder only when a previously-unnotified UID scores
@@ -2395,12 +2611,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 owner=owner or "",
             )
 
-        def _dispatch_and_checkpoint(prior):
+        async def _dispatch_and_checkpoint(prior):
             notified_uids = set(prior.get("notified_uids", []))
             new_urgent = [k for k in urgent_keys if k not in notified_uids]
             if new_urgent:
                 try:
-                    dispatch_result = _aio.run(_dispatch_urgency_reminder())
+                    dispatch_result = await _dispatch_urgency_reminder()
                     channel = (settings.get("reminder_channel") or "browser").strip().lower()
                     delivered = bool(dispatch_result.get("browser_sent"))
                     if channel == "email":
@@ -2422,23 +2638,19 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     logger.warning(f"urgency: reminder dispatch failed: {e}")
                     notify_failed.update(new_urgent)
 
-            # Prune UIDs no longer unread, while retaining every successful
-            # checkpoint observed after this worker acquired the durable lock.
-            notified_uids.intersection_update(all_unread_keys)
-            next_state = {
-                "ts": _time.time(),
-                "owner": owner or "",
-                "total_unread": len(all_unread_keys),
-                "total_urgent": total_urgent,
-                "max_score": max_score,
-                "per_uid": per_uid_scores,
-                "notified_uids": sorted(notified_uids),
-            }
+            next_state = _merge_email_urgency_state(
+                prior,
+                owner=owner,
+                per_uid_scores=per_uid_scores,
+                notified_uids=notified_uids,
+                all_unread_keys=all_unread_keys,
+                fully_scanned_account_ids=fully_scanned_account_ids,
+                timestamp=_time.time(),
+            )
             return notified_uids, next_state
 
         try:
-            await _aio.to_thread(
-                _run_email_urgency_state_transaction,
+            await _run_email_urgency_state_transaction(
                 STATE_PATH,
                 STATE_LOCK_DB,
                 _dispatch_and_checkpoint,
