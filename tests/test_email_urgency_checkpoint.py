@@ -289,6 +289,104 @@ def test_newer_partial_checkpoint_fences_older_complete_snapshot():
     }
 
 
+def test_authoritative_retirement_prunes_payload_and_recomputes_api_totals():
+    from src.builtin_actions import _merge_email_urgency_state
+
+    prior = {
+        "owner": "alice",
+        "per_uid": {
+            "acct-a:1": {"score": 1, "unread": True},
+            "acct-b:1": {"score": 3, "unread": True},
+        },
+        "notified_uids": ["acct-b:1"],
+        "account_generations": {
+            "acct-a": {"checkpoint": 1, "complete": 1},
+            "acct-b": {"checkpoint": 1, "complete": 1},
+        },
+    }
+
+    merged = _merge_email_urgency_state(
+        prior,
+        owner="alice",
+        per_uid_scores={},
+        notified_uids=prior["notified_uids"],
+        all_unread_keys=set(),
+        fully_scanned_account_ids=set(),
+        base_account_generations=prior["account_generations"],
+        timestamp=300.0,
+        retired_account_ids={"acct-b"},
+        base_payload_account_ids={"acct-a", "acct-b"},
+    )
+
+    assert merged["per_uid"] == {
+        "acct-a:1": {"score": 1, "unread": True},
+    }
+    assert merged["notified_uids"] == []
+    assert merged["total_unread"] == 1
+    assert merged["total_urgent"] == 0
+    assert merged["max_score"] == 1
+    assert merged["account_generations"]["acct-b"] == {
+        "checkpoint": 2,
+        "complete": 1,
+    }
+
+
+def test_authoritative_retirement_respects_generation_and_membership_fences():
+    from src.builtin_actions import _merge_email_urgency_state
+
+    newer = {
+        "owner": "alice",
+        "per_uid": {
+            "acct-b:2": {"score": 3, "unread": True, "reason": "newer"},
+        },
+        "notified_uids": ["acct-b:2"],
+        "account_generations": {
+            "acct-b": {"checkpoint": 2, "complete": 2},
+        },
+    }
+    generation_fenced = _merge_email_urgency_state(
+        newer,
+        owner="alice",
+        per_uid_scores={},
+        notified_uids=newer["notified_uids"],
+        all_unread_keys=set(),
+        fully_scanned_account_ids=set(),
+        base_account_generations={
+            "acct-b": {"checkpoint": 1, "complete": 1},
+        },
+        timestamp=300.0,
+        retired_account_ids={"acct-b"},
+        base_payload_account_ids={"acct-b"},
+    )
+    assert generation_fenced["per_uid"] == newer["per_uid"]
+    assert generation_fenced["notified_uids"] == ["acct-b:2"]
+    assert generation_fenced["account_generations"]["acct-b"] == {
+        "checkpoint": 2,
+        "complete": 2,
+    }
+
+    legacy_first_write = {
+        "owner": "alice",
+        "per_uid": {
+            "acct-b:3": {"score": 2, "unread": True, "reason": "concurrent"},
+        },
+        "notified_uids": [],
+    }
+    membership_fenced = _merge_email_urgency_state(
+        legacy_first_write,
+        owner="alice",
+        per_uid_scores={},
+        notified_uids=[],
+        all_unread_keys=set(),
+        fully_scanned_account_ids=set(),
+        base_account_generations={},
+        timestamp=300.0,
+        retired_account_ids={"acct-b"},
+        base_payload_account_ids=set(),
+    )
+    assert membership_fenced["per_uid"] == legacy_first_write["per_uid"]
+
+
 @pytest.mark.asyncio
 async def test_waiting_transaction_cancellation_does_not_leak_lock(tmp_path):
     from src.builtin_actions import _run_email_urgency_state_transaction
@@ -665,6 +763,146 @@ async def test_account_scoped_actions_merge_disjoint_checkpoints(
 
 
 @pytest.mark.asyncio
+async def test_full_enumeration_retires_deleted_or_disabled_account(
+    monkeypatch,
+    tmp_path,
+):
+    import routes.note_routes as note_routes
+
+    builtin_actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a", "acct-b"]
+    )
+
+    async def delivered(**_kwargs):
+        return {
+            "browser_sent": True,
+            "email_sent": False,
+            "ntfy_sent": False,
+            "webhook_sent": False,
+        }
+
+    monkeypatch.setattr(note_routes, "dispatch_reminder", delivered)
+    await builtin_actions.action_check_email_urgency("alice")
+
+    # The production query returns only enabled, owner-visible accounts. A
+    # deleted row and a disabled row are therefore the same authoritative
+    # absence at this boundary.
+    runtime["accounts"] = ["acct-a"]
+    await builtin_actions.action_check_email_urgency("alice")
+
+    state = json.loads(
+        (tmp_path / "email_urgency_state_alice.json").read_text(encoding="utf-8")
+    )
+    assert set(state["per_uid"]) == {"acct-a:1"}
+    assert state["notified_uids"] == ["acct-a:1"]
+    assert state["total_unread"] == 1
+    assert state["total_urgent"] == 1
+    assert state["max_score"] == 3
+    assert state["account_generations"]["acct-b"] == {
+        "checkpoint": 2,
+        "complete": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_zero_enabled_accounts_cleanup_precedes_model_resolution(
+    monkeypatch,
+    tmp_path,
+):
+    import routes.note_routes as note_routes
+    from src import task_endpoint
+
+    builtin_actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a"]
+    )
+
+    async def delivered(**_kwargs):
+        return {
+            "browser_sent": True,
+            "email_sent": False,
+            "ntfy_sent": False,
+            "webhook_sent": False,
+        }
+
+    monkeypatch.setattr(note_routes, "dispatch_reminder", delivered)
+    await builtin_actions.action_check_email_urgency("alice")
+    runtime["accounts"] = []
+
+    model_resolution_owners = []
+
+    def no_model_available(*_args, **kwargs):
+        model_resolution_owners.append(kwargs.get("owner"))
+        return []
+
+    monkeypatch.setattr(
+        task_endpoint,
+        "resolve_task_candidates",
+        no_model_available,
+    )
+    with pytest.raises(builtin_actions.TaskNoop):
+        await builtin_actions.action_check_email_urgency("alice")
+    assert model_resolution_owners == ["alice"]
+
+    state = json.loads(
+        (tmp_path / "email_urgency_state_alice.json").read_text(encoding="utf-8")
+    )
+    assert state["per_uid"] == {}
+    assert state["notified_uids"] == []
+    assert state["total_unread"] == 0
+    assert state["total_urgent"] == 0
+    assert state["max_score"] == 0
+    assert state["account_generations"]["acct-a"] == {
+        "checkpoint": 2,
+        "complete": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_scoped_missing_account_retires_only_selected_payload(
+    monkeypatch,
+    tmp_path,
+):
+    import routes.note_routes as note_routes
+
+    builtin_actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a", "acct-b"]
+    )
+
+    async def delivered(**_kwargs):
+        return {
+            "browser_sent": True,
+            "email_sent": False,
+            "ntfy_sent": False,
+            "webhook_sent": False,
+        }
+
+    monkeypatch.setattr(note_routes, "dispatch_reminder", delivered)
+    await builtin_actions.action_check_email_urgency("alice")
+
+    # A production account-id filter returns no row when the selected account
+    # was deleted or disabled. Other accounts are outside this scoped query and
+    # must remain untouched.
+    runtime["accounts"] = []
+    with pytest.raises(builtin_actions.TaskNoop):
+        await builtin_actions.action_check_email_urgency(
+            "alice",
+            prompt='{"account_id":"acct-b"}',
+        )
+
+    state = json.loads(
+        (tmp_path / "email_urgency_state_alice.json").read_text(encoding="utf-8")
+    )
+    assert set(state["per_uid"]) == {"acct-a:1"}
+    assert state["notified_uids"] == ["acct-a:1"]
+    assert state["total_unread"] == 1
+    assert state["total_urgent"] == 1
+    assert state["account_generations"]["acct-b"] == {
+        "checkpoint": 2,
+        "complete": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_failed_account_scan_preserves_checkpoint_until_recovery(
     monkeypatch,
     tmp_path,
@@ -696,6 +934,12 @@ async def test_failed_account_scan_preserves_checkpoint_until_recovery(
     )
     assert failed_state["notified_uids"] == ["acct-a:1", "acct-b:1"]
     assert set(failed_state["per_uid"]) == {"acct-a:1", "acct-b:1"}
+    assert failed_state["total_unread"] == 2
+    assert failed_state["total_urgent"] == 2
+    assert failed_state["account_generations"]["acct-b"] == {
+        "checkpoint": 1,
+        "complete": 1,
+    }
 
     runtime["failures"] = set()
     runtime["accounts"] = ["acct-b"]
