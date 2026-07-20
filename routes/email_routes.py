@@ -43,6 +43,7 @@ from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTE
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
+    _account_visible_to_owner,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
@@ -90,43 +91,62 @@ def _coerce_port(value, default):
         return None, f"Invalid port {value!r}; must be a whole number"
 
 
-def _lock_email_account_owner_mutation(db, owner: str) -> None:
-    """Serialize one owner's account/default mutation before reading rows.
+def _lock_email_account_owner_mutation(db, *owners: str) -> None:
+    """Delegate account/default serialization to the shared DB primitive."""
+    from core.database import lock_email_account_owner_mutations
 
-    SQLite does not implement row-level ``FOR UPDATE`` locking, so acquire its
-    process-safe writer reservation up front.  Row-locking SQLAlchemy
-    databases lock a durable owner row.  Creating a missing lock row inside a
-    savepoint safely handles two first-account requests racing for the same
-    owner without poisoning the outer transaction on a uniqueness conflict.
-    """
-    from core.database import EmailAccountOwnerLock
-    from sqlalchemy import text
-    from sqlalchemy.exc import IntegrityError
+    lock_email_account_owner_mutations(db, *owners)
 
-    if db.get_bind().dialect.name == "sqlite":
-        db.execute(text("BEGIN IMMEDIATE"))
-        return
 
-    owner_key = owner or ""
-    lock_row = db.get(EmailAccountOwnerLock, owner_key, with_for_update=True)
-    if lock_row is not None:
-        return
+def _email_account_owner_scope(query, owner: str):
+    """Restrict a query to one normalized EmailAccount owner partition."""
+    from core.database import EmailAccount
+    from sqlalchemy import or_
 
-    inserted = False
+    if owner:
+        return query.filter(EmailAccount.owner == owner)
+    return query.filter(or_(EmailAccount.owner == None, EmailAccount.owner == ""))  # noqa: E711
+
+
+def _discover_email_account_mutation_scope(account_id: str, owner: str) -> str:
+    """Read the initial lock key and fail closed before a mutation session."""
+    from core.database import EmailAccount, SessionLocal
+
+    db = SessionLocal()
     try:
-        with db.begin_nested():
-            db.add(EmailAccountOwnerLock(owner_key=owner_key))
-            db.flush()
-            inserted = True
-    except IntegrityError:
-        # Another transaction created the owner row first.  Lock that durable
-        # row below after its insert commits.
-        pass
+        row = db.get(EmailAccount, account_id)
+        if row is None or (owner and not _account_visible_to_owner(row, owner)):
+            raise HTTPException(404, "Account not found")
+        return row.owner or ""
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Account-owner mutation check failed: %s", exc)
+        raise HTTPException(503, "Account check failed")
+    finally:
+        db.close()
 
-    if not inserted:
-        db.query(EmailAccountOwnerLock).filter(
-            EmailAccountOwnerLock.owner_key == owner_key
-        ).with_for_update().one()
+
+def _lock_and_reload_email_account(db, account_id: str, owner: str, scope: str):
+    """Lock, reload, and revalidate an account, retrying if its owner moved."""
+    from core.database import EmailAccount
+
+    owner_scopes = {scope or ""}
+    while True:
+        _lock_email_account_owner_mutation(db, *owner_scopes)
+        row = db.get(EmailAccount, account_id, populate_existing=True)
+        if row is None or (owner and not _account_visible_to_owner(row, owner)):
+            raise HTTPException(404, "Account not found")
+
+        current_scope = row.owner or ""
+        if current_scope in owner_scopes or db.get_bind().dialect.name == "sqlite":
+            return row
+
+        # The account changed owner after discovery but before lock acquisition.
+        # Release the partial lock set and reacquire all observed scopes in the
+        # shared helper's canonical order, then validate from the database again.
+        db.rollback()
+        owner_scopes.add(current_scope)
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -4774,8 +4794,7 @@ def setup_email_routes():
         try:
             _lock_email_account_owner_mutation(db, owner)
             q = db.query(EmailAccount).filter(EmailAccount.is_default == True)  # noqa: E712
-            if owner:
-                q = q.filter(EmailAccount.owner == owner)
+            q = _email_account_owner_scope(q, owner)
             row = q.first()
             if row is None:
                 row = EmailAccount(id=_uuid.uuid4().hex, owner=owner, name="Default", is_default=True, enabled=True)
@@ -4801,8 +4820,7 @@ def setup_email_routes():
             if data.get("smtp_password"):
                 row.smtp_password = _enc(data["smtp_password"])
             clear_q = db.query(EmailAccount).filter(EmailAccount.id != row.id)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            clear_q = _email_account_owner_scope(clear_q, owner)
             clear_q.update({EmailAccount.is_default: False})
             db.commit()
         finally:
@@ -4924,9 +4942,7 @@ def setup_email_routes():
             # the one-default invariant — but scope it to THIS user's accounts,
             # otherwise creating a default would clear every other user's
             # default flag too.
-            scope_q = db.query(EmailAccount)
-            if owner:
-                scope_q = scope_q.filter(EmailAccount.owner == owner)
+            scope_q = _email_account_owner_scope(db.query(EmailAccount), owner)
             existing_count = scope_q.count()
             if row.is_default or existing_count == 0:
                 scope_q.update({EmailAccount.is_default: False})
@@ -4977,16 +4993,20 @@ def setup_email_routes():
 
     @router.delete("/accounts/{account_id}")
     async def delete_email_account(account_id: str, owner: str = Depends(require_user)):
-        _assert_owns_account(account_id, owner)
+        initial_scope = _discover_email_account_mutation_scope(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
-            _lock_email_account_owner_mutation(db, owner)
-            row = db.get(EmailAccount, account_id)
-            if not row:
-                return {"ok": False, "error": "Account not found"}
+            row = _lock_and_reload_email_account(
+                db, account_id, owner, initial_scope
+            )
+            row_scope = row.owner or ""
             was_default = bool(row.is_default)
             db.delete(row)
+            # Flush the removal before staging a replacement default.  The
+            # partial unique index is checked statement-by-statement, and the
+            # ORM is otherwise free to UPDATE the promoted row before DELETE.
+            db.flush()
             # If the deleted row was default, promote the next-oldest enabled
             # row owned by THIS user. Without the owner filter we'd promote
             # another user's account and the deleter would silently inherit
@@ -4996,8 +5016,7 @@ def setup_email_routes():
                     EmailAccount.id != account_id,
                     EmailAccount.enabled == True,  # noqa: E712
                 )
-                if owner:
-                    promote_q = promote_q.filter(EmailAccount.owner == owner)
+                promote_q = _email_account_owner_scope(promote_q, row_scope)
                 promote = promote_q.order_by(
                     EmailAccount.created_at.asc(), EmailAccount.id.asc()
                 ).first()
@@ -5134,19 +5153,18 @@ def setup_email_routes():
 
     @router.post("/accounts/{account_id}/set-default")
     async def set_default_account(account_id: str, owner: str = Depends(require_user)):
-        _assert_owns_account(account_id, owner)
+        initial_scope = _discover_email_account_mutation_scope(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
-            _lock_email_account_owner_mutation(db, owner)
-            row = db.get(EmailAccount, account_id)
-            if not row:
-                return {"ok": False, "error": "Account not found"}
-            # SECURITY: scope the "clear other defaults" sweep to this user's
-            # accounts so we don't unset another user's default flag.
-            clear_q = db.query(EmailAccount)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            row = _lock_and_reload_email_account(
+                db, account_id, owner, initial_scope
+            )
+            # Scope the sweep to the target row's normalized owner partition;
+            # this also handles visible legacy NULL/empty-owner accounts.
+            clear_q = _email_account_owner_scope(
+                db.query(EmailAccount), row.owner or ""
+            )
             clear_q.update({EmailAccount.is_default: False})
             row.is_default = True
             db.commit()
