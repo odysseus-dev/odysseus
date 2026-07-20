@@ -731,15 +731,12 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 }
 
             if action == "enable_tool":
-                # Re-enabling a globally disabled tool loosens the admin's only
-                # hard permission boundary. This handler runs with no admin
-                # check and its arguments can be steered by prompt injection
-                # (any page or document the agent reads), so clearing entries
-                # from disabled_tools would let a compromised turn hand itself
-                # bash/web/etc. Enabling is therefore an admin action, done in
-                # Settings -> Agent Tools (POST /tools, require_admin). Disabling
-                # (tightening) and listing stay available here, mirroring how
-                # secrets in this same handler are read-only/panel-only.
+                # One-way boundary: disabled_tools is the operator's global
+                # tool-permission denylist, and this handler runs with no admin
+                # check on prompt-injectable args — so it may tighten the list
+                # (disable_tool) but must never loosen it. Re-enabling is an
+                # admin action in Settings -> Agent Tools; the generic API route
+                # is fenced in parallel (app_api blocks POST /api/tools).
                 current = get_setting("disabled_tools", []) or []
                 return {
                     "response": (

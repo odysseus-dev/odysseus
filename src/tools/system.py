@@ -557,6 +557,13 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
     ("POST",   "/api/calendar/events"),
     ("PUT",    "/api/calendar/events"),
     ("DELETE", "/api/calendar/events"),
+    # disabled_tools is the operator's global tool-permission boundary. POST
+    # /api/tools rewrites it wholesale, and that route's require_admin is
+    # satisfied by the loopback identity these calls ride — so without this an
+    # injected turn could re-enable a tool the operator disabled. Loosening the
+    # denylist stays a human action in Settings -> Agent Tools. (GET /api/tools
+    # is a read, left callable.)
+    ("POST",   "/api/tools"),
 )
 
 
@@ -648,6 +655,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         return {"error": f"Unsupported method: {method}", "exit_code": 1}
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+        if path.rstrip("/") == "/api/tools":
+            return {"error": "Don't POST /api/tools via app_api — that rewrites the global tool denylist, which is an admin-only action. Re-enable a disabled tool in Settings -> Agent Tools. From chat you can only tighten the denylist, via manage_settings disable_tool.", "exit_code": 1}
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
         if "/api/cookbook/packages/install" in path:
