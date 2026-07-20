@@ -22,6 +22,11 @@ _ENGINE = create_engine(f"sqlite:///{_TMPDB.name}", connect_args={"check_same_th
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 
+# _owner_filter fails closed when auth is enabled (the CI default) and the
+# resolved user is None, so the library would return zero rows regardless of
+# the tag-filter fix under test. Authenticate and seed as a concrete owner.
+OWNER = "gallery-tag-tester"
+
 
 def _route(router, path):
     for r in router.routes:
@@ -34,7 +39,7 @@ def _route(router, path):
 def library(monkeypatch):
     import routes.gallery_routes as gr
     monkeypatch.setattr(gr, "SessionLocal", _TS)
-    monkeypatch.setattr(gr, "get_current_user", lambda request: None, raising=False)
+    monkeypatch.setattr(gr, "get_current_user", lambda request: OWNER, raising=False)
     return _route(gr.setup_gallery_routes(), "/api/gallery/library")
 
 
@@ -44,7 +49,7 @@ def _seed(*tagsets):
         db.query(GalleryImage).delete()
         for tg in tagsets:
             db.add(GalleryImage(id=str(uuid.uuid4()), filename=f"{uuid.uuid4().hex}.png",
-                                tags=tg, is_active=True))
+                                tags=tg, is_active=True, owner=OWNER))
         db.commit()
     finally:
         db.close()
