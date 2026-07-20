@@ -1,10 +1,7 @@
 """Pin the event-bus → outbound-webhook bridge.
 
-Lifecycle events like ``research_completed`` are emitted from many scattered
-handlers (``research_handler.py``, ``task_scheduler.py``, ``document_routes.py``,
-``memory_routes.py``, ``ai_interaction.py``, ``email_routes.py``,
-``skills_routes.py``, ``tool_implementations.py``) — none of which hold a
-``webhook_manager`` reference. They all funnel through ``event_bus.fire_event``,
+Lifecycle events are emitted from many scattered handlers that hold no
+``webhook_manager`` reference; they all funnel through ``event_bus.fire_event``,
 so the bus mirrors them to subscribed webhooks from that single seam.
 
 These tests confirm the mapping fires the right public event name, that events
@@ -122,8 +119,8 @@ def test_new_events_are_subscribable():
 
 
 def test_fire_event_dispatches_webhook_synchronously():
-    """fire_event itself drives the bridge (not just the private helper), so the
-    eight emit sites get webhook mirroring for free."""
+    """fire_event itself drives the bridge (not just the private helper), so every
+    emit site gets webhook mirroring for free."""
     fake = _FakeWebhookManager()
     restore = _with_manager(fake)
     try:
@@ -138,3 +135,90 @@ def test_fire_event_dispatches_webhook_synchronously():
         assert ("skill.added", {"owner": "bob"}) in fake.calls
     finally:
         restore()
+
+
+# ---------------------------------------------------------------------------
+# Email-MCP draft bridge: the email server runs as a subprocess, so its own
+# fire_event("document_created") lands on a manager-less bus. McpManager re-emits
+# it in the app process after a draft tool succeeds. These drive that real seam
+# (a fake MCP session), not just the same-process event-bus helper.
+# ---------------------------------------------------------------------------
+
+import asyncio
+import types
+
+
+class _FakeContent:
+    def __init__(self, text):
+        self.text = text
+        self.type = "text"
+
+
+class _FakeMcpResult:
+    def __init__(self, text, is_error=False):
+        self.content = [_FakeContent(text)]
+        self.isError = is_error
+
+
+class _FakeSession:
+    """Stands in for a live MCP ClientSession; echoes a canned tool result."""
+
+    def __init__(self, text, is_error=False):
+        self._result = _FakeMcpResult(text, is_error)
+        self.calls = []
+
+    async def call_tool(self, tool_name, arguments):
+        self.calls.append((tool_name, arguments))
+        return self._result
+
+
+def _run_email_tool(tool_name, text, *, owner="alice", is_error=False):
+    """Call McpManager.call_tool against a fake email session, capturing any
+    bridged webhook. Returns the list of (event, payload) the manager fired."""
+    from src.mcp_manager import McpManager
+
+    fake_wh = _FakeWebhookManager()
+    restore = _with_manager(fake_wh)
+    # Keep the trigger path off the real DB/AUTH — we only assert the webhook seam.
+    orig_handle = event_bus._handle_event
+
+    async def _noop(*a, **k):
+        return None
+
+    event_bus._handle_event = _noop
+    try:
+        mgr = McpManager()
+        mgr._sessions["email"] = _FakeSession(text, is_error=is_error)
+        args = {"_odysseus_owner": owner, "to": "x@y.z", "subject": "hi"}
+        asyncio.run(mgr.call_tool(f"mcp__email__{tool_name}", args))
+        return fake_wh.calls
+    finally:
+        event_bus._handle_event = orig_handle
+        restore()
+
+
+def test_email_draft_bridges_document_created_with_owner():
+    """A successful draft_email (subprocess) fires document.created in-app,
+    scoped to the owner the app passed down via _odysseus_owner."""
+    calls = _run_email_tool("draft_email", "Created Odysseus email draft `Hi`.")
+    assert calls == [("document.created", {"owner": "alice"})]
+
+
+def test_email_reply_draft_bridges_document_created():
+    """The reply-draft tools also create a compose document → same bridge."""
+    for tool in ("draft_email_reply", "ai_draft_email_reply"):
+        calls = _run_email_tool(tool, "Created Odysseus reply draft `Re: Hi`.")
+        assert calls == [("document.created", {"owner": "alice"})], tool
+
+
+def test_email_send_does_not_bridge_document_created():
+    """send_email creates no document — it must not fire document.created."""
+    calls = _run_email_tool("send_email", "Sent email to x@y.z with subject 'hi'.")
+    assert calls == []
+
+
+def test_email_draft_error_result_does_not_bridge():
+    """The email handler reports failures as an 'Error: ...' string at exit_code 0;
+    the bridge must gate on the success text, not merely a clean exit code."""
+    calls = _run_email_tool("draft_email", "Error: no account configured")
+    assert calls == []

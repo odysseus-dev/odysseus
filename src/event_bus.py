@@ -21,9 +21,9 @@ _webhook_manager = None
 
 # Internal event-bus names → public outbound-webhook event names. Only events
 # that are NOT already emitted as webhooks at their own rich-data call sites
-# belong here: ``session_created`` / ``message_sent`` are deliberately absent
-# because session_routes.py and chat_helpers.py already fire ``session.created``
-# and ``chat.message`` directly — bridging them here too would double-deliver.
+# belong here: ``session_created`` / ``message_sent`` are deliberately absent —
+# they already fire ``session.created`` / ``chat.message`` directly, so bridging
+# them here too would double-deliver.
 _WEBHOOK_EVENT_NAMES = {
     "research_completed": "research.completed",
     "document_created": "document.created",

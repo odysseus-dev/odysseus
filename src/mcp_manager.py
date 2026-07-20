@@ -17,6 +17,21 @@ from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
+# Built-in email MCP tools that create an email compose/reply document. The
+# server runs as a stdio subprocess, so the ``fire_event("document_created")``
+# it calls lands on that process's event bus — which never has the app's
+# WebhookManager wired in — and the ``document.created`` webhook never fires.
+# We re-emit it here in the app process (where the manager IS wired) after the
+# subprocess reports success. ``_MCP_OWNER_ARG`` mirrors the email server's
+# owner contextvar arg so the re-emitted event carries the same owner.
+_EMAIL_DOCUMENT_TOOLS = frozenset({
+    "draft_email",
+    "draft_email_reply",
+    "ai_draft_email_reply",
+})
+_MCP_OWNER_ARG = "_odysseus_owner"
+
+
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
     args = args or []
@@ -504,7 +519,37 @@ class McpManager:
                 logger.error(f"MCP tool call failed: {qualified_name}: {e}")
                 return {"error": str(e), "exit_code": 1}
 
+        self._bridge_email_document_event(server_id, tool_name, arguments, result)
         return result
+
+    def _bridge_email_document_event(self, server_id: str, tool_name: str,
+                                     arguments: Dict, result: Dict) -> None:
+        """Re-emit ``document_created`` in-process for email-MCP draft tools.
+
+        The email server subprocess fires the event on its own (manager-less)
+        event bus, so lifecycle consumers in the app process — the outbound
+        webhook bridge and the scheduled-task triggers — never see it. Emitting
+        here, keyed on the doc-creating tool succeeding, routes it through the
+        app's ``event_bus`` where the WebhookManager is wired. Best-effort: a
+        failure must never break the tool result.
+        """
+        if server_id != "email" or tool_name not in _EMAIL_DOCUMENT_TOOLS:
+            return
+        if not isinstance(result, dict) or result.get("exit_code") != 0:
+            return
+        # The email handler returns human text and reports errors as an
+        # ``Error: ...`` string (still exit_code 0), so gate on the success text.
+        stdout = (result.get("stdout") or "").lstrip()
+        if not stdout or stdout.startswith("Error:"):
+            return
+        owner = ""
+        if isinstance(arguments, dict):
+            owner = str(arguments.get(_MCP_OWNER_ARG) or "").strip()
+        try:
+            from src.event_bus import fire_event
+            fire_event("document_created", owner or None)
+        except Exception:
+            logger.debug("document_created bridge failed for email draft", exc_info=True)
 
     async def _do_call(self, session, tool_name: str, arguments: Dict) -> Dict:
         """Execute a single MCP tool call and return result dict."""
