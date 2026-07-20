@@ -667,7 +667,37 @@ def test_llama_cpp_linux_bootstrap_cuda_cmake_present_when_cudart_found():
     script = "\n".join(runner_lines)
 
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
-    assert 'CUDA nvcc + cudart found' in script
+    assert 'CUDA nvcc detected — preparing pip CUDA toolkit' in script
+    assert '-DCUDAToolkit_ROOT=$_odysseus_cuda_root' in script
+    assert '-DCMAKE_CUDA_COMPILER=$_odysseus_cuda_root/bin/nvcc' in script
+    assert '$_odysseus_bindirs="$HOME/.local/bin $HOME/bin"' in script
+
+
+def test_llama_cpp_linux_bootstrap_normalizes_split_pip_cuda_wheels():
+    """Split nvcc/runtime/cublas wheels must become one CMake-visible toolkit."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert '"$(basename "$_odysseus_cuda_root")" = "cuda_nvcc"' in script
+    assert 'for _cuda_pkg in cuda_runtime cublas; do' in script
+    assert '$_cuda_pkg_root/lib' in script
+    assert '$_cuda_pkg_root/include' in script
+    assert '$_odysseus_cuda_root/lib/$(basename "$_so")' in script
+    assert 'printf "%s" "$_odysseus_cuda_libdirs" | tr " " ":"' in script
+    assert '-Wl,-rpath,$_odysseus_cuda_rpath' in script
+
+
+def test_llama_cpp_linux_bootstrap_uses_native_arch_only_with_new_cmake():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'cmake --version' in script
+    assert '[ "${_odysseus_cmake_minor:-0}" -ge 24 ]' in script
+    assert '_odysseus_cuda_arch="-DCMAKE_CUDA_ARCHITECTURES=native"' in script
+    assert 'CMake ${_odysseus_cmake_version:-unknown} is older than 3.24' in script
+    assert '$_odysseus_cuda_arch -DCMAKE_CUDA_FLAGS' in script
 
 
 def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():

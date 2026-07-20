@@ -1004,22 +1004,35 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     # cublas) under ~/.local/.../nvidia/cu1X. They ship nvcc, cudart, cublas
     # and headers but NOT the layout cmake's FindCUDAToolkit expects: the
     # runtime .so is versioned-only (libcudart.so.13, no dev symlink), there is
-    # no lib64 or stubs/libcuda.so, and nvcc's CCCL headers may be a different
-    # minor than the runtime wheel. Fix all three in place (idempotent) and
-    # point cmake at that root so the native CUDA build works without a system
-    # CUDA toolkit. RPATH to the wheel lib dir keeps the binary working across
-    # container recreates (the dir lives on the persisted ~/.local volume).
+    # no lib64 or stubs/libcuda.so, and some pip releases split nvcc, runtime,
+    # and cublas into sibling directories. Normalize those into the nvcc root
+    # (idempotently) and retain every library directory in RPATH so the native
+    # CUDA build works without a system CUDA toolkit and survives container
+    # recreates (the dirs live on the persisted ~/.local volume).
     runner_lines.append('        _odysseus_cuda_root="${CUDA_HOME:-}"')
     runner_lines.append('        if [ ! -x "$_odysseus_cuda_root/bin/nvcc" ]; then _odysseus_nvcc="$(command -v nvcc 2>/dev/null || true)"; [ -n "$_odysseus_nvcc" ] && _odysseus_cuda_root="$(dirname "$(dirname "$_odysseus_nvcc")")"; fi')
     runner_lines.append('        _odysseus_cuda_extra=""')
     runner_lines.append('        if [ -n "$_odysseus_cuda_root" ] && [ -x "$_odysseus_cuda_root/bin/nvcc" ]; then')
-    runner_lines.append('          if [ -d "$_odysseus_cuda_root/lib" ] && ! ls "$_odysseus_cuda_root"/lib64/libcudart.so >/dev/null 2>&1; then')
-    runner_lines.append('            ( cd "$_odysseus_cuda_root/lib" && for _so in *.so.*; do _b="${_so%.so.*}.so"; [ -e "$_b" ] || ln -sf "$_so" "$_b"; done ) 2>/dev/null || true')
-    runner_lines.append('            [ -e "$_odysseus_cuda_root/lib64" ] || ln -sf lib "$_odysseus_cuda_root/lib64" 2>/dev/null || true')
-    runner_lines.append('            mkdir -p "$_odysseus_cuda_root/lib/stubs" 2>/dev/null || true')
-    runner_lines.append('            for _drv in /usr/lib/x86_64-linux-gnu/libcuda.so /lib/x86_64-linux-gnu/libcuda.so /usr/lib/x86_64-linux-gnu/libcuda.so.1 /lib/x86_64-linux-gnu/libcuda.so.1; do [ -e "$_drv" ] && { [ -e "$_odysseus_cuda_root/lib/stubs/libcuda.so" ] || ln -sf "$_drv" "$_odysseus_cuda_root/lib/stubs/libcuda.so"; }; done')
+    runner_lines.append('          _odysseus_cuda_libdirs="$_odysseus_cuda_root/lib"')
+    runner_lines.append('          if [ "$(basename "$_odysseus_cuda_root")" = "cuda_nvcc" ]; then')
+    runner_lines.append('            _odysseus_cuda_wheel_root="$(dirname "$_odysseus_cuda_root")"')
+    runner_lines.append('            for _cuda_pkg in cuda_runtime cublas; do')
+    runner_lines.append('              _cuda_pkg_root="$_odysseus_cuda_wheel_root/$_cuda_pkg"')
+    runner_lines.append('              [ -d "$_cuda_pkg_root/lib" ] && _odysseus_cuda_libdirs="$_odysseus_cuda_libdirs $_cuda_pkg_root/lib"')
+    runner_lines.append('              if [ -d "$_cuda_pkg_root/include" ]; then mkdir -p "$_odysseus_cuda_root/include" && for _hdr in "$_cuda_pkg_root"/include/*; do [ -e "$_hdr" ] && ln -sf "$_hdr" "$_odysseus_cuda_root/include/$(basename "$_hdr")"; done; fi')
+    runner_lines.append('            done')
     runner_lines.append('          fi')
-    runner_lines.append('          _odysseus_cuda_extra="-DCUDAToolkit_ROOT=$_odysseus_cuda_root -DCMAKE_CUDA_COMPILER=$_odysseus_cuda_root/bin/nvcc -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath,$_odysseus_cuda_root/lib"')
+    runner_lines.append('          mkdir -p "$_odysseus_cuda_root/lib" 2>/dev/null || true')
+    runner_lines.append('          for _cuda_libdir in $_odysseus_cuda_libdirs; do')
+    runner_lines.append('            [ -d "$_cuda_libdir" ] || continue')
+    runner_lines.append('            ( cd "$_cuda_libdir" && for _so in *.so.*; do _b="${_so%.so.*}.so"; [ -e "$_b" ] || ln -sf "$_so" "$_b"; done ) 2>/dev/null || true')
+    runner_lines.append('            [ "$_cuda_libdir" = "$_odysseus_cuda_root/lib" ] || for _so in "$_cuda_libdir"/*.so*; do [ -e "$_so" ] && ln -sf "$_so" "$_odysseus_cuda_root/lib/$(basename "$_so")"; done')
+    runner_lines.append('          done')
+    runner_lines.append('          [ -e "$_odysseus_cuda_root/lib64" ] || ln -sf lib "$_odysseus_cuda_root/lib64" 2>/dev/null || true')
+    runner_lines.append('          mkdir -p "$_odysseus_cuda_root/lib/stubs" 2>/dev/null || true')
+    runner_lines.append('          for _drv in /usr/lib/x86_64-linux-gnu/libcuda.so /lib/x86_64-linux-gnu/libcuda.so /usr/lib/x86_64-linux-gnu/libcuda.so.1 /lib/x86_64-linux-gnu/libcuda.so.1; do [ -e "$_drv" ] && { [ -e "$_odysseus_cuda_root/lib/stubs/libcuda.so" ] || ln -sf "$_drv" "$_odysseus_cuda_root/lib/stubs/libcuda.so"; }; done')
+    runner_lines.append('          _odysseus_cuda_rpath="$(printf "%s" "$_odysseus_cuda_libdirs" | tr " " ":")"')
+    runner_lines.append('          _odysseus_cuda_extra="-DCUDAToolkit_ROOT=$_odysseus_cuda_root -DCMAKE_CUDA_COMPILER=$_odysseus_cuda_root/bin/nvcc -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath,$_odysseus_cuda_rpath"')
     runner_lines.append('        fi')
     # Install into $HOME/.local/bin (+ ~/bin): in Docker ~/.local is the
     # persisted, on-PATH volume, whereas ~/bin (=/app/bin) is neither. On
@@ -1028,11 +1041,14 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     # CCCL_DISABLE_CTK_COMPATIBILITY_CHECK: the wheels commonly mix nvcc and
     # runtime minor versions (e.g. nvcc 13.3 vs cudart 13.0); CCCL then hard-
     # errors "CUDA compiler and CUDA toolkit headers are incompatible". Within
-    # the same CUDA major this is safe for llama.cpp. ARCHITECTURES=native
-    # targets the local GPU; BUILD_SHARED_LIBS=OFF keeps a self-contained
+    # the same CUDA major this is safe for llama.cpp. CMake 3.24 added the
+    # native architecture selector, so older distro CMake releases keep their
+    # compiler/project default. BUILD_SHARED_LIBS=OFF keeps a self-contained
     # binary so the bindir symlinks resolve; LLAMA_CURL=OFF avoids the
     # libcurl-dev build dep (models are served by path, not URL).
-    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DCMAKE_CUDA_ARCHITECTURES=native -DCMAKE_CUDA_FLAGS=-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK $_odysseus_cuda_extra && cmake --build build -j"$NPROC" --target llama-server && for _d in $_odysseus_bindirs; do ln -sf ~/llama.cpp/build/bin/llama-server "$_d/llama-server"; done')
+    runner_lines.append('        _odysseus_cuda_arch=""; _odysseus_cmake_version="$(cmake --version 2>/dev/null | sed -n \'1s/.* \\([0-9][0-9.]*\\).*/\\1/p\')"; _odysseus_cmake_major="${_odysseus_cmake_version%%.*}"; _odysseus_cmake_minor="${_odysseus_cmake_version#*.}"; _odysseus_cmake_minor="${_odysseus_cmake_minor%%.*}"')
+    runner_lines.append('        if [ "${_odysseus_cmake_major:-0}" -gt 3 ] || { [ "${_odysseus_cmake_major:-0}" -eq 3 ] && [ "${_odysseus_cmake_minor:-0}" -ge 24 ]; }; then _odysseus_cuda_arch="-DCMAKE_CUDA_ARCHITECTURES=native"; else echo "[odysseus] CMake ${_odysseus_cmake_version:-unknown} is older than 3.24; using the CUDA compiler default architecture."; fi')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF $_odysseus_cuda_arch -DCMAKE_CUDA_FLAGS=-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK $_odysseus_cuda_extra && cmake --build build -j"$NPROC" --target llama-server && for _d in $_odysseus_bindirs; do ln -sf ~/llama.cpp/build/bin/llama-server "$_d/llama-server"; done')
     runner_lines.append('      else')
     runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
     runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
