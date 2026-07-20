@@ -14,6 +14,10 @@ MAX_NAME_LEN = 100
 DEFAULT_SCOPES = "chat"
 ALLOWED_SCOPES = {
     "chat",
+    # Minted by the companion pairing flow (chat,companion). Must round-trip
+    # through token management so editing a paired token's permissions doesn't
+    # silently strip the scope its notes/tasks/memory reads depend on.
+    "companion",
     "todos:read",
     "todos:write",
     "documents:read",

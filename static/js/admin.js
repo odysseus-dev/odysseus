@@ -2466,6 +2466,8 @@ function initRag() {
 // Catalog mirrors the one in settings.js integration form. Keep keys in
 // sync with the backend scope allowlist.
 const _TOKEN_SCOPES = [
+  { key: 'chat',              label: 'Chat',              detail: 'Send chat messages and stream replies' },
+  { key: 'companion',         label: 'Companion',         detail: 'Read notes, tasks, and memory from a paired mobile device' },
   { key: 'todos:read',        label: 'Todos read',        detail: 'Read notes and checklists' },
   { key: 'todos:write',       label: 'Todos write',       detail: 'Create, update, delete, and toggle todo items' },
   { key: 'documents:read',    label: 'Documents read',    detail: 'Read documents when a document API is enabled' },
@@ -2484,8 +2486,11 @@ const _TOKEN_SCOPES = [
 function _renderTokenScopeRows(t) {
   const have = new Set(t.scopes || []);
   return _TOKEN_SCOPES.map(s => {
-    const action = (s.key.split(':')[1] || '').toLowerCase();
-    const pill = action === 'read'
+    const rawAction = (s.key.split(':')[1] || '').toLowerCase();
+    // Scopes without a `verb` suffix (chat, companion) grant broad access —
+    // label the pill "access" and style it like a non-read (write-tier) grant.
+    const action = rawAction || 'access';
+    const pill = rawAction === 'read'
       ? 'background:rgba(150,150,150,0.18);color:var(--fg-muted,#888);'
       : 'background:color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);color:var(--accent, var(--red));';
     const tool = s.label.replace(/\s+(read|write|draft|send|launch)$/i, '');
