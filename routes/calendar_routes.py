@@ -225,9 +225,23 @@ class EventUpdate(BaseModel):
 _DEFAULT_CALENDAR_NAMESPACE = uuid.UUID("4840613a-9847-4a3b-bd75-19e6bc5fc3ce")
 
 
-def _default_calendar_id(owner: str) -> str:
-    """Return the stable primary key used for an owner's lazy default."""
-    return str(uuid.uuid5(_DEFAULT_CALENDAR_NAMESPACE, owner))
+def _default_calendar_id(owner: str, collision_index: int = 0) -> str:
+    """Return one stable primary-key candidate for an owner's lazy default.
+
+    Slot zero preserves the original owner-derived identifier.  Later slots
+    let a username be reused after its prior calendar was migrated to another
+    owner during a rename, without making concurrent first use choose random
+    and therefore divergent identifiers.
+    """
+    if collision_index == 0:
+        candidate_name = owner
+    else:
+        candidate_name = json.dumps(
+            [owner, collision_index],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    return str(uuid.uuid5(_DEFAULT_CALENDAR_NAMESPACE, candidate_name))
 
 
 def _begin_sqlite_default_write(db) -> None:
@@ -273,37 +287,60 @@ def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
         if cal:
             return cal
 
-    default_id = _default_calendar_id(owner)
-    cal = CalendarCal(
-        id=default_id,
-        owner=owner,
-        name="Personal",
-        color="#5b8abf",
-        source="local",
-    )
+    collision_index = 0
+    while True:
+        default_id = _default_calendar_id(owner, collision_index)
 
-    if dialect == "sqlite":
-        db.add(cal)
-        db.flush()
-        return cal
+        if dialect == "sqlite":
+            # BEGIN IMMEDIATE above makes this occupancy check authoritative:
+            # another SQLite writer cannot rename, delete, or claim this slot
+            # until the caller commits or rolls back.
+            occupant = db.query(CalendarCal).filter(
+                CalendarCal.id == default_id,
+            ).first()
+            if occupant is not None:
+                if occupant.owner == owner:
+                    return occupant
+                collision_index += 1
+                continue
 
-    try:
-        # A uniqueness failure rolls back only this savepoint, not an event or
-        # reminder already staged by the caller's outer transaction.
-        with db.begin_nested():
+        cal = CalendarCal(
+            id=default_id,
+            owner=owner,
+            name="Personal",
+            color="#5b8abf",
+            source="local",
+        )
+
+        if dialect == "sqlite":
             db.add(cal)
             db.flush()
-        return cal
-    except IntegrityError:
-        # Use a locking/current read so repeatable-read backends can observe
-        # the row that won after our transaction's original empty snapshot.
-        winner = db.query(CalendarCal).filter(
-            CalendarCal.id == default_id,
-            CalendarCal.owner == owner,
-        ).with_for_update().first()
-        if winner is None:
-            raise
-        return winner
+            return cal
+
+        try:
+            # A uniqueness failure rolls back only this savepoint, not an event
+            # or reminder already staged by the caller's outer transaction.
+            with db.begin_nested():
+                db.add(cal)
+                db.flush()
+            return cal
+        except IntegrityError:
+            # Use a locking/current read so repeatable-read backends can observe
+            # the row that won after our transaction's original empty snapshot.
+            occupant = db.query(CalendarCal).filter(
+                CalendarCal.id == default_id,
+            ).with_for_update().first()
+            if occupant is None:
+                # Do not misclassify an unrelated integrity failure as an ID
+                # collision and loop forever. A concurrently deleted winner is
+                # safe for the caller to retry as a fresh transaction.
+                raise
+            if occupant.owner == owner:
+                return occupant
+            # A renamed calendar owns this deterministic slot. Advance to the
+            # next stable slot; concurrent callers for this owner will still
+            # converge there.
+            collision_index += 1
 
 
 # Per-request user time context. chat_routes sets this from browser timezone

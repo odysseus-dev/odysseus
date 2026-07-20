@@ -169,7 +169,50 @@ async def test_tool_list_calendars_persists_lazy_default(session_factory):
     assert _counts(session_factory) == (1, 0)
 
 
-def test_concurrent_first_use_creates_one_sqlite_default(tmp_path):
+def test_repeated_rename_and_reuse_uses_stable_fallback_ids(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'renamed-calendar.db'}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    cdb.Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    db = factory()
+    try:
+        first = _ensure_default_calendar(db, "alice")
+        assert first.id == _default_calendar_id("alice")
+        db.commit()
+
+        # The supported user-rename migration changes owner columns while
+        # deliberately preserving durable row identifiers.
+        first.owner = "bob"
+        db.commit()
+
+        second = _ensure_default_calendar(db, "alice")
+        assert second.id == _default_calendar_id("alice", 1)
+        db.commit()
+
+        # Repeating the same lifecycle must advance deterministically instead
+        # of failing or choosing a random identifier.
+        second.owner = "carol"
+        db.commit()
+
+        third = _ensure_default_calendar(db, "alice")
+        assert third.id == _default_calendar_id("alice", 2)
+        db.commit()
+
+        rows = db.query(CalendarCal).order_by(CalendarCal.owner).all()
+        assert [(row.owner, row.id) for row in rows] == [
+            ("alice", _default_calendar_id("alice", 2)),
+            ("bob", _default_calendar_id("alice")),
+            ("carol", _default_calendar_id("alice", 1)),
+        ]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def _assert_concurrent_first_use(tmp_path, occupied_owner=None):
     engine = create_engine(
         f"sqlite:///{tmp_path / 'concurrent-calendar.db'}",
         connect_args={"check_same_thread": False, "timeout": 10},
@@ -177,6 +220,20 @@ def test_concurrent_first_use_creates_one_sqlite_default(tmp_path):
     )
     cdb.Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    expected_collision_index = 0
+    if occupied_owner is not None:
+        seed = factory()
+        try:
+            seed.add(CalendarCal(
+                id=_default_calendar_id("alice"),
+                owner=occupied_owner,
+                name="Personal",
+                source="local",
+            ))
+            seed.commit()
+            expected_collision_index = 1
+        finally:
+            seed.close()
     first_staged = threading.Event()
     second_selected = threading.Event()
     errors = []
@@ -210,7 +267,7 @@ def test_concurrent_first_use_creates_one_sqlite_default(tmp_path):
                 # this transaction releases its writer reservation.
                 assert second_selected.wait(5)
             db.commit()
-            assert cal.id == _default_calendar_id("alice")
+            assert cal.id == _default_calendar_id("alice", expected_collision_index)
         except BaseException as exc:  # pragma: no cover - asserted below
             errors.append((worker, exc))
             db.rollback()
@@ -239,13 +296,26 @@ def test_concurrent_first_use_creates_one_sqlite_default(tmp_path):
         try:
             rows = db.query(CalendarCal).filter(CalendarCal.owner == "alice").all()
             assert [(row.id, row.name) for row in rows] == [
-                (_default_calendar_id("alice"), "Personal")
+                (_default_calendar_id("alice", expected_collision_index), "Personal")
             ]
             assert db.query(CalendarEvent).count() == 2
+            if occupied_owner is not None:
+                occupied = db.query(CalendarCal).filter(
+                    CalendarCal.id == _default_calendar_id("alice"),
+                ).one()
+                assert occupied.owner == occupied_owner
         finally:
             db.close()
     finally:
         engine.dispose()
+
+
+def test_concurrent_first_use_creates_one_sqlite_default(tmp_path):
+    _assert_concurrent_first_use(tmp_path)
+
+
+def test_concurrent_first_use_after_rename_creates_one_fallback_default(tmp_path):
+    _assert_concurrent_first_use(tmp_path, occupied_owner="bob")
 
 
 def test_sqlite_default_stays_in_callers_transaction(session_factory):
@@ -265,6 +335,35 @@ def test_sqlite_default_stays_in_callers_transaction(session_factory):
             .count()
             == 0
         )
+    finally:
+        verify.close()
+
+
+def test_sqlite_fallback_default_stays_in_callers_transaction(session_factory):
+    seed = session_factory()
+    try:
+        seed.add(CalendarCal(
+            id=_default_calendar_id("alice"),
+            owner="bob",
+            name="Personal",
+            source="local",
+        ))
+        seed.commit()
+    finally:
+        seed.close()
+
+    db = session_factory()
+    try:
+        cal = _ensure_default_calendar(db, "alice")
+        assert cal.id == _default_calendar_id("alice", 1)
+        db.rollback()
+    finally:
+        db.close()
+
+    verify = session_factory()
+    try:
+        assert verify.query(CalendarCal).filter(CalendarCal.owner == "alice").count() == 0
+        assert verify.query(CalendarCal).filter(CalendarCal.owner == "bob").count() == 1
     finally:
         verify.close()
 
@@ -338,3 +437,102 @@ def test_generic_backend_lost_race_recovers_inside_savepoint():
     assert db.nested_entries == 1
     assert db.locking_read is True
     assert db.candidate.id == db.winner.id
+
+
+def test_generic_backend_unattributed_integrity_error_is_not_retried():
+    db = _GenericRaceSession()
+    db.winner = None
+
+    with pytest.raises(IntegrityError):
+        _ensure_default_calendar(db, "alice")
+
+    assert db.nested_entries == 1
+
+
+class _GenericRenamedSlotSession(_GenericRaceSession):
+    """A different owner occupies slot zero; slot one remains available."""
+
+    def __init__(self):
+        super().__init__()
+        self.candidates = []
+        self.winner = CalendarCal(
+            id=_default_calendar_id("alice"),
+            owner="bob",
+            name="Personal",
+            source="local",
+        )
+
+    def add(self, row):
+        self.candidate = row
+        self.candidates.append(row)
+
+    def flush(self):
+        if len(self.candidates) == 1:
+            raise IntegrityError("insert", {}, RuntimeError("duplicate primary key"))
+
+
+def test_generic_backend_renamed_slot_advances_inside_savepoint():
+    db = _GenericRenamedSlotSession()
+
+    fallback = _ensure_default_calendar(db, "alice")
+
+    assert fallback is db.candidates[-1]
+    assert fallback.id == _default_calendar_id("alice", 1)
+    assert fallback.owner == "alice"
+    assert db.nested_entries == 2
+    assert db.locking_read is True
+    assert db.winner.owner == "bob"
+
+
+def test_generic_backend_fallback_keeps_outer_transaction_usable(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'generic-savepoint-calendar.db'}",
+        poolclass=NullPool,
+    )
+    cdb.Base.metadata.create_all(engine)
+    # SQLite supplies a lightweight local SQL executor here; changing only the
+    # dispatch name exercises the real Session/savepoint branch used by
+    # PostgreSQL-style backends without pretending to validate their dialect.
+    engine.dialect.name = "postgresql"
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    seed = factory()
+    try:
+        seed.add(CalendarCal(
+            id=_default_calendar_id("alice"),
+            owner="bob",
+            name="Personal",
+            source="local",
+        ))
+        seed.commit()
+    finally:
+        seed.close()
+
+    db = factory()
+    try:
+        cal = _ensure_default_calendar(db, "alice")
+        start = datetime(2126, 7, 20, 9)
+        db.add(CalendarEvent(
+            uid="after-fallback",
+            calendar_id=cal.id,
+            summary="Atomic",
+            dtstart=start,
+            dtend=start + timedelta(hours=1),
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    verify = factory()
+    try:
+        assert [
+            (row.owner, row.id)
+            for row in verify.query(CalendarCal).order_by(CalendarCal.owner).all()
+        ] == [
+            ("alice", _default_calendar_id("alice", 1)),
+            ("bob", _default_calendar_id("alice")),
+        ]
+        assert verify.query(CalendarEvent).count() == 1
+    finally:
+        verify.close()
+        engine.dispose()
