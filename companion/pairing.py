@@ -50,6 +50,16 @@ def _valid_companion_client_host(host: str) -> bool:
             return False
         if any(label.startswith("xn--") for label in labels):
             return False
+        # WHATWG URL parsers treat a decimal or ``0x`` single-label hostname
+        # as an IPv4 number even though Python's strict ``ipaddress`` parser
+        # rejects that spelling.  The v1 client interpolates this host back
+        # into a URL, so accepting e.g. ``134744072`` would make the phone send
+        # its bearer token to public 8.8.8.8.  Keep DNS labels unambiguous.
+        if len(labels) == 1 and (
+            labels[0].isdigit()
+            or re.fullmatch(r"0x[0-9a-f]*", labels[0]) is not None
+        ):
+            return False
         return len(labels) == 1 or (len(labels) >= 2 and labels[-1] == "local")
 
     return isinstance(address, ipaddress.IPv4Address) and any(

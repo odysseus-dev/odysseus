@@ -175,6 +175,13 @@ def test_parse_companion_base_url_accepts_v1_client_addresses(value, expected):
         "http://172.32.0.1:7000",
         "http://192.167.255.255:7000",
         "http://192.169.0.1:7000",
+        # WHATWG URL parsing normalizes these legacy numeric host spellings to
+        # IPv4 addresses even though Python's strict ipaddress parser rejects
+        # them.  134744072 / 0x08080808 both become public 8.8.8.8.
+        "http://134744072:7000",
+        "http://0x:7000",
+        "http://0x08080808:7000",
+        "http://017700000001:7000",
         "http://[fd00::1]:7000",
         "http://[fe80::1%25eth0]:7000",
         "http://b\N{LATIN SMALL LETTER U WITH DIAERESIS}cher.local:7000",
