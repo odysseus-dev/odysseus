@@ -3,11 +3,12 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
-COMPOSES = tuple(
-    (ROOT / name).read_text(encoding="utf-8")
+COMPOSE_PATHS = tuple(
+    ROOT / name
     for name in (
         "docker-compose.yml",
         "docker-compose.gpu-nvidia.yml",
@@ -23,6 +24,11 @@ def _env_example():
     return ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
 
 
+def _odysseus_environment(path):
+    compose = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return set(compose["services"]["odysseus"]["environment"])
+
+
 @pytest.mark.parametrize(
     "key",
     (
@@ -32,8 +38,9 @@ def _env_example():
     ),
 )
 def test_google_oauth_setting_is_forwarded(key):
-    expected = f"- {key}=${{{key}:-}}"
-    assert all(expected in compose for compose in COMPOSES)
+    expected = f"{key}=${{{key}:-}}"
+    for path in COMPOSE_PATHS:
+        assert expected in _odysseus_environment(path), path.name
 
 
 @pytest.mark.parametrize(
