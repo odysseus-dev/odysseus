@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 
 _task_scheduler = None
 
+# Additive event sinks: async ``(event_name, owner)`` callables invoked on every
+# fired event, independent of the task-scheduler path. Overlays (the companion
+# mobile-push bridge) subscribe here so they react to the SAME lifecycle events
+# their producers already emit — no dependence on any other delivery layer.
+_event_sinks = []
+# Strong refs to in-flight sink tasks so the GC can't collect one mid-delivery
+# (loop.create_task holds only a weak reference).
+_sink_tasks: set = set()
+
 
 def set_task_scheduler(scheduler):
     """Wire up the scheduler reference (called from app.py on startup)."""
@@ -30,11 +39,51 @@ def get_task_scheduler():
     return _task_scheduler
 
 
+def add_event_sink(sink):
+    """Register an async ``(event_name, owner)`` sink for every fired event.
+
+    Best-effort and isolated: a sink that raises is logged and can never break
+    the task-trigger path or another sink. Used by additive consumers (companion
+    mobile push) that must not own a DB row or block core event handling.
+    """
+    _event_sinks.append(sink)
+
+
+async def _run_event_sink(sink, event_name: str, owner: Optional[str]) -> None:
+    try:
+        await sink(event_name, owner)
+    except Exception:
+        logger.warning("Event sink failed for '%s'", event_name, exc_info=True)
+
+
+def _dispatch_event_sinks(event_name: str, owner: Optional[str]) -> None:
+    """Fan an event out to every registered sink, tracking each task strongly."""
+    if not _event_sinks:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    for sink in list(_event_sinks):
+        if loop is not None:
+            task = loop.create_task(_run_event_sink(sink, event_name, owner))
+            _sink_tasks.add(task)
+            task.add_done_callback(_sink_tasks.discard)
+        else:
+            # No running loop (sync caller) — deliver in a throwaway loop so the
+            # sink still runs rather than being silently dropped.
+            try:
+                asyncio.run(_run_event_sink(sink, event_name, owner))
+            except Exception:
+                logger.debug("Event sink run failed for '%s'", event_name, exc_info=True)
+
+
 def fire_event(event_name: str, owner: Optional[str] = None):
     """Fire an event — increments counters and triggers tasks that hit threshold.
 
     Safe to call from both sync and async contexts.
     """
+    _dispatch_event_sinks(event_name, owner)
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_handle_event(event_name, owner))
