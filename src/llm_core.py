@@ -2769,8 +2769,9 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
     `candidates` is a list of (url, model, headers). Each is tried in order,
-    but only retried on a *pre-content* failure — i.e. an ``event: error``
-    that arrives before any assistant text / tool-call data has been yielded.
+    but only retried on a *pre-content* failure — an ``event: error`` or an
+    empty completion before any assistant text / completed tool call is yielded.
+    Metadata is held until substantive output commits the candidate.
     Once a candidate has emitted real output we never switch (that would
     duplicate streamed tokens); a later error from that candidate passes
     through unchanged. The dead-host cooldown in stream_llm makes repeat
@@ -2789,6 +2790,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
         is_last = (i == len(cands) - 1)
         emitted = False
         retried = False
+        pending_metadata = []
         async for chunk in stream_llm(url, model, messages, headers=headers, **kwargs):
             if chunk.startswith("event: error"):
                 if not emitted and not is_last:
@@ -2801,34 +2803,67 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     else:
                         logger.warning(f"[fallback] candidate {model} failed; trying next")
                     break
+                if not emitted:
+                    # A last-candidate error is already the clearest terminal
+                    # result; do not append an empty-completion error as well.
+                    yield chunk
+                    return
                 yield chunk
                 continue
-            # Any data chunk other than the terminal [DONE] means real output.
-            if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+
+            event_data = {}
+            is_done = chunk.startswith("data: [DONE]")
+            if chunk.startswith("data: ") and not is_done:
                 try:
                     event_data = json.loads(chunk[6:])
                 except Exception:
-                    event_data = {}
-                if event_data.get("type") == "model_actual":
-                    yield chunk
-                    continue
+                    pass
+
+            delta = event_data.get("delta")
+            event_type = event_data.get("type")
+            substantive = (
+                isinstance(delta, str) and bool(delta)
+            ) or (
+                event_type == "tool_call_delta"
+            ) or (
+                event_type == "tool_calls"
+                and bool(event_data.get("calls"))
+            )
+
+            if substantive and not emitted:
                 # First real output from a NON-primary candidate: tell the client
                 # the selected model failed and another answered. Without this the
                 # fallback is invisible — a misconfigured provider looks like it
                 # works because the reply is shown under the originally selected
                 # model's name (e.g. a Bedrock/Claude endpoint that 400s every
                 # request but appears fine because another model silently answered).
-                if not emitted and i > 0:
+                if i > 0:
                     yield ('data: ' + json.dumps({
                         "type": "fallback",
                         "selected_model": primary_model,
                         "answered_by": model,
                         "reason": _summarize_stream_error(last_error),
                     }) + '\n\n')
+                # Metadata must not commit a candidate. Once real output arrives,
+                # flush it after any fallback notice and before the output itself.
+                for metadata_chunk in pending_metadata:
+                    yield metadata_chunk
+                pending_metadata.clear()
                 emitted = True
-            yield chunk
-        if not retried:
-            return  # candidate finished (success, or terminal error already sent)
-    # Every candidate failed pre-content — surface the last error.
-    if last_error:
-        yield last_error
+
+            if substantive or emitted:
+                yield chunk
+            elif not is_done:
+                pending_metadata.append(chunk)
+
+        if emitted:
+            return
+        if retried:
+            continue
+        if not is_last:
+            last_error = f'event: error\ndata: {json.dumps({"error": f"Model {model} returned no substantive output", "status": 502})}\n\n'
+            tag = "primary" if i == 0 else "candidate"
+            logger.warning(f"[fallback] {tag} {model} returned no substantive output; trying next")
+            continue
+        yield f'event: error\ndata: {json.dumps({"error": "All model candidates returned no substantive output", "status": 502})}\n\n'
+        return

@@ -830,7 +830,7 @@ app.include_router(setup_api_token_routes())
 logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
-from routes.note_routes import setup_note_routes
+from routes.note.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
 
 # Email
