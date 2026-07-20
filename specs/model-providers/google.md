@@ -1,6 +1,6 @@
 # Google Gemini Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -39,8 +39,13 @@ OpenAI-only history shape.
 
 Prefer native model metadata even when chat is configured through Google's
 OpenAI compatibility URL. Pagination parameters must remain stable between
-pages. Unknown methods and fields stay raw; unrecognized prediction models
-remain unknown.
+pages. The route probe activates only for the exact
+`generativelanguage.googleapis.com` hostname, filters the picker list to
+content-generation methods, returns no curated fallback after probe failure,
+and defaults those endpoints to manual catalog refresh unless explicitly
+overridden. The canonical Google reader is not yet called by that probe.
+Unknown methods and fields stay raw; unrecognized prediction models remain
+unknown.
 
 ## Current Gaps
 

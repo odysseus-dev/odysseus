@@ -1,6 +1,6 @@
 # llama.cpp Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -33,7 +33,9 @@ reasoning correctness can depend on selected chat template and parser.
 
 ## Fallback And Safety
 
-Identify llama.cpp through explicit kind or `/props`, not port 8000/8080.
+The registry selects llama.cpp through an explicit vendor or endpoint kind; it
+does not auto-detect `/props` from payload shape. Port 8000 currently maps to
+the vLLM placeholder, while 8080 falls through to generic OpenAI-compatible.
 llama.cpp-only `session_id` and `cache_prompt` affinity fields must remain local
 endpoint behavior and never leak to strict cloud providers (#4640 and current
 affinity tests).

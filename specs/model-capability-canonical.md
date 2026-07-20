@@ -1,182 +1,184 @@
 # Canonical Provider And Model Capability Layer
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
-This spec covers:
+This spec covers the implementation introduced on current `dev` in:
 
-- canonical model values in `src/model_capabilities.py`;
-- provider identity and model-catalog detection in
-  `src/provider_capability_schemas.py`;
-- provider-native model-payload readers in `src/model_capability_readers/`;
-- regression coverage in `tests/test_model_capabilities.py`,
-  `tests/test_model_capability_readers.py`,
-  `tests/test_provider_capability_schemas.py`, and
-  `tests/test_model_capability_diagnostics.py`;
-- future consumers in model discovery, endpoint resolution, model context,
-  request routing, pickers, and capability probes.
+- canonical model values and query helpers in `src/model_capabilities.py`;
+- record, identity, and provider-detection helpers in
+  `src/model_capability_readers/base.py`;
+- reader dispatch in `src/model_capability_readers/__init__.py`;
+- concrete readers for generic OpenAI-compatible, OpenAI, OpenRouter, Google,
+  Ollama, LM Studio, and llama.cpp payloads;
+- regression coverage in `tests/test_model_capabilities.py` and
+  `tests/test_model_capability_readers.py`.
 
-The layer normalizes already-fetched evidence. It performs no provider network
-I/O, does not shape provider requests, and does not authorize tool execution.
+The layer normalizes already-fetched JSON-compatible values. It performs no
+network I/O, does not shape provider requests, does not persist its output, and
+does not authorize model or tool use. No production caller currently consumes
+the canonical records outside this package; runtime integration remains later
+work.
+
+There is no `src/provider_capability_schemas.py`, capability-specific
+diagnostics module, or runtime model-quirk registry on current `dev`.
 
 ## Layer Boundaries
 
-- `ProviderCapabilitySchema` owns canonical provider identity, aliases, exact
-  host suffixes, and known native catalog shapes.
-- `ProviderCatalogShape` owns only catalog recognition: shape ID, provider,
-  envelope, identity paths, required discriminator paths/types/values,
-  detection priority, and whether the shape is fallback inventory.
-- `ProviderResolution` reports provider, provider source, detected catalog
-  shape, and fallback status.
-- Provider request/response paths remain in `src.llm_core` and its adapters.
-  They are not duplicated in the catalog detector.
-- `ModelCapabilityRecord` keeps the reader's internal capability/assertion and
-  control objects, endpoint-scoped stable identity, resolution evidence, and
-  optional raw provider record.
-- Model-specific behavior observations remain in
-  [model-quirks.md](model-quirks.md). There is no runtime quirk registry in this
-  layer until a real structured consumer exists.
+- `src.model_capabilities` defines normalized families, tasks, modalities,
+  capabilities, evidence sources/confidence, assertion states, deterministic
+  controls, probe results, reasoning-control tokens, and display-surface
+  queries.
+- `ModelCapability` owns family, primary task, input/output modalities,
+  capability tokens, limits, source, and confidence.
+- `CapabilityAssertion` records claimed, verified, unsupported, or unknown
+  status for one capability. Missing evidence is not an unsupported claim.
+- `DeterministicControl` records support evidence for controls such as
+  temperature, top-p, seed, tool choice, or prompt caching. A supported
+  request control is not itself a model capability.
+- `CapabilityProbeResult` is an in-memory evidence shape that converts pass,
+  fail, or partial probe state into an assertion. No current runtime probe
+  stores or merges these objects.
+- `CapabilityQuery` and `display_surfaces_for()` map a normalized capability
+  into candidate surfaces such as chat, vision chat, image generation,
+  embeddings, or reranking. They are not wired into current pickers.
+- Reader `ModelCapabilityRecord` binds a vendor/model identity to the nested
+  capability object, assertions, deterministic controls, and optional raw
+  provider evidence.
 
-Provider transport support and per-model support are different facts. A
-provider may expose several APIs while individual model cards remain unknown.
+Provider transport support and per-model support are separate facts. Request
+and response adapters remain in `src.llm_core` and related provider modules.
+Model-specific observations remain in [model-quirks.md](model-quirks.md).
 
-## Lean Canonical Record
+## Current Serialized Shapes
 
-`ModelCapabilityRecord.to_dict()` emits canonical shape version 1:
+`ModelCapability.to_dict()` emits the nested capability shape:
 
 ```json
 {
-  "schema_version": 1,
-  "provider": "openrouter",
-  "model": "provider/model",
-  "stable_id": "openrouter|global|provider/model",
   "family": "chat",
-  "task": "chat.completions",
+  "primary_task": "chat.completions",
   "modalities": {
     "input": ["text", "image"],
     "output": ["text"]
   },
-  "features": ["tool_call", "vision"],
-  "limits": {
-    "context_tokens": 131072
-  },
-  "controls": ["temperature", "top_p"],
-  "evidence": {
-    "source": "provider_reader",
-    "confidence": "provider_reported",
-    "provider_source": "explicit",
-    "shape": "openrouter.models.rich.v1",
-    "fallback": false
-  }
+  "capabilities": ["tool_call", "vision"],
+  "limits": {"context_tokens": 131072},
+  "source": "provider_reader",
+  "confidence": "provider_reported"
 }
 ```
 
-The serialized record deliberately has one name for each concept. It does not
-repeat `capability`, assertions, and controls in parallel nested structures.
-Display names and raw provider fields are reader evidence, not canonical
-identity. `raw` is included only when a caller explicitly requests it.
+`ModelCapabilityRecord.to_dict()` wraps that value with `vendor`, `model_id`,
+`stable_model_id`, `display_name`, `capability_assertions`, and
+`deterministic_controls`. It does not currently emit a schema version or the
+flat `provider`/`model`/`features`/`controls` shape. Raw provider fields are
+included only when the caller passes `include_raw=True`.
 
-`family`, `task`, modalities, features, limits, and controls remain empty or
-unknown when the provider did not report them through an intentionally mapped
-native field. Missing evidence is not an unsupported claim.
+Endpoint configuration can explicitly map `model_type=llm` to chat and
+`model_type=image` to image generation. Missing or unrecognized endpoint types
+stay unknown rather than silently becoming chat-capable in this schema layer.
 
-## Evidence Rules
+## Identity And Reader Dispatch
 
-Evidence must remain scoped to provider, endpoint, stable model identity, and
-observation source. Safe sources, from strongest local intent to weakest, are:
+`records_from_payload()` selects a reader from an explicit `vendor`, or from
+`detect_vendor(base_url, endpoint_kind)` when no vendor is supplied.
 
-1. explicit admin override or endpoint configuration at that endpoint;
-2. a bounded endpoint/model capability probe;
-3. explicit native per-model provider fields;
-4. a scoped maintained registry;
-5. heuristic evidence, only where a consumer explicitly accepts it;
-6. unknown.
+Current detection order and behavior are:
 
-Never use display names, descriptions, ownership labels, pricing text,
-provider marketing, serialized prompt/Modelfile text, or a default port as
-authoritative per-model capability.
+1. a recognized explicit endpoint kind;
+2. hostname suffix checks for OpenRouter, OpenAI, Anthropic, Google APIs, and
+   Ollama Cloud;
+3. common local ports: `11434` for Ollama, `1234` for LM Studio, `8000` for
+   vLLM, and `30000` for SGLang;
+4. generic OpenAI-compatible for any other parsed host, otherwise unknown.
 
-## Provider Resolution
+These are normalization hints, not authorization. Current hostname checks use
+plain string suffixes, and the local-port mappings are intentionally covered by
+tests; callers must not treat the result as proof of endpoint trust.
 
-Provider identity is resolved from:
+Implemented reader modules are `generic_openai`, `openai`, `openrouter`,
+`google`, `llamacpp`, `ollama`, and `lmstudio`. Anthropic, Hugging Face,
+SGLang, and vLLM have placeholder vendor IDs but currently dispatch through the
+generic identity-only reader. Other explicitly supplied vendor strings are
+also preserved while using that generic reader.
 
-1. explicit provider;
-2. explicit endpoint kind;
-3. exact known host or subdomain;
-4. one unambiguous discriminating native payload shape;
-5. unknown.
+Stable model identity is scoped in this order:
 
-Explicit identity wins over payload inference because compatible proxies may
-rewrite catalog bodies. A previously unseen explicit provider ID is preserved
-in normalized form and uses the inventory fallback until a native reader is
-added. Host matching rejects lookalikes. Ports such as 11434, 1234, 8000, and
-30000 never identify a provider.
+- explicit endpoint ID;
+- a short hash of normalized base URL when an endpoint ID is absent;
+- `global` when neither endpoint identity is supplied.
 
-Catalog shape detection is separate from provider identity. A known provider
-with an unrecognized but list-shaped response keeps its provider identity and
-is marked with an explicit fallback shape.
+## Generic Identity-Only Contract
 
-## Explicit Fallback Contract
+The generic reader accepts mapping payloads containing `data[]` or `models[]`.
+Each item must itself be a mapping and provide `id`, `name`, or `model`.
+Bare-list payloads and `key`/`slug`-only items are not accepted by the current
+implementation.
 
-The only general shapes are:
+The reader deliberately returns unknown family, modalities, capabilities, and
+controls. It preserves the raw item on the in-memory record but does not parse
+type/task fields, descriptions, ownership, supported-parameter lists,
+capability-looking booleans, or token limits.
 
-- `fallback.models.data.v1` for `data[]`;
-- `fallback.models.envelope.v1` for `models[]`;
-- `fallback.models.list.v1` for a bare list.
+## Provider-Native Readers
 
-Fallback capability promotion is disabled. The inventory reader may recover
-identity from `id`, `name`, `model`, `key`, or `slug`, preserve the raw record,
-and return an unknown capability. It must ignore capability-looking fields
-such as `type`, `task`, `pipeline_tag`, modalities, `capabilities`,
-`supported_parameters`, and token limits.
+- OpenAI keeps the official Models API identity-only.
+- OpenRouter maps explicit architecture modalities, supported parameters,
+  limits, voices, and default parameters into family/capability/control state.
+- Google maps the native Models resource. Embedding-only methods map to the
+  embedding family; content-generation methods do not prove modality or chat
+  family. Explicit thinking, limits, sampling fields, caching, and batch
+  methods are retained without parsing product names.
+- Ollama treats `/api/tags` as identity-only and maps selected-model
+  `/api/show` capability tokens. Context can come from structured fields or a
+  parsed `num_ctx` line in the serialized `parameters` value.
+- LM Studio maps native v1 `models[]` and v0-style `data[]` fields. A plain
+  OpenAI-compatible list without native type/capability fields stays unknown.
+- llama.cpp can merge `/v1/models`, `/props`, and `/slots` evidence for one
+  served model. It records tool/streaming claims, explicit unsupported
+  vision/audio assertions, controls, and runtime/training/size limits.
 
-This is the forward-compatible behavior: a new provider or payload revision
-can still list stable endpoint-scoped model identities, but it cannot silently
-opt those models into UI surfaces or request parameters. Null, malformed, or
-mixed envelopes fail soft.
+Readers tolerate non-object entries and unknown fields where their helpers
+permit it. They do not infer authoritative capability from model IDs or display
+names.
 
-## Provider-Native Reader Contract
+## Evidence Semantics
 
-Native readers:
+The canonical vocabulary includes admin override, endpoint configuration,
+provider reader, Cookbook/Hugging Face, maintained registries, heuristic,
+probe, and unknown sources. It also defines explicit, provider-reported,
+registry, heuristic, and unknown confidence values.
 
-- accept decoded JSON-compatible values and never make HTTP calls;
-- tolerate nulls, non-object entries, and unknown fields;
-- interpret only provider-owned fields with tested shapes and value types;
-- preserve endpoint-scoped stable identity;
-- keep identity-only cards unknown;
-- do not inherit provider-wide capability across all of its models.
-
-Ollama illustrates the split: `/api/tags` is inventory-only, while
-`/api/show.capabilities` and structured `model_info.*.context_length` can
-describe a selected model. Hugging Face `pipeline_tag` is interpreted only in
-the Hugging Face reader; a similarly named field in a generic payload has no
-canonical meaning.
-
-## Diagnostics
-
-Capability diagnostics use Odysseus's existing `LOG_LEVEL` environment
-toggle; it does not add a capability-specific CLI argument. At
-`LOG_LEVEL=DEBUG`, normalization emits one bounded summary with canonical
-version, provider/source, catalog shape, fallback state, record count, and the
-set of normalized families/features/controls. It never logs model IDs or raw
-payload values.
+Those tokens make evidence representable; current `dev` does not implement a
+global precedence, merge, expiry, or conflict-resolution engine. Assertions
+generated by readers are usually `claimed`; a `CapabilityProbeResult` maps pass
+to verified, fail to unsupported, and partial to claimed at the scope carried
+by that object.
 
 ## Tests
 
-Tests pin native shape discrimination, exact host matching, provider/model
-separation, unregistered explicit provider identity, malformed payloads,
-identity-only fallback, native provider mappings, the exact canonical v1
-serialization, and safe diagnostics. Dangerous-looking generic fields are
-negative fixtures: they must not promote capability.
+Focused tests pin:
+
+- endpoint-kind, host, and common-port vendor detection;
+- endpoint/base-URL-scoped stable IDs;
+- unknown behavior for generic and official OpenAI lists;
+- canonical normalization and display-surface matching;
+- assertion, deterministic-control, and probe-result shapes;
+- OpenRouter, Google, Ollama, LM Studio, and llama.cpp mappings;
+- negative cases that avoid name-based media/capability inference.
 
 ## Current Gaps
 
-- The canonical readers are not yet the single source for runtime provider
-  dispatch, model picker filtering, context lookup, or request shaping.
-- Probe merge/persistence, override layering, evidence expiry, and conflict
-  presentation remain later integration work.
-- Some providers expose useful metadata only through detail or probe endpoints;
-  list-only discovery must keep those fields unknown.
-- Runtime request builders still contain model-name heuristics. This catalog
-  does not reproduce them as a second matching system.
+- Canonical records are not yet used by runtime discovery, endpoint
+  resolution, model context, request shaping, or frontend pickers.
+- Reader output is not persisted, refreshed, merged, or expired.
+- Provider detection uses common-port hints and non-label-bounded hostname
+  suffix checks; consumers must not promote those hints into trust decisions.
+- Only seven concrete readers exist; placeholder and other providers use the
+  identity-only generic reader.
+- Generic fallback does not accept bare-list or `key`/`slug`-only payloads.
+- There is no capability-specific diagnostic/logging path.
+- Runtime request builders still contain model-name heuristics outside this
+  canonical layer.

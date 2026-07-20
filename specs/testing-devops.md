@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -87,7 +87,7 @@ docker compose logs --tail=120 odysseus
 
 `docker-compose.yml` starts Odysseus, ChromaDB, SearXNG, and ntfy. It binds services to loopback by default through `APP_BIND`, `CHROMADB_BIND`, and `NTFY_BIND`, persists configurable `APP_DATA_DIR`/`APP_LOGS_DIR`, SSH identity, HuggingFace cache, and user-local Python installs, and gives the Odysseus container host-loopback reachability through `host.docker.internal`.
 
-`Dockerfile` builds a Python 3.14 slim image with Node/npm, tmux, OpenSSH client, git/cmake, Docker CLI, `gosu`, `libmagic1`, and the image-only `python-magic` wrapper.
+`Dockerfile` builds a Python 3.14 slim image with Node/npm, tmux, OpenSSH client, git/cmake, the pinned Docker CLI `29.6.2`, `gosu`, `libmagic1`, and the image-only `python-magic` wrapper.
 
 `docker/entrypoint.sh` owns writable path ownership repair, PUID/PGID user/group creation and privilege drop, optional host-Docker socket group handling, vLLM/CUDA environment defaults, idempotent `setup.py`, and final uvicorn execution.
 
@@ -134,9 +134,6 @@ Native platform launchers:
 `LOG_LEVEL` is the shared process logging toggle. CLI helpers default it to
 `WARNING` to keep JSON command output clean; the web app defaults it to `INFO`
 and applies it to root, console, rotating-file, and direct-uvicorn logging.
-`LOG_LEVEL=DEBUG` enables bounded model-capability normalization diagnostics;
-tests require those events to omit model IDs and raw payload values.
-
 Shell completions in `scripts/_completion/` introspect CLI `--help` output through the venv and cache subcommands.
 
 `scripts/odysseus-*` provide local CLI surfaces for backup, calendar, contacts, Cookbook, docs, gallery, logs, mail, MCP, memory, notes, personal docs, presets, research, sessions, signatures, skills, tasks, theme, and webhooks.

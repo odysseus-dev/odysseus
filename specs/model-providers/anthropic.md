@@ -1,12 +1,13 @@
 # Anthropic Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
-Canonical provider ID `anthropic`; Anthropic Messages dialect; identity reader
-`src/model_capability_readers/anthropic.py`; runtime adapter in
-`src/llm_core.py`.
+Canonical placeholder vendor ID `anthropic`; Anthropic Messages runtime
+adapter in `src/llm_core.py`. There is no dedicated Anthropic capability-reader
+module; explicit/auto-detected Anthropic payloads use the generic identity-only
+reader.
 
 ## Catalog Shape
 
@@ -30,12 +31,16 @@ or their exact payload/endpoint shape proves it (#3110).
 
 ## Fallback And Safety
 
-Use exact `*.anthropic.com` host or explicit endpoint kind. A provider using
-Anthropic Messages through another host must be explicit; host substring
-matching is forbidden. Identity-only model cards remain unknown.
+Runtime provider detection uses label-bounded Anthropic host matching. The
+canonical reader helper separately uses a plain `endswith("anthropic.com")`
+hostname hint or explicit endpoint kind. A provider using Anthropic Messages
+through another host must be explicit. Identity-only model cards remain
+unknown.
 
 ## Current Gaps
 
 - The public model list does not provide per-model canonical capability data.
+- There is no dedicated Anthropic canonical reader; only `id`, `name`, or
+  `model` identity survives generic normalization.
 - Runtime model-version parsing needs structured identity before a later
   consumer can centralize sampling exceptions without another name matcher.

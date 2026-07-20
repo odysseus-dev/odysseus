@@ -1,12 +1,12 @@
 # SGLang Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
 Canonical provider ID `sglang`; OpenAI Chat/Responses plus native generation;
-reader `src/model_capability_readers/sglang.py`; Cookbook launch behavior in
-`routes/cookbook_routes.py` and serving UI modules.
+Cookbook launch behavior in `routes/cookbook_routes.py` and serving UI modules.
+There is no dedicated SGLang canonical reader on current `dev`.
 
 ## Metadata Shapes
 
@@ -18,10 +18,9 @@ Preferred native `GET /model_info` (legacy `/get_model_info`) returns:
 - `model_type`, `architectures`, `weight_version`;
 - `preferred_sampling_params`.
 
-`is_generation: true` maps chat/text generation; explicit image/audio booleans
-map modalities; sampling keys map controls. `is_generation: false` is not
-enough to distinguish embedding, rerank, or classification, so family remains
-unknown without endpoint task/config evidence.
+These are provider observations for a future dedicated reader. Current generic
+normalization does not map `is_generation`, modality booleans, sampling keys,
+or `max_model_len`.
 
 `GET /v1/models` returns served IDs with `owned_by: sglang`, `root`, and
 `max_model_len`; it supplies identity/context but not parser capability.
@@ -36,10 +35,13 @@ the selected parser/config as endpoint evidence before canonical promotion.
 
 ## Fallback And Safety
 
-Port 30000 is not SGLang identity. Prefer explicit kind or `/model_info` exact
-shape. Avoid normal discovery through the broad admin `/server_info` dump.
+Current reader detection identifies port 30000 as SGLang, or accepts an
+explicit endpoint kind, then dispatches to the generic identity-only reader.
+It does not infer SGLang from `/model_info` payload shape. Avoid normal
+discovery through the broad admin `/server_info` dump.
 
 ## Current Gaps
 
 - Endpoint records do not yet store parser/task configuration canonically.
 - Non-generation task classification needs explicit serving metadata.
+- No dedicated reader maps SGLang metadata today.

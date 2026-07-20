@@ -1,29 +1,29 @@
 # General OpenAI-Compatible Inventory Fallback
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
-Canonical compatibility identity `generic_openai`; inventory-only reader
-`src/model_capability_readers/generic_openai.py`; explicit fallback shapes in
-`src/provider_capability_schemas.py`.
+Canonical compatibility identity `generic_openai`; identity-only reader
+`src/model_capability_readers/generic_openai.py`; shared envelope and identity
+helpers in `src/model_capability_readers/base.py`.
 
 This is not a universal OpenAI-compatible capability schema. Transport request
 and response behavior remains in `src.llm_core` and provider adapters.
 
-## Accepted Inventory Envelopes
+## Accepted Inventory Shape
 
-- `fallback.models.data.v1`: `{"data": [...]}`;
-- `fallback.models.envelope.v1`: `{"models": [...]}`;
-- `fallback.models.list.v1`: a bare list.
+- `{"data": [...]}`;
+- `{"models": [...]}`.
 
-Within an item, fallback may recover identity from `id`, `name`, `model`,
-`key`, or `slug`. It preserves the raw item only for explicit diagnostic use.
-The canonical capability remains unknown.
+Within an item, the reader recovers identity from `id`, `name`, or `model`.
+Bare-list payloads and `key`/`slug`-only items are not supported. It preserves
+the raw item on the in-memory record, while `to_dict()` includes it only when
+the caller explicitly requests `include_raw=True`. Capability remains unknown.
 
 ## Disabled Capability Paths
 
-The fallback deliberately ignores all capability-looking fields, including:
+The generic reader does not inspect capability-looking fields, including:
 
 - `type`, `model_type`, `task`, and `pipeline_tag`;
 - top-level or nested modality fields;
@@ -31,17 +31,15 @@ The fallback deliberately ignores all capability-looking fields, including:
 - `supported_parameters`;
 - context, input, output, and model-length fields.
 
-Those field names have different meanings across providers and versions. They
-become evidence only inside a provider-native reader with a discriminating,
-tested payload shape. Names, descriptions, ownership, pricing, serialized
-text, and ports also never promote capability.
+Names, descriptions, ownership, pricing, and serialized text also never
+promote capability through this reader.
 
 ## Forward Compatibility
 
-An explicitly configured but unknown provider ID is preserved and paired with
-one of the fallback shape IDs. That allows inventory and endpoint-scoped
-stable IDs to keep working while every family, modality, feature, limit, and
-control remains unknown. Null, malformed, and mixed envelopes fail soft.
+An explicitly configured but unknown provider ID is preserved when the generic
+reader is selected. That allows endpoint-scoped stable IDs to keep working
+while every family, modality, capability, limit, and control remains unknown.
+Non-object entries are skipped; null or malformed roots return no records.
 
 Provider-specific headers, request extensions, and reasoning channels must be
 selected by explicit provider/endpoint adapters. They never leak through this
@@ -51,5 +49,7 @@ fallback.
 
 - Compatible providers differ on path prefixes, null handling, tools,
   streaming usage, and strict extra-field rejection.
+- Bare-list and `key`/`slug`-only inventories need explicit normalization if a
+  runtime consumer later requires them.
 - Safe request shaping still requires explicit endpoint/provider
-  configuration even when inventory fallback succeeds.
+  configuration even when identity normalization succeeds.

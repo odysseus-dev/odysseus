@@ -1,6 +1,6 @@
 # OpenRouter Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -11,7 +11,7 @@ Canonical provider ID `openrouter`; OpenAI-compatible chat dialect; rich reader
 
 `GET /api/v1/models` returns `data[]`. Canonical fields are:
 
-- `id`, `canonical_slug`, and display `name`;
+- `id` (falling back to `name`) and display `name`;
 - `architecture.input_modalities`, `architecture.output_modalities`, and
   compatibility `architecture.modality`;
 - `context_length` and `top_provider.max_completion_tokens`;
@@ -33,9 +33,10 @@ route class, not a permanent global model limit.
 
 ## Fallback And Safety
 
-Prefer the rich shape over the general `data[].id` shape. Future fields remain
-raw. If modalities are absent, retain identity/known controls and keep family
-unknown rather than parsing the model slug.
+The reader receives OpenRouter through explicit selection or the current
+hostname suffix hint. Future fields remain raw. If modalities are absent, it
+falls back to an identity-only OpenRouter record and does not parse the model
+slug; supported-parameter controls are not retained on that fallback path.
 
 ## Current Gaps
 

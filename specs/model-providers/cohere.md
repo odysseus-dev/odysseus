@@ -1,13 +1,13 @@
 # Cohere Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
-Canonical provider ID `cohere`; native Chat v2 plus the OpenAI Compatibility
-API; catalog reader `src/model_capability_readers/cohere.py`. Current
-Odysseus source already treats Cohere as a native tool-capable API host, while
-unknown-host runtime dispatch still falls through the general compatible path.
+Documented provider identity `cohere`; native Chat v2 plus the OpenAI
+Compatibility API. Current `dev` has no dedicated Cohere capability reader or
+direct Cohere request adapter; compatible endpoints use the general runtime
+path when explicitly configured.
 
 ## Catalog Shape
 
@@ -15,16 +15,16 @@ unknown-host runtime dispatch still falls through the general compatible path.
 `name`, `endpoints`, `default_endpoints`, `context_length`, `features`, and
 `sampling_defaults`; the root can carry `next_page_token`.
 
-Map only exact structured fields:
+These are candidate fields for a future dedicated reader:
 
 - a single canonical family from `endpoints`: `chat`/`generate`, `embed`,
   `rerank`, or `classify`;
 - `context_length` to the endpoint/model context limit;
 - known sampling-default keys to deterministic controls.
 
-If one card spans incompatible canonical families, keep its family unknown.
-Preserve `features` as raw evidence, but do not promote arbitrary feature text
-without an explicit maintained mapping.
+Current canonical normalization does not map them. When the generic reader is
+explicitly selected with vendor `cohere`, it preserves only item identity plus
+the raw item; family, context, features, and sampling controls stay unknown.
 
 ## Request And Response Shape
 
@@ -41,15 +41,16 @@ currently map to native thinking off/on; do not assume low/medium support.
 
 ## Fallback And Safety
 
-Exact `*.cohere.ai` or `*.cohere.com` host identity selects Cohere. The native
-`models[]` shape requires endpoint metadata so an arbitrary general envelope
-does not identify the provider. Marketing pages and provider-wide endpoint
-features do not grant every listed model tools, vision, or reasoning.
+No Cohere host or payload-shape detection exists in the canonical reader
+registry. The caller must supply provider/endpoint configuration. Marketing
+pages and provider-wide endpoint features do not grant every listed model
+tools, vision, or reasoning.
 
 ## Evidence And Gaps
 
 - Official List/Get Models resources define the catalog fields.
 - Official Chat v2, Reasoning, and Compatibility API resources define the
   transport and thinking controls.
-- Odysseus has no direct Cohere request adapter or sanitized fixtures beyond
-  this canonical reader yet; runtime integration remains follow-up work.
+- Odysseus has no direct Cohere request adapter, canonical reader, or sanitized
+  canonical fixtures yet; both normalization and runtime integration remain
+  follow-up work.

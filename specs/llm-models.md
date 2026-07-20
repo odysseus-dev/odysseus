@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -10,7 +10,7 @@ This spec covers model/provider behavior in:
 - `src/endpoint_resolver.py`;
 - `src/model_discovery.py`;
 - `src/model_context.py`;
-- `src/model_capabilities.py` and `src/provider_capability_schemas.py`;
+- `src/model_capabilities.py`;
 - `src/model_capability_readers/`;
 - `src/task_endpoint.py`;
 - `src/tls_overrides.py`;
@@ -40,30 +40,33 @@ Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls
 
 ## Canonical Provider And Model Shape
 
-`src.model_capabilities` owns canonical model family, modality, capability,
-limit, evidence, deterministic-control, probe-result, reasoning-control, and
-display-query types. `src.provider_capability_schemas` owns serving-provider
-identity and tested model-catalog envelopes; provider request/response paths
-remain in `llm_core` and its adapters.
-`src.model_capability_readers` maps already-fetched provider payloads into
-`ModelCapabilityRecord`; readers do no network I/O. Model-specific observations
-are kept in `model-quirks.md`, not a runtime registry without a consumer.
+`src.model_capabilities` owns canonical model family, task, modality,
+capability, limit, evidence, assertion, deterministic-control, probe-result,
+reasoning-control token, and display-query values.
+`src.model_capability_readers` owns endpoint-scoped stable identity, lightweight
+provider detection, record serialization, and normalization of already-fetched
+provider payloads. Readers do no network I/O. Model-specific observations are
+kept in `model-quirks.md`, not a runtime registry without a consumer.
 
 Provider support and model support are different facts. A provider may expose
 tools, reasoning, vision, or multiple APIs while individual models differ.
-Provider-native readers describe where model evidence can appear; only
-per-model catalog fields, explicit endpoint configuration, a scoped registry,
-or a probe can claim a model capability. Identity-only model lists remain
+Provider-native readers describe where model evidence can appear. Current
+concrete readers cover generic OpenAI-compatible identity, OpenAI, OpenRouter,
+Google, Ollama, LM Studio, and llama.cpp. Identity-only model lists remain
 unknown.
 
-Resolution order is explicit provider, explicit endpoint kind, exact provider
-host, then a discriminating native payload shape. General `data`, `models`, and
-bare-list envelopes are explicit inventory fallbacks and never promote
-capability. Default ports are not provider identity. Unknown future fields
-remain available in raw evidence but do not become capabilities until their
-provider-native shape is intentionally mapped. See [model-capability-canonical.md](model-capability-canonical.md),
+Reader dispatch uses an explicit vendor first, then endpoint kind, hostname
+suffix, and common local-port hints. Generic payload handling accepts `data[]`
+or `models[]` items with `id`, `name`, or `model`; it does not accept a bare
+list and never promotes capability-looking fields. Unknown fields remain in
+the in-memory raw record. See [model-capability-canonical.md](model-capability-canonical.md),
 [model-quirks.md](model-quirks.md), and the
 [provider map](model-providers/_readme.md).
+
+This canonical layer is currently exercised by focused unit tests but is not
+wired into runtime discovery, endpoint resolution, model context, request
+shaping, or frontend pickers. `routes/model_routes.py` model probes continue to
+return model IDs through their existing runtime path.
 
 Route-level probe helpers in `routes/model_routes.py` are the current exception: they build minimal provider-specific probe payloads using `llm_core` detection helpers. Keep probe behavior aligned with `llm_core` provider adapters. LLM provider HTTP clients and endpoint probes share `src.tls_overrides.llm_verify()`, which can add an operator-provided `LLM_CA_BUNDLE` on top of normal certificate verification without turning verification off or widening that trust to arbitrary URL fetches.
 
@@ -91,7 +94,7 @@ Decrypted endpoint headers can be copied into session metadata for chat use. End
 
 `src.model_discovery` owns host/env/Tailscale/local-port scanning for model servers. Admin `/api/providers` and `/api/discover` use that scanner; endpoint CRUD, test, refresh, and hidden-model controls are frontend-owned by `static/js/admin.js`.
 
-`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. Local endpoints get cheap reachability probes before expensive refreshes where possible, and endpoint responses can include explicit `supports_tools` state for schema-emission heuristics. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
+`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. Local endpoints get cheap reachability probes before expensive refreshes where possible, and endpoint responses can include explicit `supports_tools` state for schema-emission heuristics. Google Gemini API endpoints use the native paginated `generativelanguage.googleapis.com/v1beta/models` catalog, send API keys in `x-goog-api-key`, retain only content-generation model IDs, and default to manual refresh unless the caller explicitly chooses another mode. Probe failure returns no curated Google fallback. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
 
 `src.task_endpoint` owns background-task endpoint/model resolution for task routes and scheduler callers. It resolves `task_endpoint_id`/`task_model` through the normal endpoint resolver with owner context.
 
@@ -103,7 +106,7 @@ Cookbook and HWFit own local model download, serve, ranking, and auto-registrati
 
 ## Runtime Fallback And Routing
 
-Streaming chat and agent mode use configured fallback candidates through `stream_llm_with_fallback()`. Non-streaming chat and rewrite routes do not automatically get the same fallback path. Utility callers may use `llm_call_async_with_fallback()`, and vision uses its own fallback loop.
+Streaming chat and agent mode use configured fallback candidates through `stream_llm_with_fallback()`. A candidate commits only after a non-empty text/reasoning delta, a tool-call delta, or a non-empty completed tool-call event. Metadata is buffered until that point, so metadata followed by `[DONE]` or a clean empty completion can fall through to the next candidate without leaking stale model/usage state. Tool-call deltas are forwarded immediately and prevent fallback. If every candidate completes without substantive output, the stream emits one terminal 502-shaped error. Non-streaming chat and rewrite routes do not automatically get the same fallback path. Utility callers may use `llm_call_async_with_fallback()`, and vision uses its own fallback loop.
 
 Model selection has three layers: endpoint resolver hidden-model and first-chat-model selection, `/api/default-chat` per-user default/fallback resolution, and frontend picker auto-selection for empty sessions.
 
@@ -140,7 +143,7 @@ Provider tool calls are untrusted requests, not authorization. `supports_tools` 
 
 ## Current Gaps
 
-- Runtime provider detection, model curation, and frontend logos are still split across `llm_core`, `model_routes`, and `providers.js`; the canonical schema registry is not yet their single consumer.
+- Runtime provider detection, model curation, and frontend logos are still split across `llm_core`, `model_routes`, and `providers.js`; the canonical reader package has no production consumer yet.
 - Provider-specific behavior is concentrated in `llm_core.py`, which is large and easy to regress.
 - Several runtime request builders still use model-name heuristics. They should migrate only after endpoint/provider code supplies structured identity and a real consumer contract; the canonical catalog does not add a parallel quirk matcher.
 - Endpoint identity and fallback behavior need careful review when new OAuth/subscription providers are added.

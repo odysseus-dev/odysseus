@@ -1,6 +1,6 @@
 # OpenAI Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -24,10 +24,12 @@ scope that fact before it becomes canonical model capability.
 
 ## Fallback And Safety
 
-Exact `*.openai.com` host identity selects this provider; lookalikes do not.
-Do not parse model IDs or ownership labels. If a proxy returns richer explicit
-fields under an OpenAI endpoint configured as OpenAI, preserve them as raw
-evidence until an intentional OpenAI shape version maps them.
+An explicit endpoint kind selects this provider. Automatic reader detection
+currently uses a plain hostname `endswith("openai.com")` check; it is a
+normalization hint rather than a trust boundary. Do not parse model IDs or
+ownership labels. If a proxy returns richer fields while explicitly configured
+as OpenAI, the reader preserves them as raw evidence but keeps capability
+unknown.
 
 ## Current Gaps
 
@@ -35,3 +37,4 @@ evidence until an intentional OpenAI shape version maps them.
   for automatic canonical classification.
 - Runtime model-specific sampling/reasoning behavior still needs a maintained
   structured registry or endpoint probes.
+- Automatic reader host matching is not label-boundary checked.

@@ -1,6 +1,6 @@
 # Architecture Runtime Inventory
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@e57f60b | 2026-07-20
 
 > Purpose: current runtime/module inventory for codebase readability work
 > originally discussed around #4071/#4082. This is a source snapshot, not a
@@ -23,9 +23,11 @@ odysseus/
 │   ├── gallery/              # canonical gallery route/helper package
 │   ├── history/              # canonical chat history route package
 │   ├── memory/               # canonical memory route package
+│   ├── note/                 # canonical notes/reminders route package
 │   └── research/             # canonical research route package
 ├── src/                      # agent/model/runtime services and facades
 │   ├── agent_tools/          # native tool handler classes
+│   ├── model_capability_readers/ # provider model-metadata normalization
 │   ├── search/               # compatibility aliases for services.search
 │   └── tools/                # split do_* tool implementation domains
 ├── services/                 # service facades and canonical search/youtube paths
@@ -40,9 +42,9 @@ odysseus/
 
 | Directory | Flat `.py` Files | Subdirectories | Current Concern |
 |-----------|------------------|----------------|-----------------|
-| `src/` | 99 | `agent_tools/`, `search/`, `tools/` | Still broad, but tool handlers and do_* implementations now have packages. |
-| `routes/` | 54 | `contacts/`, `gallery/`, `history/`, `memory/`, `research/` | Route grouping has started; most domains remain flat top-level route files. |
-| `core/` | 10 | none | Manageable count, but `database.py` remains oversized and highly imported. |
+| `src/` | 100 | `agent_tools/`, `model_capability_readers/`, `search/`, `tools/` | Still broad, but tool handlers, capability readers, and do_* implementations now have packages. |
+| `routes/` | 54 | `contacts/`, `gallery/`, `history/`, `memory/`, `note/`, `research/` | Route grouping has started; most domains remain flat top-level route files. |
+| `core/` | 11 | none | Manageable count, but `database.py` remains oversized and highly imported. |
 
 ## Largest Runtime Modules
 
@@ -53,12 +55,13 @@ odysseus/
 | `routes/email_routes.py` | 5,226 | Largest HTTP domain; route, cache, compose, OAuth, and mutation behavior. |
 | `src/agent_loop.py` | 4,529 | Agent orchestration, tool rounds, prompt/context assembly, recovery. |
 | `routes/cookbook_routes.py` | 4,386 | Cookbook setup/download/serve/state flows. |
+| `src/llm_core.py` | 2,869 | Provider payloads, streaming, fallbacks, provider quirks. |
 | `src/builtin_actions.py` | 2,776 | Scheduler/background built-in action helpers. |
-| `src/llm_core.py` | 2,834 | Provider payloads, streaming, fallbacks, provider quirks. |
+| `routes/model_routes.py` | 2,657 | Endpoint CRUD, probing, catalog cache, provider auth links. |
 | `src/task_scheduler.py` | 2,627 | Task runner, runs, chained/event/webhook execution. |
-| `routes/model_routes.py` | 2,545 | Endpoint CRUD, probing, catalog cache, provider auth links. |
 | `core/database.py` | 2,562 | SQLAlchemy models plus manual SQLite migrations. |
 | `routes/gallery/gallery_routes.py` | 1,966 | Canonical gallery/media route package. |
+| `routes/note/note_routes.py` | 937 | Canonical notes/reminders route package. |
 | `routes/contacts/contacts_routes.py` | 916 | Canonical contacts/CardDAV route package. |
 | `routes/research/research_routes.py` | 783 | Canonical research route package. |
 | `routes/history/history_routes.py` | 794 | Canonical chat history route package. |
@@ -100,7 +103,7 @@ rg -n '(^| )from routes|(^| )import routes' src --glob '*.py' | wc -l
 
 ## Route Ownership Map
 
-Route modules are still mostly flat, with five landed domain packages:
+Route modules are still mostly flat, with six landed domain packages:
 
 - `routes/gallery/gallery_routes.py` and `routes/gallery/gallery_helpers.py`
   are canonical. `routes/gallery_routes.py` and `routes/gallery_helpers.py`
@@ -114,6 +117,8 @@ Route modules are still mostly flat, with five landed domain packages:
   is a compatibility shim.
 - `routes/contacts/contacts_routes.py` is canonical.
   `routes/contacts_routes.py` is a compatibility shim.
+- `routes/note/note_routes.py` is canonical. `routes/note_routes.py` is a
+  compatibility shim.
 
 Other major domains remain top-level route modules:
 
@@ -173,7 +178,7 @@ Admin manage tools for endpoints, MCP, webhooks, tokens, and settings live in
 Already-landed structure that should not be treated as future work:
 
 - `src/tool_implementations.py` has already been split behind a facade.
-- Gallery, research, memory, history, and contacts route packages already have canonical subpackage
+- Gallery, research, memory, history, contacts, and note route packages already have canonical subpackage
   locations plus top-level compatibility shims.
 
 ## Safety Guardrails For Follow-Up Work
@@ -199,4 +204,5 @@ python -c "import routes.memory_routes as m; import routes.memory.memory_routes 
 python -c "import routes.research_routes as r; import routes.research.research_routes as c; print(r is c)"
 python -c "import routes.history_routes as h; import routes.history.history_routes as c; print(h is c)"
 python -c "import routes.contacts_routes as c0; import routes.contacts.contacts_routes as c1; print(c0 is c1)"
+python -c "import routes.note_routes as n; import routes.note.note_routes as c; print(n is c)"
 ```

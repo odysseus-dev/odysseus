@@ -1,6 +1,6 @@
 # LM Studio Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -33,9 +33,10 @@ compatible paths.
 
 ## Fallback And Safety
 
-Port 1234 is not provider identity. Prefer pathless native `/api/v1/models`
-discovery where configured (#1122, #3615), then v0, then general identity.
-An error object from an unsupported native route is not a model list.
+Current reader detection identifies port 1234 as LM Studio. Prefer pathless
+native `/api/v1/models` discovery where configured (#1122, #3615), then v0,
+then general identity. The port mapping is a normalization hint, not endpoint
+trust. An error object from an unsupported native route is not a model list.
 
 ## Current Gaps
 

@@ -1,6 +1,6 @@
 # Chat
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -51,7 +51,7 @@ Runtime behavior:
 
 `src.agent_runs` owns detached in-memory stream runs, replay buffers, replacement cancellation, resume subscribers, explicit stop, and terminal-buffer eviction. Closing the SSE connection does not necessarily stop generation. `static/js/chat.js` can live-resume a still-running detached stream through `/api/chat/resume/{session_id}`; rich responses reload from DB for canonical rendering. Detached runs are process-local and do not survive server restart.
 
-Provider adapters live below chat in `src.llm_core`. Chat consumes normalized SSE output, fallback/error events, reasoning/tool deltas, and metrics. Model fallback only switches before output has started; after partial output, errors are surfaced to the stream instead of silently retrying a new model.
+Provider adapters live below chat in `src.llm_core`. Chat consumes normalized SSE output, fallback/error events, reasoning/tool deltas, and metrics. Model fallback only commits a candidate after substantive text/reasoning or tool-call output; metadata-only and empty/DONE-only streams can advance to the next candidate without exposing stale metadata. After substantive output, errors are surfaced to the stream instead of silently retrying a new model.
 
 ## Context Preface
 

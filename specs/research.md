@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -18,7 +18,7 @@ This spec covers deep research behavior in:
 - research CLI access in `scripts/odysseus-research`;
 - frontend modules `static/js/research/panel.js`, `static/js/research/jobs.js`, `static/js/researchSynapse.js`, `static/js/chat.js`, `static/js/chatRenderer.js`, `static/js/chatStream.js`, `static/js/documentLibrary.js`, `static/js/sessions.js`, and compare stream research UI;
 - persisted reports under `data/deep_research/*.json`;
-- tests under `tests/test_research_*`, `tests/test_deep_research_*`, `tests/test_visual_report*.py`, `tests/test_services_research_low_quality_sources.py`, research auth regressions, endpoint fallback tests, and research CLI tests.
+- tests under `tests/test_research_*`, `tests/test_deep_research_*`, `tests/test_visual_report*.py`, `tests/test_services_research_low_quality_sources.py`, `tests/test_svc_research_sources_nondict.py`, research auth regressions, endpoint fallback tests, and research CLI tests.
 
 ## Current Call Sites Include
 
@@ -114,6 +114,9 @@ Native/Docker endpoint behavior is delegated to model endpoint registration and 
 The active FastAPI app path uses `src.research_handler.ResearchHandler`.
 
 `services/research/service.py` is a public wrapper around a duplicate `services.research.research_handler.ResearchHandler`. That services handler remains compatibility/cleanup surface rather than canonical runtime truth; check parity before assuming it has every active-route field or policy behavior.
+
+Its source extraction skips non-dict finding rows so one malformed cached or
+generated entry does not discard later valid URL/title/summary sources.
 
 Search compatibility also matters: `src.search.core`, `src.search.providers`, and `src.search.content` alias the service search path so old imports stay live without a second fetch implementation.
 

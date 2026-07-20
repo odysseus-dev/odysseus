@@ -1,6 +1,6 @@
 # Ollama Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -20,10 +20,11 @@ Use two native steps:
    and thinking/reasoning tokens. Map context from exact `context_length` or
    native `<architecture>.context_length` fields.
 
-The `parameters` field is serialized Modelfile text and is not reparsed for
-capability or context truth. Native structured metadata wins. This prevents
-late text parsing and allows new architectures to use the documented
-`*.context_length` key shape without model-name tables.
+The reader does not parse model names or architecture names. It does parse a
+two-column serialized `parameters` value and can take `num_ctx` from it before
+falling back to exact or suffix `*.context_length` keys in structured mappings.
+The parameters text is used only for that keyed limit lookup, not capability
+inference.
 
 ## Request And Response Shape
 
@@ -41,9 +42,11 @@ and low-confidence until corroborated.
 
 ## Fallback And Safety
 
-Port 11434 alone does not identify Ollama. Use explicit kind, Ollama Cloud host,
-or native shape. Names that contain `vision`, `embed`, or `qwen` are not
-capability evidence (#3743, #4487).
+Current reader detection identifies port 11434 as Ollama, in addition to an
+explicit endpoint kind or an `ollama.com` hostname suffix. This is a
+normalization hint, not endpoint trust or capability evidence. Names that
+contain `vision`, `embed`, or `qwen` are not capability evidence (#3743,
+#4487).
 
 ## Current Gaps
 

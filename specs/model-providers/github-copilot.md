@@ -1,12 +1,13 @@
 # GitHub Copilot Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
 Canonical provider ID `copilot`; OpenAI-compatible chat with Copilot headers
-and OAuth; reader `src/model_capability_readers/copilot.py`; runtime adapter
-`src/copilot.py` and routes in `routes/copilot_routes.py`.
+and OAuth; runtime adapter `src/copilot.py` and routes in
+`routes/copilot_routes.py`. There is no dedicated Copilot canonical reader on
+current `dev`.
 
 ## Catalog Shape
 
@@ -17,11 +18,10 @@ The observed Copilot `/models` response uses `data[]` entries with:
 - `capabilities.supports.tool_calls` and `.vision`;
 - optional limit/family metadata.
 
-Picker-enabled entries are selectable chat models. Nested true support fields
-claim only that model's tool/vision capability. Picker-disabled utility entries
-remain identity-only unless their own structured fields say more. If no entry
-advertises picker state, current adapter behavior can retain all identities as
-a compatibility fallback, but that does not promote capability.
+Runtime model discovery uses picker state for availability. The canonical
+reader package does not map the nested support fields; an explicitly supplied
+`copilot` vendor currently uses generic identity-only normalization, and
+`model_picker_enabled` does not become canonical capability.
 
 ## Request And Response Shape
 
@@ -42,4 +42,5 @@ do not replace the account-scoped catalog response.
 
 - The catalog shape is implementation-observed and needs ongoing fixture
   comparison with current Copilot clients.
+- Copilot catalog capability fields are not normalized by current `dev`.
 - Account/plan/policy availability must remain endpoint-user scoped.

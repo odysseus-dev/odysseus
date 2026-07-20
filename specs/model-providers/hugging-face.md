@@ -1,21 +1,20 @@
 # Hugging Face Provider And Registry Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
-Canonical provider ID `huggingface`; Hub registry reader
-`src/model_capability_readers/huggingface.py`; download/fit metadata in
+Canonical placeholder vendor ID `huggingface`; download/fit metadata in
 `services/hwfit/`; OpenAI-compatible inference providers/TGI handled as their
-serving dialect.
+serving dialect. There is no dedicated Hugging Face canonical reader on
+current `dev`.
 
 ## Hub Model Shape
 
 Hub model info can provide `modelId`/`id`, `pipeline_tag`, `tags`, `config`, and
-card metadata. Only exact `pipeline_tag` values map canonical task/family and
-modalities, including text generation, embeddings/feature extraction,
-image-text-to-text, text/image/video generation, ASR, TTS, and classification.
-`config.model_type` is structured family evidence.
+card metadata. Current canonical normalization does not map `pipeline_tag`,
+`config.model_type`, or Hub task/modality fields. An explicitly selected
+Hugging Face vendor uses generic identity-only normalization.
 
 This source is `cookbook_hf`/registry confidence, not live endpoint truth.
 Free-form tags, README/card prose, repository names, and architecture names do
@@ -38,4 +37,5 @@ remote code, model cards, and repository files as untrusted content.
 
 - Revision/digest linkage between downloads, Hub records, and serving
   endpoints is incomplete.
+- Hub task/family metadata is not consumed by the canonical reader package.
 - Pipeline tags can be missing or overly broad; unknown stays unknown.

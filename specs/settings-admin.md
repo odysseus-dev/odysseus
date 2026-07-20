@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -74,7 +74,7 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - bundled accessibility font selection such as OpenDyslexic and text-size variable application;
 - CSS variable application.
 
-`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, accessibility/font/text-size controls, scoped-token helpers, and unified integrations forms. Its email account forms include provider presets, Google Workspace/.edu OAuth connect/reconnect controls, display-name fields, password-field hiding for OAuth flows, and redirect result banners. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes.
+`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, accessibility/font/text-size controls, scoped-token helpers, and unified integrations forms. Its email account forms include provider presets, Google Workspace/.edu OAuth connect/reconnect controls, display-name fields, password-field hiding for OAuth flows, and redirect result banners. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes. Google Gemini API endpoint creation omits `model_refresh_mode` so the backend can apply its manual default; proxies remain manual and other API endpoint forms submit auto refresh.
 
 Logout/user-switch flows clear local/session storage to avoid stale cross-account UI state.
 
@@ -119,7 +119,7 @@ HTTP import is best-effort and section-based. It rejects invalid top-level JSON,
 
 ## Diagnostics, Cleanup, And Wipe
 
-`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. URL-bearing diagnostics should use log-safety redaction helpers so credentials/query strings do not leak. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. The existing `LOG_LEVEL=DEBUG` toggle can add bounded capability-normalization summaries to that log; those summaries exclude model IDs and raw provider records. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
+`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. URL-bearing diagnostics should use log-safety redaction helpers so credentials/query strings do not leak. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
 
 `routes.cleanup_routes` is owner-scoped, not admin-only. It previews and applies session cleanup for the current user through `src.cleanup_service`; when auth is disabled, cleanup can operate as a single-user unscoped flow.
 

@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -17,9 +17,9 @@ This spec covers current app runtime wiring in:
 - `core/middleware.py`;
 - all route setup functions registered from `app.py`, including canonical
   `routes/gallery/`, `routes/memory/`, `routes/research/`,
-  `routes/history/`, and `routes/contacts/` packages plus top-level
+  `routes/history/`, `routes/contacts/`, and `routes/note/` packages plus top-level
   compatibility shims;
-- `routes/note_routes.py`, `routes/prefs_routes.py`, `routes/workspace_routes.py`, and `companion/routes.py`;
+- `routes/prefs_routes.py`, `routes/workspace_routes.py`, and `companion/routes.py`;
 - `src/generated_images.py` for generated-media file resolution;
 - `launcher.py`, `Odysseus.spec`, and platform launcher scripts where frozen/native startup changes runtime paths;
 - static entrypoints in `static/index.html`, `static/login.html`, and `static/app.js`.
@@ -44,13 +44,14 @@ Current router call sites include:
 - TTS/STT, documents, signatures, gallery, editor drafts, scheduled tasks, assistant, calendar, shell, Cookbook, HW Fit, compare, preferences, backup, fonts, Copilot and ChatGPT Subscription auth;
 - MCP, webhooks, API tokens, notes, email, Codex/Claude scoped APIs, vault, contacts, and companion routes.
 
-Gallery, memory, research, history, and contacts routes have canonical
+Gallery, memory, research, history, contacts, and note routes have canonical
 subpackage modules (`routes.gallery.gallery_routes`,
 `routes.memory.memory_routes`, `routes.research.research_routes`,
-`routes.history.history_routes`, and `routes.contacts.contacts_routes`). The
-old top-level modules replace their `sys.modules` entries with the canonical
-module object so legacy imports, `importlib`, and monkeypatch tests target the
-same route module that `app.py` uses.
+`routes.history.history_routes`, `routes.contacts.contacts_routes`, and
+`routes.note.note_routes`). The old top-level modules replace their
+`sys.modules` entries with the canonical module object so legacy imports,
+`importlib`, and monkeypatch tests target the same route module that `app.py`
+uses.
 
 The SPA routes `/`, `/notes`, `/calendar`, `/cookbook`, `/email`, `/memory`, `/gallery`, `/tasks`, and `/library` all serve `static/index.html`. `static/` is served with revalidation for `.js`, `.css`, and `.html` because the frontend ships raw browser modules with no hashed build output.
 

@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@e57f60b | 2026-07-20
 
 ## Scope
 
@@ -12,7 +12,8 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 - `routes/task_routes.py`, `src/task_scheduler.py`, `src/task_endpoint.py`, `src/event_bus.py`, and `src/interactive_gate.py`;
 - shared privileged task-action policy in `src/task_action_policy.py`;
 - `routes/assistant_routes.py`;
-- `routes/note_routes.py`, `src/builtin_actions.py`, and `src/action_intents.py`;
+- canonical `routes/note/note_routes.py`, compatibility shim
+  `routes/note_routes.py`, `src/builtin_actions.py`, and `src/action_intents.py`;
 - agent/tool call sites in `src/tool_index.py` and `src/tool_implementations.py`;
 - scoped Codex wrappers in `routes/codex_routes.py`;
 - database models `CalendarCal`, `CalendarEvent`, `ScheduledTask`, `TaskRun`, `Note`, and `CrewMember`;
@@ -76,7 +77,12 @@ Task runtime behavior:
 
 ## Notes And Reminders
 
-`routes.note_routes.py` owns notes/todos/reminders. Notes are SQLAlchemy `Note` rows and can include due dates, ordering, images, repeat state, AI classification, source/session provenance, and agent session linkage.
+`routes.note.note_routes` owns notes/todos/reminders, and `app.py` imports that
+canonical path. `routes.note_routes` replaces its module entry with the
+canonical module for legacy import and monkeypatch compatibility. Notes are
+SQLAlchemy `Note` rows and can include due dates, ordering, images, repeat
+state, AI classification, source/session provenance, and agent session
+linkage.
 
 Notes CRUD/reorder/reminder routes resolve the acting owner through `require_user()`: auth-enabled anonymous requests fail closed before hitting owner-scoped queries, while documented no-login/single-user modes still resolve to the compatibility owner path.
 
@@ -160,7 +166,7 @@ Note routes store caller-provided `source`, `session_id`, `image_url`, and agent
 
 ## Testing Coverage
 
-Existing coverage is strongest around CalDAV URL hardening/writeback, client cleanup and operator CA handling, bidirectional/pending CalDAV sync markers, CalDAV UID calendar scoping, calendar recurrence/timezone helpers, owner-scoped calendar basics, exact-owner task-tool mutations, scheduler restart/cancel/next-run behavior, webhook auth-exemption source shape, note-route unauthenticated fail-closed behavior, note/calendar attachment reservations, notes CLI/tool due-date behavior, calendar reminder abbreviation parsing, task CLI preview, task persona fields, and same-owner chained task validation.
+Existing coverage is strongest around CalDAV URL hardening/writeback, client cleanup and operator CA handling, bidirectional/pending CalDAV sync markers, CalDAV UID calendar scoping, calendar recurrence/timezone helpers, owner-scoped calendar basics, exact-owner task-tool mutations, scheduler restart/cancel/next-run behavior, webhook auth-exemption source shape, canonical/legacy note-module identity, note-route unauthenticated fail-closed behavior, note/calendar attachment reservations, notes CLI/tool due-date behavior, calendar reminder abbreviation parsing, task CLI preview, task persona fields, and same-owner chained task validation.
 
 Route-level coverage is thinner for full calendar route behavior, task CRUD/security/run controls, live webhook token dispatch, notes owner CRUD/reminder delivery, assistant defaults/run status, event-bus triggers, Codex todo/calendar scopes, and frontend panel wiring.
 
