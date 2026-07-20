@@ -4699,6 +4699,13 @@ def setup_email_routes():
         cfg = _get_email_config(owner=owner)
         cfg["smtp_password"] = "***" if cfg["smtp_password"] else ""
         cfg["imap_password"] = "***" if cfg["imap_password"] else ""
+        # `_get_email_config` includes encrypted OAuth fields for the server's
+        # IMAP/SMTP helpers.  They are implementation secrets, not client
+        # configuration, so keep them out of this browser-facing response just
+        # as the account-list endpoint does.
+        cfg.pop("oauth_access_token", None)
+        cfg.pop("oauth_refresh_token", None)
+        cfg.pop("oauth_token_expiry", None)
         # Include preferences from settings.json
         settings = _load_settings()
         cfg["email_auto_summarize"] = bool(settings.get("email_auto_summarize", False))

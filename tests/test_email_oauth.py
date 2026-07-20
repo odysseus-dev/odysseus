@@ -578,3 +578,53 @@ async def test_account_list_response_does_not_expose_token_values():
     assert acct["oauth_provider"] == "google"   # status is exposed
     assert "oauth_access_token" not in acct      # token value is not
     assert "oauth_refresh_token" not in acct
+
+
+@pytest.mark.asyncio
+async def test_config_response_does_not_expose_oauth_storage_fields():
+    """The client-facing config route must not serialize the encrypted token
+    fields returned by the internal transport helper."""
+    from routes.email_routes import setup_email_routes
+    from src.secret_storage import encrypt as _enc
+
+    encrypted_access = _enc("ya29.internal_access_token")
+    encrypted_refresh = _enc("1//internal_refresh_token")
+    internal_cfg = {
+        "account_id": "acct-config",
+        "account_name": "Google Workspace",
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_security": "starttls",
+        "smtp_user": "alice@example.edu",
+        "smtp_password": "",
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "imap_user": "alice@example.edu",
+        "imap_password": "",
+        "imap_starttls": False,
+        "from_address": "alice@example.edu",
+        "oauth_provider": "google",
+        "oauth_access_token": encrypted_access,
+        "oauth_refresh_token": encrypted_refresh,
+        "oauth_token_expiry": "4102444800",
+        "display_name": "Alice",
+    }
+
+    router = setup_email_routes()
+    get_config = None
+    for route in router.routes:
+        if route.path == "/api/email/config" and "GET" in getattr(route, "methods", set()):
+            get_config = route.endpoint
+            break
+    assert get_config is not None, "email config route not found"
+
+    with mock.patch("routes.email_routes._get_email_config", return_value=internal_cfg.copy()), \
+         mock.patch("routes.email_routes._load_settings", return_value={}):
+        result = await get_config(owner="alice")
+
+    assert result["oauth_provider"] == "google"
+    assert "oauth_access_token" not in result
+    assert "oauth_refresh_token" not in result
+    assert "oauth_token_expiry" not in result
+    assert encrypted_access not in json.dumps(result)
+    assert encrypted_refresh not in json.dumps(result)
