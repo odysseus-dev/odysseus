@@ -699,6 +699,103 @@ async def test_first_scan_deleted_after_revalidation_is_fenced_by_cleanup_pass(
     }
 
 
+def test_scan_keeps_registration_generation_when_cleanup_precedes_basis(
+    monkeypatch,
+    tmp_path,
+):
+    """Cleanup after verification cannot become the stale scan's baseline."""
+    from core import database
+    import routes.note_routes as note_routes
+
+    builtin_actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a"]
+    )
+    deliveries = []
+
+    async def delivered(**kwargs):
+        deliveries.append(kwargs["note_body"])
+        return {
+            "browser_sent": True,
+            "email_sent": False,
+            "ntfy_sent": False,
+            "webhook_sent": False,
+        }
+
+    monkeypatch.setattr(note_routes, "dispatch_reminder", delivered)
+    verified_account_selected = threading.Event()
+    release_verified_account = threading.Event()
+    stale_query_count = 0
+    query_count_lock = threading.Lock()
+
+    class _PausingQuery(_Query):
+        def all(self):
+            nonlocal stale_query_count
+            rows = list(self._rows)
+            if threading.current_thread().name == "stale-urgency-scan":
+                with query_count_lock:
+                    stale_query_count += 1
+                    should_pause = stale_query_count == 2
+                if should_pause:
+                    # The second enumeration has selected the enabled row, but
+                    # the action has not yet retained/used its checkpoint basis.
+                    verified_account_selected.set()
+                    assert release_verified_account.wait(5)
+            return rows
+
+    class _PausingDb(_Db):
+        def query(self, _model):
+            return _PausingQuery(self._rows())
+
+    monkeypatch.setattr(
+        database,
+        "SessionLocal",
+        lambda: _PausingDb(
+            lambda: [_account(value) for value in runtime["accounts"]]
+        ),
+    )
+
+    stale_result = {}
+
+    def run_stale_scan():
+        try:
+            stale_result["value"] = asyncio.run(
+                builtin_actions.action_check_email_urgency("alice")
+            )
+        except BaseException as exc:
+            stale_result["error"] = exc
+
+    worker = threading.Thread(
+        target=run_stale_scan,
+        name="stale-urgency-scan",
+    )
+    worker.start()
+    assert verified_account_selected.wait(5)
+
+    runtime["accounts"] = []
+    with pytest.raises(builtin_actions.TaskNoop):
+        asyncio.run(builtin_actions.action_check_email_urgency("alice"))
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    retired = json.loads(state_path.read_text(encoding="utf-8"))
+    assert retired["account_generations"]["acct-a"] == {
+        "checkpoint": 1,
+        "complete": 0,
+    }
+
+    release_verified_account.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert "error" not in stale_result
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert deliveries == []
+    assert state["per_uid"] == {}
+    assert state["notified_uids"] == []
+    assert state["account_generations"]["acct-a"] == {
+        "checkpoint": 1,
+        "complete": 0,
+    }
+
+
 @pytest.mark.asyncio
 async def test_payload_empty_tombstone_fences_reenable_redelete_and_can_recover(
     monkeypatch,
