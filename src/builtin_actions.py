@@ -221,6 +221,23 @@ def _email_urgency_account_key(message_key):
     return str(message_key).split(":", 1)[0]
 
 
+def _email_urgency_stale_accounts(
+    prior,
+    base_account_generations,
+    account_ids,
+):
+    prior_generations = _email_urgency_account_generations(prior)
+    base_generations = _email_urgency_account_generations(
+        {"account_generations": base_account_generations}
+    )
+    return {
+        str(account_id)
+        for account_id in account_ids
+        if prior_generations.get(str(account_id), {}).get("checkpoint", 0)
+        != base_generations.get(str(account_id), {}).get("checkpoint", 0)
+    }
+
+
 def _merge_email_urgency_state(
     prior,
     *,
@@ -238,18 +255,14 @@ def _merge_email_urgency_state(
         prior_per_uid = {}
     complete = {str(account_id) for account_id in fully_scanned_account_ids}
     prior_generations = _email_urgency_account_generations(prior)
-    base_generations = _email_urgency_account_generations(
-        {"account_generations": base_account_generations}
-    )
     observed_accounts = {
         _email_urgency_account_key(key) for key in per_uid_scores
     } | complete
-    stale_accounts = {
-        account_id
-        for account_id in observed_accounts
-        if prior_generations.get(account_id, {}).get("checkpoint", 0)
-        != base_generations.get(account_id, {}).get("checkpoint", 0)
-    }
+    stale_accounts = _email_urgency_stale_accounts(
+        prior,
+        base_account_generations,
+        observed_accounts,
+    )
     fresh_complete = complete - stale_accounts
     changed_accounts = set(fresh_complete)
 
@@ -261,20 +274,26 @@ def _merge_email_urgency_state(
             changed_accounts.add(account_id)
     # Partial scans may add or refresh facts, but absence from a partial scan
     # is not evidence that another checkpoint or UI row is stale. When another
-    # worker committed after this scan captured its base generation, its value
-    # also wins collisions; the stale scan may still add facts it alone saw.
+    # worker committed after this scan captured its base generation, discard
+    # this account's whole stale snapshot. A key absent from the newer state
+    # may have been removed/read, so even a stale-only key is not safely
+    # additive without another fresh scan.
     for key, value in per_uid_scores.items():
         account_id = _email_urgency_account_key(key)
-        if account_id in stale_accounts and key in merged_per_uid:
+        if account_id in stale_accounts:
             continue
         if merged_per_uid.get(key) != value:
             changed_accounts.add(account_id)
         merged_per_uid[key] = value
 
     prior_notified = _email_urgency_string_set(prior.get("notified_uids", []))
-    merged_notified = prior_notified | _email_urgency_string_set(notified_uids)
-    for key in merged_notified - prior_notified:
-        changed_accounts.add(_email_urgency_account_key(key))
+    merged_notified = set(prior_notified)
+    for key in _email_urgency_string_set(notified_uids) - prior_notified:
+        account_id = _email_urgency_account_key(key)
+        if account_id in stale_accounts:
+            continue
+        merged_notified.add(key)
+        changed_accounts.add(account_id)
     for key in list(merged_notified):
         if (
             _email_urgency_account_key(key) in fresh_complete
@@ -2662,7 +2681,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 4. Aggregate state. urgent = score ≥ 2.
         urgent_keys = [k for k, v in per_uid_scores.items() if v.get("score", 0) >= 2 and v.get("unread")]
-        total_urgent = len(urgent_keys)
 
         # ── 5. Fire a reminder only when a previously-unnotified UID scores
         # urgent. The read, decision, delivery, and checkpoint are serialized
@@ -2670,39 +2688,46 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # state or overwrite each other's successful checkpoint.
         newly_notified = set()
         notify_failed = set()
-        title = "Urgent email" if total_urgent == 1 else f"{total_urgent} urgent emails"
-        # Build a real listing — subject · sender · reason for each urgent one
-        # — so the reminder tells the user which messages to act on.
-        sorted_urgent = sorted(
-            ((k, per_uid_scores[k]) for k in urgent_keys),
-            key=lambda kv: kv[1].get("score", 0), reverse=True,
-        )[:10]
-        _pub = (settings.get("app_public_url") or "").strip().rstrip("/")
-        from urllib.parse import quote as _quote
-        lines = [f"{total_urgent} email" + ("" if total_urgent == 1 else "s") + " need an urgent reply:", ""]
-        for i, (k, v) in enumerate(sorted_urgent, 1):
-            subj = (v.get("subject") or "(no subject)")[:160]
-            frm = v.get("from") or ""
-            why = v.get("reason") or ""
-            uid_for_link = str(k).split(":", 1)[-1]
-            hash_link = f"#email={_quote('INBOX', safe='')}:{uid_for_link}"
-            open_link = f"{_pub}/{hash_link}" if _pub else hash_link
-            line = f"{i}. {subj}"
-            if frm:
-                line += f"  —  {frm}"
-            if why:
-                line += f"  ·  {why}"
-            lines.append(line)
-            lines.append(f"   Open email: {open_link}")
-        if total_urgent > len(sorted_urgent):
-            lines.append("")
-            lines.append(f"…and {total_urgent - len(sorted_urgent)} more.")
-        body = "\n".join(lines)
 
-        async def _dispatch_urgency_reminder():
+        def _urgency_reminder_payload(reminder_keys):
+            total = len(reminder_keys)
+            title = "Urgent email" if total == 1 else f"{total} urgent emails"
+            sorted_urgent = sorted(
+                ((key, per_uid_scores[key]) for key in reminder_keys),
+                key=lambda item: item[1].get("score", 0),
+                reverse=True,
+            )[:10]
+            _pub = (settings.get("app_public_url") or "").strip().rstrip("/")
+            from urllib.parse import quote as _quote
+            lines = [
+                f"{total} email" + ("" if total == 1 else "s")
+                + " need an urgent reply:",
+                "",
+            ]
+            for i, (key, value) in enumerate(sorted_urgent, 1):
+                subj = (value.get("subject") or "(no subject)")[:160]
+                frm = value.get("from") or ""
+                why = value.get("reason") or ""
+                uid_for_link = str(key).split(":", 1)[-1]
+                hash_link = f"#email={_quote('INBOX', safe='')}:{uid_for_link}"
+                open_link = f"{_pub}/{hash_link}" if _pub else hash_link
+                line = f"{i}. {subj}"
+                if frm:
+                    line += f"  —  {frm}"
+                if why:
+                    line += f"  ·  {why}"
+                lines.append(line)
+                lines.append(f"   Open email: {open_link}")
+            if total > len(sorted_urgent):
+                lines.append("")
+                lines.append(f"…and {total - len(sorted_urgent)} more.")
+            return title, "\n".join(lines)
+
+        async def _dispatch_urgency_reminder(reminder_keys):
             # Call dispatch_reminder directly: a scheduler has no browser
             # session cookie with which to call the HTTP endpoint.
             from routes.note_routes import dispatch_reminder
+            title, body = _urgency_reminder_payload(reminder_keys)
             return await dispatch_reminder(
                 title=title,
                 note_body=body,
@@ -2711,11 +2736,35 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             )
 
         async def _dispatch_and_checkpoint(prior):
-            notified_uids = set(prior.get("notified_uids", []))
-            new_urgent = [k for k in urgent_keys if k not in notified_uids]
+            notified_uids = _email_urgency_string_set(
+                prior.get("notified_uids", [])
+            )
+            observed_accounts = {
+                _email_urgency_account_key(key) for key in per_uid_scores
+            } | fully_scanned_account_ids
+            stale_accounts = _email_urgency_stale_accounts(
+                prior,
+                base_account_generations,
+                observed_accounts,
+            )
+            # Generation fencing must happen before delivery, not only during
+            # merge. A stale-only unread UID may have been removed, read, or
+            # downgraded by the newer completed scan.
+            deliverable_urgent = [
+                key
+                for key in urgent_keys
+                if _email_urgency_account_key(key) not in stale_accounts
+            ]
+            new_urgent = [
+                key
+                for key in deliverable_urgent
+                if key not in notified_uids
+            ]
             if new_urgent:
                 try:
-                    dispatch_result = await _dispatch_urgency_reminder()
+                    dispatch_result = await _dispatch_urgency_reminder(
+                        deliverable_urgent
+                    )
                     channel = (settings.get("reminder_channel") or "browser").strip().lower()
                     delivered = bool(dispatch_result.get("browser_sent"))
                     if channel == "email":
