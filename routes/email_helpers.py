@@ -890,12 +890,14 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
     """Return IMAP/SMTP config as a dict.
 
     Resolution order:
-      1. If account_id given → that specific EmailAccount row.
+      1. If account_id given → that specific enabled EmailAccount row only.
       2. Else → the row with is_default=True (scoped to `owner` when given).
       3. Else → the first enabled row (scoped to `owner` when given).
-      4. Else → legacy flat keys in data/settings.json (kept for envs
-         where the migration hasn't run yet or accounts table is empty).
-      5. Else → env vars (SMTP_HOST / IMAP_HOST / ...).
+      4. For unscoped single-user callers only, legacy flat keys in
+         data/settings.json (kept for envs where the migration hasn't run yet
+         or accounts table is empty).
+      5. For unscoped single-user callers only, env vars
+         (SMTP_HOST / IMAP_HOST / ...).
 
     Returned dict always has the same shape as before; an `account_id` key is
     added so callers can stamp derivative records (email_ai_replies etc.).
@@ -933,11 +935,13 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     row = None
             # Fallback path — restrict to this owner's accounts so we don't
             # leak another user's default mailbox to an unconfigured user.
-            if row is None:
+            # An explicit selection is authoritative: a missing, disabled, or
+            # invisible row must not silently turn into a different account.
+            if row is None and not account_id:
                 q = db.query(_EA).filter(_EA.is_default == True, _EA.enabled == True)  # noqa: E712
                 q = _owner_or_matching_legacy_account(q)
                 row = q.first()
-            if row is None:
+            if row is None and not account_id:
                 q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
                 q = _owner_or_matching_legacy_account(q)
                 row = q.order_by(_EA.created_at.asc()).first()
@@ -972,27 +976,38 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         finally:
             db.close()
     except Exception as e:
+        # Owner-scoped and explicit-account calls must fail closed. Falling
+        # through here would replace a transient database error with shared
+        # settings/environment credentials, or replace an explicit selection
+        # with an unrelated legacy account.
+        if owner or account_id:
+            raise
         logger.debug(f"email_accounts lookup failed, falling back to settings.json: {e}")
 
     # Legacy fallback — flat keys in settings.json / env vars
-    settings = _load_settings()
+    # These credentials predate owner scoping and carry no safe tenant
+    # attribution. Preserve them only for trusted single-user callers that did
+    # not explicitly select an account.
+    legacy_allowed = not owner and not account_id
+    settings = _load_settings() if legacy_allowed else {}
+    environ = os.environ if legacy_allowed else {}
     cfg = {
         "account_id": resolved_id,
         "account_name": "legacy",
-        "smtp_host": settings.get("smtp_host", os.environ.get("SMTP_HOST", "")),
-        "smtp_port": int(settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")) or 465),
+        "smtp_host": settings.get("smtp_host", environ.get("SMTP_HOST", "")),
+        "smtp_port": int(settings.get("smtp_port", environ.get("SMTP_PORT", "465")) or 465),
         "smtp_security": _smtp_security_mode({
-            "smtp_security": settings.get("smtp_security", os.environ.get("SMTP_SECURITY", "")),
-            "smtp_port": settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")),
+            "smtp_security": settings.get("smtp_security", environ.get("SMTP_SECURITY", "")),
+            "smtp_port": settings.get("smtp_port", environ.get("SMTP_PORT", "465")),
         }),
-        "smtp_user": settings.get("smtp_user", os.environ.get("SMTP_USER", "")),
-        "smtp_password": settings.get("smtp_password", os.environ.get("SMTP_PASSWORD", "")),
-        "imap_host": settings.get("imap_host", os.environ.get("IMAP_HOST", "")),
-        "imap_port": int(settings.get("imap_port", os.environ.get("IMAP_PORT", "993")) or 993),
-        "imap_user": settings.get("imap_user", os.environ.get("IMAP_USER", "")),
-        "imap_password": settings.get("imap_password", os.environ.get("IMAP_PASSWORD", "")),
+        "smtp_user": settings.get("smtp_user", environ.get("SMTP_USER", "")),
+        "smtp_password": settings.get("smtp_password", environ.get("SMTP_PASSWORD", "")),
+        "imap_host": settings.get("imap_host", environ.get("IMAP_HOST", "")),
+        "imap_port": int(settings.get("imap_port", environ.get("IMAP_PORT", "993")) or 993),
+        "imap_user": settings.get("imap_user", environ.get("IMAP_USER", "")),
+        "imap_password": settings.get("imap_password", environ.get("IMAP_PASSWORD", "")),
         "imap_starttls": settings.get("imap_starttls", True),
-        "from_address": settings.get("email_from", os.environ.get("EMAIL_FROM", "")),
+        "from_address": settings.get("email_from", environ.get("EMAIL_FROM", "")),
     }
     if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
         logger.warning("SMTP not configured — add an Email Account in Settings or set env vars")

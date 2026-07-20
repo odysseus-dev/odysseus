@@ -34,6 +34,7 @@ from src.task_endpoint import resolve_task_candidates, task_llm_call_async
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
     _account_visible_to_owner,
+    EmailNotConfiguredError,
     _send_smtp_message,
     _imap_connect, _imap, _decode_header,
     _detect_sent_folder, _detect_spam_folder, _imap_move,
@@ -110,7 +111,11 @@ def _account_visible_to_task_owner(account_id: str | None, owner: str) -> bool:
     db = _SL()
     try:
         row = db.query(_EA).filter(_EA.id == account_id).first()
-        return row is not None and _account_visible_to_owner(row, owner)
+        return (
+            row is not None
+            and bool(row.enabled)
+            and _account_visible_to_owner(row, owner)
+        )
     finally:
         db.close()
 
@@ -218,10 +223,17 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
             finally:
                 db.close()
         except Exception:
+            if owner:
+                raise
             ids = []
             names = {}
+        if not ids and owner:
+            raise EmailNotConfiguredError(
+                "No email accounts are available to this task owner"
+            )
         if len(ids) <= 1:
-            # Single-account (or zero rows — fallback to legacy settings.json lookup)
+            # Unscoped zero-account callers retain the single-user legacy
+            # settings fallback. Owner-scoped callers fail closed above.
             return await _auto_summarize_pass_single(
                 days_back=days_back,
                 account_id=(ids[0] if ids else None),
