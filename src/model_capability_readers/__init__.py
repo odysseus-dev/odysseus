@@ -25,7 +25,9 @@ from src.model_capability_readers import (
 )
 from src.model_capability_readers.base import (
     CANONICAL_MODEL_SHAPE_VERSION,
+    CANONICAL_RUNTIME_CONTEXT_SHAPE_VERSION,
     ModelCapabilityRecord,
+    RuntimeContextAllocationRecord,
     VENDOR_ANTHROPIC,
     VENDOR_CEREBRAS,
     VENDOR_CHATGPT_SUBSCRIPTION,
@@ -250,7 +252,9 @@ def records_from_payload(
 
 __all__ = [
     "ModelCapabilityRecord",
+    "RuntimeContextAllocationRecord",
     "CANONICAL_MODEL_SHAPE_VERSION",
+    "CANONICAL_RUNTIME_CONTEXT_SHAPE_VERSION",
     "PLACEHOLDER_VENDOR_IDS",
     "READER_MODULES",
     "VENDOR_ANTHROPIC",

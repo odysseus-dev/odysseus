@@ -413,6 +413,68 @@ def test_ollama_reader_uses_generic_model_info_context_length_when_no_num_ctx():
     assert dict(record.capability.limits) == {"context_tokens": 32768}
 
 
+def test_ollama_ps_reader_keeps_loaded_allocation_in_runtime_shape():
+    record = ollama.runtime_context_from_ps_payload(
+        "hf.co/example/Qwen3:Q6_K",
+        {
+            "models": [
+                {
+                    "name": "hf.co/example/Qwen3:Q6_K",
+                    "model": "hf.co/example/Qwen3:Q6_K",
+                    "context_length": 65536,
+                    "details": {"family": "qwen3"},
+                }
+            ]
+        },
+        endpoint_id="7",
+    )
+
+    assert record is not None
+    assert record.allocated_context_tokens == 65536
+    assert record.stable_model_id == "ollama|endpoint:7|hf.co/example/qwen3:q6_k"
+    serialized = record.to_dict()
+    assert serialized["runtime"] == {"allocated_context_tokens": 65536}
+    assert serialized["evidence"] == {
+        "source": mc.SOURCE_PROVIDER_READER,
+        "confidence": mc.CONFIDENCE_PROVIDER_REPORTED,
+        "shape": "ollama.ps.v1",
+        "scope": "loaded_model",
+    }
+    assert "limits" not in serialized
+    assert "raw" not in serialized
+
+
+def test_ollama_ps_reader_matches_only_exact_or_latest_identity():
+    payload = {
+        "models": [
+            {"model": "qwen3:latest", "context_length": 32768},
+            {"model": "qwen3:14b", "context_length": 65536},
+        ]
+    }
+
+    record = ollama.runtime_context_from_ps_payload("qwen3", payload)
+
+    assert record is not None
+    assert record.allocated_context_tokens == 32768
+    assert ollama.runtime_context_from_ps_payload("qwen3:8b", payload) is None
+
+
+def test_ollama_ps_reader_fails_closed_for_invalid_or_conflicting_allocation():
+    assert ollama.runtime_context_from_ps_payload(
+        "qwen3",
+        {"models": [{"model": "qwen3", "context_length": True}]},
+    ) is None
+    assert ollama.runtime_context_from_ps_payload(
+        "qwen3",
+        {
+            "models": [
+                {"model": "qwen3", "context_length": 32768},
+                {"name": "qwen3:latest", "context_length": 65536},
+            ]
+        },
+    ) is None
+
+
 def test_lmstudio_reader_uses_native_v1_capabilities_when_present():
     records = lmstudio.records_from_payload(
         {
