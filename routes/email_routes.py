@@ -5170,6 +5170,9 @@ def setup_email_routes():
             return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
         access_token = data.get("access_token", "")
         refresh_token = data.get("refresh_token", "")
+        if not access_token or not refresh_token:
+            logger.warning("Google token exchange omitted required offline credentials")
+            return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
         expiry = str(int(time.time()) + data.get("expires_in", 3600))
         # Fetch the email address from userinfo so we can auto-fill imap_user.
         email_addr = ""
@@ -5194,10 +5197,33 @@ def setup_email_routes():
             if owner and row.owner and row.owner != owner:
                 logger.warning("OAuth callback owner mismatch — rejecting token write")
                 return _RR("/?section=integrations&email_oauth_error=ownership_error")
+
+            # A reconnect must prove that the token belongs to the mailbox
+            # already configured on this row. Otherwise authenticating a
+            # different Google account leaves the saved IMAP/SMTP usernames
+            # paired with credentials for another identity.
+            verified_email = (
+                email_addr.strip().casefold()
+                if isinstance(email_addr, str)
+                else ""
+            )
+            configured_logins = {
+                value.strip().casefold()
+                for value in (row.imap_user or "", row.smtp_user or "")
+                if value.strip()
+            }
+            if not verified_email or any(
+                login != verified_email for login in configured_logins
+            ):
+                logger.warning(
+                    "Google OAuth mailbox identity verification failed for account %s",
+                    account_id,
+                )
+                return _RR("/?section=integrations&email_oauth_error=identity_verification_failed")
+
             row.oauth_provider = "google"
             row.oauth_access_token = _enc(access_token)
-            if refresh_token:
-                row.oauth_refresh_token = _enc(refresh_token)
+            row.oauth_refresh_token = _enc(refresh_token)
             row.oauth_token_expiry = expiry
             # Auto-fill Google IMAP/SMTP settings if not already configured.
             if not row.imap_host:
