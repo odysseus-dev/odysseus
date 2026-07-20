@@ -120,13 +120,22 @@ def test_pairing_payload_shape():
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        ("http://odysseus.local", ("http://odysseus.local", "odysseus.local", 80)),
-        ("https://odysseus.example", ("https://odysseus.example", "odysseus.example", 443)),
-        ("https://192.168.1.9:7443", ("https://192.168.1.9:7443", "192.168.1.9", 7443)),
-        ("http://[fd00::1]:7000", ("http://[fd00::1]:7000", "fd00::1", 7000)),
+        ("http://odysseus", ("odysseus", 80)),
+        ("http://odysseus:7000", ("odysseus", 7000)),
+        ("http://localhost:7000", ("localhost", 7000)),
+        ("http://odysseus.local", ("odysseus.local", 80)),
+        ("http://api.odysseus.local:7000", ("api.odysseus.local", 7000)),
+        ("http://10.0.0.1:7000", ("10.0.0.1", 7000)),
+        ("http://100.64.0.1:7000", ("100.64.0.1", 7000)),
+        ("http://100.127.255.254:7000", ("100.127.255.254", 7000)),
+        ("http://127.0.0.1:7000", ("127.0.0.1", 7000)),
+        ("http://169.254.1.1:7000", ("169.254.1.1", 7000)),
+        ("http://172.16.0.1:7000", ("172.16.0.1", 7000)),
+        ("http://172.31.255.254:7000", ("172.31.255.254", 7000)),
+        ("http://192.168.1.9:7000", ("192.168.1.9", 7000)),
     ],
 )
-def test_parse_companion_base_url_accepts_canonical_origins(value, expected):
+def test_parse_companion_base_url_accepts_v1_client_addresses(value, expected):
     assert P.parse_companion_base_url(value) == expected
 
 
@@ -136,38 +145,59 @@ def test_parse_companion_base_url_accepts_canonical_origins(value, expected):
         "",
         "odysseus.example",
         "ftp://odysseus.example",
-        "https://user:password@odysseus.example",
-        "https://odysseus.example/",
-        "https://odysseus.example/path",
-        "https://odysseus.example?query=1",
-        "https://odysseus.example#fragment",
-        "https://odysseus.example:not-a-port",
-        "https://odysseus.example:0",
-        "https://odysseus.example:65536",
-        " https://odysseus.example",
-        "https://odysseus.example ",
-        "https://odysseus\\example",
+        "https://odysseus.local",
+        "http://user:password@odysseus.local",
+        "http://odysseus.local/",
+        "http://odysseus.local/path",
+        "http://odysseus.local?query=1",
+        "http://odysseus.local#fragment",
+        "http://odysseus.local:not-a-port",
+        "http://odysseus.local:0",
+        "http://odysseus.local:65536",
+        "http://odysseus.local:07000",
+        "HTTP://odysseus.local:7000",
+        "http://Odysseus.local:7000",
+        " http://odysseus.local",
+        "http://odysseus.local ",
+        "http://odysseus\\local",
+        "http://odysseus.local\n",
+        "http://odysseus.local\t",
+        "http://odysseus.local\x7f",
+        "http://example.com:7000",
+        "http://1.1.1.1:7000",
+        "http://100.63.255.255:7000",
+        "http://100.128.0.1:7000",
+        "http://126.255.255.255:7000",
+        "http://128.0.0.1:7000",
+        "http://169.253.255.255:7000",
+        "http://169.255.0.1:7000",
+        "http://172.15.255.255:7000",
+        "http://172.32.0.1:7000",
+        "http://192.167.255.255:7000",
+        "http://192.169.0.1:7000",
+        "http://[fd00::1]:7000",
+        "http://[fe80::1%25eth0]:7000",
+        "http://b\N{LATIN SMALL LETTER U WITH DIAERESIS}cher.local:7000",
+        "http://xn--bcher-kva.local:7000",
+        "http://xn--bcher-kva:7000",
+        "http://odysseus%2elocal:7000",
+        "http://%31%39%32.168.1.9:7000",
+        "http://odysseus%40local:7000",
+        "http://.local:7000",
+        "http://odysseus..local:7000",
+        "http://odysseus.local.:7000",
+        "http://-odysseus:7000",
+        "http://odysseus-:7000",
+        "http://odysseus_name:7000",
+        f"http://{'a' * 64}:7000",
+        f"http://{'a' * 250}.local:7000",
     ],
 )
-def test_parse_companion_base_url_rejects_non_origins(value):
+def test_parse_companion_base_url_rejects_unsupported_or_noncanonical_addresses(
+    value,
+):
     with pytest.raises(ValueError):
         P.parse_companion_base_url(value)
-
-
-def test_pairing_payload_can_include_configured_base_url():
-    p = P.pairing_payload(
-        "odysseus.example",
-        443,
-        "ody_x",
-        base_url="https://odysseus.example",
-    )
-    assert p == {
-        "v": 1,
-        "host": "odysseus.example",
-        "port": 443,
-        "token": "ody_x",
-        "base_url": "https://odysseus.example",
-    }
 
 
 @pytest.mark.parametrize("payload", ["[]", '{"users": []}'])
@@ -298,6 +328,15 @@ def test_pair_post_json_returns_pairing_payload(monkeypatch):
     assert response["port"] == 7000
     assert response["token"] == "ody_raw"
     assert response["token_id"] == "tok123"
+    assert set(response) == {
+        "host",
+        "port",
+        "token",
+        "token_id",
+        "hosts",
+        "payload",
+        "qr",
+    }
     assert response["payload"] == {
         "v": 1,
         "host": "192.168.1.50",
@@ -310,7 +349,7 @@ def test_pair_post_json_returns_pairing_payload(monkeypatch):
 
 
 def test_pair_post_json_prefers_configured_origin(monkeypatch):
-    monkeypatch.setenv("COMPANION_BASE_URL", "https://odysseus.example")
+    monkeypatch.setenv("COMPANION_BASE_URL", "http://odysseus.local:7000")
     mint = MagicMock(return_value=("tok123", "ody_raw"))
     discovery = MagicMock(side_effect=AssertionError("configured origin must skip LAN discovery"))
     monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
@@ -322,16 +361,23 @@ def test_pair_post_json_prefers_configured_origin(monkeypatch):
     request = _fake_pair_request(format="json", port=7000)
     response = _pair_route("POST")(request)
 
-    assert response["host"] == "odysseus.example"
-    assert response["port"] == 443
-    assert response["base_url"] == "https://odysseus.example"
-    assert response["hosts"] == ["odysseus.example"]
+    assert response["host"] == "odysseus.local"
+    assert response["port"] == 7000
+    assert response["hosts"] == ["odysseus.local"]
+    assert set(response) == {
+        "host",
+        "port",
+        "token",
+        "token_id",
+        "hosts",
+        "payload",
+        "qr",
+    }
     assert response["payload"] == {
         "v": 1,
-        "host": "odysseus.example",
-        "port": 443,
+        "host": "odysseus.local",
+        "port": 7000,
         "token": "ody_raw",
-        "base_url": "https://odysseus.example",
     }
     discovery.assert_not_called()
 
@@ -340,7 +386,7 @@ def test_pair_post_rejects_invalid_config_before_mint_without_echoing_it(monkeyp
     configured_secret = "secret-password"
     monkeypatch.setenv(
         "COMPANION_BASE_URL",
-        f"https://admin:{configured_secret}@odysseus.example",
+        f"http://admin:{configured_secret}@odysseus.local",
     )
     mint = MagicMock(side_effect=AssertionError("invalid config must not mint a token"))
     monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
