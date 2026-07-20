@@ -10,6 +10,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import or_, and_
+from sqlalchemy.exc import IntegrityError
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent
@@ -221,21 +222,88 @@ class EventUpdate(BaseModel):
 
 # ── Helpers ──
 
+_DEFAULT_CALENDAR_NAMESPACE = uuid.UUID("4840613a-9847-4a3b-bd75-19e6bc5fc3ce")
+
+
+def _default_calendar_id(owner: str) -> str:
+    """Return the stable primary key used for an owner's lazy default."""
+    return str(uuid.uuid5(_DEFAULT_CALENDAR_NAMESPACE, owner))
+
+
+def _begin_sqlite_default_write(db) -> None:
+    """Serialize an absent-default check with other SQLite writers.
+
+    SQLite's default deferred transactions allow two workers to both read an
+    empty calendar set before either writes.  ``BEGIN IMMEDIATE`` acquires the
+    writer reservation before the second, authoritative lookup.  We issue it
+    only when the driver has not already opened a write transaction; a caller
+    with a pending write already owns the required reservation.
+    """
+    connection = db.connection()
+    dbapi_connection = connection.connection
+    driver_connection = getattr(
+        dbapi_connection,
+        "driver_connection",
+        dbapi_connection,
+    )
+    if not getattr(driver_connection, "in_transaction", False):
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+
 def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
-    """Return the owner's calendar, staging a default in the caller's transaction."""
+    """Return the owner's calendar, staging a default in the caller's transaction.
+
+    A stable owner-derived primary key makes concurrent first-use inserts
+    converge on one row on every SQL backend.  SQLite additionally serializes
+    the absent-row check because its deferred transactions otherwise permit
+    both workers to read the gap before either writes.  Other backends recover
+    a lost insert race inside a savepoint so the caller's event transaction
+    remains usable and atomic.
+    """
     owner = owner or FALLBACK_OWNER
     cal = db.query(CalendarCal).filter(CalendarCal.owner == owner).first()
-    if not cal:
-        cal = CalendarCal(
-            id=str(uuid.uuid4()),
-            owner=owner,
-            name="Personal",
-            color="#5b8abf",
-            source="local",
-        )
+    if cal:
+        return cal
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        _begin_sqlite_default_write(db)
+        # Another worker may have committed while BEGIN IMMEDIATE waited.
+        cal = db.query(CalendarCal).filter(CalendarCal.owner == owner).first()
+        if cal:
+            return cal
+
+    default_id = _default_calendar_id(owner)
+    cal = CalendarCal(
+        id=default_id,
+        owner=owner,
+        name="Personal",
+        color="#5b8abf",
+        source="local",
+    )
+
+    if dialect == "sqlite":
         db.add(cal)
         db.flush()
-    return cal
+        return cal
+
+    try:
+        # A uniqueness failure rolls back only this savepoint, not an event or
+        # reminder already staged by the caller's outer transaction.
+        with db.begin_nested():
+            db.add(cal)
+            db.flush()
+        return cal
+    except IntegrityError:
+        # Use a locking/current read so repeatable-read backends can observe
+        # the row that won after our transaction's original empty snapshot.
+        winner = db.query(CalendarCal).filter(
+            CalendarCal.id == default_id,
+            CalendarCal.owner == owner,
+        ).with_for_update().first()
+        if winner is None:
+            raise
+        return winner
 
 
 # Per-request user time context. chat_routes sets this from browser timezone
