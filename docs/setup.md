@@ -4,7 +4,7 @@ This page keeps the detailed install, deployment, troubleshooting, and configura
 
 ## Quick Start
 
-> **Branch note:** `dev` is the default branch and contains the latest development changes, but it may be unstable. For the more stable curated branch, use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main).
+> **Branch note:** `dev` is the default branch and contains the latest development changes, but it may be unstable. For the more stable curated branch, use [`main`](https://github.com/odysseus-dev/odysseus/tree/main).
 
 Defaults work out of the box: clone, run, then configure models/search/email
 inside **Settings**. Only edit `.env` for deployment-level overrides like
@@ -20,7 +20,7 @@ pull request guidelines.
 
 ### Docker (recommended)
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/odysseus-dev/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
@@ -38,7 +38,7 @@ only when you intentionally want LAN/reverse-proxy access.
 
 ### Native Linux / macOS
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/odysseus-dev/odysseus.git
 cd odysseus
 python3 -m venv venv
 source venv/bin/activate
@@ -56,7 +56,7 @@ Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
 
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/odysseus-dev/odysseus.git
 cd odysseus
 ./start-macos.sh
 ```
@@ -302,7 +302,7 @@ do not run on macOS. MLX-only models are not served by Odysseus.
 server; safe to re-run):
 
 ```powershell
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/odysseus-dev/odysseus.git
 cd odysseus
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
@@ -310,7 +310,7 @@ powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 Or do it by hand:
 
 ```powershell
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/odysseus-dev/odysseus.git
 cd odysseus
 py -3.11 -m venv venv
 venv\Scripts\Activate.ps1

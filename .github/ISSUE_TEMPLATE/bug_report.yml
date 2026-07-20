@@ -6,22 +6,22 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Before submitting:** search [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues)
-        and [discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) first.
+        **Before submitting:** search [open issues](https://github.com/odysseus-dev/odysseus/issues)
+        and [discussions](https://github.com/odysseus-dev/odysseus/discussions) first.
         Duplicate reports slow things down.
 
         For security vulnerabilities, **do not open a public issue** —
-        use [GitHub Security Advisories](https://github.com/pewdiepie-archdaemon/odysseus/security/advisories/new)
-        and read [SECURITY.md](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/SECURITY.md) first.
+        use [GitHub Security Advisories](https://github.com/odysseus-dev/odysseus/security/advisories/new)
+        and read [SECURITY.md](https://github.com/odysseus-dev/odysseus/blob/main/SECURITY.md) first.
 
   - type: checkboxes
     id: prerequisites
     attributes:
       label: Prerequisites
       options:
-        - label: I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues?q=is%3Aissue+is%3Aopen) and [discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) and did not find an existing report of this bug.
+        - label: I searched [open issues](https://github.com/odysseus-dev/odysseus/issues?q=is%3Aissue+is%3Aopen) and [discussions](https://github.com/odysseus-dev/odysseus/discussions) and did not find an existing report of this bug.
           required: true
-        - label: This is **not** a security vulnerability. (Vulnerabilities go to [GitHub Security Advisories](https://github.com/pewdiepie-archdaemon/odysseus/security/advisories/new) — see [SECURITY.md](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/SECURITY.md).)
+        - label: This is **not** a security vulnerability. (Vulnerabilities go to [GitHub Security Advisories](https://github.com/odysseus-dev/odysseus/security/advisories/new) — see [SECURITY.md](https://github.com/odysseus-dev/odysseus/blob/main/SECURITY.md).)
           required: true
         - label: I am running the latest code from the `dev` branch (the default branch you get on clone, where fixes land first) and the bug still reproduces there. Please `git pull` the latest `dev` before filing.
           required: true
