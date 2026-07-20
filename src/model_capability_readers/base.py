@@ -46,6 +46,7 @@ VENDOR_ZAI = "zai"
 VENDOR_UNKNOWN = "unknown"
 
 CANONICAL_MODEL_SHAPE_VERSION = 1
+CANONICAL_RUNTIME_CONTEXT_SHAPE_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,53 @@ class ModelCapabilityRecord:
                 "provider_source": self.provider_source,
                 "shape": self.catalog_shape_id,
                 "fallback": self.fallback,
+            },
+        }
+        if include_raw:
+            data["raw"] = dict(self.raw)
+        return data
+
+
+@dataclass(frozen=True)
+class RuntimeContextAllocationRecord:
+    """Provider-reported context allocated to one currently loaded model.
+
+    This runtime state is deliberately separate from ``ModelCapability.limits``:
+    a model's maximum, configured ``num_ctx``, and the allocation reported for a
+    loaded process are different facts with different lifetimes.
+    """
+
+    vendor: str
+    model_id: str
+    allocated_context_tokens: int
+    stable_model_id: str = ""
+    source: str = mc.SOURCE_PROVIDER_READER
+    confidence: str = mc.CONFIDENCE_PROVIDER_REPORTED
+    runtime_shape_id: str = ""
+    raw: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        context_tokens = int_limit(self.allocated_context_tokens)
+        if context_tokens is None:
+            raise ValueError("allocated_context_tokens must be a positive integer")
+        object.__setattr__(self, "allocated_context_tokens", context_tokens)
+        if not self.stable_model_id:
+            object.__setattr__(self, "stable_model_id", stable_model_id_for(self.vendor, self.model_id))
+
+    def to_dict(self, *, include_raw: bool = False) -> dict[str, Any]:
+        data = {
+            "schema_version": CANONICAL_RUNTIME_CONTEXT_SHAPE_VERSION,
+            "provider": self.vendor,
+            "model": self.model_id,
+            "stable_id": self.stable_model_id,
+            "runtime": {
+                "allocated_context_tokens": self.allocated_context_tokens,
+            },
+            "evidence": {
+                "source": self.source,
+                "confidence": self.confidence,
+                "shape": self.runtime_shape_id,
+                "scope": "loaded_model",
             },
         }
         if include_raw:
