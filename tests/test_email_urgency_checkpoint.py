@@ -45,10 +45,11 @@ class _EmailAccount:
 
 
 class _FakeImap:
-    def __init__(self, account_id, failures, seen_accounts):
+    def __init__(self, account_id, failures, seen_accounts, search_uids):
         self.account_id = account_id
         self.failures = failures
         self.seen_accounts = seen_accounts
+        self.search_uids = tuple(search_uids.get(account_id, ("1",)))
 
     def select(self, *_args, **_kwargs):
         if self.account_id in self.failures:
@@ -59,16 +60,18 @@ class _FakeImap:
         if self.account_id in self.failures:
             raise RuntimeError(f"{self.account_id} unavailable")
         if command == "SEARCH":
-            return "OK", [b"1"]
+            return "OK", [" ".join(self.search_uids).encode()]
+        uid = _args[0]
+        uid = uid.decode() if isinstance(uid, bytes) else str(uid)
         query = str(_args[-1]) if _args else ""
         seen = "\\Seen" if self.account_id in self.seen_accounts else ""
-        flags = f"1 (UID 1 FLAGS ({seen}))".encode()
+        flags = f"{uid} (UID {uid} FLAGS ({seen}))".encode()
         if query == "(UID FLAGS)":
             return "OK", [flags]
         raw = (
             f"From: Sender {self.account_id} <sender-{self.account_id}@example.com>\r\n"
-            f"Subject: Urgent request for {self.account_id}\r\n"
-            f"Message-ID: <{self.account_id}-1@example.com>\r\n"
+            f"Subject: Urgent request for {self.account_id} uid {uid}\r\n"
+            f"Message-ID: <{self.account_id}-{uid}@example.com>\r\n"
             "\r\n"
             "Please reply immediately."
         ).encode()
@@ -97,6 +100,7 @@ def _configure_action(monkeypatch, tmp_path, account_ids):
         "accounts": list(account_ids),
         "failures": set(),
         "seen_accounts": set(),
+        "search_uids": {},
         "settings": {
             "reminder_channel": "browser",
             "reminder_llm_synthesis": False,
@@ -136,7 +140,10 @@ def _configure_action(monkeypatch, tmp_path, account_ids):
         email_helpers,
         "_imap_connect",
         lambda account_id=None, **_kwargs: _FakeImap(
-            str(account_id), runtime["failures"], runtime["seen_accounts"]
+            str(account_id),
+            runtime["failures"],
+            runtime["seen_accounts"],
+            runtime["search_uids"],
         ),
     )
     return builtin_actions, runtime
@@ -191,6 +198,94 @@ async def test_urgency_state_transaction_serializes_decision_and_checkpoint(tmp_
     assert json.loads(state_path.read_text(encoding="utf-8")) == {
         "owner": "alice",
         "notified_uids": ["acct:42"],
+    }
+
+
+def test_stale_complete_scan_preserves_newer_account_facts_and_checkpoints():
+    from src.builtin_actions import _merge_email_urgency_state
+
+    prior = {
+        "owner": "alice",
+        "per_uid": {
+            "acct:1": {"score": 3, "unread": True, "reason": "newer"},
+            "acct:2": {"score": 2, "unread": True, "reason": "new UID"},
+        },
+        "notified_uids": ["acct:1", "acct:2"],
+        "account_generations": {
+            "acct": {"checkpoint": 1, "complete": 1},
+        },
+    }
+
+    merged = _merge_email_urgency_state(
+        prior,
+        owner="alice",
+        per_uid_scores={
+            "acct:1": {"score": 0, "unread": False, "reason": "older"},
+            "acct:3": {"score": 3, "unread": True, "reason": "also observed"},
+        },
+        notified_uids={"acct:1", "acct:2", "acct:3"},
+        all_unread_keys={"acct:3"},
+        fully_scanned_account_ids={"acct"},
+        base_account_generations={
+            "acct": {"checkpoint": 0, "complete": 0},
+        },
+        timestamp=300.0,
+    )
+
+    assert merged["per_uid"]["acct:1"]["reason"] == "newer"
+    assert set(merged["per_uid"]) == {"acct:1", "acct:2", "acct:3"}
+    assert merged["notified_uids"] == ["acct:1", "acct:2", "acct:3"]
+    assert merged["account_generations"]["acct"] == {
+        "checkpoint": 2,
+        "complete": 1,
+    }
+
+
+def test_newer_partial_checkpoint_fences_older_complete_snapshot():
+    from src.builtin_actions import _merge_email_urgency_state
+
+    legacy = {
+        "owner": "alice",
+        "per_uid": {
+            "acct:1": {"score": 3, "unread": True},
+        },
+        "notified_uids": ["acct:1"],
+    }
+    partial = _merge_email_urgency_state(
+        legacy,
+        owner="alice",
+        per_uid_scores={
+            "acct:2": {"score": 3, "unread": True},
+        },
+        notified_uids={"acct:1", "acct:2"},
+        all_unread_keys={"acct:2"},
+        fully_scanned_account_ids=set(),
+        base_account_generations={},
+        timestamp=200.0,
+    )
+    assert partial["account_generations"]["acct"] == {
+        "checkpoint": 1,
+        "complete": 0,
+    }
+
+    merged = _merge_email_urgency_state(
+        partial,
+        owner="alice",
+        per_uid_scores={
+            "acct:1": {"score": 3, "unread": True},
+        },
+        notified_uids={"acct:1", "acct:2"},
+        all_unread_keys={"acct:1"},
+        fully_scanned_account_ids={"acct"},
+        base_account_generations={},
+        timestamp=300.0,
+    )
+
+    assert set(merged["per_uid"]) == {"acct:1", "acct:2"}
+    assert merged["notified_uids"] == ["acct:1", "acct:2"]
+    assert merged["account_generations"]["acct"] == {
+        "checkpoint": 1,
+        "complete": 0,
     }
 
 
@@ -369,6 +464,76 @@ async def test_action_cancellation_rolls_back_without_checkpoint(
         "owner": "alice",
         "per_uid": {},
         "notified_uids": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_older_same_account_scan_cannot_erase_newer_committed_uid(
+    monkeypatch,
+    tmp_path,
+):
+    import routes.note_routes as note_routes
+
+    builtin_actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a"]
+    )
+    runtime["search_uids"]["acct-a"] = ["1"]
+    deliveries = []
+
+    async def delivered(**kwargs):
+        deliveries.append(kwargs["note_body"])
+        return {
+            "browser_sent": True,
+            "email_sent": False,
+            "ntfy_sent": False,
+            "webhook_sent": False,
+        }
+
+    monkeypatch.setattr(note_routes, "dispatch_reminder", delivered)
+    original_transaction = builtin_actions._run_email_urgency_state_transaction
+    stale_scan_ready = asyncio.Event()
+    release_stale_scan = asyncio.Event()
+    transaction_count = 0
+
+    async def order_transactions(state_path, lock_db_path, operation):
+        nonlocal transaction_count
+        transaction_count += 1
+        if transaction_count == 1:
+            stale_scan_ready.set()
+            await release_stale_scan.wait()
+        return await original_transaction(state_path, lock_db_path, operation)
+
+    monkeypatch.setattr(
+        builtin_actions,
+        "_run_email_urgency_state_transaction",
+        order_transactions,
+    )
+
+    stale = asyncio.create_task(
+        builtin_actions.action_check_email_urgency("alice")
+    )
+    await asyncio.wait_for(stale_scan_ready.wait(), timeout=2)
+
+    runtime["search_uids"]["acct-a"] = ["1", "2"]
+    newer_result = await asyncio.wait_for(
+        builtin_actions.action_check_email_urgency("alice"),
+        timeout=2,
+    )
+    release_stale_scan.set()
+    stale_result = await asyncio.wait_for(stale, timeout=2)
+
+    state = json.loads(
+        (tmp_path / "email_urgency_state_alice.json").read_text(encoding="utf-8")
+    )
+    assert newer_result[1] is True
+    assert stale_result[1] is True
+    assert len(deliveries) == 1
+    assert "uid 2" in deliveries[0]
+    assert set(state["per_uid"]) == {"acct-a:1", "acct-a:2"}
+    assert state["notified_uids"] == ["acct-a:1", "acct-a:2"]
+    assert state["account_generations"]["acct-a"] == {
+        "checkpoint": 1,
+        "complete": 1,
     }
 
 

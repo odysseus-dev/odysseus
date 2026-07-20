@@ -20,6 +20,64 @@ from src.interactive_gate import wait_for_interactive_quiet
 logger = logging.getLogger(__name__)
 
 
+def _read_email_urgency_state(state_path):
+    """Read one atomic urgency checkpoint, tolerating the legacy shape."""
+    from pathlib import Path
+
+    state_path = Path(state_path)
+    try:
+        state = (
+            json.loads(state_path.read_text(encoding="utf-8"))
+            if state_path.exists()
+            else {}
+        )
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _email_urgency_account_generations(state):
+    """Return normalized per-account checkpoint/complete generations.
+
+    Checkpoint generations fence every accepted state mutation. Complete
+    generations advance only for a non-stale complete scan. Missing metadata
+    is the legacy generation zero.
+    """
+    raw = state.get("account_generations", {}) if isinstance(state, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+
+    generations = {}
+    for account_id, value in raw.items():
+        if isinstance(value, dict):
+            checkpoint = value.get("checkpoint", 0)
+            complete = value.get("complete", 0)
+        else:
+            # Tolerate an intermediate scalar representation as one completed
+            # checkpoint generation instead of discarding its fence.
+            checkpoint = value
+            complete = value
+        try:
+            checkpoint = max(0, int(checkpoint))
+        except (TypeError, ValueError):
+            checkpoint = 0
+        try:
+            complete = max(0, int(complete))
+        except (TypeError, ValueError):
+            complete = 0
+        generations[str(account_id)] = {
+            "checkpoint": checkpoint,
+            "complete": complete,
+        }
+    return generations
+
+
+def _email_urgency_string_set(value):
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return set()
+    return {str(item) for item in value if isinstance(item, (str, int))}
+
+
 def _acquire_email_urgency_state_lock(
     state_path,
     lock_db_path,
@@ -60,17 +118,7 @@ def _acquire_email_urgency_state_lock(
             conn.rollback()
             conn.close()
             return None, None
-        try:
-            prior = (
-                json.loads(state_path.read_text(encoding="utf-8"))
-                if state_path.exists()
-                else {}
-            )
-            if not isinstance(prior, dict):
-                prior = {}
-        except Exception:
-            prior = {}
-        return conn, prior
+        return conn, _read_email_urgency_state(state_path)
 
     return None, None
 
@@ -181,29 +229,72 @@ def _merge_email_urgency_state(
     notified_uids,
     all_unread_keys,
     fully_scanned_account_ids,
+    base_account_generations,
     timestamp,
 ):
-    """Merge current scan knowledge without deleting unscanned accounts."""
+    """Merge a scan without letting an older snapshot erase newer facts."""
     prior_per_uid = prior.get("per_uid", {})
     if not isinstance(prior_per_uid, dict):
         prior_per_uid = {}
     complete = {str(account_id) for account_id in fully_scanned_account_ids}
+    prior_generations = _email_urgency_account_generations(prior)
+    base_generations = _email_urgency_account_generations(
+        {"account_generations": base_account_generations}
+    )
+    observed_accounts = {
+        _email_urgency_account_key(key) for key in per_uid_scores
+    } | complete
+    stale_accounts = {
+        account_id
+        for account_id in observed_accounts
+        if prior_generations.get(account_id, {}).get("checkpoint", 0)
+        != base_generations.get(account_id, {}).get("checkpoint", 0)
+    }
+    fresh_complete = complete - stale_accounts
+    changed_accounts = set(fresh_complete)
 
     merged_per_uid = dict(prior_per_uid)
     for key in list(merged_per_uid):
-        if _email_urgency_account_key(key) in complete:
+        account_id = _email_urgency_account_key(key)
+        if account_id in fresh_complete:
             merged_per_uid.pop(key, None)
+            changed_accounts.add(account_id)
     # Partial scans may add or refresh facts, but absence from a partial scan
-    # is not evidence that another checkpoint or UI row is stale.
-    merged_per_uid.update(per_uid_scores)
+    # is not evidence that another checkpoint or UI row is stale. When another
+    # worker committed after this scan captured its base generation, its value
+    # also wins collisions; the stale scan may still add facts it alone saw.
+    for key, value in per_uid_scores.items():
+        account_id = _email_urgency_account_key(key)
+        if account_id in stale_accounts and key in merged_per_uid:
+            continue
+        if merged_per_uid.get(key) != value:
+            changed_accounts.add(account_id)
+        merged_per_uid[key] = value
 
-    merged_notified = set(notified_uids)
+    prior_notified = _email_urgency_string_set(prior.get("notified_uids", []))
+    merged_notified = prior_notified | _email_urgency_string_set(notified_uids)
+    for key in merged_notified - prior_notified:
+        changed_accounts.add(_email_urgency_account_key(key))
     for key in list(merged_notified):
         if (
-            _email_urgency_account_key(key) in complete
+            _email_urgency_account_key(key) in fresh_complete
             and key not in all_unread_keys
         ):
             merged_notified.discard(key)
+            changed_accounts.add(_email_urgency_account_key(key))
+
+    next_generations = {
+        account_id: dict(value)
+        for account_id, value in prior_generations.items()
+    }
+    for account_id in changed_accounts:
+        generation = next_generations.setdefault(
+            account_id,
+            {"checkpoint": 0, "complete": 0},
+        )
+        generation["checkpoint"] += 1
+        if account_id in fresh_complete:
+            generation["complete"] += 1
 
     total_unread = 0
     total_urgent = 0
@@ -229,6 +320,7 @@ def _merge_email_urgency_state(
         "max_score": max_score,
         "per_uid": merged_per_uid,
         "notified_uids": sorted(merged_notified),
+        "account_generations": next_generations,
     }
 
 
@@ -2134,6 +2226,13 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         if not accounts:
             raise TaskNoop("no email accounts configured")
 
+        # Capture each account's checkpoint generation before any IMAP work.
+        # The locked merge compares this basis with the latest committed state,
+        # so an older scan cannot destructively replace a newer worker's facts.
+        base_account_generations = _email_urgency_account_generations(
+            _read_email_urgency_state(STATE_PATH)
+        )
+
         urgency_prompt = settings.get("urgent_email_prompt", "")
         per_uid_scores = {}   # key = "<acc_id>:<uid>" → {"score": 0-3, "reason": "..."}
         all_unread_keys = set()
@@ -2714,6 +2813,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 notified_uids=notified_uids,
                 all_unread_keys=all_unread_keys,
                 fully_scanned_account_ids=fully_scanned_account_ids,
+                base_account_generations=base_account_generations,
                 timestamp=_time.time(),
             )
             return notified_uids, next_state
