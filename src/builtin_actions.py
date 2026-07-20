@@ -20,6 +20,48 @@ from src.interactive_gate import wait_for_interactive_quiet
 logger = logging.getLogger(__name__)
 
 
+def _run_email_urgency_state_transaction(state_path, lock_db_path, operation):
+    """Serialize one owner urgency checkpoint across worker processes.
+
+    ``operation`` receives the latest JSON state and returns
+    ``(result, next_state)``.  The scheduled-email database is used only as a
+    durable cross-process write lock; the UI-facing state remains the existing
+    JSON file.  Running the operation in a worker thread keeps the async event
+    loop free while reminder delivery is in flight.
+    """
+    import sqlite3
+    import uuid
+    from pathlib import Path
+
+    state_path = Path(state_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(lock_db_path), timeout=120)
+    temp_path = state_path.with_name(
+        f".{state_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            prior = json.loads(state_path.read_text(encoding="utf-8")) \
+                if state_path.exists() else {}
+            if not isinstance(prior, dict):
+                prior = {}
+        except Exception:
+            prior = {}
+
+        result, next_state = operation(prior)
+        temp_path.write_text(json.dumps(next_state), encoding="utf-8")
+        temp_path.replace(state_path)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        temp_path.unlink(missing_ok=True)
+        conn.close()
+
+
 class TaskNoop(BaseException):
     """Raised by an action when it determined there's nothing to do.
 
@@ -1809,6 +1851,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # filename for single-user installs (matches prior behaviour).
         _owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
         STATE_PATH = _P(DATA_DIR) / f"email_urgency_state_{_owner_slug}.json"
+        STATE_LOCK_DB = STATE_PATH.with_suffix(".lock.sqlite3")
         CACHE_DIR = _P(EMAIL_URGENCY_CACHE_DIR)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -2306,97 +2349,102 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         max_score = max((v.get("score", 0) for v in per_uid_scores.values()), default=0)
         total_urgent = len(urgent_keys)
 
-        # Load prior state to know which urgent UIDs we've already notified.
-        try:
-            prior = _json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
-        except Exception:
-            prior = {}
-        notified_uids = set(prior.get("notified_uids", []))
-
-        # ── 5. Fire reminder ONLY when a previously-unnotified UID scores urgent.
-        new_urgent = [k for k in urgent_keys if k not in notified_uids]
+        # ── 5. Fire a reminder only when a previously-unnotified UID scores
+        # urgent. The read, decision, delivery, and checkpoint are serialized
+        # below so two scheduler workers cannot both act on the same stale
+        # state or overwrite each other's successful checkpoint.
         newly_notified = set()
         notify_failed = set()
-        if new_urgent:
-            title = "Urgent email" if total_urgent == 1 else f"{total_urgent} urgent emails"
-            # Build a real listing — subject · sender · reason for each urgent
-            # one — so the reminder email tells you which messages to act on,
-            # not just "4 needing reply". Optional deep-link when the user has
-            # `app_public_url` configured in Settings (so the email row links
-            # straight into the Odysseus Email tab).
-            # Sort: highest-scored UIDs first; cap at 10 to keep the email tidy.
-            sorted_urgent = sorted(
-                ((k, per_uid_scores[k]) for k in urgent_keys),
-                key=lambda kv: kv[1].get("score", 0), reverse=True,
-            )[:10]
-            _pub = (settings.get("app_public_url") or "").strip().rstrip("/")
-            from urllib.parse import quote as _quote
-            lines = [f"{total_urgent} email" + ("" if total_urgent == 1 else "s") + " need an urgent reply:", ""]
-            for i, (k, v) in enumerate(sorted_urgent, 1):
-                subj = (v.get("subject") or "(no subject)")[:160]
-                frm = v.get("from") or ""
-                why = v.get("reason") or ""
-                uid_for_link = str(k).split(":", 1)[-1]
-                hash_link = f"#email={_quote('INBOX', safe='')}:{uid_for_link}"
-                open_link = f"{_pub}/{hash_link}" if _pub else hash_link
-                line = f"{i}. {subj}"
-                if frm:
-                    line += f"  —  {frm}"
-                if why:
-                    line += f"  ·  {why}"
-                lines.append(line)
-                lines.append(f"   Open email: {open_link}")
-            if total_urgent > len(sorted_urgent):
-                lines.append("")
-                lines.append(f"…and {total_urgent - len(sorted_urgent)} more.")
-            body = "\n".join(lines)
-            try:
-                # Call dispatch_reminder DIRECTLY (no HTTP/auth roundtrip — the
-                # endpoint version 401's the background scheduler because it
-                # has no session cookie).
-                from routes.note_routes import dispatch_reminder
-                dispatch_result = await dispatch_reminder(
-                    title=title, note_body=body, note_id="urgent-email",
-                    owner=owner or "",
-                )
-                channel = (settings.get("reminder_channel") or "browser").strip().lower()
-                delivered = bool(dispatch_result.get("browser_sent"))
-                if channel == "email":
-                    delivered = bool(dispatch_result.get("email_sent"))
-                elif channel == "ntfy":
-                    delivered = bool(dispatch_result.get("ntfy_sent"))
-                elif channel == "webhook":
-                    delivered = bool(dispatch_result.get("webhook_sent"))
-                if delivered:
-                    newly_notified.update(new_urgent)
-                else:
+        title = "Urgent email" if total_urgent == 1 else f"{total_urgent} urgent emails"
+        # Build a real listing — subject · sender · reason for each urgent one
+        # — so the reminder tells the user which messages to act on.
+        sorted_urgent = sorted(
+            ((k, per_uid_scores[k]) for k in urgent_keys),
+            key=lambda kv: kv[1].get("score", 0), reverse=True,
+        )[:10]
+        _pub = (settings.get("app_public_url") or "").strip().rstrip("/")
+        from urllib.parse import quote as _quote
+        lines = [f"{total_urgent} email" + ("" if total_urgent == 1 else "s") + " need an urgent reply:", ""]
+        for i, (k, v) in enumerate(sorted_urgent, 1):
+            subj = (v.get("subject") or "(no subject)")[:160]
+            frm = v.get("from") or ""
+            why = v.get("reason") or ""
+            uid_for_link = str(k).split(":", 1)[-1]
+            hash_link = f"#email={_quote('INBOX', safe='')}:{uid_for_link}"
+            open_link = f"{_pub}/{hash_link}" if _pub else hash_link
+            line = f"{i}. {subj}"
+            if frm:
+                line += f"  —  {frm}"
+            if why:
+                line += f"  ·  {why}"
+            lines.append(line)
+            lines.append(f"   Open email: {open_link}")
+        if total_urgent > len(sorted_urgent):
+            lines.append("")
+            lines.append(f"…and {total_urgent - len(sorted_urgent)} more.")
+        body = "\n".join(lines)
+
+        async def _dispatch_urgency_reminder():
+            # Call dispatch_reminder directly: a scheduler has no browser
+            # session cookie with which to call the HTTP endpoint.
+            from routes.note_routes import dispatch_reminder
+            return await dispatch_reminder(
+                title=title,
+                note_body=body,
+                note_id="urgent-email",
+                owner=owner or "",
+            )
+
+        def _dispatch_and_checkpoint(prior):
+            notified_uids = set(prior.get("notified_uids", []))
+            new_urgent = [k for k in urgent_keys if k not in notified_uids]
+            if new_urgent:
+                try:
+                    dispatch_result = _aio.run(_dispatch_urgency_reminder())
+                    channel = (settings.get("reminder_channel") or "browser").strip().lower()
+                    delivered = bool(dispatch_result.get("browser_sent"))
+                    if channel == "email":
+                        delivered = bool(dispatch_result.get("email_sent"))
+                    elif channel == "ntfy":
+                        delivered = bool(dispatch_result.get("ntfy_sent"))
+                    elif channel == "webhook":
+                        delivered = bool(dispatch_result.get("webhook_sent"))
+                    if delivered:
+                        newly_notified.update(new_urgent)
+                        notified_uids.update(new_urgent)
+                    else:
+                        notify_failed.update(new_urgent)
+                        logger.warning(
+                            "urgency: reminder dispatch returned no successful "
+                            f"delivery path: {dispatch_result}"
+                        )
+                except Exception as e:
+                    logger.warning(f"urgency: reminder dispatch failed: {e}")
                     notify_failed.update(new_urgent)
-                    logger.warning(f"urgency: reminder dispatch returned no successful delivery path: {dispatch_result}")
-            except Exception as e:
-                logger.warning(f"urgency: reminder dispatch failed: {e}")
-                notify_failed.update(new_urgent)
-            # Mark only successfully delivered UIDs as notified so a transient
-            # SMTP/ntfy/browser failure retries instead of lying forever.
-            notified_uids.update(newly_notified)
 
-        # Prune notified_uids that aren't unread anymore (so a future re-urgent
-        # message with the same UID — rare but possible after archive→unarchive
-        # — can re-notify). Keep only UIDs still in `all_unread_keys`.
-        notified_uids = {u for u in notified_uids if u in all_unread_keys}
+            # Prune UIDs no longer unread, while retaining every successful
+            # checkpoint observed after this worker acquired the durable lock.
+            notified_uids.intersection_update(all_unread_keys)
+            next_state = {
+                "ts": _time.time(),
+                "owner": owner or "",
+                "total_unread": len(all_unread_keys),
+                "total_urgent": total_urgent,
+                "max_score": max_score,
+                "per_uid": per_uid_scores,
+                "notified_uids": sorted(notified_uids),
+            }
+            return notified_uids, next_state
 
-        state = {
-            "ts": _time.time(),
-            "owner": owner or "",
-            "total_unread": len(all_unread_keys),
-            "total_urgent": total_urgent,
-            "max_score": max_score,
-            "per_uid": per_uid_scores,
-            "notified_uids": sorted(notified_uids),
-        }
         try:
-            STATE_PATH.write_text(_json.dumps(state), encoding="utf-8")
+            await _aio.to_thread(
+                _run_email_urgency_state_transaction,
+                STATE_PATH,
+                STATE_LOCK_DB,
+                _dispatch_and_checkpoint,
+            )
         except Exception as e:
-            logger.warning(f"urgency: state write failed: {e}")
+            logger.warning(f"urgency: state transaction failed: {e}")
 
         # ── 6. Activity-log summary — counts line on top, then per-tier
         # bulleted breakdown so the user can see WHICH emails ranked where
