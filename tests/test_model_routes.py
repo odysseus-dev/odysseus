@@ -90,7 +90,7 @@ def test_clear_speech_endpoint_settings_resets_tts_and_stt():
     }
 
 
-def test_endpoint_cleanup_removes_primary_and_fallback_references():
+def test_endpoint_cleanup_preserves_legacy_default_fallback_data():
     settings = {
         "default_endpoint_id": "dead",
         "default_model": "primary",
@@ -106,14 +106,12 @@ def test_endpoint_cleanup_removes_primary_and_fallback_references():
 
     assert _endpoint_settings_using_endpoint(settings, "dead", include_speech=True) == [
         "Default Model",
-        "Default Model Fallbacks",
         "Utility Model Fallbacks",
         "Vision Model Fallbacks",
         "Speech to Text",
     ]
     assert _clear_endpoint_settings_for_endpoint(settings, "dead", include_speech=True) == [
         "Default Model",
-        "Default Model Fallbacks",
         "Utility Model Fallbacks",
         "Vision Model Fallbacks",
         "Speech to Text",
@@ -121,6 +119,7 @@ def test_endpoint_cleanup_removes_primary_and_fallback_references():
     assert settings["default_endpoint_id"] == ""
     assert settings["default_model"] == ""
     assert settings["default_model_fallbacks"] == [
+        {"endpoint_id": "dead", "model": "fallback-a"},
         {"endpoint_id": "keep", "model": "fallback-b"},
     ]
     assert settings["utility_model_fallbacks"] == []
@@ -129,7 +128,7 @@ def test_endpoint_cleanup_removes_primary_and_fallback_references():
     assert settings["stt_model"] == "base"
 
 
-def test_endpoint_cleanup_updates_scoped_and_legacy_user_prefs():
+def test_endpoint_cleanup_updates_active_scoped_prefs_but_preserves_legacy_data():
     scoped = {
         "_users": {
             "alice": {
@@ -154,8 +153,10 @@ def test_endpoint_cleanup_updates_scoped_and_legacy_user_prefs():
     legacy = {
         "default_model_fallbacks": [{"endpoint_id": "dead", "model": "chat"}],
     }
-    assert _clear_user_pref_endpoint_refs(legacy, "dead") == 1
-    assert legacy["default_model_fallbacks"] == []
+    assert _clear_user_pref_endpoint_refs(legacy, "dead") == 0
+    assert legacy["default_model_fallbacks"] == [
+        {"endpoint_id": "dead", "model": "chat"}
+    ]
 
 
 # ── _default_endpoint_needs_assignment (add-endpoint auto-default) ──
