@@ -222,7 +222,7 @@ class EventUpdate(BaseModel):
 # ── Helpers ──
 
 def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
-    """Create default calendar if none exist for this owner."""
+    """Return the owner's calendar, staging a default in the caller's transaction."""
     owner = owner or FALLBACK_OWNER
     cal = db.query(CalendarCal).filter(CalendarCal.owner == owner).first()
     if not cal:
@@ -234,8 +234,7 @@ def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
             source="local",
         )
         db.add(cal)
-        db.commit()
-        db.refresh(cal)
+        db.flush()
     return cal
 
 
@@ -1015,6 +1014,9 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             _ensure_default_calendar(db, owner)
+            # Listing calendars intentionally lazily creates a durable default.
+            # Other callers commit it with the event they are creating.
+            db.commit()
             cals = db.query(CalendarCal).filter(CalendarCal.owner == owner).all()
             return {"calendars": [
                 {"name": c.name, "href": c.id, "color": c.color, "source": c.source}
@@ -1023,6 +1025,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
+            db.rollback()
             logger.error("Failed to list calendars: %s", e)
             raise HTTPException(500, "Failed to list calendars")
         finally:
