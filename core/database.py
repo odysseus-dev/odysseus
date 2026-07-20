@@ -430,6 +430,21 @@ class EmailAccount(TimestampMixin, Base):
     )
 
 
+class EmailAccountOwnerLock(Base):
+    """Durable per-owner mutex for email-account default mutations.
+
+    Row-locking databases serialize mutations by locking this row before they
+    inspect or stage EmailAccount changes.  SQLite uses ``BEGIN IMMEDIATE``
+    instead, because it ignores ``SELECT ... FOR UPDATE``; keeping the table in
+    the shared metadata still makes the non-SQLite path available without a
+    separate migration.  The empty key represents unconfigured/single-user
+    mode, whose account queries intentionally retain their global scope.
+    """
+    __tablename__ = "email_account_owner_locks"
+
+    owner_key = Column(String, primary_key=True)
+
+
 class ModelEndpoint(TimestampMixin, Base):
     """Admin-configured model endpoints. Models are auto-discovered via /v1/models."""
     __tablename__ = "model_endpoints"

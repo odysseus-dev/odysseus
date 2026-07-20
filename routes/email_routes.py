@@ -90,6 +90,45 @@ def _coerce_port(value, default):
         return None, f"Invalid port {value!r}; must be a whole number"
 
 
+def _lock_email_account_owner_mutation(db, owner: str) -> None:
+    """Serialize one owner's account/default mutation before reading rows.
+
+    SQLite does not implement row-level ``FOR UPDATE`` locking, so acquire its
+    process-safe writer reservation up front.  Row-locking SQLAlchemy
+    databases lock a durable owner row.  Creating a missing lock row inside a
+    savepoint safely handles two first-account requests racing for the same
+    owner without poisoning the outer transaction on a uniqueness conflict.
+    """
+    from core.database import EmailAccountOwnerLock
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(text("BEGIN IMMEDIATE"))
+        return
+
+    owner_key = owner or ""
+    lock_row = db.get(EmailAccountOwnerLock, owner_key, with_for_update=True)
+    if lock_row is not None:
+        return
+
+    inserted = False
+    try:
+        with db.begin_nested():
+            db.add(EmailAccountOwnerLock(owner_key=owner_key))
+            db.flush()
+            inserted = True
+    except IntegrityError:
+        # Another transaction created the owner row first.  Lock that durable
+        # row below after its insert commits.
+        pass
+
+    if not inserted:
+        db.query(EmailAccountOwnerLock).filter(
+            EmailAccountOwnerLock.owner_key == owner_key
+        ).with_for_update().one()
+
+
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
     aliases = [owner or ""]
     try:
@@ -4733,6 +4772,7 @@ def setup_email_routes():
         import uuid as _uuid
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             q = db.query(EmailAccount).filter(EmailAccount.is_default == True)  # noqa: E712
             if owner:
                 q = q.filter(EmailAccount.owner == owner)
@@ -4857,6 +4897,7 @@ def setup_email_routes():
             return {"ok": False, "error": port_err}
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             row = EmailAccount(
                 id=_uuid.uuid4().hex,
                 name=name,
@@ -4940,24 +4981,32 @@ def setup_email_routes():
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             row = db.get(EmailAccount, account_id)
             if not row:
                 return {"ok": False, "error": "Account not found"}
             was_default = bool(row.is_default)
             db.delete(row)
-            db.commit()
             # If the deleted row was default, promote the next-oldest enabled
             # row owned by THIS user. Without the owner filter we'd promote
             # another user's account and the deleter would silently inherit
             # it as their default.
             if was_default:
-                promote_q = db.query(EmailAccount).filter(EmailAccount.enabled == True)  # noqa: E712
+                promote_q = db.query(EmailAccount).filter(
+                    EmailAccount.id != account_id,
+                    EmailAccount.enabled == True,  # noqa: E712
+                )
                 if owner:
                     promote_q = promote_q.filter(EmailAccount.owner == owner)
-                promote = promote_q.order_by(EmailAccount.created_at.asc()).first()
+                promote = promote_q.order_by(
+                    EmailAccount.created_at.asc(), EmailAccount.id.asc()
+                ).first()
                 if promote:
                     promote.is_default = True
-                    db.commit()
+            # Deletion and any replacement promotion are one durable state
+            # transition, so another worker can never observe or race the old
+            # split-commit gap.
+            db.commit()
             return {"ok": True}
         finally:
             db.close()
@@ -5089,6 +5138,7 @@ def setup_email_routes():
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             row = db.get(EmailAccount, account_id)
             if not row:
                 return {"ok": False, "error": "Account not found"}
