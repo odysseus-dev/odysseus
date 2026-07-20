@@ -194,19 +194,28 @@ def setup_companion_routes() -> APIRouter:
         the code works immediately, no restart. `?format=json` returns the
         payload for an in-app pairing screen."""
         require_admin(request)
+        try:
+            configured_origin = _pairing.configured_companion_origin()
+        except ValueError as exc:
+            raise HTTPException(500, str(exc)) from None
         owner = get_current_user(request)
         invalidate = getattr(request.app.state, "invalidate_token_cache", None)
         token_id, raw_token = mint_pairing_token(owner, invalidate)
 
-        hosts = _pairing.lan_ip_candidates()
-        host = hosts[0] if hosts else "127.0.0.1"
-        port = request.url.port or _pairing.default_port()
-        payload = _pairing.pairing_payload(host, port, raw_token)
+        if configured_origin:
+            base_url, host, port = configured_origin
+            hosts = [host]
+        else:
+            base_url = None
+            hosts = _pairing.lan_ip_candidates()
+            host = hosts[0] if hosts else "127.0.0.1"
+            port = request.url.port or _pairing.default_port()
+        payload = _pairing.pairing_payload(host, port, raw_token, base_url=base_url)
         qr = _pairing.pairing_qr_png_data_uri(payload)
         qr_ok = bool(qr and qr.startswith("data:image/png;base64,"))
 
         if (request.query_params.get("format") or "").lower() == "json":
-            return {
+            response = {
                 "host": host,
                 "port": port,
                 "token": raw_token,
@@ -215,6 +224,9 @@ def setup_companion_routes() -> APIRouter:
                 "payload": payload,
                 "qr": qr if qr_ok else None,
             }
+            if base_url:
+                response["base_url"] = base_url
+            return response
 
         import json as _json
         payload_json = _json.dumps(payload, separators=(",", ":"))
