@@ -1,7 +1,7 @@
 import ipaddress
 import json
 import os
-import ssl
+import time
 import uuid
 import logging
 import re
@@ -376,22 +376,40 @@ _HTTPCORE_TO_HTTPX_EXC = {
 
 
 class _PinnedAsyncBackend(httpcore.AsyncNetworkBackend):
-    """Async network backend that routes every TCP connect to a fixed IP.
+    """Async network backend that routes every TCP connect to the pre-validated
+    IPs, in order, until one connects.
 
-    httpcore derives TLS SNI and the ``Host`` header from the request URL, not
-    from the connect host, so pinning only the socket destination keeps
-    certificate validation and vhost routing pointed at the original hostname.
+    All the IPs come from the single SSRF resolution, so trying the next one on
+    a connect failure is not re-resolution — it's ordinary multi-address
+    fallback restricted to the set the guard already approved. httpcore derives
+    TLS SNI and the ``Host`` header from the request URL, not from the connect
+    host, so pinning only the socket destination keeps certificate validation
+    and vhost routing pointed at the original hostname.
     """
 
-    def __init__(self, ip: ipaddress._BaseAddress):
-        self._ip = str(ip)
+    def __init__(self, ips: List[ipaddress._BaseAddress]):
+        self._ips = [str(ip) for ip in ips]
         self._real = httpcore.AnyIOBackend()
 
     async def connect_tcp(self, host, port, timeout=None, local_address=None,
                           socket_options=None):
-        return await self._real.connect_tcp(
-            self._ip, port, timeout, local_address, socket_options
-        )
+        # Fallback shares one connect budget: each attempt gets the time left
+        # until the original deadline, so N dead addresses can't stretch the
+        # connect phase to N * timeout.
+        deadline = None if timeout is None else time.monotonic() + timeout
+        last_exc: Optional[Exception] = None
+        for ip in self._ips:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            try:
+                return await self._real.connect_tcp(
+                    ip, port, remaining, local_address, socket_options
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_exc = exc
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+        # Every approved address was unreachable within the budget.
+        raise last_exc
 
     async def connect_unix_socket(self, path, timeout=None, socket_options=None):
         return await self._real.connect_unix_socket(path, timeout, socket_options)
@@ -401,7 +419,7 @@ class _PinnedAsyncBackend(httpcore.AsyncNetworkBackend):
 
 
 class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
-    """httpx transport that pins the TCP connect to a pre-resolved IP.
+    """httpx transport that pins the TCP connect to the pre-resolved IP(s).
 
     Kept local to mirror the per-module pinned transports web fetch (#704) and
     webhook delivery (#5147) already carry, rather than coupling api_call to the
@@ -410,13 +428,18 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
     pinned, closing the DNS-rebinding TOCTOU between the SSRF check and connect.
     """
 
-    def __init__(self, ip: ipaddress._BaseAddress):
-        self._pinned_ip = ip
+    def __init__(self, ips: List[ipaddress._BaseAddress]):
+        self._pinned_ips = list(ips)
         self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=ssl.create_default_context(),
+            # Reuse the exact CA trust the default httpx client would build
+            # (certifi bundle + SSL_CERT_FILE / SSL_CERT_DIR when trust_env is
+            # set), so swapping in this transport doesn't quietly change which
+            # certificate chains verify. ssl.create_default_context() would fall
+            # back to the system roots instead.
+            ssl_context=httpx.create_ssl_context(),
             http1=True,
             http2=False,
-            network_backend=_PinnedAsyncBackend(ip),
+            network_backend=_PinnedAsyncBackend(ips),
         )
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -452,20 +475,23 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
         await self._pool.aclose()
 
 
-def _first_resolved_ip(raw_ips: List[str]) -> Optional[ipaddress._BaseAddress]:
-    """Return the first entry that parses as an IP address.
+def _validated_ips(raw_ips: List[str]) -> List[ipaddress._BaseAddress]:
+    """Return every entry that parses as an IP address, order preserved.
 
-    Matches how ``check_outbound_url`` walks its resolver output (it skips
-    unparseable results), so the pinned IP is one the guard actually validated.
+    check_outbound_url only returns ok when *all* of these classify as safe, so
+    the whole list is guard-approved and any of them is a legitimate connect
+    target. Skipping unparseable entries mirrors how the guard walks the same
+    resolver output.
     """
+    ips: List[ipaddress._BaseAddress] = []
     for raw in raw_ips:
         if not isinstance(raw, str):
             continue
         try:
-            return ipaddress.ip_address(raw.split("%")[0])  # strip IPv6 zone id
+            ips.append(ipaddress.ip_address(raw.split("%")[0]))  # strip IPv6 zone id
         except ValueError:
             continue
-    return None
+    return ips
 
 
 async def execute_api_call(
@@ -547,8 +573,8 @@ async def execute_api_call(
     )
     if not ok:
         return {"error": f"URL rejected: {reason}", "exit_code": 1}
-    pinned_ip = _first_resolved_ip(resolved_ips)
-    if pinned_ip is None:
+    pinned_ips = _validated_ips(resolved_ips)
+    if not pinned_ips:
         return {"error": "URL rejected: host did not resolve to a usable address", "exit_code": 1}
 
     method = method.upper()
@@ -590,7 +616,7 @@ async def execute_api_call(
 
     try:
         async with httpx.AsyncClient(
-            timeout=30.0, transport=_PinnedAsyncTransport(pinned_ip)
+            timeout=30.0, transport=_PinnedAsyncTransport(pinned_ips)
         ) as client:
             response = await client.request(
                 method,
