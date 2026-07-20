@@ -236,6 +236,13 @@ def _email_urgency_payload_account_ids(state):
     }
 
 
+def _email_urgency_known_account_ids(state):
+    """Return payload owners plus generation-only active/retired markers."""
+    return _email_urgency_payload_account_ids(state) | set(
+        _email_urgency_account_generations(state)
+    )
+
+
 def _email_urgency_stale_accounts(
     prior,
     base_account_generations,
@@ -265,6 +272,7 @@ def _merge_email_urgency_state(
     timestamp,
     retired_account_ids=(),
     base_payload_account_ids=(),
+    known_account_ids=(),
 ):
     """Merge a scan without letting an older snapshot erase newer facts."""
     prior_per_uid = prior.get("per_uid", {})
@@ -356,19 +364,22 @@ def _merge_email_urgency_state(
         generation["checkpoint"] += 1
         if account_id in fresh_complete:
             generation["complete"] += 1
+    for account_id in {str(value) for value in known_account_ids}:
+        next_generations.setdefault(
+            account_id,
+            {"checkpoint": 0, "complete": 0},
+        )
     for account_id in retired_accounts:
-        # Keep a generation-only tombstone. It prevents a scan that started
-        # before deletion/disable from resurrecting the retired account, while
-        # a later re-enabled account can capture this checkpoint and replace
-        # the tombstone normally. Do not advance an already-empty tombstone on
-        # every cleanup pass.
-        had_generation = account_id in prior_generations
-        if account_id in prior_payload_accounts or not had_generation:
-            generation = next_generations.setdefault(
-                account_id,
-                {"checkpoint": 0, "complete": 0},
-            )
-            generation["checkpoint"] += 1
+        # Every authoritative absence advances its generation, even when the
+        # prior state is already a payload-empty tombstone. A re-enabled scan
+        # may have captured that previous tombstone immediately before the
+        # account was disabled/deleted again; monotonic advancement is what
+        # makes that in-flight scan stale.
+        generation = next_generations.setdefault(
+            account_id,
+            {"checkpoint": 0, "complete": 0},
+        )
+        generation["checkpoint"] += 1
 
     total_unread = 0
     total_urgent = 0
@@ -2213,32 +2224,84 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # back to the legacy "unowned account whose imap_user / from_address
         # == this owner" pattern — same rule `_get_email_config` uses, so a
         # pre-multi-user account row still gets picked up for the seeded task.
-        db = _SL()
-        try:
-            from sqlalchemy import and_ as _and, or_ as _or
-            q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
-            if owner:
-                unowned = _or(_EA.owner == None, _EA.owner == "")  # noqa: E711
-                same_mailbox = _or(_EA.imap_user == owner, _EA.from_address == owner)
-                q = q.filter(_or(_EA.owner == owner, _and(unowned, same_mailbox)))
-            if target_account_id:
-                q = q.filter(_EA.id == target_account_id)
-            accounts = q.all()
-        finally:
-            db.close()
+        def _enumerate_enabled_accounts():
+            db = _SL()
+            try:
+                from sqlalchemy import and_ as _and, or_ as _or
+                q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
+                if owner:
+                    unowned = _or(_EA.owner == None, _EA.owner == "")  # noqa: E711
+                    same_mailbox = _or(
+                        _EA.imap_user == owner,
+                        _EA.from_address == owner,
+                    )
+                    q = q.filter(
+                        _or(_EA.owner == owner, _and(unowned, same_mailbox))
+                    )
+                if target_account_id:
+                    q = q.filter(_EA.id == target_account_id)
+                return q.all()
+            finally:
+                db.close()
 
-        # Capture the checkpoint basis before any cleanup or IMAP work. A full
-        # owner-wide enumeration authoritatively retires payload belonging to
-        # accounts that are no longer enabled/visible. A scoped task may retire
+        initial_accounts = _enumerate_enabled_accounts()
+        initial_account_ids = {
+            str(account.id) for account in initial_accounts
+        }
+
+        # Register every account before IMAP work, including its first-ever
+        # scan. A concurrent zero-account cleanup can then advance this marker
+        # and fence delivery even before the scan has produced payload.
+        if initial_account_ids:
+            async def _register_accounts(prior):
+                next_state = _merge_email_urgency_state(
+                    prior,
+                    owner=owner,
+                    per_uid_scores={},
+                    notified_uids=prior.get("notified_uids", []),
+                    all_unread_keys=set(),
+                    fully_scanned_account_ids=set(),
+                    base_account_generations=(
+                        _email_urgency_account_generations(prior)
+                    ),
+                    timestamp=_time.time(),
+                    known_account_ids=initial_account_ids,
+                )
+                return None, next_state
+
+            await _run_email_urgency_state_transaction(
+                STATE_PATH,
+                STATE_LOCK_DB,
+                _register_accounts,
+            )
+
+        # Revalidate after registration. If deletion/disable and its cleanup
+        # completed before the marker was published, this second enumeration
+        # observes the absence and this action retires its own marker instead
+        # of starting IMAP. Accounts newly appearing between the two reads are
+        # left for the next pass rather than scanned without prior registration.
+        verified_accounts = _enumerate_enabled_accounts()
+        enabled_account_ids = {
+            str(account.id) for account in verified_accounts
+        }
+        accounts = [
+            account
+            for account in verified_accounts
+            if str(account.id) in initial_account_ids
+        ]
+
+        # Capture the checkpoint basis before cleanup or IMAP. A full
+        # owner-wide enumeration authoritatively retires all known state IDs
+        # absent from the current enabled/visible set. A scoped task may retire
         # only its selected missing/disabled account. Existing accounts remain
-        # present here even if their later network scan fails, so transient
-        # IMAP failure never erases their last known state.
+        # present even if their later network scan fails, so transient IMAP
+        # failure never erases their last known state.
         base_state = _read_email_urgency_state(STATE_PATH)
         base_account_generations = _email_urgency_account_generations(
             base_state
         )
         base_payload_account_ids = _email_urgency_payload_account_ids(base_state)
-        enabled_account_ids = {str(account.id) for account in accounts}
+        known_state_account_ids = _email_urgency_known_account_ids(base_state)
         if target_account_id:
             retired_account_ids = (
                 {str(target_account_id)}
@@ -2247,7 +2310,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             )
         else:
             retired_account_ids = (
-                base_payload_account_ids - enabled_account_ids
+                known_state_account_ids - enabled_account_ids
             )
 
         if retired_account_ids:
@@ -2275,9 +2338,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             # exact committed basis that the subsequent scan must compare.
             base_state = _read_email_urgency_state(STATE_PATH)
             base_account_generations = _email_urgency_account_generations(
-                base_state
-            )
-            base_payload_account_ids = _email_urgency_payload_account_ids(
                 base_state
             )
 
