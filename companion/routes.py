@@ -165,7 +165,15 @@ def setup_companion_routes() -> APIRouter:
             body = await request.json()
         except Exception:
             raise HTTPException(400, "Invalid JSON body")
-        return ((body or {}).get("token") or "").strip()
+        # Valid JSON that isn't an object (array/string/number/null) has no
+        # `.get`, and a non-string token has no `.strip` — reject with 400
+        # rather than letting either raise an AttributeError → 500.
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Body must be a JSON object")
+        token = body.get("token")
+        if not isinstance(token, str):
+            raise HTTPException(400, "token must be a string")
+        return token.strip()
 
     @router.post("/push/register")
     async def push_register(request: Request):
@@ -174,6 +182,7 @@ def setup_companion_routes() -> APIRouter:
         Owner-scoped: bearer callers resolve to their token's real owner, so a
         paired phone registers under that account and never another's. The token
         is a device handle, not a chat credential."""
+        require_models_scope(request)
         owner = token_owner(request)
         if not owner:
             raise HTTPException(401, "Unknown caller")
@@ -187,6 +196,7 @@ def setup_companion_routes() -> APIRouter:
     @router.post("/push/unregister")
     async def push_unregister(request: Request):
         """Drop one Expo push token for the calling owner (e.g. on sign-out)."""
+        require_models_scope(request)
         owner = token_owner(request)
         if not owner:
             raise HTTPException(401, "Unknown caller")
@@ -197,6 +207,7 @@ def setup_companion_routes() -> APIRouter:
     @router.post("/push/test")
     async def push_test(request: Request):
         """Send a test notification to the caller's registered devices."""
+        require_models_scope(request)
         owner = token_owner(request)
         if not owner:
             raise HTTPException(401, "Unknown caller")

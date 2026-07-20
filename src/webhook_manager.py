@@ -333,7 +333,6 @@ class WebhookManager:
         # keeps weak references to tasks, so without this the GC can collect a
         # delivery task mid-flight and the webhook is silently never sent.
         self._bg_tasks: set = set()
-        self._sinks = []
 
     def _spawn_tracked(self, coro):
         """Schedule a background task and hold a strong reference until it
@@ -345,22 +344,6 @@ class WebhookManager:
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
-
-    def add_sink(self, sink):
-        """Register an extra async ``(event, payload)`` delivery sink.
-
-        Additive overlays (the companion mobile-push bridge) use this to receive
-        every fired event without owning a DB ``Webhook`` row. Sinks are
-        best-effort and isolated: a failing sink never affects DB-webhook
-        delivery or any other sink.
-        """
-        self._sinks.append(sink)
-
-    async def _run_sink(self, sink, event: str, payload: dict):
-        try:
-            await sink(event, payload)
-        except Exception:
-            logger.warning("Webhook sink failed for event '%s'", event, exc_info=True)
 
     def _decrypt_secret(self, encrypted: Optional[str]) -> Optional[str]:
         """Decrypt a webhook signing secret from DB storage."""
@@ -400,11 +383,6 @@ class WebhookManager:
         for wh in matching:
             decrypted_secret = self._decrypt_secret(wh.secret)
             self._spawn_tracked(self._deliver(wh.id, wh.url, decrypted_secret, event, payload))
-
-        # Extra sinks (e.g. companion mobile push) receive every fired event,
-        # independent of DB webhook rows. Isolated so one can't break delivery.
-        for sink in self._sinks:
-            asyncio.create_task(self._run_sink(sink, event, payload))
 
     async def deliver_test(self, webhook_id: str, url: str, encrypted_secret: Optional[str]):
         """Public method for the test-webhook route."""

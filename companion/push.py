@@ -5,12 +5,13 @@ manager. Where webhooks POST a fixed JSON envelope to an arbitrary http(s)
 URL, this routes a lifecycle event to the Expo push service so a paired phone
 buzzes — no public relay, no third party beyond Expo's push gateway.
 
-Wiring: ``build_push_sink()`` is registered with ``WebhookManager.add_sink`` in
-app.py. The manager invokes it on every fired event; we deliver only when the
-event carries an ``owner`` (the lifecycle events) and that owner has registered
-at least one device. Owner attribution is the whole game — a push must reach
-exactly one user's phones — so events without an owner in their payload are
-deliberately skipped rather than broadcast.
+Wiring: ``build_push_sink()`` is registered with ``event_bus.add_event_sink`` in
+app.py — the SAME lifecycle producer path the rest of the app fires on, so push
+does not depend on the outbound-webhook layer (or any unmerged bridge) to reach
+a phone. The bus invokes it as ``(event_name, owner)`` on every fired event; we
+deliver only when the event is a mapped lifecycle event AND carries an owner
+(owner attribution is the whole game — a push must reach exactly one user's
+phones), so ownerless events are skipped rather than broadcast.
 
 Tokens live in a small JSON file under DATA_DIR (alongside auth.json), keyed by
 owner. An Expo push token is a device handle, not a high-value secret, but it
@@ -37,15 +38,16 @@ EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 _TOKEN_RE = re.compile(r"^Exp(?:o|onent)PushToken\[[A-Za-z0-9 _.\-]+\]$")
 _MAX_TOKENS_PER_OWNER = 20
 
-# event name -> (title, default body). Only owner-bearing events are useful as
-# a phone notification; everything else returns None from notification_for and
-# is skipped. Bodies can be overridden per-event from the payload below.
+# internal event-bus name -> (title, body). These are the names lifecycle
+# producers actually fire on the event bus (research_completed, document_created,
+# ...); anything else returns None from notification_for and is skipped. Only
+# owner-bearing lifecycle events are useful as a phone notification.
 _EVENT_NOTIFICATIONS = {
-    "research.completed": ("Research complete", "Your research report is ready."),
-    "document.created": ("Document added", "A new document was created."),
-    "memory.added": ("Memory saved", "A new memory was saved."),
-    "email.received": ("New email", "You have new mail."),
-    "skill.added": ("Skill added", "A new skill is available."),
+    "research_completed": ("Research complete", "Your research report is ready."),
+    "document_created": ("Document added", "A new document was created."),
+    "memory_added": ("Memory saved", "A new memory was saved."),
+    "email_received": ("New email", "You have new mail."),
+    "skill_added": ("Skill added", "A new skill is available."),
 }
 
 _lock = threading.Lock()
@@ -128,16 +130,47 @@ def list_push_tokens(owner: str) -> list:
         return list(_read_all().get(owner, []))
 
 
+def rename_owner(old_owner: str, new_owner: str) -> None:
+    """Move an owner's registered devices to a new username on account rename.
+
+    Without this, renaming an account strands its paired phones under the old
+    key (their events would silently stop). Merges into any tokens the new name
+    already has, de-duped and capped, and drops the old key.
+    """
+    if not old_owner or not new_owner or old_owner == new_owner:
+        return
+    with _lock:
+        data = _read_all()
+        moving = [t for t in data.pop(old_owner, []) if isinstance(t, str)]
+        if not moving:
+            return
+        existing = [t for t in data.get(new_owner, []) if isinstance(t, str)]
+        merged = existing + [t for t in moving if t not in existing]
+        data[new_owner] = merged[-_MAX_TOKENS_PER_OWNER:]
+        _write_all(data)
+
+
+def purge_owner(owner: str) -> None:
+    """Remove all of an owner's registered devices on account deletion.
+
+    Prevents a deleted account's Expo tokens from lingering — and, if the
+    username is later reused, from associating a prior account's phone with the
+    new identity.
+    """
+    if not owner:
+        return
+    with _lock:
+        data = _read_all()
+        if data.pop(owner, None) is not None:
+            _write_all(data)
+
+
 # --------------------------------------------------------------------------- #
 # Delivery
 # --------------------------------------------------------------------------- #
-def notification_for(event: str, payload: dict):
-    """Map an event+payload to (title, body), or None to skip it."""
-    note = _EVENT_NOTIFICATIONS.get(event)
-    if note is None:
-        return None
-    title, body = note
-    return title, body
+def notification_for(event: str):
+    """Map an internal event name to (title, body), or None to skip it."""
+    return _EVENT_NOTIFICATIONS.get(event)
 
 
 def build_messages(tokens: list, title: str, body: str, data: dict) -> list:
@@ -174,16 +207,16 @@ async def deliver(messages: list) -> None:
         logger.warning("Expo push delivery failed", exc_info=True)
 
 
-async def push_event(event: str, payload: dict) -> None:
-    """Sink entrypoint: route one fired event to the owner's devices.
+async def push_event(event: str, owner) -> None:
+    """Event-bus sink: route one fired lifecycle event to the owner's devices.
 
-    Only owner-bearing, mapped events reach a phone; everything else is a no-op.
+    Called as ``(event_name, owner)`` by ``event_bus``. Only owner-bearing,
+    mapped lifecycle events reach a phone; everything else is a no-op.
     """
-    payload = payload or {}
-    owner = payload.get("owner")
+    owner = (owner or "").strip() if isinstance(owner, str) else owner
     if not owner:
         return
-    note = notification_for(event, payload)
+    note = notification_for(event)
     if note is None:
         return
     tokens = list_push_tokens(owner)

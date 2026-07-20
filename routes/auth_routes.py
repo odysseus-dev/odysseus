@@ -372,6 +372,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 )
             raise HTTPException(500, "Failed to rename user data")
 
+        # Companion push registrations are JSON-backed and keyed by username;
+        # move them so a renamed account's paired phones keep receiving pushes.
+        try:
+            from companion import push as _companion_push
+            _companion_push.rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename companion push tokens %s -> %s: %s", old_username, new_username, e)
+
         # Per-user prefs are JSON-backed, not SQL-backed.
         try:
             from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
@@ -606,6 +614,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # cached token keeps authenticating until some other token op or a
         # restart clears the cache. Mirror what the token routes do.
         _invalidate_api_token_cache()
+        # Purge the deleted account's companion push registrations so its Expo
+        # tokens don't linger — and can't attach a prior account's phone to a
+        # reused username.
+        try:
+            from companion import push as _companion_push
+            _companion_push.purge_owner(body.username.strip().lower())
+        except Exception:
+            logger.warning("Failed to purge companion push tokens for deleted user")
         return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----
