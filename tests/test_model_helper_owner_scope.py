@@ -40,6 +40,6 @@ def test_history_compact_resolves_with_owner_scope():
 
 
 def test_note_reminder_synthesis_resolves_with_owner_scope():
-    body = _function_source("routes/note_routes.py", "dispatch_reminder")
+    body = _function_source("routes/note/note_routes.py", "dispatch_reminder")
     assert 'resolve_endpoint("utility", owner=owner or None)' in body
     assert 'resolve_endpoint("default", owner=owner or None)' in body

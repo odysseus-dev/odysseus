@@ -1,7 +1,7 @@
 # Architecture Runtime Inventory
 
 > **Purpose**: Phase 0 planning baseline for codebase readability improvements (#4071).
-> **Parent issue**: [#4082](https://github.com/pewdiepie-archdaemon/odysseus/issues/4082)
+> **Parent issue**: [#4082](https://github.com/odysseus-dev/odysseus/issues/4082)
 > **Last updated**: dev@b58af42 | 2026-06-16
 > **Status**: Draft — to be reviewed before follow-up slices open.
 > **Snapshot basis**: Importer / file / import-line counts are refreshed to `dev@b58af42` (2026-06-16) and are recomputable via the commands in §3.4. **Line counts** in §2.1 / §2.2 are a snapshot from an earlier baseline and drift as `dev` moves — recompute any of them with `wc -l <file>`. This inventory tracks structure and risk, not live metrics.

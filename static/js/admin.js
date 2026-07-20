@@ -934,6 +934,13 @@ function initEndpointForm() {
   function _apiEndpointKind() {
     return (kindSel && kindSel.value) ? kindSel.value : 'api';
   }
+  function _modelRefreshModeForApiEndpoint(url, endpointKind) {
+    if (endpointKind === 'proxy') return 'manual';
+    try {
+      if ((new URL(url)).hostname.toLowerCase() === 'generativelanguage.googleapis.com') return '';
+    } catch (_) {}
+    return 'auto';
+  }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
     // Fix common protocol typos
@@ -1081,7 +1088,8 @@ function initEndpointForm() {
       fd.append('base_url', url);
       const endpointKind = _apiEndpointKind();
       fd.append('endpoint_kind', endpointKind);
-      fd.append('model_refresh_mode', endpointKind === 'proxy' ? 'manual' : 'auto');
+      const refreshMode = _modelRefreshModeForApiEndpoint(url, endpointKind);
+      if (refreshMode) fd.append('model_refresh_mode', refreshMode);
       fd.append('model_refresh_timeout', '30');
       if (apiKey) fd.append('api_key', apiKey);
       if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
