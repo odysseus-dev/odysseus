@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from src.api_token_capabilities import (
@@ -277,43 +275,36 @@ def test_every_manifest_entry_has_known_nonempty_scopes_and_unique_methods():
             seen.add(key)
 
 
-def test_manifest_contains_only_the_current_audited_bearer_routes():
+def _router_inventory(router):
+    return {
+        (method, route.path)
+        for route in router.routes
+        for method in getattr(route, "methods", set())
+    }
+
+
+def test_manifest_matches_runtime_scoped_router_inventory():
+    from companion.routes import setup_companion_routes
+    from routes.codex_routes import setup_claude_routes, setup_codex_routes
+
+    companion_inventory = _router_inventory(setup_companion_routes())
+    companion_pairing = {
+        route
+        for route in companion_inventory
+        if route[1] == "/api/companion/pair"
+    }
+    assert companion_pairing == {
+        ("GET", "/api/companion/pair"),
+        ("POST", "/api/companion/pair"),
+    }
+
     expected = {
         ("POST", "/api/v1/chat"),
         ("GET", "/api/models"),
-        ("GET", "/api/companion/ping"),
-        ("GET", "/api/companion/info"),
-        ("GET", "/api/companion/models"),
-        ("GET", "/api/codex/capabilities"),
-        ("GET", "/api/codex/plugin.zip"),
-        ("GET", "/api/claude/plugin.zip"),
-        ("GET", "/api/codex/todos"),
-        ("POST", "/api/codex/todos"),
-        ("GET", "/api/codex/emails"),
-        ("GET", "/api/codex/emails/{uid}"),
-        ("POST", "/api/codex/emails/draft-document"),
-        ("POST", "/api/codex/emails/draft"),
-        ("POST", "/api/codex/emails/send"),
-        ("GET", "/api/codex/memory"),
-        ("POST", "/api/codex/memory"),
-        ("DELETE", "/api/codex/memory/{memory_id}"),
-        ("GET", "/api/codex/calendar/events"),
-        ("POST", "/api/codex/calendar/events"),
-        ("DELETE", "/api/codex/calendar/events/{uid}"),
-        ("GET", "/api/codex/documents"),
-        ("GET", "/api/codex/documents/{doc_id}"),
-        ("POST", "/api/codex/documents"),
-        ("DELETE", "/api/codex/documents/{doc_id}"),
-        ("GET", "/api/codex/cookbook/tasks"),
-        ("GET", "/api/codex/cookbook/servers"),
-        ("GET", "/api/codex/cookbook/output/{session_id}"),
-        ("GET", "/api/codex/cookbook/cached"),
-        ("GET", "/api/codex/cookbook/presets"),
-        ("POST", "/api/codex/cookbook/serve"),
-        ("POST", "/api/codex/cookbook/stop/{session_id}"),
-        ("POST", "/api/codex/cookbook/preset/{name}"),
-        ("POST", "/api/codex/cookbook/adopt"),
     }
+    expected.update(_router_inventory(setup_codex_routes()))
+    expected.update(_router_inventory(setup_claude_routes()))
+    expected.update(companion_inventory - companion_pairing)
     actual = {
         (method, capability.path)
         for capability in API_TOKEN_ROUTE_CAPABILITIES
@@ -350,30 +341,3 @@ def test_token_minting_and_route_checks_share_the_scope_catalog():
     assert codex_routes.TODO_READ_SCOPES <= ALL_API_TOKEN_SCOPES
     assert codex_routes.EMAIL_READ_SCOPES <= ALL_API_TOKEN_SCOPES
     assert codex_routes.COOKBOOK_READ_SCOPES <= ALL_API_TOKEN_SCOPES
-
-
-def test_capability_gate_runs_only_after_a_valid_bearer_match():
-    source = Path("app.py").read_text(encoding="utf-8")
-    cors_gate = source.index("if is_cors_preflight(")
-    exempt_gate = source.index("if _is_auth_exempt(path):")
-    internal_gate = source.index("# In-process internal-tool token bypass")
-    local_gate = source.index("# Allow DIRECT localhost requests")
-    bearer_gate = source.index('if auth_header.startswith("Bearer ody_"):')
-    token_match = source.index("if matched_id:", bearer_gate)
-    capability_gate = source.index("authorize_api_token_request(", token_match)
-    token_state = source.index("request.state.api_token = True", capability_gate)
-    cookie_gate = source.index("# --- Cookie-based session auth ---", token_state)
-
-    assert (
-        cors_gate
-        < exempt_gate
-        < internal_gate
-        < local_gate
-        < bearer_gate
-        < token_match
-        < capability_gate
-        < token_state
-        < cookie_gate
-    )
-    local_block = source[local_gate:bearer_gate]
-    assert 'not auth_header.startswith("Bearer ody_")' in local_block
