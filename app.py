@@ -67,7 +67,11 @@ from core.constants import (
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
+from core.middleware import (
+    CodexCookbookBoundaryMiddleware,
+    SecurityHeadersMiddleware,
+    is_cors_preflight,
+)
 from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -472,6 +476,12 @@ if AUTH_ENABLED:
     logger.info("Auth middleware enabled (AUTH_ENABLED=true)")
 else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
+
+# Added after AuthMiddleware so Starlette places this boundary outermost. Raw
+# Odysseus bearer/internal credentials are rejected before authentication can
+# read or update token state and before FastAPI parses a Cookbook route body.
+# The same boundary remains installed when authentication is disabled.
+app.add_middleware(CodexCookbookBoundaryMiddleware)
 
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
