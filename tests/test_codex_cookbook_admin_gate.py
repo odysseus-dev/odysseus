@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import core.middleware as middleware
 from core.middleware import (
     CodexCookbookBoundaryMiddleware,
     INTERNAL_TOOL_HEADER,
@@ -122,6 +123,22 @@ DUPLICATE_PRE_BODY_HEADERS = [
     pytest.param(
         [(_INTERNAL_HEADER_BYTES, b"invalid, " + _INTERNAL_TOKEN_BYTES)],
         id="internal-proxy-combined",
+    ),
+    pytest.param(
+        [(_INTERNAL_HEADER_BYTES, b" " + _INTERNAL_TOKEN_BYTES)],
+        id="internal-leading-sp",
+    ),
+    pytest.param(
+        [(_INTERNAL_HEADER_BYTES, _INTERNAL_TOKEN_BYTES + b" ")],
+        id="internal-trailing-sp",
+    ),
+    pytest.param(
+        [(_INTERNAL_HEADER_BYTES, b" " + _INTERNAL_TOKEN_BYTES + b" ")],
+        id="internal-both-sp",
+    ),
+    pytest.param(
+        [(_INTERNAL_HEADER_BYTES, b"\t" + _INTERNAL_TOKEN_BYTES + b"\t")],
+        id="internal-both-htab",
     ),
     pytest.param(
         [
@@ -289,6 +306,13 @@ def test_odysseus_bearer_parser_accepts_scheme_case_and_sp_htab(value):
 )
 def test_odysseus_bearer_parser_rejects_other_credentials(value):
     assert is_odysseus_bearer_authorization(value) is False
+
+
+def test_internal_header_match_preserves_an_exact_whitespace_token(monkeypatch):
+    configured_token = "\t configured token \t"
+    monkeypatch.setattr(middleware, "INTERNAL_TOOL_TOKEN", configured_token)
+
+    assert middleware._internal_header_matches(configured_token) is True
 
 
 def test_mounted_root_path_gate_precedes_json_validation(monkeypatch):
