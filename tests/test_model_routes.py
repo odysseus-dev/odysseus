@@ -98,6 +98,9 @@ def test_endpoint_cleanup_preserves_legacy_default_fallback_data():
             {"endpoint_id": "dead", "model": "fallback-a"},
             {"endpoint_id": "keep", "model": "fallback-b"},
         ],
+        "foreground_model_fallbacks": [
+            {"endpoint_id": "dead", "model": "foreground"},
+        ],
         "utility_model_fallbacks": [{"endpoint_id": "dead", "model": "utility"}],
         "vision_model_fallbacks": [{"endpoint_id": "dead", "model": "vision"}],
         "stt_provider": "endpoint:dead",
@@ -106,12 +109,14 @@ def test_endpoint_cleanup_preserves_legacy_default_fallback_data():
 
     assert _endpoint_settings_using_endpoint(settings, "dead", include_speech=True) == [
         "Default Model",
+        "Foreground Model Fallbacks",
         "Utility Model Fallbacks",
         "Vision Model Fallbacks",
         "Speech to Text",
     ]
     assert _clear_endpoint_settings_for_endpoint(settings, "dead", include_speech=True) == [
         "Default Model",
+        "Foreground Model Fallbacks",
         "Utility Model Fallbacks",
         "Vision Model Fallbacks",
         "Speech to Text",
@@ -122,6 +127,7 @@ def test_endpoint_cleanup_preserves_legacy_default_fallback_data():
         {"endpoint_id": "dead", "model": "fallback-a"},
         {"endpoint_id": "keep", "model": "fallback-b"},
     ]
+    assert settings["foreground_model_fallbacks"] == []
     assert settings["utility_model_fallbacks"] == []
     assert settings["vision_model_fallbacks"] == []
     assert settings["stt_provider"] == "disabled"
@@ -130,10 +136,19 @@ def test_endpoint_cleanup_preserves_legacy_default_fallback_data():
 
 def test_endpoint_cleanup_updates_active_scoped_prefs_but_preserves_legacy_data():
     scoped = {
+        "foreground_model_fallbacks": [
+            {"endpoint_id": "dead", "model": "ownerless"},
+        ],
+        "default_model_fallbacks": [
+            {"endpoint_id": "dead", "model": "legacy-ownerless"},
+        ],
         "_users": {
             "alice": {
                 "utility_endpoint_id": "dead",
                 "utility_model": "utility",
+                "foreground_model_fallbacks": [
+                    {"endpoint_id": "dead", "model": "foreground"},
+                ],
                 "vision_model_fallbacks": [{"endpoint_id": "dead", "model": "vision"}],
             },
             "bob": {
@@ -142,10 +157,15 @@ def test_endpoint_cleanup_updates_active_scoped_prefs_but_preserves_legacy_data(
             },
         },
     }
-    assert _clear_user_pref_endpoint_refs(scoped, "dead") == 1
+    assert _clear_user_pref_endpoint_refs(scoped, "dead") == 2
+    assert scoped["foreground_model_fallbacks"] == []
+    assert scoped["default_model_fallbacks"] == [
+        {"endpoint_id": "dead", "model": "legacy-ownerless"},
+    ]
     assert scoped["_users"]["alice"] == {
         "utility_endpoint_id": "",
         "utility_model": "",
+        "foreground_model_fallbacks": [],
         "vision_model_fallbacks": [],
     }
     assert scoped["_users"]["bob"]["default_endpoint_id"] == "keep"

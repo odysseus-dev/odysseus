@@ -2020,12 +2020,12 @@ async function _cmdUsage(args, ctx) {
   const messageCount = Number(session?.message_count || 0);
   const totalTokens = Number(session?.total_tokens || 0);
   const costTracked = chatRenderer.isCostTrackedEndpoint ? chatRenderer.isCostTrackedEndpoint(endpointUrl) : true;
-  const cost = costTracked && chatRenderer.getSessionCost ? Number(chatRenderer.getSessionCost(sid) || 0) : 0;
-  const costLine = costTracked
-    ? (cost > 0
-      ? `Estimated local cost: $${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
-      : 'Estimated local cost: unavailable or zero')
-    : 'Estimated local cost: not tracked for this endpoint';
+  const cost = chatRenderer.getSessionCost ? Number(chatRenderer.getSessionCost(sid) || 0) : 0;
+  const costLine = cost > 0
+    ? `Estimated local cost: $${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
+    : costTracked
+      ? 'Estimated local cost: unavailable or zero'
+      : 'Estimated local cost: no billable usage recorded';
 
   slashReply(`<pre>${[
     `Session: ${ctx.esc(session?.name || 'Current chat')}`,
