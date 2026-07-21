@@ -66,4 +66,26 @@ const html = sandbox.__mdToHtml(input);
 assert.equal(html.includes('___ALLOWED_HTML_'), false, html);
 assert.equal(html.includes('appendChild'), true, html);
 
+// Restoring a block with String.replace and a *string* replacement treats
+// `$&`, `` $` ``, `$'`, `$$`, `$1` as special patterns, corrupting any code
+// sample that contains them. Restore must use a function replacer so the
+// content is inserted verbatim. Each fenced code block below carries a `$`
+// sequence next to a unique marker word; assert the marker survives intact
+// and no placeholder leaks.
+const dollarCases = [
+  ['AMPCASE $& END', 'ampersand'],
+  ["BTCASE $` END", 'backtick'],
+  ["APOSCASE $' END", 'apostrophe'],
+  ['DOUBLECASE $$ END', 'dollar-dollar'],
+  ['GROUPCASE $1 END', 'group-ref'],
+];
+for (const [code, name] of dollarCases) {
+  const out = sandbox.__mdToHtml(['```sh', code, '```'].join('\n'));
+  const marker = code.split(' ')[0];  // e.g. "AMPCASE"
+  assert.equal(out.includes('___CODE_BLOCK_'), false,
+    `${name}: placeholder leaked -> ${out}`);
+  assert.ok(out.includes(marker), `${name}: marker ${marker} missing -> ${out}`);
+  assert.ok(out.includes('END'), `${name}: trailing text lost -> ${out}`);
+}
+
 console.log('ok');

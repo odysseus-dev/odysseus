@@ -758,24 +758,31 @@ export function mdToHtml(src, opts) {
   // Remove empty paragraphs
   s = s.replace(/<p><\/p>/g, '');
 
+  // Restore blocks with a function replacer (`() => block`) rather than a
+  // string, so `$`-sequences inside the restored content — `$&`, `` $` ``,
+  // `$'`, `$$`, `$1` — are NOT interpreted as String.replace special
+  // patterns. A code sample like `echo "$&"` or a regex `s/$'/x/` would
+  // otherwise be corrupted on restore. Same reason the inline-code site below
+  // already uses a function replacer.
+
   // CRITICAL: Restore allowed HTML blocks first
   allowedHtmlBlocks.forEach((block, index) => {
-    s = s.replace(`___ALLOWED_HTML_${index}___`, block);
+    s = s.replace(`___ALLOWED_HTML_${index}___`, () => block);
   });
 
   // Restore math blocks
   mathBlocks.forEach((block, index) => {
-    s = s.replace(`___MATH_BLOCK_${index}___`, block);
+    s = s.replace(`___MATH_BLOCK_${index}___`, () => block);
   });
 
   // Restore mermaid diagram blocks
   mermaidBlocks.forEach((block, index) => {
-    s = s.replace(`___MERMAID_BLOCK_${index}___`, block);
+    s = s.replace(`___MERMAID_BLOCK_${index}___`, () => block);
   });
 
   // CRITICAL: Restore code blocks at the end
   codeBlocks.forEach((block, index) => {
-    s = s.replace(`___CODE_BLOCK_${index}___`, block);
+    s = s.replace(`___CODE_BLOCK_${index}___`, () => block);
   });
 
   // Restore inline code spans last, so placeholders carried inside restored
