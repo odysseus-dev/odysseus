@@ -66,8 +66,15 @@ def _header_values(headers, name: str) -> list[str]:
 def _internal_header_matches(value: str) -> bool:
     """Compare raw or proxy-combined values without obs-text type failures."""
     candidates = [value]
+    trimmed_value = value.strip(" \t")
+    if trimmed_value != value:
+        candidates.append(trimmed_value)
     if "," in value:
-        candidates.extend(part.strip() for part in value.split(","))
+        for part in value.split(","):
+            candidates.append(part)
+            trimmed_part = part.strip(" \t")
+            if trimmed_part != part:
+                candidates.append(trimmed_part)
     try:
         expected = INTERNAL_TOOL_TOKEN.encode("utf-8")
     except (AttributeError, UnicodeError):
