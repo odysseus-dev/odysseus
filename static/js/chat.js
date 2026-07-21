@@ -44,6 +44,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
   })();
 
+  // A child is "protected" if it (or something inside it) is still live/
+  // unpersisted — trimming it would rip a still-streaming node (or its
+  // ticker/RAF-backed UI) out of the DOM mid-flight.
+  function _isProtectedHistoryNode(el) {
+    if (!el || !el.classList) return false;
+    if (el.classList.contains('streaming')) return true;
+    if (el.classList.contains('agent-thinking-dots')) return true;
+    if (el.querySelector) {
+      if (el.querySelector('.agent-thread.streaming')) return true;
+      if (el.querySelector('.agent-thread-node.running')) return true;
+      if (el.querySelector('#doc-stream-indicator')) return true;
+    }
+    return false;
+  }
+
   function _trimChatHistoryDOM() {
     var box = document.getElementById('chat-history');
     if (!box) return;
@@ -51,12 +66,20 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (children.length <= MAX_CHAT_DOM_NODES) return;
     var keepFloor = Math.min(20, Math.floor(MAX_CHAT_DOM_NODES / 4));
 
-    // Remove the oldest children until we're under the cap. The scroll-based
-    // pager in sessions.js handles re-fetching older messages on demand.
+    // Walk from the oldest child toward the keepFloor boundary. Protected
+    // (live/streaming) nodes are skipped in place rather than stopping the
+    // sweep entirely — during one very long turn every node belonging to
+    // that turn may be `.streaming`, and bailing at the first one would mean
+    // nothing ever gets reclaimed, defeating the OOM cap. Completed nodes
+    // interleaved among protected ones are still removed as we pass them.
     var maxIdx = Math.max(0, children.length - keepFloor);
     for (var i = 0; i < maxIdx && children.length > MAX_CHAT_DOM_NODES; i++) {
       var el = children[i];
       if (!el) break;
+
+      if (_isProtectedHistoryNode(el)) {
+        continue; // skip, don't remove, don't stop the walk
+      }
 
       // Tear down any per-node intervals
       if (el._waveInterval) { clearInterval(el._waveInterval); el._waveInterval = null; }
@@ -345,21 +368,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         _backgroundStreams.delete(sid);
       }
     });
-    // Evict oldest entries when the map exceeds the cardinality cap.
-    // This bounds memory for abandoned streams that never completed.
-    while (_backgroundStreams.size > MAX_BACKGROUND_STREAMS) {
-      var oldestKey = _backgroundStreams.keys().next().value;
-      if (oldestKey === undefined) break;
-      var oldest = _backgroundStreams.get(oldestKey);
-      if (oldest) {
-        if (oldest.abortCtrl) { try { oldest.abortCtrl.abort(); } catch (_) {} oldest.abortCtrl = null; }
-        oldest.accumulated = '';
-        oldest.sourcesHtml = '';
-        oldest.findingsData = null;
-        oldest.metrics = null;
-      }
-      _backgroundStreams.delete(oldestKey);
-    }
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -1674,6 +1682,41 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         return time && tokens ? time + ' · ' + tokens : (time || tokens);
       }
 
+      // Shared text-extraction chain for the live thinking box — strips think
+      // tags/channel markers from the raw round accumulator. Used by both the
+      // mid-stream debounce tick and the teardown/finalize helper so the two
+      // never drift out of sync.
+      function _extractLiveThinkText(rawRoundText) {
+        var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(rawRoundText))
+          .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
+          .replace(/<\|channel>thought\s*\n?/gi, '')
+          .replace(/<\|channel>response\s*\n?/gi, '')
+          .replace(/<channel\|>/gi, '');
+        thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+        return thinkText;
+      }
+
+      // Tears down the live-thinking RAF/timer loop and (optionally) does a
+      // final rich render of whatever thinking text has accumulated so far.
+      // Call this at every terminal transition away from a live thinking box
+      // (clean </think> close, [DONE] while still thinking, a new agent_step,
+      // or the streaming catch-block) so the RAF/timeout never keeps running
+      // against a bubble that's about to be replaced or detached.
+      function _teardownLiveThinking(finalRender) {
+        if (_thinkTimerRAF) { cancelAnimationFrame(_thinkTimerRAF); _thinkTimerRAF = 0; }
+        if (_thinkRenderTimer) { clearTimeout(_thinkRenderTimer); _thinkRenderTimer = null; }
+        if (_liveThinkInner) {
+          var thinkText = _extractLiveThinkText(roundText);
+          if (finalRender) {
+            _liveThinkInner.style.whiteSpace = '';
+            _liveThinkInner.style.fontFamily = '';
+            _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
+          } else {
+            _liveThinkInner.textContent = thinkText;
+          }
+        }
+      }
+
       function _replyAfterClosedThinking(text) {
         text = markdownModule.normalizeThinkingMarkup(text || '');
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
@@ -1867,7 +1910,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               // Force-close thinking if still open (model never output boundary)
               if (isThinking) {
                 isThinking = false;
-                cancelAnimationFrame(_thinkTimerRAF);
+                _teardownLiveThinking(true);
                 var _elapsedDone = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                 if (_elapsedDone) {
                   accumulated = accumulated.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
@@ -2107,13 +2150,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                       _thinkRenderTimer = setTimeout(function() {
                         _thinkRenderTimer = null;
                         if (!_liveThinkInner || !isThinking) return;
-                        var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText))
-                          .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
-                          .replace(/<\|channel>thought\s*\n?/gi, '')
-                          .replace(/<\|channel>response\s*\n?/gi, '')
-                          .replace(/<channel\|>/gi, '');
-                        thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                        _liveThinkInner.textContent = thinkText;
+                        _liveThinkInner.textContent = _extractLiveThinkText(roundText);
                       }, 200);
                     }
                     // Keep thinking box scrolled to bottom, but let user scroll up
@@ -2153,16 +2190,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   }
 
                   // Thinking ended — smooth transition: update header, pause, then collapse
-                  // Stop live timer and spinner
-                  cancelAnimationFrame(_thinkTimerRAF);
-                  // Replace plain-text with a single rich markdown render now that
-                  // the thinking block is complete.
-                  if (_liveThinkInner) {
-                    var _finalThinkText = _liveThinkInner.textContent;
-                    _liveThinkInner.style.whiteSpace = '';
-                    _liveThinkInner.style.fontFamily = '';
-                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(_finalThinkText);
-                  }
+                  // Stop live timer/debounce and do the one rich markdown render
+                  // now that the thinking block is complete.
+                  _teardownLiveThinking(true);
                   var elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   // Embed thinking time in the <think> tag for persistence on reload
                   if (elapsed) {
@@ -2912,6 +2942,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
+                // Force-finalize any still-open live thinking box before this
+                // round's content is rendered/reset — otherwise the RAF/debounce
+                // timer from the previous round keeps running against a bubble
+                // that's about to be replaced, and _renderStream() below would
+                // clobber the thinking box's DOM before it's ever finalized.
+                if (isThinking) _teardownLiveThinking(true);
                 _renderStream();
                 // Mark thread as connected to bubble below
                 const _activeThread = document.querySelector('.agent-thread.streaming');
@@ -3050,6 +3086,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       _removeThinkingSpinner();
       // Stop any thread pulse animations
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      // Clean up any tool node still left "running" on a clean [DONE] (e.g. a
+      // tool_output that never arrived for the last call) — same sweep as the
+      // user-Stop handler and the error path, so its per-node tickers
+      // (_waveInterval / _elapsedTicker) don't keep firing forever.
+      document.querySelectorAll('.agent-thread-node.running').forEach(node => {
+        if (node._waveInterval) { clearInterval(node._waveInterval); node._waveInterval = null; }
+        if (node._elapsedTicker) { clearInterval(node._elapsedTicker); node._elapsedTicker = null; }
+        node.classList.remove('running');
+      });
       // --- Final render (skip if stream was ever backgrounded or currently in background) ---
       // Remove streaming class from all round bubbles
       holder.classList.remove('streaming');
@@ -3315,6 +3360,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       } // end if (!_isBgFinal)
 
     } catch (err) {
+      // Finalize any still-open live thinking box BEFORE _renderStream() below —
+      // when a think tag is still unclosed, _renderStream() overwrites
+      // contentEl.innerHTML with a "Thinking (N lines)" placeholder, which
+      // detaches _liveThinkInner from the DOM. Flushing after that point would
+      // write into an orphaned node and be a silent no-op, and the live
+      // RAF/debounce timer would keep running unbounded.
+      if (isThinking) _teardownLiveThinking(true);
       _renderStream();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
@@ -3336,6 +3388,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           }
         } else if (bgErr) {
           bgErr.status = 'error';
+          // Free the large accumulated text/resources now — matches the
+          // [DONE] background-completion path. Nothing else needs these once
+          // the entry is marked errored; checkBackgroundStream reloads from
+          // the DB, and _purgeStaleBackgroundStreams will delete the entry.
+          bgErr.accumulated = '';
+          bgErr.sourcesHtml = '';
+          bgErr.abortCtrl = null;
           if (sessionModule && sessionModule.clearStreaming) {
             sessionModule.clearStreaming(streamSessionId);
           }

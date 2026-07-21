@@ -10383,10 +10383,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Flush final content to textarea and code element
     var textarea = document.getElementById('doc-editor-textarea');
     var codeEl = document.getElementById('doc-editor-code');
-    if (textarea && codeEl) {
+    if (textarea || codeEl) {
       var finalContent = docs.get(oldId)?.content || '';
-      textarea.value = finalContent;
-      codeEl.textContent = finalContent + '\n';
+      if (textarea) textarea.value = finalContent;
+      if (codeEl) codeEl.textContent = finalContent + '\n';
     }
     // Hide streaming indicator + cursor
     var indicator = document.getElementById('doc-stream-indicator');
