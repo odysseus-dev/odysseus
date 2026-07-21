@@ -1348,7 +1348,10 @@ def setup_shell_routes() -> APIRouter:
                     )
                 checks.append("echo '---OSREL---'; cat /etc/os-release 2>/dev/null || { [ \"$(uname -s 2>/dev/null)\" = \"Darwin\" ] && echo ID=macos; } || true")
                 inner = " ; ".join(checks)
-                argv = _ssh_base_argv(host, ssh_port) + [inner]
+                # sh -c: the PATH= assignments and if/then in the probe are
+                # POSIX-only and the remote login shell may be fish/csh —
+                # unwrapped, every system prereq shows "missing" on such hosts.
+                argv = _ssh_base_argv(host, ssh_port) + [posix_remote_shell_cmd(inner)]
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
                     stdout=asyncio.subprocess.PIPE,
@@ -1493,7 +1496,8 @@ def setup_shell_routes() -> APIRouter:
                             '&& nvidia-smi -L 2>/dev/null | grep -q "GPU " '
                             '&& echo nvidia=1 || echo nvidia=0'
                         )
-                        argv = _ssh_base_argv(host, ssh_port) + [probe]
+                        # sh -c: the venv-activate prefix is POSIX-only.
+                        argv = _ssh_base_argv(host, ssh_port) + [posix_remote_shell_cmd(probe)]
                         proc = await asyncio.create_subprocess_exec(
                             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                         )
@@ -1765,7 +1769,9 @@ def setup_shell_routes() -> APIRouter:
         cmd = _llama_cpp_rebuild_cmd(update_source=update_source)
         try:
             argv = (
-                (_ssh_base_argv(host, ssh_port) + [cmd])
+                # sh -c: the rebuild script is POSIX sh and the remote login
+                # shell may be fish/csh.
+                (_ssh_base_argv(host, ssh_port) + [posix_remote_shell_cmd(cmd)])
                 if host
                 else ["bash", "-lc", cmd]
             )
