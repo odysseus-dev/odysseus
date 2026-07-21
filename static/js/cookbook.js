@@ -920,7 +920,7 @@ export function _buildServeCmd(f, modelName, backend) {
       // Already-pulled Ollama tag (e.g. `qwen2.5:7b`). On kierkegaard the
       // runtime is the ROCm Ollama sidecar; this quick command verifies the
       // tag exists, then the backend auto-registers http://host.docker.internal:11434/v1.
-      cmd = `docker exec ollama-rocm ollama show ${modelName}`;
+      cmd = `ollama show ${modelName}`;
     } else {
       const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
       const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
