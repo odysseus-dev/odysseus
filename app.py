@@ -366,7 +366,7 @@ if AUTH_ENABLED:
             path = get_application_route_path(request.scope)
             # A genuine CORS preflight (OPTIONS + Access-Control-Request-Method)
             # carries no credentials by design and must reach CORSMiddleware to be
-            # answered. AuthMiddleware is the outermost middleware, so gating the
+            # answered. AuthMiddleware runs outside CORSMiddleware, so gating the
             # preflight on auth 401s it before CORS can respond -- which blocks
             # every cross-origin browser/WebView client before the real request
             # is sent. Let real preflights through (only OPTIONS w/ the ACRM
