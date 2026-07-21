@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tailscale Tunnel Path Decision — Ras's Multi-Machine Setup</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot {
+      width: 12px; height: 12px;
+      background: #fb7185;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .card.blocked { border-color: #fb7185; opacity: 0.7; }
+    .card.recommended { border-color: #34d399; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Tailscale Tunnel Path — Three Options</h1>
+      </div>
+      <p class="subtitle">Goal: VPS can reach the Mac mini's agentmemory daemon (port 3111) over the encrypted tailnet.</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 720">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrowhead-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <marker id="arrowhead-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrowhead-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- =====================  PATHS HEADER  ===================== -->
+        <text x="40" y="40" fill="#22d3ee" font-size="11" font-weight="600">Three paths from VPS to Mac mini's :3111 (agentmemory daemon)</text>
+
+        <!-- =====================  DEVICES  ===================== -->
+        <!-- Laptop (top-left) -->
+        <rect x="40" y="80" width="140" height="70" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="110" y="105" fill="white" font-size="12" font-weight="600" text-anchor="middle">LAPTOP</text>
+        <text x="110" y="123" fill="#94a3b8" font-size="9" text-anchor="middle">100.93.33.88</text>
+        <text x="110" y="138" fill="#22d3ee" font-size="8" text-anchor="middle">Tailscale: kernel mode</text>
+
+        <!-- Mac mini (top-right) — the canonical memory host -->
+        <rect x="820" y="80" width="140" height="80" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="2"/>
+        <text x="890" y="105" fill="white" font-size="12" font-weight="600" text-anchor="middle">MAC MINI</text>
+        <text x="890" y="123" fill="#94a3b8" font-size="9" text-anchor="middle">100.90.244.101</text>
+        <text x="890" y="138" fill="#34d399" font-size="8" text-anchor="middle">iii daemon :3111</text>
+        <text x="890" y="150" fill="#fb7185" font-size="7" text-anchor="middle">127.0.0.1 only (wrapper bug)</text>
+
+        <!-- VPS Container (middle) — the focus of decision -->
+        <rect x="350" y="320" width="300" height="180" rx="10" fill="rgba(15, 23, 42, 0.7)" stroke="#94a3b8" stroke-width="2"/>
+        <text x="500" y="345" fill="white" font-size="13" font-weight="700" text-anchor="middle">VPS CONTAINER</text>
+        <text x="500" y="362" fill="#94a3b8" font-size="9" text-anchor="middle">b5c08b733c93 / 100.90.120.97</text>
+        <text x="500" y="378" fill="#94a3b8" font-size="9" text-anchor="middle">containerd, seccomp docker-default</text>
+        <text x="500" y="393" fill="#94a3b8" font-size="9" text-anchor="middle">no /dev/net/tun, no iptables</text>
+
+        <!-- Inside VPS: tailscaled + agentmemory client + ssh tunnel script -->
+        <rect x="380" y="410" width="110" height="70" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="435" y="430" fill="white" font-size="10" font-weight="600" text-anchor="middle">tailscaled</text>
+        <text x="435" y="446" fill="#94a3b8" font-size="8" text-anchor="middle">--tun=userspace</text>
+        <text x="435" y="460" fill="#fb7185" font-size="7" text-anchor="middle">TCP-to-peer times out</text>
+        <text x="435" y="472" fill="#94a3b8" font-size="7" text-anchor="middle">silent drop</text>
+
+        <rect x="510" y="410" width="120" height="70" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="570" y="430" fill="white" font-size="10" font-weight="600" text-anchor="middle">SSH tunnel</text>
+        <text x="570" y="446" fill="#94a3b8" font-size="8" text-anchor="middle">-L 3111:127.0.0.1:3111</text>
+        <text x="570" y="460" fill="#22d3ee" font-size="7" text-anchor="middle">localhost:3111 ready</text>
+        <text x="570" y="472" fill="#94a3b8" font-size="7" text-anchor="middle">agentmemory client</text>
+
+        <!-- Hermes host (host OS of VPS, containerd underneath) — small dotted box below VPS -->
+        <rect x="350" y="540" width="300" height="60" rx="8" fill="rgba(120, 53, 15, 0.1)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="6,3"/>
+        <text x="500" y="560" fill="#fbbf24" font-size="10" font-weight="600" text-anchor="middle">HOSTINGER HOST (Host OS)</text>
+        <text x="500" y="578" fill="#94a3b8" font-size="8" text-anchor="middle">2.24.31.124 — srv1836102.hstgr.cloud</text>
+        <text x="500" y="592" fill="#fbbf24" font-size="8" text-anchor="middle">containerd + Traefik — controls container rebuild</text>
+
+        <!-- =====================  PATHS  ===================== -->
+
+        <!-- Path A: Hostinger rebuild with /dev/net/tun -->
+        <path d="M 500 410 Q 500 240 820 160" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrowhead-amber)"/>
+        <rect x="430" y="220" width="160" height="50" rx="6" fill="rgba(120, 53, 15, 0.2)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="510" y="240" fill="#fbbf24" font-size="11" font-weight="600" text-anchor="middle">PATH A</text>
+        <text x="510" y="255" fill="white" font-size="9" text-anchor="middle">/dev/net/tun + iptables</text>
+        <text x="510" y="266" fill="#94a3b8" font-size="7" text-anchor="middle">Hostinger rebuild</text>
+
+        <line x1="500" y1="500" x2="500" y2="538" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#arrowhead-amber)"/>
+
+        <!-- Path B: Sidecar container -->
+        <path d="M 240 540 Q 240 400 380 445" fill="none" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <rect x="220" y="220" width="160" height="50" rx="6" fill="rgba(76, 29, 149, 0.2)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="300" y="240" fill="#a78bfa" font-size="11" font-weight="600" text-anchor="middle">PATH B</text>
+        <text x="300" y="255" fill="white" font-size="9" text-anchor="middle">Sidecar container</text>
+        <text x="300" y="266" fill="#94a3b8" font-size="7" text-anchor="middle">shared socket volume</text>
+
+        <!-- Path C: Laptop as ProxyJump -->
+        <path d="M 110 150 Q 110 250 380 445" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#arrowhead-emerald)"/>
+        <path d="M 110 150 Q 110 80 250 80 Q 380 80 510 80" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#arrowhead-emerald)"/>
+        <path d="M 820 160 Q 900 160 900 220 Q 900 280 800 320 Q 700 360 630 410" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#arrowhead-emerald)"/>
+        <rect x="430" y="120" width="160" height="50" rx="6" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="510" y="140" fill="#34d399" font-size="11" font-weight="600" text-anchor="middle">PATH C — RECOMMENDED</text>
+        <text x="510" y="155" fill="white" font-size="9" text-anchor="middle">Laptop as ProxyJump</text>
+        <text x="510" y="166" fill="#94a3b8" font-size="7" text-anchor="middle">VPS → laptop → mini</text>
+
+        <!-- =====================  TAILNET HUB  ===================== -->
+        <ellipse cx="500" cy="170" rx="170" ry="22" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="500" y="167" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">Tailscale tailnet</text>
+        <text x="500" y="180" fill="#94a3b8" font-size="8" text-anchor="middle">tail42ce2d.ts.net · DERP relay · WireGuard</text>
+
+        <!-- =====================  LEGEND  ===================== -->
+        <text x="40" y="660" fill="white" font-size="10" font-weight="600">Legend</text>
+        <rect x="40" y="672" width="14" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="60" y="680" fill="#94a3b8" font-size="8">Machine on tailnet</text>
+        <line x1="180" y1="677" x2="200" y2="677" stroke="#34d399" stroke-width="2" marker-end="url(#arrowhead-emerald)"/>
+        <text x="208" y="680" fill="#94a3b8" font-size="8">Recommended path</text>
+        <line x1="340" y1="677" x2="360" y2="677" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrowhead-amber)"/>
+        <text x="368" y="680" fill="#94a3b8" font-size="8">Cleanest path (blocked)</text>
+        <line x1="540" y1="677" x2="560" y2="677" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="568" y="680" fill="#94a3b8" font-size="8">Alternative</text>
+        <rect x="40" y="692" width="14" height="10" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1"/>
+        <text x="60" y="700" fill="#94a3b8" font-size="8">Known blocker / constraint</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards: the three paths -->
+    <div class="cards">
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>Path A — Cleanest (blocked)</h3>
+        </div>
+        <ul>
+          <li>• Rebuild Hostinger container with <code>--device=/dev/net/tun --cap-add=NET_ADMIN</code> + iptables in image</li>
+          <li>• Switch <code>tailscaled</code> from userspace to kernel mode</li>
+          <li>• Direct TCP from VPS → mini over tailnet works</li>
+          <li>• Tunnel script already staged — flips one flag and runs</li>
+          <li>• <span style="color:#fb7185">BLOCKED:</span> Hostinger containerd blocks device passthrough; no /dev/net/tun, no iptables</li>
+          <li>• Time to green: depends on Hostinger (days)</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot" style="background:#a78bfa"></div>
+          <h3>Path B — Sidecar (medium)</h3>
+        </div>
+        <ul>
+          <li>• Spin up a second container with /dev/net/tun, run Tailscale kernel-mode there</li>
+          <li>• Share the tailnet socket via a volume mount</li>
+          <li>• VPS gets the kernel-mode Tailscale benefits without rebuilding the main container</li>
+          <li>• <span style="color:#fb7185">BLOCKED:</span> Hostinger would need to allow multi-container projects (depends on plan)</li>
+          <li>• Time to green: hours if allowed, never if not</li>
+        </ul>
+      </div>
+
+      <div class="card recommended">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Path C — Laptop ProxyJump (today)</h3>
+        </div>
+        <ul>
+          <li>• VPS opens SSH to laptop with <code>-J tylar@100.93.33.88</code> as the jump</li>
+          <li>• Laptop relays to mini over tailnet (laptop already has kernel-mode and works fine)</li>
+          <li>• Tunnel terminates at VPS's localhost:3111 same as Path A</li>
+          <li>• <span style="color:#fbbf24">Trade-off:</span> brittle — needs laptop online. Reconnects handle brief drops</li>
+          <li>• Time to green: 30 min from your "go"</li>
+        </ul>
+      </div>
+
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>Why Path A is blocked (root cause)</h3>
+        </div>
+        <ul>
+          <li>• Hostinger containerd policy: <code>docker-default</code> seccomp profile enforces deny-by-default device access</li>
+          <li>• <code>mknod /dev/net/tun c 10 200</code> succeeds (root has CAP_MKNOD)</li>
+          <li>• But <code>open(/dev/net/tun, ...)</code> returns EPERM — cgroup device whitelist excludes char-major-10-200</li>
+          <li>• <code>iptables</code> not installed in image — needed for kernel-mode Tailscale NAT/firewall management</li>
+          <li>• Even with <code>CAP_NET_ADMIN</code> granted, container cannot bypass cgroup device policy</li>
+          <li>• Hostinger would need to grant device passthrough at the orchestrator level — policy change, not config change</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>What works today (no tunnel needed)</h3>
+        </div>
+        <ul>
+          <li>• <code>tailscale ping</code> to any peer — control plane works via DERP</li>
+          <li>• Outbound HTTPS to login.tailscale.com, github.com, controlplane.tailscale.com</li>
+          <li>• All Hermes app functions (Claude Code, sessions, skills, cron)</li>
+          <li>• TinyFish Search + Fetch (free tier, working today)</li>
+          <li>• Playwright local browser harness</li>
+          <li>• fzf, general shell tooling</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>What stays blocked until tunnel</h3>
+        </div>
+        <ul>
+          <li>• <code>AGENTMEMORY_URL=http://localhost:3111</code> from VPS — daemon unreachable</li>
+          <li>• <code>@agentmemory/agentmemory</code> on VPS — install script fails cleanly, waiting on tunnel</li>
+          <li>• Cross-machine memory continuity (your stated core goal)</li>
+          <li>• Any direct TCP service to the mini (only SSH via tailnet would work, and only via laptop relay)</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      Ras's Hermes Agent setup · Tailscale path decision · 2026-07-18
+    </p>
+  </div>
+</body>
+</html>
