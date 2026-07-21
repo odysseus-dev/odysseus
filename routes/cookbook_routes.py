@@ -24,6 +24,7 @@ from core.middleware import require_admin
 from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import (
     IS_WINDOWS,
+    posix_remote_shell_cmd,
     detached_popen_kwargs,
     find_bash,
     kill_process_tree,
@@ -212,7 +213,12 @@ async def _remote_binary_available(
     if windows:
         check = f'powershell -NoProfile -Command "if (Get-Command {binary} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 127 }}"'
     else:
-        check = f'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; command -v {shlex.quote(binary)} >/dev/null 2>&1'
+        # Wrapped in `sh -c` so the probe survives non-POSIX remote login
+        # shells (fish rejects the PATH= assignment and would report every
+        # binary as missing).
+        check = posix_remote_shell_cmd(
+            f'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; command -v {shlex.quote(binary)} >/dev/null 2>&1'
+        )
     try:
         proc = await asyncio.create_subprocess_exec(
             "ssh",
@@ -247,7 +253,11 @@ def _remote_tmux_command(*args: str) -> str:
         'if [ -z "$ODYSSEUS_TMUX" ]; then echo "tmux not found" >&2; exit 127; fi; '
     )
     quoted = " ".join(shlex.quote(str(arg)) for arg in args)
-    return f'{_remote_posix_path_prefix()}{tmux}"$ODYSSEUS_TMUX" {quoted}'
+    # sh -c wrapper: the remote login shell may be fish/csh, which cannot
+    # parse the PATH=/ODYSSEUS_TMUX= assignments or `if ...; then`.
+    return posix_remote_shell_cmd(
+        f'{_remote_posix_path_prefix()}{tmux}"$ODYSSEUS_TMUX" {quoted}'
+    )
 
 
 def _remote_tmux_launch_command(session_id: str, runner: str) -> str:
@@ -263,7 +273,9 @@ def _remote_tmux_launch_command(session_id: str, runner: str) -> str:
     sid = shlex.quote(str(session_id))
     runner_q = shlex.quote(str(runner))
     runner_exec = shlex.quote(f"./{runner}")
-    return (
+    # sh -c wrapper: see _remote_tmux_command — required for non-POSIX
+    # remote login shells (fish/csh).
+    return posix_remote_shell_cmd(
         f'{_remote_posix_path_prefix()}{tmux}'
         f'chmod +x {runner_q} && '
         f'"$ODYSSEUS_TMUX" set-option -g history-limit 100000 2>/dev/null; '
@@ -2661,7 +2673,7 @@ def setup_cookbook_routes() -> APIRouter:
                 platform = "windows"
             else:
                 # Check for Termux
-                detect_cmd2 = f"ssh {pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
+                detect_cmd2 = f"ssh {pf}{host} {shlex.quote(posix_remote_shell_cmd('test -d /data/data/com.termux && echo termux || echo linux'))}"
                 proc2 = await asyncio.create_subprocess_shell(
                     detect_cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
@@ -2689,7 +2701,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            cmd = f"ssh {pf}{host} {shlex.quote(posix_remote_shell_cmd(setup_script))}"
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
@@ -2711,7 +2723,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            cmd = f"ssh {pf}{host} {shlex.quote(posix_remote_shell_cmd(setup_script))}"
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -2755,13 +2767,11 @@ def setup_cookbook_routes() -> APIRouter:
         """Run a small GPU probe shell command locally or over SSH."""
         if host:
             pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            quoted_cmd = shlex.quote(cmd_text)
-            remote_cmd = (
-                f"if command -v sh >/dev/null 2>&1; then sh -lc {quoted_cmd}; "
-                f"elif command -v bash >/dev/null 2>&1; then bash -lc {quoted_cmd}; "
-                f"elif command -v zsh >/dev/null 2>&1; then zsh -lc {quoted_cmd}; "
-                "else echo 'No POSIX shell found for GPU probe' >&2; exit 127; fi"
-            )
+            # `sh -lc '<cmd>'` is a simple command every remote login shell
+            # (bash/zsh/fish/csh) parses identically. The previous
+            # if/elif shell-fallback chain was itself POSIX-only syntax, so
+            # it died on fish before reaching any of its fallbacks.
+            remote_cmd = "sh -lc " + shlex.quote(cmd_text)
             cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(remote_cmd)}"
             proc = await asyncio.create_subprocess_shell(
                 cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE

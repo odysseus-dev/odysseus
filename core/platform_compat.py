@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import ntpath
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -357,6 +358,20 @@ def get_wsl_windows_user_profile() -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def posix_remote_shell_cmd(cmd: str) -> str:
+    """Wrap a POSIX-sh snippet for execution on a remote host over ssh.
+
+    sshd runs the remote command line through the target user's login shell.
+    When that shell is not POSIX — fish rejects `VAR=value` assignments,
+    `export`, and `if ...; then`; `set -e` even means something else there —
+    raw snippets fail (or worse, silently do the wrong thing) before the
+    first real command runs. `sh -c '<snippet>'` is a simple command that
+    every login shell parses identically, so the snippet always executes
+    under a POSIX shell regardless of the remote user's shell choice.
+    """
+    return "sh -c " + shlex.quote(cmd)
 
 
 def _ssh_exec_argv(

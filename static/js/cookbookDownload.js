@@ -580,10 +580,11 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       const _zh = zombieCandidate.remoteHost || '';
       const _zPort = (_serverByVal?.(zombieCandidate.remoteServerKey || zombieCandidate.payload?.remote_server_key || _zh)
         || (_envState.servers || []).find(s => s.host === _zh) || {}).port;
-      const _sshPf = _zh ? `ssh ${_zPort && _zPort !== '22' ? `-p ${_zPort} ` : ''}${_zh} '` : '';
-      const _sshSf = _zh ? `'` : '';
       const _probePrefix = _zh ? 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ' : '';
-      const _probeCmd = `${_sshPf}${_probePrefix}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
+      const _probeInner = `${_probePrefix}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null`;
+      // _sshCmd wraps in remote `sh -c` so the PATH= prefix survives
+      // non-POSIX remote login shells (fish/csh).
+      const _probeCmd = _zh ? _sshCmd(_zh, _probeInner, _zPort) : _probeInner;
       const _r = await fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

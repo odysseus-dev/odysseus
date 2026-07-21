@@ -289,10 +289,16 @@ function _buildServerOpts(excludeLocal = false) {
   return html;
 }
 
-/** Wrap a command in SSH for a remote host, with proper single-quote escaping. */
+/** Wrap a command in SSH for a remote host, with proper single-quote escaping.
+ * The command is forced through remote `sh -c`: sshd hands the command line
+ * to the target user's login shell, and fish/csh cannot parse POSIX
+ * constructs like env-var assignments or `if …; then`. Two quoting layers:
+ * the outer one is consumed by the local shell running the ssh command, the
+ * inner one reaches the remote so sh gets the snippet as one argument. */
 export function _sshCmd(host, cmd, port) {
   const portFlag = port && port !== '22' ? `-p ${port} ` : '';
-  return `ssh ${portFlag}${host} '${cmd.replace(/'/g, "'\\''")}'`;
+  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+  return `ssh ${portFlag}${host} ${q(`sh -c ${q(cmd)}`)}`;
 }
 
 /** Get SSH port for a given host (or task object) */

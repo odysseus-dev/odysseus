@@ -14,7 +14,7 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
-from core.platform_compat import IS_APPLE_SILICON, which_tool
+from core.platform_compat import IS_APPLE_SILICON, posix_remote_shell_cmd, which_tool
 from core.middleware import INTERNAL_TOOL_USER
 from src.host_docker_access import (
     HOST_DOCKER_ACCESS_HINT,
@@ -1273,7 +1273,9 @@ def setup_shell_routes() -> APIRouter:
                 # the remote; quoting it breaks ~/venv activation.
                 src = _venv_activate_prefix(venv)
                 inner = f"{src}python3 -c {shlex.quote(py)}"
-                argv = _ssh_base_argv(host, ssh_port) + [inner]
+                # sh -c: the `. …/bin/activate && ` prefix is POSIX-only and
+                # the remote login shell may be fish/csh.
+                argv = _ssh_base_argv(host, ssh_port) + [posix_remote_shell_cmd(inner)]
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
                     stdout=asyncio.subprocess.PIPE,
@@ -1304,7 +1306,8 @@ def setup_shell_routes() -> APIRouter:
                         '$HOME/llama.cpp/build/bin:$HOME/llama.cpp/build-vulkan/bin:$PATH"; '
                         "command -v llama-server 2>/dev/null || true"
                     )
-                    argv = _ssh_base_argv(host, ssh_port) + [inner]
+                    # sh -c: `export PATH=…` is not valid in fish.
+                    argv = _ssh_base_argv(host, ssh_port) + [posix_remote_shell_cmd(inner)]
                     proc = await asyncio.create_subprocess_exec(
                         *argv,
                         stdout=asyncio.subprocess.PIPE,
@@ -1702,7 +1705,11 @@ def setup_shell_routes() -> APIRouter:
         )
         try:
             if host:
-                argv = _ssh_base_argv(host, ssh_port) + [script]
+                # sh -c wrapper: the script is POSIX sh (`set -e`, BREW=…
+                # assignments, if/then). sshd hands the raw command line to
+                # the remote user's login shell, so a fish/csh login shell
+                # dies on it before the first real command runs.
+                argv = _ssh_base_argv(host, ssh_port) + [posix_remote_shell_cmd(script)]
             else:
                 argv = ["bash", "-lc", script]
         except ValueError as e:

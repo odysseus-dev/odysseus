@@ -16,6 +16,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from core.platform_compat import posix_remote_shell_cmd
 from routes._validators import validate_remote_host, validate_ssh_port
 
 from src.tools._common import _parse_tool_args
@@ -885,9 +886,11 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
     )
     if remote:
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
+        # sh -c: `if …; then …; fi` is POSIX-only and the remote login
+        # shell may be fish/csh.
         cmd = (
             f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
-            f"{_pf}{shlex.quote(remote)} {shlex.quote(inner)}"
+            f"{_pf}{shlex.quote(remote)} {shlex.quote(posix_remote_shell_cmd(inner))}"
         )
         host_label = remote
     else:

@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core.middleware import require_admin
+from core.platform_compat import posix_remote_shell_cmd
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
@@ -621,7 +622,9 @@ def setup_codex_routes(
         )
         if host:
             import shlex
-            cmd = f"ssh {port_flag}{host} {shlex.quote(inner)}"
+            # sh -c: `if …; then …; fi` is POSIX-only and the remote login
+            # shell may be fish/csh.
+            cmd = f"ssh {port_flag}{host} {shlex.quote(posix_remote_shell_cmd(inner))}"
         else:
             cmd = inner
         result = await _run_shell(cmd, timeout=15)

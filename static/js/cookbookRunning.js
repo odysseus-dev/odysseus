@@ -986,13 +986,23 @@ function _remoteTmuxPrefix() {
   return 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ';
 }
 
+// Wrap a POSIX snippet for a remote host: sshd runs the command line via the
+// target user's login shell, and fish/csh cannot parse PATH= assignments or
+// `if …; then`. `sh -c '<snippet>'` is a simple command every shell accepts.
+// Double-quoted on purpose: the outer layer is consumed by the LOCAL shell
+// (/api/shell/exec runs the ssh command through bash), the inner layer
+// arrives at the remote so sh gets the snippet as one argument.
+function _shWrap(cmd) {
+  return _shQuote(`sh -c ${_shQuote(cmd)}`);
+}
+
 export function _tmuxCmd(task, tmuxArgs) {
   if (_isWindows(task)) {
     return _winSessionCmd(task, tmuxArgs);
   }
   const host = _taskRemoteHost(task);
   if (host) {
-    return `ssh ${_sshPrefix(_getPort(task))}${host} '${_remoteTmuxPrefix()}tmux ${tmuxArgs}' 2>/dev/null`;
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shWrap(`${_remoteTmuxPrefix()}tmux ${tmuxArgs}`)} 2>/dev/null`;
   }
   return `tmux ${tmuxArgs} 2>/dev/null`;
 }
@@ -1025,7 +1035,7 @@ function _winSessionCmd(task, tmuxArgs) {
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
     return _winPowerShellCmd(task, ps);
   }
-  return host ? `ssh ${pf}${host} '${_remoteTmuxPrefix()}tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
+  return host ? `ssh ${pf}${host} ${_shWrap(`${_remoteTmuxPrefix()}tmux ${tmuxArgs}`)} 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
 function _winPowerShellCmd(task, ps) {
@@ -1052,7 +1062,7 @@ export function _tmuxGracefulKill(task) {
   }
   const host = _taskRemoteHost(task);
   if (host) {
-    return `ssh ${_sshPrefix(_getPort(task))}${host} '${_remoteTmuxPrefix()}tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shWrap(`${_remoteTmuxPrefix()}tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`)}`;
   }
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
 }
@@ -1079,7 +1089,7 @@ export function _tmuxForceKill(task) {
     `tmux kill-session -t ${sid} 2>/dev/null`;
   const host = _taskRemoteHost(task);
   if (host) {
-    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(_remoteTmuxPrefix() + inner)}`;
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shWrap(_remoteTmuxPrefix() + inner)}`;
   }
   return inner;
 }
@@ -1096,7 +1106,7 @@ export function _tmuxIsAliveCheck(task) {
   const inner = `if tmux has-session -t ${sid} 2>/dev/null; then echo ALIVE; else echo DEAD; fi`;
   const host = _taskRemoteHost(task);
   if (host) {
-    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(_remoteTmuxPrefix() + inner)}`;
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shWrap(_remoteTmuxPrefix() + inner)}`;
   }
   return inner;
 }
