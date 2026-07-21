@@ -24,6 +24,9 @@ from core.middleware import require_admin
 from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import (
     IS_WINDOWS,
+    cookbook_ssh_dir,
+    cookbook_ssh_identity_flags,
+    cookbook_ssh_identity_opts,
     detached_popen_kwargs,
     find_bash,
     kill_process_tree,
@@ -216,6 +219,7 @@ async def _remote_binary_available(
     try:
         proc = await asyncio.create_subprocess_exec(
             "ssh",
+            *cookbook_ssh_identity_opts(),
             "-o",
             "ConnectTimeout=6",
             "-o",
@@ -746,14 +750,9 @@ def setup_cookbook_routes() -> APIRouter:
         return shlex.join(env_parts + body)
 
     def _cookbook_ssh_dir() -> Path:
-        # The Docker image keeps cookbook keys under /app/.ssh; that path only
-        # exists inside the container. On Windows (and any non-container host)
-        # fall back to the user profile's ~/.ssh, which OpenSSH on Win10+ uses.
-        if not IS_WINDOWS:
-            app_ssh = Path("/app/.ssh")
-            if Path("/app").exists():
-                return app_ssh
-        return Path.home() / ".ssh"
+        # Single source of truth in core.platform_compat so key generation and
+        # the ssh/scp identity flags can never disagree about where keys live.
+        return cookbook_ssh_dir()
 
     def _cookbook_ssh_key_path() -> Path:
         return _cookbook_ssh_dir() / "id_ed25519"
@@ -1169,8 +1168,8 @@ def setup_cookbook_routes() -> APIRouter:
                 f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
             )
             setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
+                f"scp -O {cookbook_ssh_identity_flags()}{_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                f'ssh {cookbook_ssh_identity_flags()}{_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
             )
 
         elif remote:
@@ -1269,8 +1268,8 @@ def setup_cookbook_routes() -> APIRouter:
             _pf = f"-P {_port} " if _port and _port != "22" else ""
             _spf = f"-p {_port} " if _port and _port != "22" else ""
             setup_cmd = (
-                f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f"ssh {_spf}{remote} {shlex.quote(_remote_tmux_launch_command(session_id, remote_runner))}"
+                f"scp -O {cookbook_ssh_identity_flags()}{_pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                f"ssh {cookbook_ssh_identity_flags()}{_spf}{remote} {shlex.quote(_remote_tmux_launch_command(session_id, remote_runner))}"
             )
         else:
             # Local: run hf download in the background (tmux on POSIX, a detached
@@ -1372,9 +1371,9 @@ def setup_cookbook_routes() -> APIRouter:
                 _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
                 if platform == "windows":
                     # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                    cmd = f'ssh {_ssh_opts}{_pf}{host} "python -" < \'{scan_py}\''
+                    cmd = f'ssh {cookbook_ssh_identity_flags()}{_ssh_opts}{_pf}{host} "python -" < \'{scan_py}\''
                 else:
-                    cmd = f"ssh {_ssh_opts}{_pf}{host} 'python3 -' < '{scan_py}'"
+                    cmd = f"ssh {cookbook_ssh_identity_flags()}{_ssh_opts}{_pf}{host} 'python3 -' < '{scan_py}'"
                 proc = await asyncio.create_subprocess_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -1521,7 +1520,7 @@ def setup_cookbook_routes() -> APIRouter:
         if remote:
             # Probe over SSH. Bash's /dev/tcp gives a portable "is anything
             # listening" check without requiring ss/netstat/nmap.
-            ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
+            ssh_base = ["ssh", *cookbook_ssh_identity_opts(), "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if ssh_port and str(ssh_port) != "22":
                 try:
                     ssh_port = validate_ssh_port(ssh_port)
@@ -1599,7 +1598,7 @@ def setup_cookbook_routes() -> APIRouter:
         if local_win:
             return
         if remote:
-            ssh_args = ["ssh"]
+            ssh_args = ["ssh", *cookbook_ssh_identity_opts()]
             if ssh_port and ssh_port != "22":
                 ssh_args.extend(["-p", str(ssh_port)])
             capture_cmd = ssh_args + [remote, _remote_tmux_command("capture-pane", "-t", session_id, "-p", "-S", "-2000")]
@@ -2047,8 +2046,8 @@ def setup_cookbook_routes() -> APIRouter:
                 f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
             )
             setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
+                f"scp -O {cookbook_ssh_identity_flags()}{_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                f'ssh {cookbook_ssh_identity_flags()}{_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
             )
         else:
             # ── Linux/Termux: bash + tmux (existing flow) ──
@@ -2549,7 +2548,7 @@ def setup_cookbook_routes() -> APIRouter:
                     from core.constants import BASE_DIR
                     diff_script = Path(BASE_DIR) / "scripts" / "diffusion_server.py"
                     if diff_script.exists():
-                        scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
+                        scp_extras = f"scp -O {cookbook_ssh_identity_flags()}{_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
                         runner_path.write_text(
                             runner_path.read_text(encoding="utf-8").replace(
                                 "scripts/diffusion_server.py", ".diffusion_server.py"
@@ -2558,8 +2557,8 @@ def setup_cookbook_routes() -> APIRouter:
                         )
                 setup_cmd = (
                     f"{scp_extras}"
-                    f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                    f"ssh {_pf}{remote} {shlex.quote(_remote_tmux_launch_command(session_id, remote_runner))}"
+                    f"scp -O {cookbook_ssh_identity_flags()}{_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                    f"ssh {cookbook_ssh_identity_flags()}{_pf}{remote} {shlex.quote(_remote_tmux_launch_command(session_id, remote_runner))}"
                 )
             else:
                 setup_cmd = f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
@@ -2649,7 +2648,7 @@ def setup_cookbook_routes() -> APIRouter:
         pf = f"-p {port} " if port and port != "22" else ""
 
         # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
-        detect_cmd = f'ssh {pf}{host} "echo %OS%"'
+        detect_cmd = f'ssh {cookbook_ssh_identity_flags()}{pf}{host} "echo %OS%"'
         platform = "linux"
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -2661,7 +2660,7 @@ def setup_cookbook_routes() -> APIRouter:
                 platform = "windows"
             else:
                 # Check for Termux
-                detect_cmd2 = f"ssh {pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
+                detect_cmd2 = f"ssh {cookbook_ssh_identity_flags()}{pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
                 proc2 = await asyncio.create_subprocess_shell(
                     detect_cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
@@ -2681,7 +2680,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "python -c \\\"from huggingface_hub import snapshot_download; print('OK')\\\""
                 '"'
             )
-            cmd = f'ssh {pf}{host} {setup_script}'
+            cmd = f'ssh {cookbook_ssh_identity_flags()}{pf}{host} {setup_script}'
         elif platform == "termux":
             setup_script = (
                 "pkg install -y python tmux 2>/dev/null; "
@@ -2689,7 +2688,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            cmd = f"ssh {cookbook_ssh_identity_flags()}{pf}{host} '{setup_script}'"
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
@@ -2711,7 +2710,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            cmd = f"ssh {cookbook_ssh_identity_flags()}{pf}{host} '{setup_script}'"
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -2732,7 +2731,7 @@ def setup_cookbook_routes() -> APIRouter:
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
             pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
+            cmd = f"ssh {cookbook_ssh_identity_flags()}-o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
             proc = await asyncio.create_subprocess_shell(
                 cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
@@ -2762,7 +2761,7 @@ def setup_cookbook_routes() -> APIRouter:
                 f"elif command -v zsh >/dev/null 2>&1; then zsh -lc {quoted_cmd}; "
                 "else echo 'No POSIX shell found for GPU probe' >&2; exit 127; fi"
             )
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(remote_cmd)}"
+            cmd = f"ssh {cookbook_ssh_identity_flags()}-o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(remote_cmd)}"
             proc = await asyncio.create_subprocess_shell(
                 cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
@@ -3136,7 +3135,7 @@ def setup_cookbook_routes() -> APIRouter:
         try:
             if host:
                 pf = f"-p {req.ssh_port} " if req.ssh_port and req.ssh_port != "22" else ""
-                cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{kill_cmd}'"
+                cmd = f"ssh {cookbook_ssh_identity_flags()}-o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{kill_cmd}'"
                 proc = await asyncio.create_subprocess_shell(
                     cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
@@ -3510,7 +3509,7 @@ def setup_cookbook_routes() -> APIRouter:
             except HTTPException:
                 continue
             sport = str(srv.get("port") or "").strip()
-            ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
+            ssh_base = ["ssh", *cookbook_ssh_identity_opts(), "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if sport and sport != "22":
                 try:
                     sport = validate_ssh_port(sport)
@@ -4067,7 +4066,7 @@ def setup_cookbook_routes() -> APIRouter:
             cmd = ["python3", "-c", HF_CACHE_COMPLETE_PROBE, repo_id, cache_root or ""]
             try:
                 if remote_host:
-                    ssh_base = ["ssh"]
+                    ssh_base = ["ssh", *cookbook_ssh_identity_opts()]
                     if ssh_port and ssh_port != "22":
                         ssh_base.extend(["-p", str(ssh_port)])
                     shell_cmd = " ".join(shlex.quote(x) for x in cmd)
@@ -4090,7 +4089,7 @@ def setup_cookbook_routes() -> APIRouter:
             cmd = ["python3", "-c", HF_CACHE_INCOMPLETE_PROBE, repo_id, cache_root or ""]
             try:
                 if remote_host:
-                    ssh_base = ["ssh"]
+                    ssh_base = ["ssh", *cookbook_ssh_identity_opts()]
                     if ssh_port and ssh_port != "22":
                         ssh_base.extend(["-p", str(ssh_port)])
                     shell_cmd = " ".join(shlex.quote(x) for x in cmd)
@@ -4174,7 +4173,7 @@ def setup_cookbook_routes() -> APIRouter:
             if task_platform == "windows" and remote:
                 # Windows: check PID file + Get-Process, read log tail
                 sd = "$env:TEMP\\odysseus-sessions"
-                ssh_base = ["ssh"]
+                ssh_base = ["ssh", *cookbook_ssh_identity_opts()]
                 if _tport and _tport != "22":
                     ssh_base.extend(["-p", str(_tport)])
                 check_cmd = ssh_base + [
@@ -4191,7 +4190,7 @@ def setup_cookbook_routes() -> APIRouter:
                     f"Get-Content \"{sd}\\{session_id}.log\" -Tail 10 -ErrorAction SilentlyContinue",
                 ]
             elif remote:
-                ssh_base = ["ssh"]
+                ssh_base = ["ssh", *cookbook_ssh_identity_opts()]
                 if _tport and _tport != "22":
                     ssh_base.extend(["-p", str(_tport)])
                 check_cmd = ssh_base + [remote, _remote_tmux_command("has-session", "-t", session_id)]

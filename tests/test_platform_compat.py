@@ -254,12 +254,52 @@ def test_run_wsl_windows_powershell_calls_subprocess_with_expected_argv(monkeypa
     assert captured["kwargs"]["timeout"] == 9
 
 
-def test_ssh_exec_argv_builds_default_command():
+def test_ssh_exec_argv_builds_default_command(monkeypatch):
+    monkeypatch.setattr(platform_compat, "cookbook_ssh_identity_opts", lambda: [])
     argv = platform_compat._ssh_exec_argv("alice@gpu-box", None, remote_cmd="echo ok")
     assert argv == ["ssh", "alice@gpu-box", "echo ok"]
 
 
-def test_ssh_exec_argv_includes_port_and_options():
+def test_ssh_exec_argv_includes_cookbook_identity(monkeypatch, tmp_path):
+    ssh_dir = tmp_path / "app-ssh"
+    ssh_dir.mkdir()
+    (ssh_dir / "id_ed25519").write_text("key")
+    monkeypatch.setattr(platform_compat, "cookbook_ssh_dir", lambda: ssh_dir)
+    argv = platform_compat._ssh_exec_argv("alice@gpu-box", None, remote_cmd="echo ok")
+    assert argv == [
+        "ssh",
+        "-i",
+        str(ssh_dir / "id_ed25519"),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"UserKnownHostsFile={ssh_dir / 'known_hosts'}",
+        "alice@gpu-box",
+        "echo ok",
+    ]
+
+
+def test_cookbook_ssh_identity_opts_empty_without_key_outside_container(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setattr(platform_compat, "cookbook_ssh_dir", lambda: home / ".ssh")
+    monkeypatch.setattr(platform_compat.Path, "home", staticmethod(lambda: home))
+    assert platform_compat.cookbook_ssh_identity_opts() == []
+
+
+def test_cookbook_ssh_identity_flags_are_shell_quoted(monkeypatch, tmp_path):
+    ssh_dir = tmp_path / "dir with space"
+    ssh_dir.mkdir()
+    (ssh_dir / "id_ed25519").write_text("key")
+    monkeypatch.setattr(platform_compat, "cookbook_ssh_dir", lambda: ssh_dir)
+    flags = platform_compat.cookbook_ssh_identity_flags()
+    assert flags.startswith("-i ")
+    assert flags.endswith(" ")
+    assert f"'{ssh_dir / 'id_ed25519'}'" in flags
+
+
+def test_ssh_exec_argv_includes_port_and_options(monkeypatch):
+    monkeypatch.setattr(platform_compat, "cookbook_ssh_identity_opts", lambda: [])
     argv = platform_compat._ssh_exec_argv(
         "alice@gpu-box",
         "2222",
@@ -281,6 +321,7 @@ def test_ssh_exec_argv_includes_port_and_options():
 
 
 def test_run_ssh_command_uses_built_argv(monkeypatch):
+    monkeypatch.setattr(platform_compat, "cookbook_ssh_identity_opts", lambda: [])
     captured = {}
 
     class _Result:

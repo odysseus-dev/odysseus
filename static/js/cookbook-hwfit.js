@@ -2231,7 +2231,11 @@ export function _hwfitInit() {
       '(grep -qxF "$KEY" ~/.ssh/authorized_keys || printf "%s\\n" "$KEY" >> ~/.ssh/authorized_keys)',
       'chmod 600 ~/.ssh/authorized_keys',
     ].join(' && ');
-    return `ssh -o StrictHostKeyChecking=accept-new ${pf}${host} ${_singleQuote(remote)}`;
+    // PubkeyAuthentication=no: this command exists to bootstrap the key via
+    // password auth, but an ssh-agent loaded with several unrelated keys
+    // burns through the server's MaxAuthTries before the password prompt
+    // ("Too many authentication failures"). Skip straight to password.
+    return `ssh -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no ${pf}${host} ${_singleQuote(remote)}`;
   }
 
   async function _fetchCookbookSshKey(generate = false) {

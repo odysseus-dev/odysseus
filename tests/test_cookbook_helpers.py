@@ -59,6 +59,9 @@ async def test_run_ssh_command_executes_with_stdin_and_returns_output(monkeypatc
         return _Proc()
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        "core.platform_compat.cookbook_ssh_identity_opts", lambda: []
+    )
 
     rc, out, err = await run_ssh_command_async(
         "alice@gpu-box",

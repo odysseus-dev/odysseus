@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import ntpath
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -359,6 +360,57 @@ def get_wsl_windows_user_profile() -> Optional[str]:
     return None
 
 
+def cookbook_ssh_dir() -> Path:
+    """Directory holding the Cookbook-managed SSH identity.
+
+    The Docker image keeps cookbook keys under /app/.ssh (a persisted bind
+    mount); that path only exists inside the container. On Windows (and any
+    non-container host) fall back to the user's ~/.ssh.
+    """
+    if not IS_WINDOWS and Path("/app").exists():
+        return Path("/app/.ssh")
+    return Path.home() / ".ssh"
+
+
+def cookbook_ssh_key_path() -> Path:
+    return cookbook_ssh_dir() / "id_ed25519"
+
+
+def cookbook_ssh_identity_opts() -> list[str]:
+    """Explicit identity flags for Cookbook ssh/scp invocations.
+
+    Cookbook must not rely on ssh's default $HOME/.ssh lookup: in the
+    container the runtime user's HOME (e.g. /root under PUID=0) is not /app,
+    so the key generated in /app/.ssh is never offered and ssh silently falls
+    back to password auth, which fails headless. IdentitiesOnly=yes still
+    honours ssh_config IdentityFile entries and the default on-disk key
+    files — it only stops unrelated agent-held keys from being offered first
+    and exhausting the server's MaxAuthTries.
+    """
+    opts: list[str] = []
+    ssh_dir = cookbook_ssh_dir()
+    key = ssh_dir / "id_ed25519"
+    if key.exists():
+        opts += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
+    if ssh_dir != Path.home() / ".ssh":
+        # Containerized: $HOME/.ssh is not the persisted cookbook dir, so ssh
+        # must also be pointed at the known_hosts file the app maintains
+        # (see _repair_cookbook_known_host) instead of the ephemeral default.
+        opts += ["-o", f"UserKnownHostsFile={ssh_dir / 'known_hosts'}"]
+    return opts
+
+
+def cookbook_ssh_identity_flags() -> str:
+    """cookbook_ssh_identity_opts as a shell fragment for string-built
+    ssh/scp commands. Non-empty results end with a trailing space so call
+    sites can interpolate `f"ssh {cookbook_ssh_identity_flags()}{pf}{host}"`.
+    """
+    opts = cookbook_ssh_identity_opts()
+    if not opts:
+        return ""
+    return " ".join(shlex.quote(o) for o in opts) + " "
+
+
 def _ssh_exec_argv(
     remote: str,
     ssh_port: str | None,
@@ -372,7 +424,7 @@ def _ssh_exec_argv(
     remote_host = remote_value.rsplit("@", 1)[-1]
     if not remote_value or remote_value.startswith("-") or not remote_host or remote_host.startswith("-"):
         raise ValueError("Invalid SSH remote host")
-    argv = ["ssh"]
+    argv = ["ssh", *cookbook_ssh_identity_opts()]
     if connect_timeout is not None:
         argv.extend(["-o", f"ConnectTimeout={int(connect_timeout)}"])
     if strict_host_key_checking is not None:

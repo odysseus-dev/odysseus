@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core.middleware import require_admin
+from core.platform_compat import cookbook_ssh_identity_flags
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
@@ -621,7 +622,7 @@ def setup_codex_routes(
         )
         if host:
             import shlex
-            cmd = f"ssh {port_flag}{host} {shlex.quote(inner)}"
+            cmd = f"ssh {cookbook_ssh_identity_flags()}{port_flag}{host} {shlex.quote(inner)}"
         else:
             cmd = inner
         result = await _run_shell(cmd, timeout=15)
@@ -683,7 +684,7 @@ def setup_codex_routes(
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
         host, port_flag = _ssh_prefix_for_task(task or {})
         if host:
-            cmd = f"ssh {port_flag}{host} \"tmux kill-session -t {session_id}\""
+            cmd = f"ssh {cookbook_ssh_identity_flags()}{port_flag}{host} \"tmux kill-session -t {session_id}\""
         else:
             cmd = f"tmux kill-session -t {session_id}"
         result = await _run_shell(cmd, timeout=10)
@@ -842,7 +843,7 @@ def setup_codex_routes(
         # Verify the tmux session exists on the target host before adopting.
         import shlex
         if host:
-            check = f"ssh {shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)}'"
+            check = f"ssh {cookbook_ssh_identity_flags()}{shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)}'"
         else:
             check = f"tmux has-session -t {shlex.quote(sess)}"
         chk = await _run_shell(check, timeout=8)

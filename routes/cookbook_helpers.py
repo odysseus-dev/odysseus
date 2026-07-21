@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from routes._validators import validate_remote_host, validate_ssh_port
-from core.platform_compat import _ssh_exec_argv
+from core.platform_compat import _ssh_exec_argv, cookbook_ssh_identity_flags
 
 logger = logging.getLogger(__name__)
 
@@ -1139,7 +1139,7 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
 def _ssh(host, cmd, port=None):
     """Build SSH command string with optional port."""
     pf = f"-p {port} " if port and port != "22" else ""
-    return f"ssh {pf}{host} '{cmd}'"
+    return f"ssh {cookbook_ssh_identity_flags()}{pf}{host} '{cmd}'"
 
 
 def _safe_env_prefix(ep: str | None) -> str | None:
@@ -1198,7 +1198,7 @@ def _safe_env_prefix(ep: str | None) -> str | None:
 def _ssh_ps(host, script_path, port=None):
     """Build SSH command to run a PowerShell script on a Windows remote."""
     pf = f"-p {port} " if port and port != "22" else ""
-    return f'ssh {pf}{host} "powershell -ExecutionPolicy Bypass -File {script_path}"'
+    return f'ssh {cookbook_ssh_identity_flags()}{pf}{host} "powershell -ExecutionPolicy Bypass -File {script_path}"'
 
 
 # Windows session dir — stored in user's temp on the remote

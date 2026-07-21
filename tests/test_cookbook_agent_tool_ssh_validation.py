@@ -103,6 +103,9 @@ async def test_stop_served_model_rejects_invalid_ssh_port_before_shell(monkeypat
 @pytest.mark.asyncio
 async def test_stop_served_model_uses_validated_remote_target(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
+    monkeypatch.setattr(
+        "src.tools.cookbook.cookbook_ssh_identity_flags", lambda: ""
+    )
 
     result = await tools.do_stop_served_model(
         json.dumps(

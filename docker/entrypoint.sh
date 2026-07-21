@@ -29,6 +29,22 @@ fi
 ODY_USER="$(getent passwd "$PUID" | cut -d: -f1)"
 [ -z "$ODY_USER" ] && ODY_USER=odysseus
 
+# Cookbook keeps its SSH identity in /app/.ssh (a persisted bind mount), but
+# ssh/scp resolve keys and known_hosts from $HOME/.ssh. When the runtime
+# user's home is not /app (e.g. PUID=0 → root → /root), every ssh invocation
+# silently finds no key and falls back to password auth, which fails
+# headless. Symlink $HOME/.ssh → /app/.ssh so both always agree. /root is
+# ephemeral, so this must run on every start.
+ODY_HOME="$(getent passwd "$PUID" | cut -d: -f6)"
+if [ -n "$ODY_HOME" ] && [ "$ODY_HOME" != "/app" ] && [ -d /app ]; then
+    mkdir -p /app/.ssh "$ODY_HOME"
+    if [ ! -e "$ODY_HOME/.ssh" ]; then
+        ln -s /app/.ssh "$ODY_HOME/.ssh"
+    elif [ ! -L "$ODY_HOME/.ssh" ]; then
+        echo "Warning: $ODY_HOME/.ssh exists and is not a symlink; Cookbook SSH keys live in /app/.ssh" >&2
+    fi
+fi
+
 # Docker-socket group plumbing for the explicit host-Docker overlay. When
 # opted in, the socket is owned by root:<host docker gid>. Add the app user
 # to that group and later call gosu by username so supplementary groups are

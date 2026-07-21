@@ -20,6 +20,7 @@ from pathlib import Path
 
 import httpx
 from core.constants import internal_api_base
+from core.platform_compat import cookbook_ssh_identity_flags
 from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ async def _stop_serve(session_id: str, remote_host: str = "", ssh_port: str = ""
     if remote_host:
         port_flag = f"-p {shlex.quote(str(ssh_port))} " if ssh_port and str(ssh_port) != "22" else ""
         cmd = (
-            f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+            f"ssh {cookbook_ssh_identity_flags()}-o ConnectTimeout=5 -o StrictHostKeyChecking=no "
             f"{port_flag}{shlex.quote(remote_host)} "
             f"'tmux kill-session -t {shlex.quote(session_id)}'"
         )
