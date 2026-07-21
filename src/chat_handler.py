@@ -29,6 +29,34 @@ from src.youtube_handler import (
 logger = logging.getLogger(__name__)
 
 
+def _sync_upload_vision_to_gallery(file_info: Dict[str, Any], owner: Optional[str], text: str) -> None:
+    file_hash = (file_info or {}).get("hash")
+    if not file_hash or not text:
+        return
+    try:
+        from core.database import GalleryImage, SessionLocal
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(
+                GalleryImage.file_hash == file_hash,
+                GalleryImage.is_active == True,  # noqa: E712
+            )
+            if owner:
+                q = q.filter(GalleryImage.owner == owner)
+            img = q.first()
+            if not img:
+                return
+            img.caption = text.strip()
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Failed to sync upload vision text to gallery: %s", e)
+
+
 class ChatHandler:
     """Handles chat operations for both streaming and non-streaming endpoints."""
 
@@ -163,6 +191,8 @@ class ChatHandler:
                         "name": fi.get("name") or fi.get("original_name") or fi["id"],
                         "mime": fi.get("mime", ""),
                         "size": fi.get("size", 0),
+                        "checksum_sha256": fi.get("checksum_sha256") or fi.get("hash"),
+                        "created_at": fi.get("created_at") or fi.get("uploaded_at"),
                         "width": fi.get("width"),
                         "height": fi.get("height"),
                     })
@@ -207,6 +237,7 @@ class ChatHandler:
                                     _vtext = _vf.read().strip()
                                 if _vtext:
                                     enhanced_message += f"\n[User-corrected caption / OCR for this image — treat as authoritative]:\n{_vtext}"
+                                    _sync_upload_vision_to_gallery(file_info, owner, _vtext)
                                     _m = meta_by_id.get(att_id)
                                     if _m is not None:
                                         _m["vision"] = _vtext
@@ -226,6 +257,7 @@ class ChatHandler:
                                     cached_desc = _vf.read().strip()
                                 if cached_desc and not cached_desc.startswith("["):
                                     vl_desc = cached_desc
+                                    _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
                             except Exception:
                                 vl_desc = None
                         if not vl_desc:
@@ -237,6 +269,7 @@ class ChatHandler:
                                     os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
                                     with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
+                                    _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
                                 except Exception:
                                     pass
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"

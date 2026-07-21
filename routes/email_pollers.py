@@ -29,7 +29,7 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from src.llm_core import llm_call_async
+from src.task_endpoint import resolve_task_candidates, task_llm_call_async
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
@@ -43,6 +43,46 @@ from routes.email_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Recovers a `[{"action": ...}, ...]` JSON array from raw LLM output when the
+# fenced-block strip leaves nothing usable. Runs on model output influenced by
+# untrusted email bodies, so it must not backtrack: the object content class is
+# `[^{}]` (brace-delimited, greedy) rather than the old `[^[\]]*?` lazy runs,
+# which exploded exponentially on inputs like `[{"action"},{` + `}},{{` * N
+# (CodeQL py/redos #198).
+_CAL_ACTION_ARRAY_RE = re.compile(
+    r'\[\s*\{[^{}]*"action"[^{}]*\}\s*(?:,\s*\{[^{}]*\}\s*)*\]',
+    re.DOTALL,
+)
+
+
+def _extract_json_array_from_text(text: str):
+    """Return the last valid JSON array embedded in model output, if any."""
+    if not text:
+        return None
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE).strip()
+    decoder = json.JSONDecoder()
+    try:
+        parsed = decoder.decode(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+    except Exception:
+        pass
+
+    # Models often explain themselves and finish with `[]` or `[{"action":...}]`.
+    # Scan every array opener and keep the last complete JSON array, rather than
+    # using a greedy regex that can swallow prose containing square brackets.
+    last = None
+    for idx, ch in enumerate(cleaned):
+        if ch != "[":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(cleaned[idx:])
+        except Exception:
+            continue
+        if isinstance(parsed, list):
+            last = parsed
+    return last
 
 
 def _owner_for_email_account(account_id: str | None) -> str:
@@ -77,6 +117,8 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
                                    do_tag: bool = False, do_spam: bool = False,
                                    do_calendar: bool = False,
                                    days_back: int = 1,
+                                   account_id: str | None = None,
+                                   max_process: int | None = None,
                                    progress_cb=None) -> str:
     """One iteration of the email scan. Temporarily flips settings flags
     so the existing background-loop logic runs exactly once for the requested ops."""
@@ -91,7 +133,12 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
     settings["email_auto_calendar"] = bool(do_calendar)
     _save_settings(settings)
     try:
-        return await _auto_summarize_pass(days_back=days_back, progress_cb=progress_cb)
+        return await _auto_summarize_pass(
+            days_back=days_back,
+            account_id=account_id,
+            max_process=max_process,
+            progress_cb=progress_cb,
+        )
     finally:
         s2 = _load_settings()
         for k, v in prev.items():
@@ -129,7 +176,7 @@ def _latest_inbox_fallback_uids(conn, reconnect):
         return [], reconnect()
 
 
-async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
     When account_id is None, iterates over every enabled account in
@@ -156,28 +203,41 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
             names = {}
         if len(ids) <= 1:
             # Single-account (or zero rows — fallback to legacy settings.json lookup)
-            return await _auto_summarize_pass_single(days_back=days_back, account_id=(ids[0] if ids else None), progress_cb=progress_cb)
+            return await _auto_summarize_pass_single(
+                days_back=days_back,
+                account_id=(ids[0] if ids else None),
+                max_process=max_process,
+                progress_cb=progress_cb,
+            )
         outs = []
         for idx, aid in enumerate(ids, start=1):
             try:
                 await _emit_progress(progress_cb, f"{names.get(aid, aid[:8])}: starting ({idx}/{len(ids)})")
-                result = await _auto_summarize_pass_single(days_back=days_back, account_id=aid, progress_cb=progress_cb)
+                result = await _auto_summarize_pass_single(
+                    days_back=days_back,
+                    account_id=aid,
+                    max_process=max_process,
+                    progress_cb=progress_cb,
+                )
                 outs.append(f"[{names.get(aid, aid[:8])}] {result}")
             except Exception as e:
                 logger.warning(f"auto-summarize pass failed for account {aid}: {e}")
                 outs.append(f"[{names.get(aid, aid[:8])}] error: {e}")
         return "\n".join(outs)
-    return await _auto_summarize_pass_single(days_back=days_back, account_id=account_id, progress_cb=progress_cb)
+    return await _auto_summarize_pass_single(
+        days_back=days_back,
+        account_id=account_id,
+        max_process=max_process,
+        progress_cb=progress_cb,
+    )
 
 
-async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan for ONE account.
     Reads current settings flags."""
     import asyncio
     import sqlite3 as _sql3
-    import requests as _req
-    from src.endpoint_resolver import resolve_endpoint
-    from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+    from src.llm_core import _uses_max_completion_tokens
 
     settings = _load_settings()
     auto_sum = settings.get("email_auto_summarize", False)
@@ -254,9 +314,15 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         ).fetchall()}
         if auto_tag or auto_spam:
             if account_owner:
-                _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags WHERE owner=?", (account_owner,)).fetchall()}
+                _tag_existing = {r[0] for r in _c.execute(
+                    "SELECT message_id FROM email_tags WHERE owner=? AND (account_id=? OR account_id='' OR account_id IS NULL)",
+                    (account_owner, account_id or ""),
+                ).fetchall()}
             else:
-                _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags WHERE owner='' OR owner IS NULL").fetchall()}
+                _tag_existing = {r[0] for r in _c.execute(
+                    "SELECT message_id FROM email_tags WHERE (owner='' OR owner IS NULL) AND (account_id=? OR account_id='' OR account_id IS NULL)",
+                    (account_id or "",),
+                ).fetchall()}
         else:
             _tag_existing = set()
         _cal_existing = {r[0] for r in _c.execute(
@@ -285,11 +351,10 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if auto_spam and not spam_folder:
             logger.warning("Auto-spam enabled but no Junk/Spam folder detected — will classify but not move")
 
-        url, model, headers = resolve_endpoint("utility", owner=account_owner)
-        if not url:
-            url, model, headers = resolve_endpoint("default", owner=account_owner)
-        if not url or not model:
+        task_candidates = resolve_task_candidates(owner=account_owner)
+        if not task_candidates:
             return "No model configured"
+        url, model, headers = task_candidates[0]
 
         writing_style = settings.get("email_writing_style", "")
         processed = 0
@@ -303,7 +368,14 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         _reply_failed = 0
         _detail_lines = []
         _current_folder = "INBOX"
-        _max_process = 5
+        # Calendar extraction is sequential and each row can involve a model
+        # call plus a calendar write. Keep the scheduled calendar-only pass
+        # below the 5-minute action budget instead of timing out mid-run.
+        _default_max_process = 3 if (auto_cal and not auto_sum and not auto_reply and not auto_tag and not auto_spam) else 5
+        try:
+            _max_process = max(1, int(max_process)) if max_process is not None else _default_max_process
+        except Exception:
+            _max_process = _default_max_process
         for _entry in uid_list:
             if processed >= _max_process:
                 break
@@ -395,48 +467,30 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     req_headers.update(headers)
 
                 if need_sum:
-                    tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-                    payload = {
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": "You are an email summarizer. Format: 1-3 short bullet points (use '- '). Cover: main point, action items, deadlines. If the email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR CONTENTS — pull out invoice totals, deadlines, key clauses, any concrete numbers/dates in PDFs/docs, and reflect them in the bullets. Be terse.\n\nOUTPUT FORMAT: Put ONLY the bullet points between these exact markers, each on its own line:\n<<<SUMMARY>>>\n- ...\n<<<END>>>\nAny reasoning or planning must come BEFORE <<<SUMMARY>>> (ideally inside <think>...</think>). Only the text between the markers is kept."},
-                            {"role": "user", "content": f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\n---\n\nSummarize the email. Output the bullets between <<<SUMMARY>>> and <<<END>>>."},
-                        ],
-                        tok_key: 16384,
-                        "temperature": 0.3,
-                        "stream": False,
-                    }
-                    # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
-                    if _restricts_temperature(model):
-                        payload.pop("temperature", None)
                     try:
-                        # Use to_thread so this sync HTTP call doesn't freeze
-                        # the entire event loop while the LLM thinks (240s).
-                        resp = await asyncio.to_thread(
-                            _req.post, url, json=payload, headers=req_headers, timeout=240
+                        summary = await task_llm_call_async(
+                            messages=[
+                                {"role": "system", "content": "You are an email summarizer. Format: 1-3 short bullet points (use '- '). Cover: main point, action items, deadlines. If the email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR CONTENTS — pull out invoice totals, deadlines, key clauses, any concrete numbers/dates in PDFs/docs, and reflect them in the bullets. Be terse.\n\nOUTPUT FORMAT: Put ONLY the bullet points between these exact markers, each on its own line:\n<<<SUMMARY>>>\n- ...\n<<<END>>>\nAny reasoning or planning must come BEFORE <<<SUMMARY>>> (ideally inside <think>...</think>). Only the text between the markers is kept."},
+                                {"role": "user", "content": f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\n---\n\nSummarize the email. Output the bullets between <<<SUMMARY>>> and <<<END>>>."},
+                            ],
+                            fallback_url=url, fallback_model=model, fallback_headers=headers,
+                            owner=account_owner or None,
+                            temperature=0.3, max_tokens=16384, timeout=240,
                         )
-                        if resp.ok:
-                            rdata = resp.json()
-                            m = (rdata.get("choices") or [{}])[0].get("message", {})
-                            summary = (m.get("content") or "").strip()
-                            summary = _extract_reply(summary)
-                            if not summary:
-                                rc = (m.get("reasoning_content") or "").strip()
-                                bullets = [ln.strip() for ln in rc.split("\n") if re.match(r"^[-•*]\s+|^\d+[.)]\s+", ln.strip())]
-                                summary = "\n".join(bullets) if bullets else ""
-                            if summary:
-                                _c = _sql3.connect(SCHEDULED_DB)
-                                _c.execute("""
-                                    INSERT OR REPLACE INTO email_summaries
-                                    (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
-                                _c.commit()
-                                _c.close()
-                                _sum_existing.add(message_id)
-                                _summaries_created += 1
-                                _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
-                                _detail_lines.append(f"summary · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
+                        summary = _extract_reply((summary or "").strip())
+                        if summary:
+                            _c = _sql3.connect(SCHEDULED_DB)
+                            _c.execute("""
+                                INSERT OR REPLACE INTO email_summaries
+                                (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
+                            _c.commit()
+                            _c.close()
+                            _sum_existing.add(message_id)
+                            _summaries_created += 1
+                            _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
+                            _detail_lines.append(f"summary · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
                     except Exception as e:
                         _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
                         _detail_lines.append(f"summary failed · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
@@ -457,14 +511,14 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     if context_snippets:
                         sys_prompt += "\n\nRELEVANT CONTEXT FROM PAST EMAILS AND CONTACTS:\n" + "\n\n---\n\n".join(context_snippets[:5])
                     try:
-                        reply = await llm_call_async(
-                            url=url, model=model,
+                        reply = await task_llm_call_async(
                             messages=[
                                 {"role": "system", "content": sys_prompt},
                                 {"role": "user", "content": f"Original email:\nFrom: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\nDraft a reply. Return only the reply body text."},
                             ],
-                            temperature=0.7, max_tokens=1024,
-                            headers=req_headers, timeout=90,
+                            fallback_url=url, fallback_model=model, fallback_headers=headers,
+                            owner=account_owner or None,
+                            temperature=0.7, max_tokens=1024, timeout=90,
                         )
                         reply = _apply_email_style_mechanics(_extract_reply(reply or ""))
                         if reply:
@@ -491,6 +545,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 # ── Calendar event extraction (independent of reply drafting) ──
                 if need_cal:
                     _cal_run_count = 0
+                    _cal_event_uids = []
+                    _cal_parse_ok = False
                     try:
                         # Pull a snapshot of upcoming events so the LLM can decide
                         # create vs update vs cancel based on what already exists.
@@ -499,8 +555,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         _existing_summary = get_upcoming_events(_acct_owner, horizon_days=60, limit=40)
                         existing_json = json.dumps(_existing_summary)
                         is_sent = _folder.lower().startswith("sent") or "sent" in _folder.lower()
-                        cal_extract = await llm_call_async(
-                            url=url, model=model,
+                        cal_extract = await task_llm_call_async(
                             messages=[
                                 {"role": "system", "content": (
                                     "You are a calendar assistant. The user receives emails AND sends replies "
@@ -551,21 +606,22 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     f"{body[:4000]}"
                                 )},
                             ],
-                            temperature=0.1, max_tokens=16384,
-                            headers=req_headers, timeout=180,
+                            fallback_url=url, fallback_model=model, fallback_headers=headers,
+                            owner=account_owner or None,
+                            temperature=0.1, max_tokens=16384, timeout=75,
                         )
                         _raw_original = cal_extract or ""
                         cal_extract = _strip_think(_raw_original)
                         cal_extract = re.sub(r"^```(?:json)?\s*|\s*```$", "", cal_extract, flags=re.MULTILINE).strip()
                         if not cal_extract and _raw_original:
-                            matches = list(re.finditer(r'\[\s*\{[^[\]]*?"action"[^[\]]*?\}\s*(?:,\s*\{[^[\]]*?\}\s*)*\]', _raw_original, re.DOTALL))
+                            matches = list(_CAL_ACTION_ARRAY_RE.finditer(_raw_original))
                             if matches:
                                 cal_extract = matches[-1].group()
                         logger.info(f"[cal-extract] uid={uid.decode() if isinstance(uid, bytes) else uid} folder={_folder} subj={subject[:50]!r} raw_len={len(cal_extract)} orig_len={len(_raw_original)} raw={cal_extract[:800]!r}")
-                        jm = re.search(r'\[.*\]', cal_extract, re.DOTALL)
-                        if jm:
+                        ops = _extract_json_array_from_text(cal_extract)
+                        if ops is not None:
                             try:
-                                ops = json.loads(jm.group())
+                                _cal_parse_ok = True
                                 logger.info(f"[cal-extract] parsed {len(ops)} op(s)")
                                 if isinstance(ops, list) and ops:
                                     from src.tool_implementations import do_manage_calendar
@@ -595,6 +651,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                             r = await do_manage_calendar(json.dumps(args), owner=_acct_owner)
                                             if r.get("exit_code", 0) == 0:
                                                 logger.info(f"[cal-extract] Updated event uid={cuid} → {op.get('title')} {op['date']}")
+                                                if cuid and cuid not in _cal_event_uids:
+                                                    _cal_event_uids.append(cuid)
                                                 _cal_run_count += 1
                                             else:
                                                 logger.warning(f"[cal-extract] update failed: {r.get('error')}")
@@ -675,28 +733,43 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                             r = await do_manage_calendar(cal_args, owner=_acct_owner)
                                             if r.get("exit_code", 0) == 0:
                                                 logger.info(f"[cal-extract] Created event: {op['title']} on {op['date']}")
+                                                _created_uid = (r.get("uid") or "").strip()
+                                                if _created_uid and _created_uid not in _cal_event_uids:
+                                                    _cal_event_uids.append(_created_uid)
                                                 _events_created += 1
                                                 _cal_run_count += 1
                                             else:
                                                 logger.warning(f"[cal-extract] create failed: {r.get('error')} args={cal_args[:200]}")
                             except Exception as je:
                                 logger.warning(f"[cal-extract] JSON parse failed: {je} on raw={cal_extract[:200]!r}")
+                        else:
+                            logger.warning(f"[cal-extract] no JSON array found on raw={cal_extract[:200]!r}")
                     except Exception as e:
                         logger.warning(f"[cal-extract] Meeting extraction LLM call failed for uid={uid}: {e}")
-                    # Record we processed this email so we don't re-LLM next run
-                    try:
-                        _cc = _sql3.connect(SCHEDULED_DB)
-                        _cc.execute(
-                            "INSERT OR REPLACE INTO email_calendar_extractions "
-                            "(message_id, owner, uid, events_created, created_at) VALUES (?, ?, ?, ?, ?)",
-                            (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid),
-                             _cal_run_count, datetime.utcnow().isoformat())
-                        )
-                        _cc.commit()
-                        _cc.close()
-                        _cal_existing.add(message_id)
-                    except Exception as ce:
-                        logger.debug(f"Could not cache calendar extraction: {ce}")
+                    else:
+                        # Record successfully parsed results so we don't re-LLM
+                        # no-op emails. Transient LLM failures are retried on
+                        # the next poll run.
+                        try:
+                            if _cal_parse_ok:
+                                _cc = _sql3.connect(SCHEDULED_DB)
+                                _cc.execute(
+                                    "INSERT OR REPLACE INTO email_calendar_extractions "
+                                    "(message_id, owner, uid, event_uids, events_created, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                                    (
+                                        message_id,
+                                        account_owner or "",
+                                        uid.decode() if isinstance(uid, bytes) else str(uid),
+                                        json.dumps(_cal_event_uids),
+                                        _cal_run_count,
+                                        datetime.utcnow().isoformat(),
+                                    ),
+                                )
+                                _cc.commit()
+                                _cc.close()
+                                _cal_existing.add(message_id)
+                        except Exception as ce:
+                            logger.debug(f"Could not cache calendar extraction: {ce}")
 
                 if need_urgent:
                     try:
@@ -728,9 +801,11 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             "temperature": 0,
                             tok_key: 200,
                         }
-                        urg_raw = await llm_call_async(
-                            url=url, model=model, messages=payload["messages"],
-                            temperature=0, max_tokens=200, headers=req_headers, timeout=60,
+                        urg_raw = await task_llm_call_async(
+                            messages=payload["messages"],
+                            fallback_url=url, fallback_model=model, fallback_headers=headers,
+                            owner=account_owner or None,
+                            temperature=0, max_tokens=200, timeout=60,
                         )
                         urg_raw = _strip_think(urg_raw or "")
                         urg_raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", urg_raw, flags=re.MULTILINE).strip()
@@ -831,8 +906,13 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         class_sys = (
                             "Classify the email. Return ONLY a JSON object, no prose, no markdown fences. "
                             "Schema: {\"tags\": [\"tag1\"], \"spam\": false, \"reason\": \"short\"}. "
-                            "Pick 1-2 tags from: work, personal, finance, bills, receipt, travel, "
-                            "newsletter, promo, notification, security, social, shopping, calendar.\n\n"
+                            "Pick 1-3 tags from: work, personal, urgent, action-needed, finance, bills, "
+                            "receipt, legal, travel, newsletter, promo, notification, security, social, "
+                            "shopping, calendar, support.\n\n"
+                            "Use work for professional/company/client/operations messages. "
+                            "Use personal for friends/family/private-life messages. "
+                            "Use urgent for real time-sensitive consequences. "
+                            "Use action-needed when the user likely needs to reply, pay, sign, book, or decide.\n\n"
                             "Set spam=true for ANY of:\n"
                             "- Phishing, scams, chain mail, deceptive offers\n"
                             "- Marketing/promotional blasts (\"special offer\", \"limited time\", discount codes)\n"
@@ -849,70 +929,55 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             "If it's a mass-mailed generic update with no personal CTA, mark spam=true even if from a legitimate service. "
                             "Reason should be 5-10 words."
                         )
-                        tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-                        payload = {
-                            "model": model,
-                            "messages": [
+                        raw_out = await task_llm_call_async(
+                            messages=[
                                 {"role": "system", "content": class_sys},
                                 {"role": "user", "content": f"From: {sender}\nSubject: {subject}\n\n{body[:4000]}"},
                             ],
-                            tok_key: 512,
-                            "temperature": 0.1,
-                            "stream": False,
-                        }
-                        # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
-                        if _restricts_temperature(model):
-                            payload.pop("temperature", None)
-                        # to_thread keeps the event loop responsive during the LLM call
-                        resp = await asyncio.to_thread(
-                            _req.post, url, json=payload, headers=req_headers, timeout=120
+                            fallback_url=url, fallback_model=model, fallback_headers=headers,
+                            owner=account_owner or None,
+                            temperature=0.1, max_tokens=512, timeout=120,
                         )
-                        if not resp.ok:
-                            logger.warning(f"Auto-classify {uid.decode() if isinstance(uid, bytes) else str(uid)} HTTP {resp.status_code}: {resp.text[:200]}")
-                        else:
-                            rdata = resp.json()
-                            m = (rdata.get("choices") or [{}])[0].get("message", {})
-                            raw_out = (m.get("content") or "").strip()
-                            raw_out = _strip_think(raw_out)
-                            raw_out = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_out, flags=re.MULTILINE).strip()
-                            jm = re.search(r'\{.*\}', raw_out, re.DOTALL)
-                            parsed = None
-                            if jm:
-                                try:
-                                    parsed = json.loads(jm.group(0))
-                                except Exception:
-                                    parsed = None
-                            if parsed is not None:
-                                _ALLOWED_TAGS = {"work","personal","finance","bills","receipt","travel",
-                                                 "newsletter","marketing","notification","security","social",
-                                                 "shopping","calendar"}
-                                raw_tags = parsed.get("tags") or []
-                                if isinstance(raw_tags, str):
-                                    raw_tags = [raw_tags]
-                                tags = [t.strip().lower().replace("_", "-") for t in raw_tags if isinstance(t, str)]
-                                tags = ["marketing" if t == "promo" else t for t in tags]
-                                tags = [t for t in tags if t in _ALLOWED_TAGS][:2]
-                                is_spam = bool(parsed.get("spam"))
-                                spam_reason = str(parsed.get("reason") or "")[:200]
+                        raw_out = _strip_think((raw_out or "").strip())
+                        raw_out = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_out, flags=re.MULTILINE).strip()
+                        jm = re.search(r'\{.*\}', raw_out, re.DOTALL)
+                        parsed = None
+                        if jm:
+                            try:
+                                parsed = json.loads(jm.group(0))
+                            except Exception:
+                                parsed = None
+                        if parsed is not None:
+                            _ALLOWED_TAGS = {"work","personal","urgent","action-needed","finance","bills",
+                                             "receipt","legal","travel","newsletter","marketing","notification",
+                                             "security","social","shopping","calendar","support"}
+                            raw_tags = parsed.get("tags") or []
+                            if isinstance(raw_tags, str):
+                                raw_tags = [raw_tags]
+                            tags = [t.strip().lower().replace("_", "-") for t in raw_tags if isinstance(t, str)]
+                            tags = ["marketing" if t == "promo" else t for t in tags]
+                            tags = [t for t in tags if t in _ALLOWED_TAGS][:3]
+                            is_spam = bool(parsed.get("spam"))
+                            spam_reason = str(parsed.get("reason") or "")[:200]
 
-                                moved_to = ""
-                                if is_spam and auto_spam and spam_folder:
-                                    if _imap_move(uid, spam_folder, account_id=account_id, owner=account_owner):
-                                        moved_to = spam_folder
-                                        logger.info(f"Auto-spam moved uid={uid.decode() if isinstance(uid, bytes) else str(uid)} to {spam_folder}: {spam_reason}")
+                            moved_to = ""
+                            if is_spam and auto_spam and spam_folder:
+                                if _imap_move(uid, spam_folder, account_id=account_id, owner=account_owner):
+                                    moved_to = spam_folder
+                                    logger.info(f"Auto-spam moved uid={uid.decode() if isinstance(uid, bytes) else str(uid)} to {spam_folder}: {spam_reason}")
 
-                                _c = _sql3.connect(SCHEDULED_DB)
-                                _c.execute("""
-                                    INSERT OR REPLACE INTO email_tags
-                                    (message_id, owner, uid, folder, subject, sender, tags, spam_verdict,
-                                     spam_reason, moved_to, model_used, created_at)
-                                    VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), subject, sender,
-                                      json.dumps(tags), 1 if is_spam else 0,
-                                      spam_reason, moved_to, model, datetime.utcnow().isoformat()))
-                                _c.commit()
-                                _c.close()
-                                _tag_existing.add(message_id)
+                            _c = _sql3.connect(SCHEDULED_DB)
+                            _c.execute("""
+                                INSERT OR REPLACE INTO email_tags
+                                (message_id, owner, account_id, uid, folder, subject, sender, tags, spam_verdict,
+                                 spam_reason, moved_to, model_used, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (message_id, account_owner or "", account_id or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender,
+                                  json.dumps(tags), 1 if is_spam else 0,
+                                  spam_reason, moved_to, model, datetime.utcnow().isoformat()))
+                            _c.commit()
+                            _c.close()
+                            _tag_existing.add(message_id)
                     except Exception as e:
                         logger.warning(f"Auto-classify {uid} failed: {e}")
 
@@ -1003,6 +1068,28 @@ def _scheduled_poll_once() -> dict:
         for r in rows:
             sid = r[0]
             try:
+                # Atomically claim this row before doing any work. Two
+                # pollers can race here (the in-process asyncio task and an
+                # externally cron-driven `odysseus-mail poll-scheduled`, or
+                # an admin running the CLI manually alongside the in-process
+                # one despite the ODYSSEUS_INPROCESS_POLLERS=0 guidance) -
+                # both can SELECT the same 'pending' row before either has
+                # updated its status. The UPDATE...WHERE status='pending' is
+                # the atomicity boundary: only the poller whose UPDATE
+                # actually changes a row (rowcount == 1) proceeds to send;
+                # a loser sees rowcount == 0 and skips it instead of sending
+                # a duplicate.
+                claim_conn = sqlite3.connect(SCHEDULED_DB)
+                claim_cur = claim_conn.execute(
+                    "UPDATE scheduled_emails SET status='sending' WHERE id=? AND status='pending'",
+                    (sid,),
+                )
+                claim_conn.commit()
+                claimed = claim_cur.rowcount == 1
+                claim_conn.close()
+                if not claimed:
+                    continue
+
                 attachments = json.loads(r[8] or "[]")
                 row_account_id = r[9] if len(r) > 9 else None
                 odysseus_kind = r[10] if len(r) > 10 else "scheduled"

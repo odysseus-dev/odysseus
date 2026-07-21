@@ -7,10 +7,9 @@ benefit.
 
 ## What runs, and why
 
-Most checks live in files under `.github/workflows/`. CodeQL is configured
-through GitHub's code scanning default setup, so it appears as a dynamic GitHub
-workflow instead of a checked-in workflow file. They run automatically; you do
-not start them.
+Most checks live in files under `.github/workflows/`. CodeQL uses the
+checked-in advanced configuration in `.github/workflows/codeql.yml`. They run
+automatically; you do not start them.
 
 | Check | What it protects against | Blocks a merge? |
 |---|---|---|
@@ -90,14 +89,9 @@ let the workflows run on one pull request first, then add them here.
 2. Turn on **Dependency graph** (usually on by default for public repos) -- this
    powers Dependency review and Dependabot.
 3. Turn on **Dependabot alerts** and **Dependabot security updates**.
-4. Under **Code scanning**, use **Set up -> Default** for CodeQL. GitHub then
-   runs CodeQL as a dynamic workflow without the fork-token limitations that
-   affect checked-in advanced workflows.
-
-   Do not also add a checked-in CodeQL workflow while default setup is enabled:
-   GitHub rejects advanced CodeQL uploads when default setup is active. If the
-   project later needs an advanced CodeQL workflow, disable default setup first
-   and keep only one CodeQL publishing path active.
+4. Under **Code scanning**, keep **Default setup** disabled. CodeQL is
+   configured by `.github/workflows/codeql.yml`; enabling default setup at the
+   same time causes GitHub to reject uploads from the checked-in workflow.
 
 ## Keeping it current
 

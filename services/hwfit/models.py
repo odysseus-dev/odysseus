@@ -12,7 +12,8 @@ QUANT_BPP = {
     "Q4_K_M": 0.58, "Q4_0": 0.58, "Q3_K_M": 0.48, "Q2_K": 0.37,
     "AWQ-4bit": 0.50, "AWQ-8bit": 1.0,
     "GPTQ-Int4": 0.50, "GPTQ-Int8": 1.0,
-    "mlx-4bit": 0.55, "mlx-8bit": 1.0, "mlx-6bit": 0.75,
+    "QAT-INT4": 0.50, "QAT-INT8": 1.0,
+    "mlx-3bit": 0.42, "mlx-4bit": 0.55, "mlx-5bit": 0.65, "mlx-6bit": 0.75, "mlx-8bit": 1.0,
     # DeepSeek-V4-style mixed: MoE experts in FP4 (bulk), attention + non-
     # expert dense in FP8, embeddings/LM head in BF16. By weight count the
     # experts dominate so the effective BPP sits closer to FP4 than FP8.
@@ -30,7 +31,8 @@ QUANT_SPEED_MULT = {
     "Q4_K_M": 1.15, "Q4_0": 1.15, "Q3_K_M": 1.25, "Q2_K": 1.35,
     "AWQ-4bit": 1.2, "AWQ-8bit": 0.85,
     "GPTQ-Int4": 1.2, "GPTQ-Int8": 0.85,
-    "mlx-4bit": 1.15, "mlx-8bit": 0.85, "mlx-6bit": 1.0,
+    "QAT-INT4": 1.15, "QAT-INT8": 0.85,
+    "mlx-3bit": 1.25, "mlx-4bit": 1.15, "mlx-5bit": 1.05, "mlx-6bit": 1.0, "mlx-8bit": 0.85,
     "FP4-MoE-Mixed": 1.10,  # slightly slower than pure FP4 because of mixed-dtype dispatch
     "FP8-Mixed": 0.85,
 }
@@ -47,7 +49,11 @@ QUANT_QUALITY_PENALTY = {
     # penalty so FP8 wins when both fit. AWQ-4bit stays heavier.
     "AWQ": -1.0, "AWQ-4bit": -4.0, "AWQ-8bit": -1.0,
     "GPTQ": -1.0, "GPTQ-Int4": -4.0, "GPTQ-Int8": -1.0,
-    "mlx-4bit": -4.0, "mlx-8bit": -0.5, "mlx-6bit": -1.5,
+    # Quantization-aware training recovers most of the int4 quality loss, so a
+    # QAT-INT4 build lands far closer to bf16 than a post-training Q4/INT4
+    # (Google reports near-bf16 quality). Penalize it lightly, not like Q4_K_M.
+    "QAT-INT4": -1.0, "QAT-INT8": 0.0,
+    "mlx-3bit": -8.0, "mlx-4bit": -4.0, "mlx-5bit": -2.5, "mlx-6bit": -1.5, "mlx-8bit": -0.5,
     # DeepSeek-V4 mixed: only MoE experts at FP4 (the rest is FP8/BF16),
     # so the realized quality is much closer to FP8 than to pure FP4 —
     # the activation-sensitive layers stay high-precision. ~0 penalty.
@@ -63,7 +69,8 @@ QUANT_BYTES_PER_PARAM = {
     "Q4_K_M": 0.5, "Q4_0": 0.5, "Q3_K_M": 0.375, "Q2_K": 0.25,
     "AWQ-4bit": 0.5, "AWQ-8bit": 1.0,
     "GPTQ-Int4": 0.5, "GPTQ-Int8": 1.0,
-    "mlx-4bit": 0.5, "mlx-8bit": 1.0, "mlx-6bit": 0.75,
+    "QAT-INT4": 0.5, "QAT-INT8": 1.0,
+    "mlx-3bit": 0.375, "mlx-4bit": 0.5, "mlx-5bit": 0.625, "mlx-6bit": 0.75, "mlx-8bit": 1.0,
     "FP4-MoE-Mixed": 0.55,
     "FP8-Mixed": 1.0,
 }
@@ -74,13 +81,17 @@ PREQUANTIZED_PREFIXES = (
     "AWQ-", "GPTQ-", "mlx-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
     "INT4", "INT8", "W4A16", "W8A8", "W8A16",
     "FP4-MoE-Mixed", "FP8-Mixed",
+    "QAT-",
 )
 
 
 def infer_quantization_from_name(name):
     n = (name or "").lower()
+    model_name = n.rsplit("/", 1)[-1]
     if "nvfp4" in n:
         return "NVFP4"
+    if re.search(r"(^|[-_/])bf16($|[-_/])", model_name):
+        return "BF16"
     if "mxfp4" in n:
         return "MXFP4"
     if re.search(r"(^|[-_/])nf4($|[-_/])", n):
@@ -98,8 +109,12 @@ def infer_quantization_from_name(name):
         return "AWQ-8bit" if is8 else "AWQ-4bit"
     if "gptq" in n:
         return "GPTQ-Int8" if is8 else "GPTQ-Int4"
-    if "mlx" in n:
-        if "6bit" in n:
+    if n.startswith("mlx-community/") or "mlx" in model_name:
+        if "3bit" in model_name:
+            return "mlx-3bit"
+        if "5bit" in model_name:
+            return "mlx-5bit"
+        if "6bit" in model_name:
             return "mlx-6bit"
         return "mlx-8bit" if is8 else "mlx-4bit"
     if "fp8" in n:
@@ -130,7 +145,7 @@ def is_prequantized(model):
         or re.search(r"(^|[-_/])fp8($|[-_/\s])", text) is not None
         or (not (model.get("is_gguf") or model.get("gguf_sources")) and re.search(r"(^|[-_/])(?:int)?8bit($|[-_/\s])", text) is not None)
         or any(x in text for x in ("awq", "gptq", "mlx"))
-        or any(q.startswith(p) for p in PREQUANTIZED_PREFIXES)
+        or any(isinstance(q, str) and q.startswith(p) for p in PREQUANTIZED_PREFIXES)
     )
 
 
@@ -140,7 +155,7 @@ def params_b(model):
         return raw / 1_000_000_000.0
 
     pc = model.get("parameter_count", "")
-    if pc:
+    if isinstance(pc, str) and pc:
         pc = pc.strip().upper()
         m = re.match(r"^([\d.]+)\s*([BKMGT]?)$", pc)
         if m:
@@ -252,15 +267,75 @@ def infer_use_case(model):
 
 _models_cache = None
 
+def _load_model_file(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            loaded = json.load(f)
+            return loaded if isinstance(loaded, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def reset_model_cache():
+    global _models_cache
+    _models_cache = None
+
+def refresh_dynamic_catalogs(force=False):
+    """Refresh API-backed model catalogs and invalidate the merged cache.
+
+    The bundled JSON files remain the offline fallback. Dynamic catalogs live
+    under DATA_DIR so runtime refreshes do not dirty the source tree.
+    """
+    from services.hwfit.hf_discovery import (
+        refresh_hf_collection_models_cache,
+        refresh_mlx_community_cache,
+    )
+
+    refreshed = {
+        "mlx_community": len(refresh_mlx_community_cache(force=force)),
+        "hf_collections": len(refresh_hf_collection_models_cache(force=force)),
+    }
+    reset_model_cache()
+    return refreshed
+
 def get_models():
     global _models_cache
     if _models_cache is None:
         data_path = os.path.join(os.path.dirname(__file__), "data", "hf_models.json")
+        static_mlx_path = os.path.join(os.path.dirname(__file__), "data", "mlx_community_models.json")
         try:
-            with open(data_path, encoding="utf-8") as f:
-                _models_cache = [_normalize_model_entry(m) for m in json.load(f)]
-        except (FileNotFoundError, json.JSONDecodeError):
-            _models_cache = []
+            from services.hwfit.hf_discovery import (
+                load_cached_hf_collection_models,
+                load_cached_mlx_community_models,
+            )
+            dynamic_mlx_models = load_cached_mlx_community_models()
+            dynamic_hf_models = load_cached_hf_collection_models()
+        except Exception:
+            dynamic_mlx_models = []
+            dynamic_hf_models = []
+        seen = set()
+        rows = []
+        def _append_models(models):
+            for model in models:
+                if not isinstance(model, dict):
+                    continue
+                name = model.get("name")
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                rows.append(_normalize_model_entry(model))
+
+        for model in _load_model_file(data_path):
+            if not isinstance(model, dict):
+                continue
+            name = model.get("name")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            rows.append(_normalize_model_entry(model))
+        _append_models(dynamic_hf_models)
+        _append_models(dynamic_mlx_models)
+        _append_models(_load_model_file(static_mlx_path))
+        _models_cache = rows
     return _models_cache
 
 

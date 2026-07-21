@@ -1,6 +1,7 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
 import logging
+import json
 import re
 import uuid
 from datetime import datetime, date, timedelta
@@ -12,8 +13,9 @@ from sqlalchemy import or_, and_
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent
-from src.auth_helpers import require_user
+from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,24 @@ def _ics_naive_dtstart(dt):
     if isinstance(dt, date):
         return datetime(dt.year, dt.month, dt.day)
     return dt
+
+
+def _ensure_positive_duration(start_dt, end_dt, all_day):
+    """Clamp an imported event's end so it has a positive duration.
+
+    Some .ics exporters write a single-day all-day event with DTEND equal to
+    DTSTART (treating DTEND as inclusive rather than the RFC 5545 exclusive
+    bound). Stored verbatim that produces a zero-duration row, which the
+    list_events overlap filter (dtstart < end AND dtend > start) silently
+    drops — the event never appears on the calendar even though the web UI
+    would otherwise show it. Normalize a non-positive end to the same default
+    span used when DTEND is absent: one day for all-day events, one hour
+    otherwise.
+    """
+    if end_dt <= start_dt:
+        return start_dt + (timedelta(days=1) if all_day else timedelta(hours=1))
+    return end_dt
+
 
 # Single-user fallback identity. Used only when:
 #   1. The app is configured for single-user (no auth middleware), AND
@@ -434,6 +454,20 @@ def _parse_dt(s: str) -> datetime:
         if t is not None:
             return base.replace(hour=t[0], minute=t[1])
 
+    # time-first: "3pm today", "9am tomorrow", "11pm tonight"
+    # (parity with parse_due_for_user, which handles these via the same form)
+    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    if m:
+        time_part, word = m.group(1).strip(), m.group(2)
+        base = today
+        if word in ("tomorrow", "tmrw"):
+            base = today + timedelta(days=1)
+        elif word == "yesterday":
+            base = today - timedelta(days=1)
+        t = _parse_time(time_part)
+        if t is not None:
+            return base.replace(hour=t[0], minute=t[1])
+
     # next <weekday> [at] TIME
     weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     m = _re.match(r'^next\s+(\w+)(?:\s+at)?\s*(.*)$', lower)
@@ -509,6 +543,7 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
         "description": ev.description or "",
         "location": ev.location or "",
         "rrule": ev.rrule or "",
+        "recurrence_exdates": _recurrence_exdates(ev),
         "calendar": ev.calendar.name if ev.calendar else "",
         "calendar_href": ev.calendar_id,
         "color": ev.color or (ev.calendar.color if ev.calendar else ""),
@@ -520,6 +555,28 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
 # ── Recurrence expansion ──
 
 _RRULE_EXPANSION_LIMIT = 1000
+
+
+def _recurrence_exdates(ev: CalendarEvent) -> list[str]:
+    raw = getattr(ev, "recurrence_exdates", "") or ""
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values if isinstance(v, str) and v.strip()]
+
+
+def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
+    if "::" not in uid:
+        return ""
+    suffix = uid.split("::", 1)[1]
+    if ev.all_day:
+        return suffix[:10]
+    return suffix[:16]
 
 
 def _expand_rrule(
@@ -586,6 +643,7 @@ def _expand_rrule(
     results = []
     truncated = False
     base = _event_to_dict(ev)
+    exdates = set(_recurrence_exdates(ev))
 
     for occ_start in rule.xafter(expand_start, inc=True):
         if occ_start >= end:
@@ -606,8 +664,13 @@ def _expand_rrule(
         # Build the compound uid: {base_uid}::{date} or ::{datetime}
         if ev.all_day:
             occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%d')}"
+            exdate_key = occ_start.strftime("%Y-%m-%d")
         else:
             occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%dT%H:%M')}"
+            exdate_key = occ_start.strftime("%Y-%m-%dT%H:%M")
+
+        if exdate_key in exdates:
+            continue
 
         d = dict(base)
         d["uid"] = occ_uid
@@ -635,8 +698,17 @@ def _expand_rrule(
 
 # ── Routes ──
 
-def setup_calendar_routes() -> APIRouter:
+def setup_calendar_routes(upload_handler=None) -> APIRouter:
     router = APIRouter(prefix="/api/calendar", tags=["calendar"])
+
+    def _reserve_calendar_uploads(request: Request, *values) -> None:
+        missing_id = reserve_upload_references(
+            upload_handler,
+            effective_user(request),
+            *values,
+        )
+        if missing_id:
+            raise HTTPException(409, f"Referenced upload is no longer available: {missing_id}")
 
     # ── CalDAV multi-account helpers ─────────────────────────────────────────
 
@@ -851,7 +923,24 @@ def setup_calendar_routes() -> APIRouter:
             '</d:prop></d:propfind>'
         )
         try:
-            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False) as cx:
+            # Build an SSL context that trusts the operator's custom CA bundle
+            # (SSL_CERT_FILE / REQUESTS_CA_BUNDLE) so self-signed CalDAV servers
+            # pass the pre-flight the same way they pass the real sync.
+            # trust_env=False is kept to block proxy/auth env leakage; the CA
+            # bundle is loaded explicitly instead.
+            import ssl as _ssl
+            _ssl_ctx = _ssl.create_default_context()
+            # Disable VERIFY_X509_STRICT so certs without a keyUsage extension
+            # (common in self-signed setups) are accepted, matching the
+            # requests/urllib3 behavior used by the CalDAV sync path.
+            _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+            _ca_bundle = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE")
+            if _ca_bundle:
+                if _os.path.isfile(_ca_bundle):
+                    _ssl_ctx.load_verify_locations(_ca_bundle)
+                else:
+                    logger.warning("CalDAV test: CA bundle %s not found, using system CAs", _ca_bundle)
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
                     auth=(user, pw),
@@ -1008,6 +1097,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.post("/events")
     async def create_event(request: Request, data: EventCreate):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, data.color, data.description, data.location)
         db = SessionLocal()
         try:
             cal = None
@@ -1069,6 +1159,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.put("/events/{uid}")
     async def update_event(request: Request, uid: str, data: EventUpdate):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, data.color, data.description, data.location)
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:
@@ -1118,7 +1209,7 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.delete("/events/{uid}")
-    async def delete_event(request: Request, uid: str):
+    async def delete_event(request: Request, uid: str, scope: str = "series"):
         owner = _require_user(request)
         try:
             base_uid = _resolve_base_uid(uid)
@@ -1127,7 +1218,22 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
+            is_occurrence_delete = scope in {"occurrence", "instance"} and "::" in uid and bool(ev.rrule)
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_occurrence_delete:
+                key = _occurrence_exdate_key(uid, ev)
+                if not key:
+                    raise HTTPException(400, "Invalid recurring occurrence uid")
+                exdates = _recurrence_exdates(ev)
+                if key not in exdates:
+                    exdates.append(key)
+                ev.recurrence_exdates = json.dumps(sorted(exdates))
+                if is_caldav:
+                    ev.caldav_sync_pending = "update"
+                db.commit()
+                if is_caldav:
+                    await _push_caldav_event_after_commit(owner, base_uid, "update")
+                return {"ok": True, "scope": "occurrence", "exdate": key}
             if is_caldav:
                 _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
@@ -1147,6 +1253,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.post("/calendars")
     async def create_calendar(request: Request, name: str = "Imported", color: str = "#5b8abf"):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, color)
         db = SessionLocal()
         try:
             cal = CalendarCal(
@@ -1169,6 +1276,7 @@ def setup_calendar_routes() -> APIRouter:
     @router.put("/calendars/{cal_id}")
     async def update_calendar(request: Request, cal_id: str, name: str = None, color: str = None):
         owner = _require_user(request)
+        _reserve_calendar_uploads(request, color)
         db = SessionLocal()
         try:
             cal = _get_or_404_calendar(db, cal_id, owner)
@@ -1226,7 +1334,7 @@ def setup_calendar_routes() -> APIRouter:
                 db.commit()
                 db.refresh(target_cal)
 
-            imported = skipped = 0
+            imported = skipped = repaired = 0
             for comp in cal_data.walk():
                 if comp.name != "VEVENT":
                     continue
@@ -1262,6 +1370,18 @@ def setup_calendar_routes() -> APIRouter:
                         .first()
                     )
                     if existing:
+                        # An import predating the clamp below may have stored
+                        # this same event with a non-positive duration, which
+                        # the list_events overlap filter hides. Re-importing
+                        # lands here and would skip without touching that row,
+                        # so the event would stay invisible. Backfill the clamp
+                        # onto the stored row before skipping it.
+                        fixed_end = _ensure_positive_duration(
+                            existing.dtstart, existing.dtend, bool(existing.all_day)
+                        )
+                        if fixed_end != existing.dtend:
+                            existing.dtend = fixed_end
+                            repaired += 1
                         skipped += 1
                         continue
 
@@ -1295,6 +1415,8 @@ def setup_calendar_routes() -> APIRouter:
                     else:
                         end_dt = start_dt + timedelta(hours=1)
 
+                end_dt = _ensure_positive_duration(start_dt, end_dt, all_day)
+
                 ev = CalendarEvent(
                     uid=uid_val,
                     calendar_id=target_cal.id,
@@ -1315,6 +1437,7 @@ def setup_calendar_routes() -> APIRouter:
                 "ok": True,
                 "imported": imported,
                 "skipped": skipped,
+                "repaired": repaired,
                 "calendar": cal_display,
                 "calendar_id": target_cal.id,
             }

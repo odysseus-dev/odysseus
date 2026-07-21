@@ -8,6 +8,7 @@ import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 
 let initialized = false;
 let modalEl = null;
@@ -541,6 +542,9 @@ async function initDefaultChat() {
     renderFallbacks();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
+  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
+  modelSel.addEventListener('change', saveDefault);
+
   async function saveDefault() {
     try {
       var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
@@ -557,8 +561,6 @@ async function initDefaultChat() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
-  modelSel.addEventListener('change', saveDefault);
   if (addFbBtn) addFbBtn.addEventListener('click', function() {
     var first = enabledEndpoints()[0];
     _fallbacks.push({ endpoint_id: first ? first.id : '', model: '' });
@@ -1721,24 +1723,6 @@ async function initAgentSettings() {
     (curR != null ? ' · ' + curR + ' steps/message' : '') +
     (supInput && supInput.checked ? ' · supervisor on' : '');
 
-  // Standalone Email Safety toggle (separate card on the AI Defaults tab).
-  // Default to ON if the setting isn't present so a fresh install is safe.
-  var emailConfirm = el('set-agentEmailConfirm');
-  if (emailConfirm) {
-    try {
-      var s = await fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json());
-      emailConfirm.checked = s.agent_email_confirm !== false;
-    } catch (_) {}
-    emailConfirm.addEventListener('change', async () => {
-      try {
-        await fetch('/api/auth/settings', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_email_confirm: !!emailConfirm.checked }),
-        });
-      } catch (_) {}
-    });
-  }
 }
 
 /* ═══════════════════════════════════════════
@@ -3122,6 +3106,28 @@ async function initEmailSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
 
+  const styleKey = 'odysseus-email-writing-style';
+  const styleEl = el('set-email-style');
+
+  // The account/CardDAV config endpoints can be slow when remote mail servers
+  // are cold. Populate the Writing Style box independently so saved prose does
+  // not appear seconds after the panel opens.
+  try {
+    const cachedStyle = localStorage.getItem(styleKey);
+    if (styleEl && cachedStyle !== null && !styleEl.value) styleEl.value = cachedStyle;
+  } catch (_) {}
+
+  const loadWritingStyle = async () => {
+    try {
+      const res = await fetch('/api/email/style');
+      const data = await res.json();
+      const style = data.style || '';
+      if (styleEl) styleEl.value = style;
+      try { localStorage.setItem(styleKey, style); } catch (_) {}
+    } catch (_) {}
+  };
+  loadWritingStyle();
+
   // Load current email config
   try {
     const res = await fetch('/api/email/config');
@@ -3144,13 +3150,6 @@ async function initEmailSettings() {
     if (el('set-carddav-url')) el('set-carddav-url').value = cfg.url || '';
     if (el('set-carddav-user')) el('set-carddav-user').value = cfg.username || '';
     if (el('set-carddav-pass')) el('set-carddav-pass').value = '';
-  } catch (_) {}
-
-  // Load writing style
-  try {
-    const res = await fetch('/api/email/style');
-    const data = await res.json();
-    if (el('set-email-style')) el('set-email-style').value = data.style || '';
   } catch (_) {}
 
   // Save email config
@@ -3243,7 +3242,8 @@ async function initEmailSettings() {
       });
       const data = await res.json();
       if (data.success && data.style) {
-        if (el('set-email-style')) el('set-email-style').value = data.style;
+        if (styleEl) styleEl.value = data.style;
+        try { localStorage.setItem(styleKey, data.style); } catch (_) {}
         if (msg) msg.textContent = '✓ Style extracted';
       } else {
         if (msg) msg.textContent = data.error || 'Failed';
@@ -3262,12 +3262,16 @@ async function initEmailSettings() {
     const msg = el('set-email-style-msg');
     if (msg) msg.textContent = 'Saving...';
     try {
+      const style = styleEl ? styleEl.value : '';
       const res = await fetch('/api/email/style', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ style: el('set-email-style').value }),
+        body: JSON.stringify({ style }),
       });
       const result = await res.json();
+      if (result.success) {
+        try { localStorage.setItem(styleKey, style); } catch (_) {}
+      }
       if (msg) msg.textContent = result.success ? '✓ Saved' : 'Failed';
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
@@ -3838,7 +3842,10 @@ async function initUnifiedIntegrations() {
         if (lbl) lbl.textContent = text;
         if (ico) ico.innerHTML = _apiIconFor(k);
       };
-      const _close = () => { menu.style.display = 'none'; };
+      // Menu is reused (hidden, not recreated). close() hides it and tears down
+      // its outside-click listener + Escape-stack entry; bindMenuDismiss is
+      // re-registered fresh on each open (see _open).
+      let _close = () => { menu.style.display = 'none'; };
       const _open = () => {
         menu.style.display = 'block';
         const tRect = trig.getBoundingClientRect();
@@ -3847,8 +3854,7 @@ async function initUnifiedIntegrations() {
         const above = tRect.top;
         if (mRect.height > below && above > below) { menu.style.top = 'auto'; menu.style.bottom = 'calc(100% + 2px)'; }
         else { menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto'; }
-        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trig) { _close(); document.removeEventListener('click', onDoc, true); } };
-        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+        _close = bindMenuDismiss(menu, () => { menu.style.display = 'none'; }, (ev) => !menu.contains(ev.target) && ev.target !== trig);
       };
       trig.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _close() : _open(); });
       menu.querySelectorAll('.ufapi-option').forEach(btn => {
@@ -4584,7 +4590,10 @@ async function initUnifiedIntegrations() {
         if (labelEl) labelEl.textContent = lbl;
         if (iconEl) iconEl.innerHTML = PROV_LOGO[k] || _customLogo;
       };
-      const _closeMenu = () => { menu.style.display = 'none'; };
+      // Menu is reused (hidden, not recreated). _closeMenu hides it and tears
+      // down its outside-click listener + Escape-stack entry; bindMenuDismiss is
+      // re-registered fresh on each open (see _openMenu).
+      let _closeMenu = () => { menu.style.display = 'none'; };
       const _openMenu = () => {
         menu.style.display = 'block';
         // Drop-up when there's not enough room below the trigger.
@@ -4597,8 +4606,7 @@ async function initUnifiedIntegrations() {
         } else {
           menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto';
         }
-        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trigger) { _closeMenu(); document.removeEventListener('click', onDoc, true); } };
-        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+        _closeMenu = bindMenuDismiss(menu, () => { menu.style.display = 'none'; }, (ev) => !menu.contains(ev.target) && ev.target !== trigger);
       };
       trigger.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _closeMenu() : _openMenu(); });
       menu.querySelectorAll('.ufp-option').forEach(btn => {
@@ -5650,8 +5658,11 @@ async function initUnifiedIntegrations() {
       addBtn.parentElement.style.position = 'relative';
       addBtn.parentElement.classList.add('uf-add-anchor');
     }
+    // Menu is created per open and removed on close. _closeMenu routes through
+    // the bindMenuDismiss close() bound when the menu opens, so the outside-click
+    // listener + Escape-stack entry are torn down alongside the node removal.
     let _menuEl = null;
-    const _closeMenu = () => { if (_menuEl) { _menuEl.remove(); _menuEl = null; } };
+    let _closeMenu = () => {};
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (_menuEl) { _closeMenu(); return; }
@@ -5683,8 +5694,7 @@ async function initUnifiedIntegrations() {
           showForm(k, 'new');
         });
       });
-      const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== addBtn) { _closeMenu(); document.removeEventListener('click', onDoc, true); } };
-      setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+      _closeMenu = bindMenuDismiss(menu, () => { menu.remove(); _menuEl = null; }, (ev) => !menu.contains(ev.target) && ev.target !== addBtn);
     });
   }
 

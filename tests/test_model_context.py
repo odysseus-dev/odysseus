@@ -191,9 +191,19 @@ class TestLookupKnown:
         assert _lookup_known("gpt-4") == 8192
 
 
+class _FakeResp:
+    def __init__(self, payload, ok=True):
+        self._payload = payload
+        self.is_success = ok
+
+    def json(self):
+        return self._payload
+
+
 class TestGetContextLength:
     def setup_method(self):
         model_context._context_cache.clear()
+        model_context._catalog_ctx_cache.clear()
 
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
         calls = []
@@ -233,7 +243,7 @@ class TestGetContextLength:
         assert second == 200000
         assert len(calls) == 1
 
-    def test_configured_proxy_uses_default_without_model_listing(self, monkeypatch):
+    def _proxy_db(self, monkeypatch):
         _install_endpoint_db(monkeypatch, [
             types.SimpleNamespace(
                 base_url="http://100.117.136.97:34521/v1",
@@ -242,18 +252,63 @@ class TestGetContextLength:
                 is_enabled=True,
             )
         ])
-        calls = []
+
+    def test_configured_proxy_known_model_skips_model_listing(self, monkeypatch):
+        # A model covered by the known-context table must still resolve without
+        # touching /models — the cheap path the proxy short-circuit exists for.
+        self._proxy_db(monkeypatch)
 
         def fake_get(*args, **kwargs):
-            calls.append(args)
-            raise AssertionError("/models should not be queried for configured proxy context")
+            raise AssertionError("/models must not be queried for a known proxy model")
 
         monkeypatch.setattr(model_context.httpx, "get", fake_get)
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
-        first = model_context.get_context_length(endpoint, "unknown-proxy-model")
-        second = model_context.get_context_length(endpoint, "unknown-proxy-model")
+        assert model_context.get_context_length(endpoint, "gpt-4o") == 128000
 
-        assert first == model_context.DEFAULT_CONTEXT
-        assert second == model_context.DEFAULT_CONTEXT
-        assert calls == []
+    def test_configured_proxy_unknown_model_reads_catalog_context(self, monkeypatch):
+        # A model missing from the known table (e.g. a new OpenRouter model)
+        # must report the catalog's real window, not the bare default (#4886).
+        # The catalog is fetched once per endpoint and reused for other models.
+        self._proxy_db(monkeypatch)
+        fetches = []
+
+        def fake_get(url, *args, **kwargs):
+            fetches.append(url)
+            return _FakeResp({"data": [
+                {"id": "owl-alpha", "context_length": 1048576},
+                {"id": "tiny-proxy-model", "context_length": 8192},
+            ]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "owl-alpha") == 1048576
+        # A second unknown model on the same endpoint reuses the cached catalog.
+        assert model_context.get_context_length(endpoint, "tiny-proxy-model") == 8192
+        assert len(fetches) == 1
+
+    def test_configured_proxy_unknown_model_falls_back_to_default(self, monkeypatch):
+        # If the catalog can be read but doesn't list the model, keep the
+        # conservative default rather than guessing.
+        self._proxy_db(monkeypatch)
+
+        def fake_get(url, *args, **kwargs):
+            return _FakeResp({"data": [{"id": "some-other-model", "context_length": 4096}]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "absent-model") == model_context.DEFAULT_CONTEXT
+
+    def test_configured_proxy_catalog_fetch_failure_uses_default(self, monkeypatch):
+        # A failed/unreachable catalog must not raise — fall back to the default.
+        self._proxy_db(monkeypatch)
+
+        def fake_get(url, *args, **kwargs):
+            raise RuntimeError("network down")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "unknown-proxy-model") == model_context.DEFAULT_CONTEXT

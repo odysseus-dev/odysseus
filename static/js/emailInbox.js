@@ -5,15 +5,15 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary } from './emailLibrary.js';
+import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen } from './emailLibrary.js';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
-import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
+import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
+import { emailApiUrl, emailAccountQuery } from './emailShared.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
-const _acct = () => window.__odysseusActiveEmailAccount
-  ? `&account_id=${encodeURIComponent(window.__odysseusActiveEmailAccount)}`
-  : '';
+const _acct = () => emailAccountQuery('&');
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
@@ -27,6 +27,76 @@ const _starFilledIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="c
 const _bellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
 const _replySeparator = '---------- Previous message ----------';
+const _DONE_RESPONSE_TAGS = new Set(['urgent', 'reply-soon', 'action-needed']);
+
+function _splitEmailAddresses(raw) {
+  return (typeof raw === 'string' ? raw : '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function _isMyEmailAddress(addr, myAddresses) {
+  const email = extractEmail(addr);
+  if (!email) return false;
+  return new Set((myAddresses || []).map(a => String(a || '').trim().toLowerCase()).filter(Boolean)).has(email);
+}
+
+function _withoutMyAddresses(raw, myAddresses) {
+  return _splitEmailAddresses(raw).filter(addr => !_isMyEmailAddress(addr, myAddresses));
+}
+
+function _openCalendarEventFromEmail(uid) {
+  const target = String(uid || '').trim();
+  if (!target) return;
+  import('./calendar.js').then(mod => {
+    const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
+    if (open) open(target);
+  }).catch(() => {});
+}
+
+function _openEmailTagFilter(tag) {
+  const normalized = String(tag || '').trim().toLowerCase().replace(/_/g, '-');
+  if (!normalized || normalized === 'calendar') return;
+  try { openEmailLibrary(); } catch (_) {}
+  setTimeout(() => {
+    document.dispatchEvent(new CustomEvent('odysseus:email-filter-tag', { detail: { tag: normalized } }));
+  }, 0);
+}
+
+function _emailTagPillHtml(tag, em) {
+  const normalized = String(tag || '').trim().toLowerCase().replace(/_/g, '-');
+  if (!normalized) return '';
+  const eventUid = normalized === 'calendar' && Array.isArray(em?.calendar_event_uids)
+    ? String(em.calendar_event_uids[0] || '').trim()
+    : '';
+  if (normalized === 'calendar') {
+    if (!eventUid) return '';
+    return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-calendar-event-uid="${_esc(eventUid)}" title="Open calendar event">${_esc(normalized)}</button>`;
+  }
+  return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-email-filter-tag="${_esc(normalized)}" title="Show ${_esc(normalized)} emails">${_esc(normalized)}</button>`;
+}
+
+function _emailTagGroupHtml(tags, em) {
+  const visible = (Array.isArray(tags) ? tags : [])
+    .map(t => _emailTagPillHtml(t, em))
+    .filter(Boolean);
+  if (!visible.length) return '';
+  if (visible.length === 1) return `<span class="email-tags">${visible[0]}</span>`;
+  const extra = visible.slice(1).map(html => `<span class="email-tag-extra">${html}</span>`).join('');
+  return `<span class="email-tags email-tags-collapsed">${visible[0]}${extra}<button type="button" class="email-tags-more" data-email-tags-more aria-expanded="false" title="Show all tags">+${visible.length - 1}<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button></span>`;
+}
+
+function _visibleEmailTagsForRender(em) {
+  const tags = Array.isArray(em?.tags) ? em.tags : [];
+  if (!em?.is_answered) return tags;
+  return tags.filter(t => !_DONE_RESPONSE_TAGS.has(String(t || '').trim().toLowerCase().replace(/_/g, '-')));
+}
+
+function _clearDoneResponseTagsLocal(em) {
+  if (!em || !Array.isArray(em.tags)) return;
+  em.tags = em.tags.filter(t => !_DONE_RESPONSE_TAGS.has(String(t || '').trim().toLowerCase().replace(/_/g, '-')));
+}
 
 function _cleanAiReplyText(text) {
   if (!text) return '';
@@ -69,9 +139,14 @@ window.addEventListener('email-answered', (e) => {
   const uid = e.detail && e.detail.uid;
   if (uid == null) return;
   const em = _emails.find(x => String(x.uid) === String(uid));
-  if (em) { em.is_answered = true; em.is_read = true; }
+  if (em) {
+    em.is_answered = true;
+    em.is_read = true;
+    _clearDoneResponseTagsLocal(em);
+  }
   document.querySelectorAll('.email-item[data-uid="' + CSS.escape(String(uid)) + '"]').forEach(item => {
     item.classList.remove('email-unread');
+    item.querySelectorAll('.email-tag-urgent, .email-tag-reply-soon, .email-tag-action-needed').forEach(n => n.remove());
     const check = item.querySelector('.email-done-check');
     if (check) check.classList.add('active');
     // Auto-mark from sending a reply — flash the row so the user sees the
@@ -87,10 +162,15 @@ let _docModule = null;
 let _listSpinner = null;
 let _senderFilter = null;       // email address (lowercased) to filter by, or null
 let _senderFilterLabel = null;  // display label for the active filter chip
+let _showEmailTags = localStorage.getItem('odysseus.email.showTags') !== '0';
 
 export function init(documentModule) {
   _docModule = documentModule;
   _bindEvents();
+  document.addEventListener('odysseus:email-tags-toggle', (e) => {
+    _showEmailTags = e.detail?.show !== false;
+    _renderList();
+  });
   // Init the library popup with a callback to open emails
   initEmailLibrary({
     documentModule,
@@ -134,6 +214,23 @@ export async function openReplyDraft(uid, folder = 'INBOX', mode = 'reply', pref
   } finally {
     _currentFolder = previousFolder || _currentFolder;
   }
+}
+
+function _bringEmailReplyDraftToFrontOnMobile() {
+  if (window.innerWidth > 768) return;
+  document.body.classList.remove('email-front', 'email-doc-split-active');
+  document.documentElement.style.removeProperty('--email-doc-split-left-x');
+  document.documentElement.style.removeProperty('--email-doc-split-email-w');
+  document.documentElement.style.removeProperty('--email-doc-split-right-x');
+  // Keep the email sheet visible behind the reply document on mobile. The
+  // document panel sits above it via the normal doc-view z-index rules, and
+  // swiping the document down minimizes it to a chip to reveal the email.
+  document.querySelectorAll('#email-lib-modal, .modal[id^="email-reader-"]').forEach(modal => {
+    modal.classList.remove('email-snap-left', 'modal-left-docked', 'modal-right-docked');
+    modal.style.removeProperty('z-index');
+  });
+  const docPane = document.getElementById('doc-editor-pane');
+  if (docPane) docPane.style.setProperty('z-index', '10010', 'important');
 }
 
 // When the document editor pane opens (body.doc-view turns on), make sure the
@@ -194,10 +291,11 @@ function _bindEvents() {
     });
   }
 
-  // Initial unread count check, refresh every 60s
-  _refreshUnreadCount();
+  // Delay the lightweight unread badge check so opening Odysseus doesn't
+  // compete with the initial chat/session paint. The full email list now loads
+  // only when the inbox is actually opened.
+  setTimeout(_refreshUnreadCount, 8000);
   setInterval(_refreshUnreadCount, 60000);
-  prewarmEmailLibrary({ delay: 3000 });
 
   // Deep-link: #email=<folder>:<uid> opens the library and expands that card
   _maybeOpenFromHash();
@@ -230,24 +328,24 @@ async function _refreshUnreadCount() {
   const dot = document.getElementById('email-unread-dot');
   if (dot && !dot._stickyState) dot.style.display = 'none';
   try {
-    // Parallel: unread list + urgency state.
-    const [listRes, urgRes] = await Promise.all([
-      fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=50&filter=unread${_acct()}`),
+    // Parallel: cheap unread state + urgency state.
+    const [stateRes, urgRes] = await Promise.all([
+      fetch(emailApiUrl('/api/email/unread-state', { folder: 'INBOX' })),
       fetch(`${API_BASE}/api/email/urgency-state`, { credentials: 'same-origin' }).catch(() => null),
     ]);
-    if (!listRes || !listRes.ok) return;
-    const data = await listRes.json();
+    if (!stateRes || !stateRes.ok) return;
+    const data = await stateRes.json();
     if (!dot) return;
 
-    const emails = data.emails || [];
-    if (emails.length === 0) {
+    const unreadCount = Number(data.unread_count || 0);
+    if (unreadCount <= 0) {
       dot.style.display = 'none';
       return;
     }
 
     // Compare highest unread UID to the last-seen threshold in localStorage
     const lastSeen = parseInt(localStorage.getItem('odysseus-email-last-seen-uid') || '0', 10);
-    const maxUid = Math.max(...emails.map(e => parseInt(e.uid, 10) || 0));
+    const maxUid = parseInt(data.max_uid || '0', 10) || 0;
 
     // Only show dot if there's a new email above the threshold
     dot.style.display = maxUid > lastSeen ? '' : 'none';
@@ -275,12 +373,11 @@ export function markInboxAsSeen() {
   // Called when the user opens the inbox popup — clears the notif dot
   try {
     // Find current max UID so subsequent arrivals trigger the dot
-    fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=1${_acct()}`)
+    fetch(emailApiUrl('/api/email/unread-state', { folder: 'INBOX' }))
       .then(r => r.json())
       .then(data => {
-        const emails = data.emails || [];
-        if (emails.length > 0) {
-          const maxUid = Math.max(...emails.map(e => parseInt(e.uid, 10) || 0));
+        const maxUid = parseInt(data.max_uid || '0', 10) || 0;
+        if (maxUid > 0) {
           localStorage.setItem('odysseus-email-last-seen-uid', String(maxUid));
         }
         const dot = document.getElementById('email-unread-dot');
@@ -308,7 +405,7 @@ export async function loadEmails(append = false) {
 
   try {
     const fromQS = _senderFilter ? `&from=${encodeURIComponent(_senderFilter)}` : '';
-    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${_acct()}&_=${Date.now()}`);
+    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${_acct()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
@@ -338,7 +435,8 @@ export async function loadEmails(append = false) {
 
 async function loadFolders() {
   try {
-    const res = await fetch(`${API_BASE}/api/email/folders?_=1${_acct()}`);
+    const accountQS = _acct().replace(/^&/, '');
+    const res = await fetch(`${API_BASE}/api/email/folders${accountQS ? `?${accountQS}` : ''}`);
     const data = await res.json();
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
@@ -511,12 +609,10 @@ function _createEmailItem(em) {
     ? `<span class="email-unread-dot-inline" title="${_esc(_unreadTitle)}" style="display:inline-flex;align-items:center;flex-shrink:0;margin-left:4px;color:${_unreadColor}"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg></span>`
     : '';
 
-  const tags = Array.isArray(em.tags) ? em.tags : [];
-  const tagPills = tags.length
-    ? `<span class="email-tags">${tags.map(t => `<span class="email-tag email-tag-${_esc(t)}">${_esc(t)}</span>`).join('')}</span>`
-    : '';
+  const tags = _showEmailTags ? _visibleEmailTagsForRender(em) : [];
+  const tagPills = _emailTagGroupHtml(tags, em);
 
-  const spamTag = em.is_spam_verdict
+  const spamTag = _showEmailTags && em.is_spam_verdict
     ? `<span class="email-tag email-tag-spam" title="AI flagged as spam — click ✓ to unflag">spam <button class="email-spam-unflag" data-uid="${em.uid}" title="Not spam">\u2713</button></span>`
     : '';
 
@@ -534,6 +630,30 @@ function _createEmailItem(em) {
 
   // Click sender name → filter list to that sender
   const senderEl = item.querySelector('.email-sender-clickable');
+  item.querySelectorAll('[data-calendar-event-uid]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _openCalendarEventFromEmail(btn.dataset.calendarEventUid);
+    });
+  });
+  item.querySelectorAll('[data-email-filter-tag]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _openEmailTagFilter(btn.dataset.emailFilterTag);
+    });
+  });
+  item.querySelectorAll('[data-email-tags-more]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const wrap = btn.closest('.email-tags');
+      if (!wrap) return;
+      const expanded = wrap.classList.toggle('email-tags-expanded');
+      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+  });
   if (senderEl) {
     senderEl.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -658,7 +778,8 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
   try {
     let data = preloadedData;
     if (!data) {
-      const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
+      const fullQS = mode === 'forward' ? '&full=1' : '';
+      const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}${fullQS}`);
       data = await res.json();
     }
     if (data.error) {
@@ -701,7 +822,10 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           if (result.success && result.reply) {
             aiSuggestedBody = _cleanAiReplyText(result.reply);
           } else {
-            const _msg = result.error || 'AI reply could not be generated';
+            const _rawMsg = result.error || 'AI reply could not be generated';
+            const _msg = /empty response/i.test(_rawMsg)
+              ? 'AI returned empty response.'
+              : _rawMsg;
             console.error('AI reply generation failed:', _msg);
             import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
             return;
@@ -725,13 +849,26 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       ? window._myEmailAddresses
       : (window._myEmailAddress ? [window._myEmailAddress] : []);
 
-    let toAddress = data.from_address;
+    const fromIsMe = _isMyEmailAddress(data.from_address, myAddresses);
+    const originalToWithoutMe = _withoutMyAddresses(data.to, myAddresses);
+    const originalCcWithoutMe = _withoutMyAddresses(data.cc, myAddresses);
+
+    let toAddress = fromIsMe
+      ? (originalToWithoutMe.join(', ') || originalCcWithoutMe[0] || data.from_address)
+      : data.from_address;
     let ccAddresses = '';
     let subjectPrefix = 'Re: ';
 
     if (mode === 'reply-all') {
-      // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
-      ccAddresses = buildReplyAllCc(data, myAddresses);
+      if (fromIsMe) {
+        // Replying from Sent should go back to the people I originally wrote
+        // to, not to myself. Keep original Cc recipients on Cc.
+        toAddress = originalToWithoutMe.join(', ') || originalCcWithoutMe[0] || data.from_address;
+        ccAddresses = originalCcWithoutMe.filter(addr => !originalToWithoutMe.some(t => extractEmail(t) === extractEmail(addr))).join(', ');
+      } else {
+        // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
+        ccAddresses = buildReplyAllCc(data, myAddresses);
+      }
     } else if (mode === 'forward') {
       toAddress = '';
       subjectPrefix = 'Fwd: ';
@@ -752,6 +889,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     if (data.attachments && data.attachments.length > 0) {
       const attStr = data.attachments.map(a => `${a.index}:${a.filename}:${a.size}`).join('|');
       content += `\nX-Attachments: ${attStr}`;
+      if (mode === 'forward') content += `\nX-Forward-Attachments: 1`;
     }
     content += '\n---\n';
 
@@ -810,12 +948,10 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     }
 
     if (_docModule) {
-      // Only reuse an existing doc tab if the user really just wants to "view"
-      // the email again. For reply/reply-all/forward/ai-reply, always create
-      // a fresh draft — otherwise a previously-emptied doc (sent reply, AI
-      // reply that came back blank, etc.) keeps coming back instead of a
-      // proper pre-filled reply.
-      const reuseExisting = (mode === 'view' || mode === 'open');
+      // Agent-provided reply text should land in the email draft the user
+      // already has open. Otherwise mobile users see the source email while the
+      // agent silently creates a second draft elsewhere.
+      const reuseExisting = mode !== 'forward';
       const existingDocId = (reuseExisting && _docModule.findEmailDocId)
         ? _docModule.findEmailDocId(em.uid, _currentFolder)
         : null;
@@ -823,49 +959,23 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
         if (!_docModule.isPanelOpen()) _docModule.openPanel();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         await _docModule.loadDocument(existingDocId);
-      } else {
-        // If the user already has a chat session open, reuse it instead of
-        // spawning a new one. They asked for this explicitly — opening reply
-        // mid-conversation shouldn't whip them out of context.
-        let activeSid = '';
-        try { activeSid = sessionModule?.getCurrentSessionId?.() || ''; } catch {}
-        if (!activeSid) {
-          // No chat in flight — keep the old behavior of creating a scoped
-          // email-thread chat, then RE-READ the now-current session id. The
-          // POST below requires a session_id (backend 400s without one), and
-          // the freshly-created chat is what should own the reply draft.
-          await _createEmailChat(data);
-          try { activeSid = sessionModule?.getCurrentSessionId?.() || ''; } catch {}
+        if (aiSuggestedBody && typeof _docModule.replaceEmailReplyBody === 'function') {
+          await _docModule.replaceEmailReplyBody(existingDocId, aiSuggestedBody, { force: true });
         }
-        // Guarantee a session — _createEmailChat can't make one when there's
-        // no enabled default-chat endpoint, which left the reply POSTing a
-        // null session_id → 400. Create a bare session so the draft always
-        // has a home regardless of chat/endpoint config.
+        _bringEmailReplyDraftToFrontOnMobile();
+      } else {
+        const activeSid = await _createEmailChat(data);
         if (!activeSid) {
-          try {
-            const _fd = new FormData();
-            _fd.append('name', `Email: ${(data.subject || '').slice(0, 60)}`);
-            _fd.append('skip_validation', 'true');
-            const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-            if (_sres.ok) {
-              const _sdata = await _sres.json();
-              if (_sdata && _sdata.id) {
-                activeSid = _sdata.id;
-                if (sessionModule?.loadSessions) await sessionModule.loadSessions();
-                if (sessionModule?.selectSession) await sessionModule.selectSession(activeSid);
-              }
-            }
-          } catch (e) { console.error('reply: bare session create failed', e); }
+          console.error('reply: could not obtain a session_id');
+          import('./ui.js').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
+          return;
         }
 
         const docRes = await fetch(`${API_BASE}/api/document`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            // Reuse the user's current chat session if there is one (so the
-            // reply draft lives in the chat they were just in); otherwise
-            // null and the new email-chat (created above) takes over.
-            session_id: activeSid || null,
+            session_id: activeSid,
             title: data.subject,
             content: content,
             language: 'email',
@@ -895,6 +1005,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           } else {
             await _docModule.loadDocument(doc.id);
           }
+          _bringEmailReplyDraftToFrontOnMobile();
         }
       }
     }
@@ -915,7 +1026,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
 }
 
 function _showEmailMenu(em, anchor, itemEl) {
-  document.querySelectorAll('.email-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.email-dropdown').forEach(dismissOrRemove);
 
   const dropdown = document.createElement('div');
   dropdown.className = 'dropdown email-dropdown show';
@@ -938,7 +1049,7 @@ function _showEmailMenu(em, anchor, itemEl) {
         _showRemindSubmenu(em, dropdown);
         return;
       }
-      dropdown.remove();
+      close();
       a.action();
     });
     dropdown.appendChild(menuItem);
@@ -946,13 +1057,7 @@ function _showEmailMenu(em, anchor, itemEl) {
 
   anchor.appendChild(dropdown);
 
-  const close = (e) => {
-    if (!dropdown.contains(e.target) && !anchor.contains(e.target)) {
-      dropdown.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) => !dropdown.contains(ev.target) && !anchor.contains(ev.target));
 }
 
 // ---- Reminder submenu (creates a Note with a reminder for this email) ----
@@ -987,7 +1092,7 @@ function _showRemindSubmenu(em, parentDropdown) {
     item.innerHTML = `<span>${p.label}</span><span style="margin-left:auto;opacity:0.5;font-size:10px;">${p.sub}</span>`;
     item.addEventListener('click', async (e) => {
       e.stopPropagation();
-      parentDropdown.remove();
+      dismissOrRemove(parentDropdown);
       await _createReplyReminder(em, p.date);
     });
     parentDropdown.appendChild(item);
@@ -997,7 +1102,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   customItem.innerHTML = '<span>Pick date and time…</span>';
   customItem.addEventListener('click', async (e) => {
     e.stopPropagation();
-    parentDropdown.remove();
+    dismissOrRemove(parentDropdown);
     const tmp = document.createElement('input');
     tmp.type = 'datetime-local';
     const def = new Date(tomorrow);
@@ -1084,13 +1189,43 @@ async function _deleteEmail(em) {
   const { styledConfirm } = await import('./ui.js');
   const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
   if (!ok) return;
+  const row = document.querySelector(`.email-item[data-uid="${CSS.escape(String(em.uid))}"]`);
+  const busy = _showEmailDeleteOverlay(row);
+  await busy?.ready;
   try {
     await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'DELETE' });
+    busy?.remove?.();
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();
   } catch (e) {
+    busy?.remove?.();
     console.error('Failed to delete:', e);
   }
+}
+
+function _showEmailDeleteOverlay(target) {
+  if (!target) return null;
+  const wp = spinnerModule.createWhirlpool(16);
+  const overlay = document.createElement('div');
+  overlay.className = 'email-delete-overlay';
+  overlay.appendChild(wp.element);
+  const prevPos = target.style.position;
+  const prevPointerEvents = target.style.pointerEvents;
+  if (getComputedStyle(target).position === 'static') target.style.position = 'relative';
+  target.style.pointerEvents = 'none';
+  target.classList.add('email-delete-busy');
+  target.appendChild(overlay);
+  const ready = new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return {
+    ready,
+    remove() {
+      try { wp.destroy?.(); } catch (_) {}
+      overlay.remove();
+      target.classList.remove('email-delete-busy');
+      target.style.pointerEvents = prevPointerEvents;
+      target.style.position = prevPos;
+    }
+  };
 }
 
 async function _toggleDone(em, itemEl) {
@@ -1099,9 +1234,11 @@ async function _toggleDone(em, itemEl) {
   if (newState) em.is_read = true; // mark-done implies mark-read
   if (itemEl) {
     if (newState) {
+      _clearDoneResponseTagsLocal(em);
       itemEl.classList.remove('email-unread');
       // Also drop any inline unread indicator dots the renderer may have added
       itemEl.querySelectorAll('.email-unread-dot, [data-unread-dot]').forEach(n => n.remove());
+      itemEl.querySelectorAll('.email-tag-urgent, .email-tag-reply-soon, .email-tag-action-needed').forEach(n => n.remove());
     }
     const check = itemEl.querySelector('.email-done-check');
     if (check) check.classList.toggle('active', newState);
@@ -1119,31 +1256,58 @@ async function _toggleDone(em, itemEl) {
 }
 
 async function _createEmailChat(emailData) {
+  const subject = String(emailData?.subject || 'New Email').trim() || 'New Email';
+  const title = subject === 'New Email' ? 'New Email' : `Email: ${subject.slice(0, 60)}`;
   try {
-    // Try current session's endpoint first
-    const current = sessionModule.getSessions?.().find(s => s.id === sessionModule.getCurrentSessionId?.());
-    let url, model, endpointId;
-    if (current && current.endpoint_url && current.model) {
-      url = current.endpoint_url;
-      model = current.model;
-      endpointId = current.endpoint_id;
-    } else {
-      // Fall back to default chat config
-      const dcRes = await fetch(`${API_BASE}/api/default-chat`);
-      const dc = await dcRes.json();
-      url = dc.endpoint_url;
-      model = dc.model;
-      endpointId = dc.endpoint_id;
+    const currentSid = sessionModule.getCurrentSessionId?.() || '';
+    const current = sessionModule.getSessions?.().find(s => s.id === currentSid);
+    const currentIsBlank = !!current
+      && !current.archived
+      && !current.has_documents
+      && !current.has_images
+      && Number(current.message_count || 0) === 0
+      && current.folder !== 'Assistant'
+      && current.folder !== 'Tasks';
+    if (currentIsBlank) {
+      const meta = document.getElementById('current-meta');
+      if (meta) meta.textContent = title;
+      return current.id;
+    }
+    let url = current?.endpoint_url || '';
+    let model = current?.model || '';
+    let endpointId = current?.endpoint_id || '';
+    if (!url || !model) {
+      try {
+        const dcRes = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
+        const dc = dcRes.ok ? await dcRes.json() : {};
+        url = dc.endpoint_url || '';
+        model = dc.model || '';
+        endpointId = dc.endpoint_id || '';
+      } catch (_) {}
     }
 
-    if (url && model) {
-      await sessionModule.createDirectChat(url, model, endpointId);
-      // Set a helpful title in the chat meta
-      const meta = document.getElementById('current-meta');
-      if (meta) meta.textContent = `Email: ${(emailData.subject || '').slice(0, 60)}`;
+    const fd = new FormData();
+    fd.append('name', title);
+    fd.append('skip_validation', 'true');
+    if (url) fd.append('endpoint_url', url);
+    if (model) fd.append('model', model);
+    if (endpointId) fd.append('endpoint_id', endpointId);
+    const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!res.ok) {
+      console.error('email chat create failed', res.status, await res.text().catch(() => ''));
+      return '';
     }
+    const payload = await res.json().catch(() => ({}));
+    const sid = payload?.id || '';
+    if (!sid) return '';
+    if (sessionModule?.loadSessions) await sessionModule.loadSessions();
+    if (sessionModule?.selectSession) await sessionModule.selectSession(sid);
+    const meta = document.getElementById('current-meta');
+    if (meta) meta.textContent = title;
+    return sid;
   } catch (e) {
     console.error('Failed to create email chat:', e);
+    return '';
   }
 }
 
@@ -1155,38 +1319,7 @@ async function _composeNew() {
   // (doc shows for a frame, then slides up again). Mount once, at injectFreshDoc,
   // after the session + doc exist.
   try {
-    // /api/document requires a session_id (returns 400 if null), so reuse
-    // the active chat if there is one — otherwise spin up an email-scoped
-    // chat first, same pattern the reply path uses.
-    let sid = '';
-    try { sid = sessionModule?.getCurrentSessionId?.() || ''; } catch (_) {}
-    if (!sid) {
-      await _createEmailChat({ subject: 'New Email' });
-      try { sid = sessionModule?.getCurrentSessionId?.() || ''; } catch (_) {}
-    }
-    // Guarantee a session — _createEmailChat can't make one when there's no
-    // enabled default-chat endpoint, which left compose POSTing a null
-    // session_id → 400 (the draft silently never appeared). Same bare-session
-    // fallback the reply flow uses.
-    if (!sid) {
-      try {
-        const _fd = new FormData();
-        _fd.append('name', 'New Email');
-        _fd.append('skip_validation', 'true');
-        const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-        if (_sres.ok) {
-          const _sdata = await _sres.json();
-          if (_sdata && _sdata.id) {
-            sid = _sdata.id;
-            // NOTE: intentionally do NOT loadSessions()/selectSession() here.
-            // Re-selecting the (empty) session re-renders the chat and flashes
-            // the welcome splash for a frame before the draft opens — the
-            // "splash flickers like crazy then email opens" bug. The doc only
-            // needs the session_id; the draft opens in the doc panel regardless.
-          }
-        }
-      } catch (e) { console.error('compose: bare session create failed', e); }
-    }
+    const sid = await _createEmailChat({ subject: 'New Email' });
     if (!sid) {
       console.error('compose: could not obtain a session_id');
       import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});

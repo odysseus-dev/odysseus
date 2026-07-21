@@ -65,13 +65,25 @@ export function _calBgImageUrl(c) {
   return _isCalBgImage(c) ? c.slice(3) : '';
 }
 
+// Escape a value for safe embedding inside a single-quoted CSS `url('...')`.
+// Backslashes MUST be escaped first: otherwise a trailing/embedded `\` in the
+// (CalDAV-syncable, untrusted) bg-image URL would escape the closing quote we
+// add for `'` and let the value break out of the string (CodeQL
+// js/incomplete-sanitization). `"` is percent-encoded for good measure.
+export function _cssUrlEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '%22');
+}
+
 // Returns a value safe to drop into `style="background:..."`. Falls back to
 // the calendar default for bg-image events in spots where an image would be
 // too small to render usefully (small grid dots, multi-day bars).
 export function _calBgCss(c, fallback) {
   if (_isCalBgImage(c)) {
     const u = _calBgImageUrl(c);
-    return u ? `center/cover no-repeat url('${u.replace(/'/g, "\\'")}')` : (fallback || 'var(--accent)');
+    return u ? `center/cover no-repeat url('${_cssUrlEscape(u)}')` : (fallback || 'var(--accent)');
   }
   return c || fallback || 'var(--accent)';
 }

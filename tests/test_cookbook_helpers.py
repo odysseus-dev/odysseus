@@ -348,7 +348,7 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     src = (pathlib.Path(__file__).resolve().parent.parent
         / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
 
-    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
+    assert "re.sub(r\"(?<![A-Za-z0-9_.\\-/])llama_cpp(?![A-Za-z0-9_.\\-/])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
 
@@ -419,8 +419,6 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -433,8 +431,6 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -447,8 +443,6 @@ def test_pip_install_attempt_success_exits_zero():
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -557,6 +551,19 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
     assert _validate_serve_cmd(cmd) == cmd
 
 
+def test_validate_serve_cmd_accepts_llama_mmproj_printf_format():
+    cmd = (
+        "CUDA_VISIBLE_DEVICES=0 llama-server --model "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/snapshots/abc/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 -ngl 99 -c 20000 "
+        "--cache-type-k q4_0 --cache-type-v q4_0 --mmproj "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/snapshots/abc/mmproj-BF16.gguf')\" "
+        "--image-max-tokens 1024"
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
+
+
 def test_normalize_llama_cpp_python_cache_types_for_stale_client_cmd():
     cmd = (
         "python -m llama_cpp.server --model model.gguf --host 0.0.0.0 --port 8000 "
@@ -626,7 +633,7 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     script = "\n".join(runner_lines)
 
     assert "mkdir -p ~/bin" in script
-    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp && rm -rf build")
+    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp")
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
@@ -676,7 +683,7 @@ def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
     # outer else that handles no-GPU-toolchain). Verify it appears at least once
     # before the outer "no HIP/CUDA toolchain" warning.
     cpu_cmake = 'cmake -B build -DCMAKE_BUILD_TYPE=Release &&'
-    no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
+    no_toolchain_warn = 'WARNING: no HIP/CUDA/Vulkan toolchain found'
     assert cpu_cmake in script
     assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
 
@@ -693,8 +700,8 @@ def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
-    assert 'WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only.' in script
-    assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
+    assert 'WARNING: no HIP/CUDA/Vulkan toolchain found — building llama-server for CPU only.' in script
+    assert 'Install Vulkan (libvulkan-dev) / ROCm for AMD GPUs or CUDA tooling for NVIDIA' in script
 
 
 def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
@@ -910,3 +917,42 @@ def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
     assert rec["size_bytes"] == len(b"abc123")
     assert rec["has_incomplete"] is False
     assert rec["is_diffusion"] is False
+
+
+def test_validate_serve_cmd_accepts_find_subshell_for_mmproj():
+    """$(find …) for mmproj path should be accepted, same as $(printf %s …)."""
+    cmd = (
+        "HIP_VISIBLE_DEVICES=0 llama-server "
+        "--model \"$(printf %s '/app/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-GGUF"
+        "/snapshots/90f9618340396838ee7ff5b0ba2da27da62953d3/gemma-4-E2B-it-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 -ngl 99 -c 131072 "
+        "--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 "
+        "--mmproj \"$(find '/app/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-GGUF"
+        "/snapshots' -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)\" "
+        "--image-max-tokens 1024"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_unrelated_subshells():
+    for cmd in [
+        "llama-server --model \"$(curl https://example.invalid/model.gguf)\" --host 0.0.0.0 --port 8000",
+        "llama-server --model \"$(rm -rf /tmp/not-a-model)\" --host 0.0.0.0 --port 8000",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(cmd)
+
+
+def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
+    for cmd in [
+        (
+            "llama-server --model model.gguf "
+            "--mmproj \"$(find '/app/models' -iname 'mmproj*.gguf' | xargs head -1)\""
+        ),
+        (
+            "llama-server --model model.gguf "
+            "--mmproj \"$(find '/app/models' -iname '*.gguf' 2>/dev/null | sort | head -1)\""
+        ),
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(cmd)

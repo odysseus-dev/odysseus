@@ -214,6 +214,22 @@ _check_nvidia_smi() {
     echo
 }
 
+# WSL2 snap Docker cannot see /usr/lib/wsl/lib/libdxcore.so from its confined
+# namespace, so NVIDIA passthrough fails until the user switches to non-snap
+# Docker. DockerRootDir identifies snap installs more reliably than snap(8).
+_is_wsl() {
+    grep -qi microsoft /proc/version 2>/dev/null && return 0
+    [ -d /usr/lib/wsl ] && return 0
+    return 1
+}
+
+_is_docker_snap() {
+    case "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)" in
+        */snap/docker/*|*/snap.docker/*) return 0 ;;
+    esac
+    return 1
+}
+
 # Returns 1 if Docker is unavailable (callers should stop further GPU checks).
 _check_docker() {
     _info "Checking Docker..."
@@ -258,6 +274,26 @@ _check_gpu_passthrough() {
         echo
         _fail "GPU passthrough failed. Check these steps in order:"
         echo
+        if _is_wsl && _is_docker_snap; then
+            _warn "Detected: Docker installed via snap, running on WSL2."
+            _warn "This is a known incompatibility, not a toolkit/config problem:"
+            _warn "  snap confines Docker's mount namespace, so it cannot see the"
+            _warn "  WSL2-injected GPU library at /usr/lib/wsl/lib/libdxcore.so even"
+            _warn "  though the file exists on the host. Installing/reconfiguring"
+            _warn "  nvidia-container-toolkit will NOT fix this — the numbered"
+            _warn "  steps below will not help until Docker itself is replaced."
+            echo
+            _info "Fix: remove snap Docker and install the official apt-based Docker"
+            _info "Engine instead (unsandboxed, can see /usr/lib/wsl/lib):"
+            echo
+            echo "  sudo snap remove docker"
+            echo "  # then follow: https://docs.docker.com/engine/install/ubuntu/"
+            echo "  sudo nvidia-ctk runtime configure --runtime=docker"
+            echo "  sudo systemctl restart docker"
+            echo
+            _info "Re-run this script afterward to confirm passthrough works."
+            echo
+        fi
         echo "  1. Install NVIDIA Container Toolkit (if not already installed):"
         echo "     Arch:    sudo pacman -S nvidia-container-toolkit"
         echo "     Debian:  sudo apt install nvidia-container-toolkit"

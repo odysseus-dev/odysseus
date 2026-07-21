@@ -216,7 +216,14 @@ def _normalize_integration_base_url(base_url: Any) -> str:
 
 
 def _join_integration_url(base_url: str, path: str) -> str:
-    return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+    base = base_url.rstrip("/")
+    rel = path.lstrip("/")
+    if not rel:
+        # A bare "/" must resolve to the base URL itself, not base + "/".
+        # POST-to-base integrations (e.g. Discord webhooks) 404 on the
+        # trailing-slash variant of their URL.
+        return base
+    return urljoin(base + "/", rel)
 
 
 def load_integrations() -> List[Dict[str, Any]]:
@@ -394,6 +401,22 @@ async def execute_api_call(
         return {"error": "Path must not contain a fragment", "exit_code": 1}
 
     url = _join_integration_url(base_url, path)
+
+    # SSRF guard — same check used by the gallery endpoint, embeddings,
+    # CardDAV, and the reminder webhook sender. Link-local / metadata
+    # addresses (169.254.x.x — the cloud credential-exfil vector) are always
+    # rejected; INTEGRATION_API_BLOCK_PRIVATE_IPS=true also blocks RFC-1918 /
+    # loopback for locked-down deployments. Private stays allowed by default
+    # because LAN integrations (Home Assistant, Miniflux, ntfy) are the
+    # primary use case.
+    from src.url_safety import check_outbound_url
+    block_private = os.getenv(
+        "INTEGRATION_API_BLOCK_PRIVATE_IPS", "false"
+    ).lower() == "true"
+    ok, reason = check_outbound_url(url, block_private=block_private)
+    if not ok:
+        return {"error": f"URL rejected: {reason}", "exit_code": 1}
+
     method = method.upper()
 
     # Build headers

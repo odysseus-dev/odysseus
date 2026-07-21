@@ -9,6 +9,12 @@ def test_detects_ollama_cloud_native_provider():
     assert llm_core._detect_provider("https://ollama.com/api/chat") == "ollama"
 
 
+def test_detects_bare_local_ollama_as_native_provider():
+    assert llm_core._detect_provider("http://localhost:11434") == "ollama"
+    assert llm_core._detect_provider("http://127.0.0.1:11434/") == "ollama"
+    assert llm_core._detect_provider("http://localhost:11434/v1") == "openai"
+
+
 def test_llm_call_posts_native_ollama_payload(monkeypatch):
     seen = {}
 
@@ -41,6 +47,82 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
     assert seen["headers"]["Authorization"] == "Bearer ollama-key"
     assert seen["json"]["stream"] is False
     assert seen["json"]["options"] == {"temperature": 0.2, "num_predict": 7}
+
+
+def test_llm_call_posts_bare_local_ollama_to_native_api(monkeypatch):
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["url"] = url
+        seen["json"] = json
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"message": {"content": "OK"}, "done": True},
+        )
+
+    monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+
+    result = llm_core.llm_call(
+        "http://localhost:11434",
+        "llama3.2",
+        [{"role": "user", "content": "Say OK"}],
+    )
+
+    assert result == "OK"
+    assert seen["url"] == "http://localhost:11434/api/chat"
+    assert seen["json"]["stream"] is False
+
+
+def test_openai_compatible_chat_url_shapes(monkeypatch):
+    seen = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.append(url)
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"choices": [{"message": {"content": "OK"}}]},
+        )
+
+    monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    llm_core._response_cache.clear()
+
+    cases = [
+        ("http://localhost:11434/v1", "http://localhost:11434/v1/chat/completions"),
+        (
+            "http://localhost:11434/v1/chat/completions",
+            "http://localhost:11434/v1/chat/completions",
+        ),
+    ]
+    for i, (base_url, expected_url) in enumerate(cases):
+        result = llm_core.llm_call(
+            base_url,
+            f"openai-compatible-{i}",
+            [{"role": "user", "content": f"Say OK {i}"}],
+        )
+        assert result == "OK"
+        assert seen[-1] == expected_url
+
+
+def test_list_model_ids_from_openai_compatible_v1(monkeypatch):
+    seen = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        seen["url"] = url
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"data": [{"id": "qwen2.5-coder:7b"}]},
+        )
+
+    monkeypatch.setattr(llm_core.httpx, "get", fake_get)
+
+    assert llm_core.list_model_ids("http://localhost:11434/v1") == ["qwen2.5-coder:7b"]
+    assert seen["url"] == "http://localhost:11434/v1/models"
 
 
 # ---------------------------------------------------------------------------

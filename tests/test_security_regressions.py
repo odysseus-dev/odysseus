@@ -38,6 +38,8 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
     assert "not instructions" in UNTRUSTED_CONTEXT_POLICY
     assert "overrides" in UNTRUSTED_CONTEXT_POLICY
+    assert "Do not quote" in UNTRUSTED_CONTEXT_POLICY
+    assert "acknowledge untrusted-source wrapper labels" in UNTRUSTED_CONTEXT_POLICY
 
 
 # ── secret_storage ─────────────────────────────────────────────
@@ -892,7 +894,8 @@ def test_web_fetch_guard_fails_closed_on_empty_resolution(monkeypatch):
 
 def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
     # A public URL that 302-redirects to an internal address must be blocked
-    # at the redirect hop, not followed.
+    # at the redirect hop, not followed. _get_public_url now uses
+    # httpx.Client(...).stream(...) so the test must mock that path.
     import httpx
     from src.search import content
 
@@ -903,14 +906,31 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
         status_code = 302
         url = "http://public.example/start"
         headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+        encoding = "utf-8"
 
-    from contextlib import contextmanager
+    class _FakeStream:
+        def __enter__(self):
+            return _Resp()
 
-    @contextmanager
-    def _fake_stream(method, url, **kwargs):
-        yield _Resp()
+        def __exit__(self, *args):
+            return False
 
-    monkeypatch.setattr(httpx, "stream", _fake_stream)
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def stream(self, method, url):
+            assert method == "GET"
+            assert url == "http://public.example/start"
+            return _FakeStream()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
 
     with _pytest.raises(httpx.RequestError) as exc:
         content._get_public_url("http://public.example/start", headers={}, timeout=5)
@@ -1097,9 +1117,9 @@ def _import_session_routes_for_filename():
 def _import_gallery_routes_for_filename():
     # Same rationale as the session route helper: import _sanitize_gallery_filename
     # against the real core.database and leave a clean, real module cached.
-    _drop_route_module_cache("routes.gallery_routes")
-    _drop_route_module_cache("routes.gallery_helpers")
-    return importlib.import_module("routes.gallery_routes")
+    _drop_route_module_cache("routes.gallery.gallery_routes")
+    _drop_route_module_cache("routes.gallery.gallery_helpers")
+    return importlib.import_module("routes.gallery.gallery_routes")
 
 
 def test_export_filename_sanitizer_blocks_header_and_path_chars():
@@ -1222,3 +1242,274 @@ def test_visual_report_escapes_request_category():
     # value must coerce rather than crash the render (html.escape needs a str).
     out = generate_visual_report(question="q", report_markdown="## H", category=12345)
     assert "category-12345" in out
+
+
+# ── DNS rebinding (audit finding 8.1) ────────────────────────────────
+# _resolve_public_ips resolves a URL's hostname once per hop and rejects
+# private / metadata targets, but httpx would then re-resolve the
+# hostname at connect time. The fix: the actual TCP connect is pinned
+# to the resolved IP via a custom httpcore.NetworkBackend, while the
+# URL / Host header / SNI stay on the original hostname.
+
+import ipaddress as _ipaddr
+import socket as _socket
+import threading as _threading
+
+import httpx as _httpx
+
+
+def test_dns_rebinding_blocked_by_resolve_gate(monkeypatch):
+    from src.search import content
+
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("10.0.0.5")])
+
+    with _pytest.raises(_httpx.RequestError) as exc:
+        content._resolve_public_ips("https://attacker.example/")
+    assert "non-public" in str(exc.value).lower()
+
+
+def test_dns_rebinding_pinned_backend_connects_to_resolved_ip(monkeypatch):
+    """``_PinnedBackend.connect_tcp`` must ignore the URL's host and
+    dial the pinned IP at the original port. This is the core of the
+    fix: httpcore's NetworkBackend contract lets us intercept the
+    connect before DNS lookup happens.
+    """
+    from src.search import content
+
+    pinned_ip = _ipaddr.ip_address("93.184.216.34")
+    captured = {}
+
+    class _StubStream:
+        def close(self):
+            pass
+
+    class _StubBackend:
+        def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+            captured["host"] = host
+            captured["port"] = port
+            return _StubStream()
+
+        def connect_unix_socket(self, path, timeout=None, socket_options=None):
+            raise OSError("not used")
+
+        def sleep(self, seconds):
+            pass
+
+    backend = content._PinnedBackend(pinned_ip)
+    monkeypatch.setattr(backend, "_real", _StubBackend())
+
+    backend.connect_tcp("attacker.example", 443)
+
+    assert captured["host"] == "93.184.216.34", captured
+    assert captured["port"] == 443, captured
+
+
+def test_dns_rebinding_pinned_transport_dials_pinned_ip(monkeypatch):
+    """End-to-end: ``_PinnedTransport`` actually dials the pinned IP
+    when given a hostname, with the original URL's Host header
+    preserved. We stand up a local socket server on a free port and
+    make the transport connect there via the pinned backend.
+    """
+    from src.search import content
+    import httpcore
+
+    # Stand up a TCP server that accepts one connection and records
+    # the request bytes it received, then returns a minimal HTTP/1.1
+    # response.
+    captured = {"request": b""}
+    server_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    server_sock.bind(("127.0.0.1", 0))
+    server_sock.listen(1)
+    port = server_sock.getsockname()[1]
+
+    def serve_once():
+        conn, _ = server_sock.accept()
+        with conn:
+            conn.settimeout(2.0)
+            buf = b""
+            try:
+                while b"\r\n\r\n" not in buf:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+            except _socket.timeout:
+                pass
+            captured["request"] = buf
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Length: 2\r\n"
+                b"Connection: close\r\n"
+                b"\r\n"
+                b"OK"
+            )
+
+    t = _threading.Thread(target=serve_once, daemon=True)
+    t.start()
+
+    # Pin the transport to 127.0.0.1:<port>. The caller hands it a URL
+    # with a fake hostname so we can verify the host header is sent
+    # while the TCP connect goes to the pinned IP.
+    pinned_ip = _ipaddr.ip_address("127.0.0.1")
+    transport = content._PinnedTransport(pinned_ip)
+
+    req = _httpx.Request(
+        "GET",
+        f"http://attacker.test:{port}/path?q=1",
+        headers={"host": "attacker.test"},
+    )
+    try:
+        with _httpx.Client(transport=transport, timeout=5) as client:
+            response = client.send(req)
+        assert response.status_code == 200, response.text
+    finally:
+        server_sock.close()
+
+    t.join(timeout=2)
+
+    request_bytes = captured["request"]
+    assert request_bytes, "server never received a request"
+    # Host header is the original hostname, not the IP. (httpx
+    # lowercases header names; compare case-insensitively.)
+    headers_blob = request_bytes.lower()
+    assert b"host: attacker.test" in headers_blob, request_bytes
+    # The path was preserved.
+    assert b"/path?q=1" in request_bytes, request_bytes
+
+
+def test_dns_rebinding_pinned_transport_preserves_url_netloc(monkeypatch):
+    """The URL the transport hands to the underlying httpcore layer
+    must still be the original ``https://example.com/...`` — never
+    rewritten to the pinned IP. SNI / vhost depend on this.
+    """
+    from src.search import content
+
+    seen_url = {}
+
+    class _RecordingPool:
+        def handle_request(self, req):
+            seen_url["host"] = req.url.host.decode() if isinstance(req.url.host, bytes) else req.url.host
+            seen_url["scheme"] = req.url.scheme.decode() if isinstance(req.url.scheme, bytes) else req.url.scheme
+            seen_url["target"] = req.url.target.decode() if isinstance(req.url.target, bytes) else req.url.target
+            raise _httpx.ConnectError("intercepted")
+
+        def close(self):
+            pass
+
+    pinned_ip = _ipaddr.ip_address("93.184.216.34")
+    transport = content._PinnedTransport(pinned_ip)
+    transport._pool = _RecordingPool()
+
+    req = _httpx.Request("GET", "https://example.com/some/path?q=1")
+    with _pytest.raises(_httpx.ConnectError):
+        transport.handle_request(req)
+
+    assert seen_url["host"] == "example.com", seen_url
+    assert seen_url["scheme"] == "https", seen_url
+    assert seen_url["target"] == "/some/path?q=1", seen_url
+
+
+def test_dns_rebinding_redirect_re_resolves_per_hop(monkeypatch):
+    """Every redirect hop must call ``_resolve_public_ips`` again.
+    A redirect to a private-IP target must be blocked even when the
+    first hop was public.
+    """
+    from src.search import content
+
+    seen = []
+
+    def fake_resolve(url):
+        seen.append(url)
+        if "private" in url:
+            raise _httpx.RequestError(f"Blocked non-public URL: {url}")
+        return [_ipaddr.ip_address("93.184.216.34")]
+
+    monkeypatch.setattr(content, "_resolve_public_ips", fake_resolve)
+
+    class _Resp:
+        status_code = 302
+        headers = {"location": "http://private.example/secret"}
+        encoding = "utf-8"
+
+        def __init__(self, url):
+            self.url = url
+
+    class _FakeStream:
+        def __init__(self, response):
+            self.response = response
+
+        def __enter__(self):
+            return self.response
+
+        def __exit__(self, *args):
+            return False
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, method, url):
+            assert method == "GET"
+            return _FakeStream(_Resp(url))
+
+    monkeypatch.setattr(_httpx, "Client", _FakeClient)
+
+    with _pytest.raises(_httpx.RequestError) as exc:
+        content._get_public_url("http://public.example/start", headers={}, timeout=5)
+    assert "non-public" in str(exc.value).lower()
+    # Both hops were validated.
+    assert seen == ["http://public.example/start", "http://private.example/secret"], seen
+
+
+def test_dns_rebinding_transport_uses_public_apis(monkeypatch):
+    """Static guard: ``_PinnedTransport`` must use only the public
+    ``httpx.BaseTransport`` / ``httpcore`` APIs. No subclassing of
+    ``httpx.HTTPTransport`` (whose ``_pool`` slot we'd have to
+    overwrite), no reads of private ``httpcore.ConnectionPool``
+    attributes, and no imports from ``httpx._transports``.
+    """
+    from src.search import content
+
+    import inspect
+
+    # 1) Subclass check: must be BaseTransport, not HTTPTransport.
+    mro_names = [c.__name__ for c in content._PinnedTransport.__mro__]
+    assert "BaseTransport" in mro_names, mro_names
+    assert "HTTPTransport" not in mro_names, (
+        "_PinnedTransport subclasses httpx.HTTPTransport. Subclass "
+        "httpx.BaseTransport instead and build the pool from scratch "
+        "with the public httpcore.ConnectionPool API."
+    )
+
+    # 2) No reads of private httpcore.ConnectionPool attrs.
+    src = inspect.getsource(content._PinnedTransport)
+    forbidden = (
+        "_ssl_context",
+        "_max_connections",
+        "_max_keepalive_connections",
+        "_keepalive_expiry",
+        "_http1",
+        "_http2",
+        "_network_backend",
+    )
+    leaked = [name for name in forbidden if name in src]
+    assert not leaked, (
+        f"_PinnedTransport reads private httpcore.ConnectionPool attrs: {leaked}. "
+        "Build the pool from the public httpcore.ConnectionPool API instead."
+    )
+
+    # 3) No imports from httpx's private transport module.
+    module_src = inspect.getsource(content)
+    forbidden_imports = ("from httpx._transports", "import httpx._transports")
+    leaked_imports = [s for s in forbidden_imports if s in module_src]
+    assert not leaked_imports, (
+        f"content.py imports from httpx's private transport module: {leaked_imports}. "
+        "Use only the public httpx and httpcore APIs."
+    )

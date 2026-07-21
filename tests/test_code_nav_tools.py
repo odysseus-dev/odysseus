@@ -91,6 +91,30 @@ def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
     assert ".git/config" not in r["output"]
 
 
+@pytest.mark.skipif(shutil.which("rg") is None, reason="targets the ripgrep fast-path")
+def test_grep_skips_case_variant_sensitive_files_rg(repo):
+    """The rg fast-path must exclude deny-listed key files case-insensitively.
+
+    A file whose name is a case variant of a sensitive pattern (e.g. ID_RSA vs
+    id_rsa, Known_Hosts vs known_hosts) points at the same secret on a
+    case-insensitive filesystem, so grep must not return its contents. The
+    Python fallback already folds case via _is_sensitive_path; a plain --glob
+    exclusion is case-sensitive, so it would leak these — this pins the rg path.
+    """
+    token = "GREPSECRET_TOKEN_ZZZ"
+    with open(os.path.join(repo, "notes.txt"), "w") as f:
+        f.write(f"see {token}\n")
+    with open(os.path.join(repo, "ID_RSA"), "w") as f:
+        f.write(f"PRIVATE {token}\n")
+    with open(os.path.join(repo, "Known_Hosts"), "w") as f:
+        f.write(f"host {token}\n")
+    r = _run("grep", f'{{"pattern": "{token}", "path": "{repo}"}}')
+    assert r["exit_code"] == 0
+    assert "notes.txt" in r["output"]        # ordinary matches still returned
+    assert "ID_RSA" not in r["output"]        # case-variant key excluded
+    assert "Known_Hosts" not in r["output"]
+
+
 # ── glob ──────────────────────────────────────────────────────────────────
 
 def test_glob_py(repo):

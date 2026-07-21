@@ -3,13 +3,16 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
+from urllib.parse import unquote, urlparse
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
 
 from src.runtime_paths import get_app_root
+from core.platform_compat import safe_chmod, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +45,28 @@ def _default_database_url() -> str:
 
 
 def _normalize_sqlite_url(url: str) -> str:
-    if not url.startswith("sqlite:///"):
+    """Resolve relative ordinary SQLite paths without rewriting URI filenames."""
+    try:
+        parsed = make_url(url)
+    except Exception:
         return url
-    db_path = url.replace("sqlite:///", "", 1)
-    if db_path == ":memory:" or os.path.isabs(db_path):
+
+    if parsed.get_backend_name() != "sqlite":
         return url
-    return f"sqlite:///{(Path(get_app_root()) / db_path).resolve().as_posix()}"
+
+    db_path = parsed.database
+    if (
+        not db_path
+        or db_path == ":memory:"
+        or str(db_path).lower().startswith("file:")
+        or os.path.isabs(str(db_path))
+    ):
+        return url
+
+    absolute_path = (Path(get_app_root()) / str(db_path)).resolve().as_posix()
+    return parsed.set(database=absolute_path).render_as_string(
+        hide_password=False
+    )
 
 
 # Get database URL from environment, default to SQLite in DATA_DIR
@@ -58,6 +77,59 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 )
+
+
+# Sidecar files SQLite can create next to the main DB. -journal is the default
+# rollback journal; -wal/-shm appear once WAL is enabled. Each can hold copies of
+# secret-bearing pages, so they get the same 0o600 lockdown as the DB itself.
+_SQLITE_SIDECARS = ("-journal", "-wal", "-shm")
+
+
+def _sqlite_db_path(url) -> Optional[str]:
+    """Return the filesystem path for a file-backed SQLite URL.
+
+    SQLite query parameters such as ``mode=memory`` only affect filename
+    semantics when SQLAlchemy enables URI handling with ``uri=true``. Ordinary
+    file URLs must therefore remain file-backed even when they contain a query
+    parameter named ``mode``.
+
+    For SQLite ``file:`` URIs, an empty authority or ``localhost`` identifies a
+    local path. Other authorities are retained as UNC-style paths.
+    """
+    if url.get_backend_name() != "sqlite":
+        return None
+
+    db_path = url.database
+    if not db_path or db_path == ":memory:":
+        return None
+
+    db_path = str(db_path)
+    query = {
+        str(key).lower(): str(value).strip().lower()
+        for key, value in dict(getattr(url, "query", {}) or {}).items()
+    }
+    uri_enabled = query.get("uri") in {"1", "true", "yes", "on"}
+    is_file_uri = db_path.lower().startswith("file:")
+
+    if not uri_enabled or not is_file_uri:
+        return db_path
+
+    if (
+        db_path.lower().startswith("file::memory:")
+        or query.get("mode") == "memory"
+    ):
+        return None
+
+    parsed = urlparse(db_path)
+    fs_path = parsed.path or ""
+    if not fs_path or fs_path == ":memory:":
+        return None
+
+    authority = parsed.netloc
+    if authority and authority.lower() != "localhost":
+        fs_path = f"//{authority}{fs_path}"
+
+    return unquote(fs_path)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -276,6 +348,7 @@ class GalleryImage(TimestampMixin, Base):
     id         = Column(String, primary_key=True, index=True)
     filename   = Column(String, nullable=False, unique=True)
     prompt     = Column(Text, nullable=False, default="")
+    caption    = Column(Text, nullable=True, default="")
     model      = Column(String, nullable=True)
     size       = Column(String, nullable=True)
     quality    = Column(String, nullable=True)
@@ -1182,6 +1255,29 @@ def _migrate_add_multiuser_owner_columns():
     _migrate_add_owner_to_table("documents", "ix_documents_owner")
 
 
+def _migrate_add_gallery_caption_column():
+    """Add OCR/vision caption storage for gallery images."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(gallery_images)").fetchall()]
+        if columns and "caption" not in columns:
+            conn.execute("ALTER TABLE gallery_images ADD COLUMN caption TEXT DEFAULT ''")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added caption column to gallery_images")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration gallery caption column failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_api_token_scopes_column():
     """Add API token scopes for existing installs.
 
@@ -1670,6 +1766,7 @@ class CalendarEvent(TimestampMixin, Base):
     # `Z`-suffix on serialization so the frontend interprets correctly.
     is_utc      = Column(Boolean, default=False, nullable=False)
     rrule       = Column(String, default="")
+    recurrence_exdates = Column(Text, default="")  # JSON list of skipped occurrence starts
     color       = Column(String, nullable=True)  # per-event color override
     status      = Column(String, default="confirmed")  # confirmed, cancelled
     importance  = Column(String, default="normal")    # low | normal | high | critical
@@ -1794,6 +1891,41 @@ def init_db():
     """
     _migrate_model_endpoints()
     Base.metadata.create_all(bind=engine)
+    # Lock the DB file (and any SQLite sidecars) to 0o600 — it holds bearer-token
+    # + bcrypt hashes and encrypted provider keys. POSIX only; safe_chmod no-ops
+    # on Windows (ACL-restricted profile dir) and the path helper returns None for
+    # Postgres / in-memory. Must stay AFTER create_all: the file is born here at
+    # the umask default, and nothing below resets the mode. The path comes from
+    # engine.url (SQLAlchemy's parsed URL), so a driver-qualified or query-tagged
+    # DATABASE_URL still resolves to the real file instead of slipping through.
+    db_path = _sqlite_db_path(engine.url)
+    if db_path is not None:
+        # Fail closed-loud on the main file: this is the only access control on
+        # it, so if the chmod genuinely fails (read-only FS, foreign owner) an
+        # operator should hear about it. safe_chmod also returns False as a
+        # Windows no-op, so guard on IS_WINDOWS to avoid a spurious warning there.
+        if not safe_chmod(db_path, 0o600) and not IS_WINDOWS:
+            logger.warning(
+                "Could not restrict %s to 0o600; it holds secrets and may be "
+                "world-readable. Check filesystem permissions and ownership.",
+                db_path,
+            )
+        # Re-lock any sidecars present at startup. New ones inherit the main
+        # file's mode (now 0o600, since we set it first), and they're usually
+        # absent here, but a stale -wal/-shm/-journal left by an older 0o644
+        # install could still expose secret pages. Absent sidecars are the
+        # normal case, not an error — only a failed chmod warrants a warning.
+        for suffix in _SQLITE_SIDECARS:
+            sidecar = db_path + suffix
+            if (
+                os.path.exists(sidecar)
+                and not safe_chmod(sidecar, 0o600)
+                and not IS_WINDOWS
+            ):
+                logger.warning(
+                    "Could not restrict %s to 0o600; it may expose DB pages.",
+                    sidecar,
+                )
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
@@ -1811,6 +1943,7 @@ def init_db():
     _migrate_add_token_columns()
     _migrate_add_mode_column()
     _migrate_add_multiuser_owner_columns()
+    _migrate_add_gallery_caption_column()
     _migrate_add_api_token_scopes_column()
     _migrate_backfill_document_owner_from_session()
     _migrate_assign_legacy_owner()
@@ -1833,6 +1966,7 @@ def init_db():
     _migrate_add_calendar_origin()
     _migrate_add_calendar_account_id()
     _migrate_add_caldav_sync_columns()
+    _migrate_add_calendar_recurrence_exdates()
     _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
@@ -1877,6 +2011,20 @@ def _migrate_chat_messages_fts():
     conn = None
     try:
         conn = sqlite3.connect(db_path)
+        fts_content_expr_new = (
+            "CASE WHEN instr(COALESCE(new.content, ''), ';base64,') > 0 "
+            "OR instr(COALESCE(new.content, ''), 'data:image/') > 0 "
+            "OR instr(COALESCE(new.content, ''), 'data:audio/') > 0 "
+            "THEN '[inline media omitted from search index]' "
+            "ELSE COALESCE(new.content, '') END"
+        )
+        fts_content_expr_cm = (
+            "CASE WHEN instr(COALESCE(cm.content, ''), ';base64,') > 0 "
+            "OR instr(COALESCE(cm.content, ''), 'data:image/') > 0 "
+            "OR instr(COALESCE(cm.content, ''), 'data:audio/') > 0 "
+            "THEN '[inline media omitted from search index]' "
+            "ELSE COALESCE(cm.content, '') END"
+        )
         try:
             conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp._odysseus_fts5_probe USING fts5(content)")
             conn.execute("DROP TABLE IF EXISTS temp._odysseus_fts5_probe")
@@ -1885,7 +2033,7 @@ def _migrate_chat_messages_fts():
             return
 
         conn.executescript(
-            """
+            f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
                 content,
                 message_id UNINDEXED,
@@ -1893,10 +2041,14 @@ def _migrate_chat_messages_fts():
                 role UNINDEXED
             );
 
+            DROP TRIGGER IF EXISTS chat_messages_fts_ai;
+            DROP TRIGGER IF EXISTS chat_messages_fts_ad;
+            DROP TRIGGER IF EXISTS chat_messages_fts_au;
+
             CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ai
             AFTER INSERT ON chat_messages BEGIN
                 INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+                VALUES ({fts_content_expr_new}, new.id, new.session_id, new.role);
             END;
 
             CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ad
@@ -1908,14 +2060,14 @@ def _migrate_chat_messages_fts():
             AFTER UPDATE ON chat_messages BEGIN
                 DELETE FROM chat_messages_fts WHERE message_id = old.id;
                 INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+                VALUES ({fts_content_expr_new}, new.id, new.session_id, new.role);
             END;
             """
         )
         conn.execute(
-            """
+            f"""
             INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-            SELECT COALESCE(cm.content, ''), cm.id, cm.session_id, cm.role
+            SELECT {fts_content_expr_cm}, cm.id, cm.session_id, cm.role
             FROM chat_messages cm
             WHERE NOT EXISTS (
                 SELECT 1 FROM chat_messages_fts fts
@@ -1923,6 +2075,7 @@ def _migrate_chat_messages_fts():
             )
             """
         )
+        _scrub_legacy_chat_message_fts_media(conn)
         conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"chat_messages FTS migration failed: {e}")
@@ -1931,6 +2084,37 @@ def _migrate_chat_messages_fts():
             conn.close()
         except Exception:
             pass
+
+
+def _scrub_legacy_chat_message_fts_media(conn) -> None:
+    """Replace already-indexed inline media rows with searchable text only."""
+    try:
+        from src.attachment_refs import search_index_text
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS media scrub skipped: {e}")
+        return
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, role, content
+            FROM chat_messages
+            WHERE instr(COALESCE(content, ''), ';base64,') > 0
+               OR instr(COALESCE(content, ''), 'data:image/') > 0
+               OR instr(COALESCE(content, ''), 'data:audio/') > 0
+            """
+        ).fetchall()
+        for message_id, session_id, role, content in rows:
+            conn.execute("DELETE FROM chat_messages_fts WHERE message_id = ?", (message_id,))
+            conn.execute(
+                """
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (?, ?, ?, ?)
+                """,
+                (search_index_text(content), message_id, session_id, role),
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS media scrub failed: {e}")
 
 
 def _migrate_add_email_smtp_security():
@@ -2178,6 +2362,28 @@ def _migrate_add_calendar_metadata():
         conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"calendar_events migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_calendar_recurrence_exdates():
+    """Add skipped recurrence occurrences for deleting one instance of a series."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(calendar_events)").fetchall()]
+        if columns and "recurrence_exdates" not in columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN recurrence_exdates TEXT DEFAULT ''")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar_events recurrence_exdates migration failed: {e}")
     finally:
         try:
             conn.close()
