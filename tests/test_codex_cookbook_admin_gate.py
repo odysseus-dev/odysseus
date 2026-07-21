@@ -84,6 +84,61 @@ PRE_BODY_CREDENTIALS = [
     ),
 ]
 
+_INTERNAL_HEADER_BYTES = INTERNAL_TOOL_HEADER.lower().encode("ascii")
+_INTERNAL_TOKEN_BYTES = INTERNAL_TOOL_TOKEN.encode("utf-8")
+DUPLICATE_PRE_BODY_HEADERS = [
+    pytest.param(
+        [
+            (b"authorization", b"Basic placeholder"),
+            (b"authorization", b"Bearer ody_second_value"),
+        ],
+        id="bearer-second",
+    ),
+    pytest.param(
+        [
+            (b"authorization", b"Bearer ody_first_value"),
+            (b"authorization", b"Basic placeholder"),
+        ],
+        id="bearer-first",
+    ),
+    pytest.param(
+        [
+            (_INTERNAL_HEADER_BYTES, b"invalid"),
+            (_INTERNAL_HEADER_BYTES, _INTERNAL_TOKEN_BYTES),
+        ],
+        id="internal-second",
+    ),
+    pytest.param(
+        [
+            (_INTERNAL_HEADER_BYTES, _INTERNAL_TOKEN_BYTES),
+            (_INTERNAL_HEADER_BYTES, b"invalid"),
+        ],
+        id="internal-first",
+    ),
+    pytest.param(
+        [(b"authorization", b"Basic placeholder, Bearer ody_combined")],
+        id="bearer-proxy-combined",
+    ),
+    pytest.param(
+        [(_INTERNAL_HEADER_BYTES, b"invalid, " + _INTERNAL_TOKEN_BYTES)],
+        id="internal-proxy-combined",
+    ),
+    pytest.param(
+        [
+            (_INTERNAL_HEADER_BYTES, b"\xff"),
+            (b"authorization", b"Bearer ody_after_obs_text"),
+        ],
+        id="non-ascii-before-bearer",
+    ),
+    pytest.param(
+        [
+            (_INTERNAL_HEADER_BYTES, b"\xff"),
+            (_INTERNAL_HEADER_BYTES, _INTERNAL_TOKEN_BYTES),
+        ],
+        id="non-ascii-before-internal",
+    ),
+]
+
 
 class _PoisonPath:
     def __fspath__(self):
@@ -195,6 +250,24 @@ def test_gate_precedes_json_body_validation(blocked_client, headers):
     assert side_effects == []
 
 
+@pytest.mark.parametrize("raw_headers", DUPLICATE_PRE_BODY_HEADERS)
+def test_all_duplicate_and_obs_text_credentials_precede_body_validation(
+    blocked_client,
+    raw_headers,
+):
+    client, side_effects = blocked_client
+
+    response = client.post(
+        "/api/codex/cookbook/serve",
+        headers=[*raw_headers, (b"content-type", b"application/json")],
+        content=b"{not-json",
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Forbidden"}
+    assert side_effects == []
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -203,6 +276,7 @@ def test_gate_precedes_json_body_validation(blocked_client, headers):
         "BEARER   ody_token",
         "BeArEr\tody_token",
         "  bearer \t  ody_token  ",
+        "Basic placeholder, Bearer ody_token",
     ],
 )
 def test_odysseus_bearer_parser_accepts_scheme_case_and_sp_htab(value):

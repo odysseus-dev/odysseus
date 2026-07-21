@@ -38,32 +38,66 @@ def is_codex_cookbook_path(path: str) -> bool:
 
 
 def is_odysseus_bearer_authorization(value: str | None) -> bool:
-    """Recognize the Bearer scheme with normal case and whitespace freedom."""
+    """Recognize an Odysseus Bearer value, including proxy-combined fields."""
     if not isinstance(value, str):
         return False
-    parts = value.strip().split(None, 1)
-    return (
-        len(parts) == 2
-        and parts[0].casefold() == "bearer"
-        and parts[1].startswith("ody_")
-    )
+    for candidate in value.split(","):
+        parts = candidate.strip().split(None, 1)
+        if (
+            len(parts) == 2
+            and parts[0].casefold() == "bearer"
+            and parts[1].startswith("ody_")
+        ):
+            return True
+    return False
+
+
+def _header_values(headers, name: str) -> list[str]:
+    """Return every field value, with a mapping fallback for direct callers."""
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        values = getlist(name)
+    else:
+        value = headers.get(name)
+        values = value if isinstance(value, (list, tuple)) else [value]
+    return [value for value in values if isinstance(value, str)]
+
+
+def _internal_header_matches(value: str) -> bool:
+    """Compare raw or proxy-combined values without obs-text type failures."""
+    candidates = [value]
+    if "," in value:
+        candidates.extend(part.strip() for part in value.split(","))
+    try:
+        expected = INTERNAL_TOOL_TOKEN.encode("utf-8")
+    except (AttributeError, UnicodeError):
+        return False
+    for candidate in candidates:
+        try:
+            if secrets.compare_digest(candidate.encode("utf-8"), expected):
+                return True
+        except (AttributeError, TypeError, UnicodeError):
+            continue
+    return False
 
 
 def require_codex_cookbook_browser(request: Request) -> None:
     """Reject bearer and internal-tool principals at the shared boundary."""
     current_user = getattr(request.state, "current_user", None)
-    authorization = request.headers.get("authorization", "")
-    internal_header = request.headers.get(INTERNAL_TOOL_HEADER)
-    has_internal_header = bool(
-        internal_header
-        and secrets.compare_digest(internal_header, INTERNAL_TOOL_TOKEN)
-    )
     if (
         getattr(request.state, "api_token", False)
         or current_user == "api"
         or current_user == INTERNAL_TOOL_USER
-        or is_odysseus_bearer_authorization(authorization)
-        or has_internal_header
+    ):
+        raise HTTPException(403, "Forbidden")
+    if any(
+        is_odysseus_bearer_authorization(value)
+        for value in _header_values(request.headers, "authorization")
+    ):
+        raise HTTPException(403, "Forbidden")
+    if any(
+        _internal_header_matches(value)
+        for value in _header_values(request.headers, INTERNAL_TOOL_HEADER)
     ):
         raise HTTPException(403, "Forbidden")
 
