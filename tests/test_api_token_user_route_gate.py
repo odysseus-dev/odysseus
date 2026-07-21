@@ -9,7 +9,14 @@ from core.middleware import require_admin
 from src import auth_helpers
 
 
-def _request(*, current_user="api", api_token=True, api_token_owner="alice"):
+def _request(
+    *,
+    current_user="api",
+    api_token=True,
+    api_token_owner="alice",
+    admin_users=(),
+):
+    admin_users = frozenset(admin_users)
     return SimpleNamespace(
         state=SimpleNamespace(
             current_user=current_user,
@@ -20,7 +27,7 @@ def _request(*, current_user="api", api_token=True, api_token_owner="alice"):
             state=SimpleNamespace(
                 auth_manager=SimpleNamespace(
                     is_configured=True,
-                    is_admin=lambda _user: False,
+                    is_admin=lambda user: user in admin_users,
                 ),
             ),
         ),
@@ -47,11 +54,11 @@ def test_require_authenticated_request_allows_api_token_owner(monkeypatch):
 
 
 def test_require_admin_rejects_api_token_pseudo_user(monkeypatch):
-    """A bearer token never inherits cookie-session administrator access."""
+    """A bearer token never inherits its owner's administrator access."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
 
     with pytest.raises(HTTPException) as exc:
-        require_admin(_request())
+        require_admin(_request(api_token_owner="alice", admin_users={"alice"}))
 
     assert exc.value.status_code == 403
 
