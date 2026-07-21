@@ -26,8 +26,8 @@ Future split PRs must still inspect each file manually before editing.
 
 ## Current summary
 
-- test files scanned: 583
-- collected pytest items counted: 3586
+- test files scanned: 582
+- collected pytest items counted: 3555
 - large-file threshold: 300 lines
 - large-collected threshold: 20 collected items
 
@@ -38,10 +38,10 @@ Area distribution:
 | cli | 28 |
 | helpers | 1 |
 | js | 39 |
-| routes | 23 |
+| routes | 24 |
 | security | 77 |
 | services | 144 |
-| uncategorized | 234 |
+| uncategorized | 232 |
 | unit | 37 |
 
 Sub-area distribution:
@@ -71,7 +71,7 @@ Sub-area distribution:
 | parse | 4 |
 | provider | 6 |
 | research | 16 |
-| route | 6 |
+| route | 7 |
 | routes | 9 |
 | scheduler | 3 |
 | scope | 5 |
@@ -81,7 +81,7 @@ Sub-area distribution:
 | webhook | 3 |
 | xss | 5 |
 
-Values below 2 files: 244 values covering 244 files.
+Values below 2 files: 242 values covering 242 files.
 
 ## Top files by collected pytest items
 
@@ -140,7 +140,6 @@ Values below 2 files: 244 values covering 244 files.
 | `tests/test_endpoint_owner_scope_followup.py` | 414 | 11 | 11 | 0 | security | owner_scope | route/api, db/session, filesystem |
 | `tests/test_endpoint_probing.py` | 411 | 34 | 30 | 6 | uncategorized | endpoint_probing | route/api, db/session, import-state |
 | `tests/test_imap_leak_fixes.py` | 404 | 15 | 15 | 0 | uncategorized | imap_leak_fixes | route/api, db/session, security, filesystem |
-| `tests/test_companion_readonly.py` | 402 | 17 | 17 | 0 | uncategorized | companion_readonly | db/session, import-state |
 | `tests/test_api_chat_security.py` | 401 | 22 | 8 | 0 | security | security | route/api, db/session, import-state, filesystem, async/threading |
 | `tests/test_upload_handler_atomicity.py` | 401 | 9 | 9 | 0 | uncategorized | upload_handler_atomicity | filesystem, async/threading |
 | `tests/test_run_focus.py` | 399 | 47 | 44 | 0 | uncategorized | run_focus | security, filesystem, subprocess/script, ui/static |
@@ -202,7 +201,6 @@ These are planning candidates only. A later split PR still needs a focused manua
 | `tests/test_calendar_recurrence.py` | 338 lines | No obvious setup signals from static scan. | Plan split boundaries before editing. |
 | `tests/test_workspace_confine.py` | 328 lines | route/api, filesystem, subprocess/script, async/threading | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_api_token_routes.py` | 578 lines | route/api, db/session, import-state, async/threading | Defer mechanical split until setup/risk boundaries are mapped. |
-| `tests/test_companion_readonly.py` | 402 lines | db/session, import-state | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_set_admin.py` | 317 lines | route/api, import-state, filesystem, async/threading | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_imap_leak_fixes.py` | 404 lines | route/api, db/session, security, filesystem | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_auth_regressions.py` | 375 lines | route/api, db/session, import-state, async/threading | Defer mechanical split until setup/risk boundaries are mapped. |
@@ -243,7 +241,6 @@ Before using any of these files as a split target, first decide whether the taxo
 | `tests/test_context_compactor.py` | 233 | 21 | context_compactor | db/session, import-state, async/threading | Review taxonomy and setup/risk boundaries before any split. |
 | `tests/test_youtube_handler_consolidation.py` | 104 | 20 | youtube_handler_consolidation | route/api, import-state | Review taxonomy and setup/risk boundaries before any split. |
 | `tests/test_workspace_confine.py` | 328 | 18 | workspace_confine | route/api, filesystem, subprocess/script, async/threading | Review taxonomy and setup/risk boundaries before any split. |
-| `tests/test_companion_readonly.py` | 402 | 17 | companion_readonly | db/session, import-state | Review taxonomy and setup/risk boundaries before any split. |
 | `tests/test_set_admin.py` | 317 | 17 | set_admin | route/api, import-state, filesystem, async/threading | Review taxonomy and setup/risk boundaries before any split. |
 | `tests/test_imap_leak_fixes.py` | 404 | 15 | imap_leak_fixes | route/api, db/session, security, filesystem | Review taxonomy and setup/risk boundaries before any split. |
 | `tests/test_agent_migration_manifest.py` | 340 | 15 | agent_migration_manifest | import-state, filesystem | Review taxonomy and setup/risk boundaries before any split. |
