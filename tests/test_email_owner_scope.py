@@ -539,6 +539,55 @@ async def test_pending_agent_draft_routes_do_not_expose_ownerless_rows(tmp_path,
     assert rows == [("draft-bob", "agent_draft"), ("draft-ownerless", "agent_draft")]
 
 
+@pytest.mark.asyncio
+async def test_pending_agent_draft_routes_block_cross_owner_actions(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+    import routes.email_routes as email_routes
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
+    email_helpers._init_scheduled_db()
+
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        """
+        INSERT INTO scheduled_emails
+        (id, to_addr, subject, body, attachments, send_at, created_at, status, account_id, owner)
+        VALUES (?, ?, ?, ?, '[]', '9999-12-31T00:00:00', ?, 'agent_draft', ?, ?)
+        """,
+        [
+            ("draft-alice", "alice@example.com", "Alice", "alice body", "2026-01-01", "acct-a", "alice"),
+            ("draft-bob", "bob@example.com", "Bob", "bob body", "2026-01-02", "acct-b", "bob"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    router = email_routes.setup_email_routes()
+    list_pending = _route_endpoint(router, "/api/email/pending", "GET")
+    approve_pending = _route_endpoint(router, "/api/email/pending/{sid}/approve", "POST")
+    cancel_pending = _route_endpoint(router, "/api/email/pending/{sid}", "DELETE")
+
+    alice_rows = await list_pending(owner="alice")
+    assert [row["id"] for row in alice_rows["pending"]] == ["draft-alice"]
+
+    assert (await approve_pending("draft-bob", owner="alice"))["success"] is False
+    assert (await cancel_pending("draft-bob", owner="alice"))["success"] is False
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, status, send_at FROM scheduled_emails ORDER BY id",
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows == [
+        ("draft-alice", "agent_draft", "9999-12-31T00:00:00"),
+        ("draft-bob", "agent_draft", "9999-12-31T00:00:00"),
+    ]
+
+
 def test_scheduled_poller_resolves_config_with_row_owner(tmp_path, monkeypatch):
     import routes.email_helpers as email_helpers
     import routes.email_pollers as email_pollers

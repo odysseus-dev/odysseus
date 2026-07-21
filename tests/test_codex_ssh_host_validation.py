@@ -199,7 +199,8 @@ async def test_documents_pagination_out_of_range_offset_returns_empty_page():
     assert result["next_offset"] is None
 
 
-def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch):
+@pytest.mark.parametrize("host_field", ["host", "remote_host"])
+def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch, host_field):
     calls = []
 
     async def fail_if_shell_runs(*args, **kwargs):
@@ -212,7 +213,7 @@ def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch):
     body = {
         "tmux_session": "serve_abc123",
         "model": "org/model",
-        "host": "-oProxyCommand=sh",
+        host_field: "-oProxyCommand=sh",
     }
 
     with pytest.raises(HTTPException) as exc:

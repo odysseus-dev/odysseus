@@ -6,22 +6,22 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Before submitting:** search [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues)
-        and [discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) first.
-        Feature requests that duplicate [ROADMAP.md](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/ROADMAP.md)
+        **Before submitting:** search [open issues](https://github.com/odysseus-dev/odysseus/issues)
+        and [discussions](https://github.com/odysseus-dev/odysseus/discussions) first.
+        Feature requests that duplicate [ROADMAP.md](https://github.com/odysseus-dev/odysseus/blob/main/ROADMAP.md)
         or an existing open issue will be closed as duplicates.
 
         If your idea needs community input before it becomes a concrete proposal,
-        start a [discussion](https://github.com/pewdiepie-archdaemon/odysseus/discussions/categories/ideas) instead.
+        start a [discussion](https://github.com/odysseus-dev/odysseus/discussions/categories/ideas) instead.
 
   - type: checkboxes
     id: prerequisites
     attributes:
       label: Prerequisites
       options:
-        - label: I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues?q=is%3Aissue+is%3Aopen) and this has not already been proposed.
+        - label: I searched [open issues](https://github.com/odysseus-dev/odysseus/issues?q=is%3Aissue+is%3Aopen) and this has not already been proposed.
           required: true
-        - label: I searched [discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) and this is not already being debated there.
+        - label: I searched [discussions](https://github.com/odysseus-dev/odysseus/discussions) and this is not already being debated there.
           required: true
         - label: This is a concrete, actionable proposal — not a vague "it would be nice if..." request.
           required: true
