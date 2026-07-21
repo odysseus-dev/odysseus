@@ -78,4 +78,4 @@ These are open, acknowledged, and contributor help is welcome:
 
 3. **`src/search/` partial consolidation.** `src.search.core` and `src.search.providers` correctly alias `services.search` via `sys.modules` replacement. `analytics`, `cache`, `content`, `query`, and `ranking` are still independent copies that can drift. The SSRF regression tests in `tests/test_webhook_ssrf_resilience.py` test `src.webhook_manager` directly (separate from search), so the safety net there is intact. See #1058.
 
-4. **Token scopes are coarse.** There is no way to grant a session a subset of the owning user's privileges. Companion/mobile tokens carry either `chat` or `admin` scope with no per-capability granularity.
+4. **API-token capability checks must stay explicit.** Generic API tokens can carry one or more allowlisted scopes for chat, todos, documents, email, calendar, memory, or Cookbook. Bearer access must enforce the required scope and token owner without inheriting browser-session or administrator privileges.

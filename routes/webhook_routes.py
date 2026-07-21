@@ -51,8 +51,8 @@ def _caller_owns_session(sess_owner, caller) -> bool:
     its owner matches them exactly. A null/empty session owner (legacy or
     migrated rows) is deliberately NOT resumable by an arbitrary token — the
     old ``sess_owner and sess_owner != caller`` form skipped the check whenever
-    ``sess_owner`` was falsy, so any chat-scoped token (e.g. a paired mobile
-    device) could resume such a session, inject a message, and read back its
+    ``sess_owner`` was falsy, so any chat-scoped API client could resume such a
+    session, inject a message, and read back its
     history and reuse the owner's endpoint credentials. Fail closed: an
     unresolvable caller also returns False.
     """
