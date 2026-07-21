@@ -1,8 +1,13 @@
 # Oversized Test File Split Plan
 
+> Historical snapshot: originally generated at `dev@6b7a4c1e` for #3983 and
+> adjusted here only for the companion-removal test delta. It is not a live
+> inventory of the current test tree; regenerate it before selecting new split
+> work.
+
 ## Purpose
 
-This document plans future oversized test-file splits using current repo data.
+This document preserves the original oversized test-file planning snapshot.
 It does not move files, rewrite assertions, extract helpers, or change CI.
 
 ## Roadmap context
@@ -13,7 +18,7 @@ It does not move files, rewrite assertions, extract helpers, or change CI.
 
 ## Methodology
 
-Metrics were generated from the current test tree using:
+The snapshot metrics were originally generated using:
 
 - physical line counts for every recursive `test_*.py` file under `tests/`;
 - AST counts for `test_*` functions and `Test*` classes;
@@ -24,7 +29,7 @@ Metrics were generated from the current test tree using:
 Static signals are not proof of risk. They are review prompts.
 Future split PRs must still inspect each file manually before editing.
 
-## Current summary
+## Snapshot summary (plus companion-removal delta)
 
 - test files scanned: 582
 - collected pytest items counted: 3555
@@ -145,7 +150,7 @@ Values below 2 files: 242 values covering 242 files.
 | `tests/test_run_focus.py` | 399 | 47 | 44 | 0 | uncategorized | run_focus | security, filesystem, subprocess/script, ui/static |
 | `tests/test_auth_regressions.py` | 375 | 15 | 15 | 0 | security | auth | route/api, db/session, import-state, async/threading |
 | `tests/test_calendar_owner_scope.py` | 345 | 7 | 7 | 0 | security | owner_scope | route/api, db/session, import-state, filesystem, async/threading, ui/static |
-| `tests/test_null_owner_gates.py` | 342 | 20 | 20 | 0 | security | owner | route/api, db/session, import-state |
+| `tests/test_null_owner_gates.py` | 341 | 20 | 20 | 0 | security | owner | route/api, db/session, import-state |
 | `tests/test_agent_migration_manifest.py` | 340 | 15 | 15 | 0 | uncategorized | agent_migration_manifest | import-state, filesystem |
 | `tests/test_calendar_recurrence.py` | 338 | 19 | 19 | 0 | services | calendar | - |
 | `tests/test_tool_policy.py` | 330 | 13 | 13 | 0 | uncategorized | tool_policy | import-state, async/threading |
@@ -196,7 +201,7 @@ These are planning candidates only. A later split PR still needs a focused manua
 | `tests/test_platform_compat.py` | 318 lines, 21 collected tests | import-state, filesystem, subprocess/script | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_context_compactor.py` | 21 collected tests | db/session, import-state, async/threading | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_prompt_security.py` | 21 collected tests | No obvious setup signals from static scan. | Good first manual-review candidate if test themes are cohesive. |
-| `tests/test_null_owner_gates.py` | 342 lines, 20 collected tests | route/api, db/session, import-state | Defer mechanical split until setup/risk boundaries are mapped. |
+| `tests/test_null_owner_gates.py` | 341 lines, 20 collected tests | route/api, db/session, import-state | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_youtube_handler_consolidation.py` | 20 collected tests | route/api, import-state | Defer mechanical split until setup/risk boundaries are mapped. |
 | `tests/test_calendar_recurrence.py` | 338 lines | No obvious setup signals from static scan. | Plan split boundaries before editing. |
 | `tests/test_workspace_confine.py` | 328 lines | route/api, filesystem, subprocess/script, async/threading | Defer mechanical split until setup/risk boundaries are mapped. |
