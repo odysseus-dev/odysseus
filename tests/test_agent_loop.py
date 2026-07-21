@@ -498,3 +498,35 @@ class TestWebSearchSourcesKeyLookup:
         src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
         assert src_text != ""
         assert "SOURCES" in src_text
+
+
+def test_note_content_question_is_not_admin_intent():
+    messages = [
+        {
+            "role": "user",
+            "content": "What do my notes say about the future NAS?",
+        }
+    ]
+
+    assert _detect_admin_intent(messages) is False
+
+
+def test_note_management_command_is_admin_intent():
+    messages = [
+        {
+            "role": "user",
+            "content": "Open my notes.",
+        }
+    ]
+
+    assert _detect_admin_intent(messages) is True
+
+
+def test_note_content_question_classifies_as_rag():
+    intent = _classify_agent_request(
+        [],
+        "What do my notes say about the future NAS?",
+    )
+
+    assert intent["low_signal"] is False
+    assert "rag" in intent["domains"]
