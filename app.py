@@ -663,7 +663,7 @@ app.include_router(setup_session_routes(
 ))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
-from routes.admin_wipe_routes import setup_admin_wipe_routes
+from routes.admin_wipe.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
