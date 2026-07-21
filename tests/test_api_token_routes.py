@@ -192,7 +192,12 @@ def test_create_token_attributes_owner_hashes_secret_and_returns_raw_once(monkey
     invalidator.assert_called_once()
 
 
-def test_create_token_accepts_cookbook_read_scope(monkeypatch, token_routes_mod):
+@pytest.mark.parametrize("scope", ["cookbook:read", "cookbook:launch"])
+def test_create_token_rejects_retired_cookbook_scopes(
+    monkeypatch,
+    token_routes_mod,
+    scope,
+):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
 
@@ -202,24 +207,12 @@ def test_create_token_accepts_cookbook_read_scope(monkeypatch, token_routes_mod)
 
     req = _req("alice", is_admin=True)
     create_token = _get_handler(mod, "POST", "/tokens")
-    resp = create_token(request=req, name="cookbook-reader", scopes="cookbook:read")
+    with pytest.raises(HTTPException) as exc:
+        create_token(request=req, name="retired-cookbook", scopes=scope)
 
-    assert resp["scopes"] == ["cookbook:read"]
-
-
-def test_cookbook_launch_scope_implies_read(monkeypatch, token_routes_mod):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    mod = token_routes_mod
-
-    fake_session = MagicMock()
-    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
-    monkeypatch.setattr(mod, "get_current_user", lambda req: req.state.current_user)
-
-    req = _req("alice", is_admin=True)
-    create_token = _get_handler(mod, "POST", "/tokens")
-    resp = create_token(request=req, name="cookbook-launcher", scopes="cookbook:launch")
-
-    assert resp["scopes"] == ["cookbook:read", "cookbook:launch"]
+    assert exc.value.status_code == 400
+    assert exc.value.detail == f"Unknown token scope: {scope}"
+    fake_session.add.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

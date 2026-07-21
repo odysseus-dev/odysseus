@@ -36,7 +36,6 @@ ALL_API_TOKEN_SCOPES = frozenset().union(
     MEMORY_READ_SCOPES,
     CALENDAR_READ_SCOPES,
     DOCS_READ_SCOPES,
-    COOKBOOK_READ_SCOPES,
 )
 
 
@@ -95,16 +94,17 @@ def _capability(
 def _normalize_route_path(path: str) -> str | None:
     """Normalize the single trailing slash FastAPI redirects by default.
 
-    Everything else stays strict. Query strings and fragments do not belong in
-    ASGI ``scope['path']``; repeated separators, dot segments, backslashes, and
-    control characters are treated as malformed instead of being normalized
-    into a capability match.
+    Everything else stays strict. ASGI ``scope['path']`` is already decoded, so
+    question marks and hashes can be legitimate path-segment data rather than
+    query or fragment delimiters. Repeated separators, dot segments,
+    backslashes, and control characters are treated as malformed instead of
+    being normalized into a capability match.
     """
     if not isinstance(path, str) or not path.startswith("/"):
         return None
     if any(ord(char) < 32 or ord(char) == 127 for char in path):
         return None
-    if "?" in path or "#" in path or "\\" in path:
+    if "\\" in path:
         return None
     if path != "/" and path.endswith("/"):
         path = path[:-1]
@@ -139,9 +139,15 @@ def _route_path_from_scope(scope: Mapping[str, object]) -> str:
         return ""
     if not isinstance(root_path, str):
         root_path = ""
-    root_path = root_path.rstrip("/")
-    if root_path and (path == root_path or path.startswith(root_path + "/")):
-        path = path[len(root_path):] or "/"
+    if root_path:
+        if path == root_path:
+            path = "/"
+        elif (
+            path.startswith(root_path)
+            and len(path) > len(root_path)
+            and path[len(root_path)] == "/"
+        ):
+            path = path[len(root_path):]
     return path
 
 
@@ -221,27 +227,6 @@ API_TOKEN_ROUTE_CAPABILITIES: tuple[ApiTokenRouteCapability, ...] = (
     _capability("GET", "/api/codex/documents/{doc_id}", DOCS_READ_SCOPES),
     _capability("POST", "/api/codex/documents", DOCS_WRITE_SCOPES),
     _capability("DELETE", "/api/codex/documents/{doc_id}", DOCS_WRITE_SCOPES),
-    _capability("GET", "/api/codex/cookbook/tasks", COOKBOOK_READ_SCOPES),
-    _capability("GET", "/api/codex/cookbook/servers", COOKBOOK_READ_SCOPES),
-    _capability(
-        "GET",
-        "/api/codex/cookbook/output/{session_id}",
-        COOKBOOK_READ_SCOPES,
-    ),
-    _capability("GET", "/api/codex/cookbook/cached", COOKBOOK_READ_SCOPES),
-    _capability("GET", "/api/codex/cookbook/presets", COOKBOOK_READ_SCOPES),
-    _capability("POST", "/api/codex/cookbook/serve", COOKBOOK_LAUNCH_SCOPES),
-    _capability(
-        "POST",
-        "/api/codex/cookbook/stop/{session_id}",
-        COOKBOOK_LAUNCH_SCOPES,
-    ),
-    _capability(
-        "POST",
-        "/api/codex/cookbook/preset/{name}",
-        COOKBOOK_LAUNCH_SCOPES,
-    ),
-    _capability("POST", "/api/codex/cookbook/adopt", COOKBOOK_LAUNCH_SCOPES),
 )
 
 
