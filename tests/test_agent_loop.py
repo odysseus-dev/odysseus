@@ -314,17 +314,21 @@ class TestComputeFinalMetrics:
     def test_tool_events_included(self):
         events = [{"tool": "bash", "duration": 1.0}]
         texts = ["round 1 text"]
+        models = ["round-1-model"]
         m = _compute_final_metrics(**self._base_args(
             tool_events=events,
             round_texts=texts,
+            round_models=models,
         ))
         assert m["tool_events"] == events
         assert m["round_texts"] == texts
+        assert m["round_models"] == models
 
     def test_no_tool_events_excluded(self):
         m = _compute_final_metrics(**self._base_args(tool_events=[], round_texts=[]))
         assert "tool_events" not in m
         assert "round_texts" not in m
+        assert "round_models" not in m
 
 
 # ---------------------------------------------------------------------------

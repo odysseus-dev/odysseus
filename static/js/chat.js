@@ -22,7 +22,13 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260722emailfastindex1';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
-import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
+import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import {
+  applyModelMetricsState,
+  applyModelRouteEventState,
+  inheritModelRouteState,
+} from './chatModelProvenance.js';
+import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -385,13 +391,27 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     const tsSpan = roleEl.querySelector('.role-timestamp');
     const req = requestedModel || actualModel || '';
     const actual = actualModel || requestedModel || '';
-    let label = _modelRouteLabel(req, actual);
+    let label = _modelRouteLabel(
+      req,
+      actual,
+      opts.requestedEndpointLabel,
+      opts.actualEndpointLabel,
+      opts.requestedEndpointId,
+      opts.actualEndpointId,
+    );
     if (opts.suffix) label += ' (' + opts.suffix + ')';
     if (opts.characterName) label = opts.characterName;
     roleEl.textContent = label + ' ';
     _applyModelColor(roleEl, actual || req);
-    if (req && actual && !_sameModelName(req, actual)) {
-      roleEl.title = req + ' -> ' + actual + (opts.reason ? ': ' + opts.reason : '');
+    const endpointChanged = Boolean(
+      opts.requestedEndpointId
+      && opts.actualEndpointId
+      && opts.requestedEndpointId !== opts.actualEndpointId
+    );
+    if (req && actual && (!_sameModelName(req, actual) || endpointChanged)) {
+      roleEl.title = req + ' -> ' + actual
+        + (endpointChanged ? ' (' + opts.requestedEndpointLabel + ' -> ' + opts.actualEndpointLabel + ')' : '')
+        + (opts.reason ? ': ' + opts.reason : '');
     } else if (!opts.reason) {
       roleEl.removeAttribute('title');
     }
@@ -561,6 +581,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
   const _backgroundStreams = new Map(); // sessionId -> { status, accumulated, sourcesHtml, abortCtrl, query, metrics }
   const _activeStreams = new Map();     // sessionId -> { abortCtrl, holder, query, startedAt }
   const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
+  const _terminalSavedStreams = new Set(); // sessionId -> canonical terminal event seen by active reader
+  const _streamRunIds = new Map();      // sessionId -> opaque identity of the exact detached run
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
@@ -573,30 +595,23 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
            _resumingStreams.has(sessionId);
   }
 
-  function _getForegroundStreamState() {
-    try {
-      const sid = sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
-      return sid ? (_activeStreams.get(sid) || null) : null;
-    } catch (_) {
-      return null;
-    }
+  /** Stable cost identity for one logical metrics segment within a run. */
+  function _metricsCostRecordId(runId, event) {
+    if (!runId) return '';
+    return `${runId}:${event && event.teacher ? 'teacher' : 'primary'}`;
   }
 
-  function _syncForegroundStreamGlobals() {
-    const active = _getForegroundStreamState();
-    isStreaming = !!active;
-    currentAbort = active ? active.abortCtrl : null;
-    currentHolder = active ? active.holder : null;
-    _setForegroundChatBusy(!!active || !!_sendInFlight);
-    return active;
-  }
-
-  function _touchStreamActivity(sessionId) {
-    const now = Date.now();
-    _lastReaderActivity = now;
-    const active = sessionId ? _activeStreams.get(sessionId) : null;
-    if (active) active.lastActivity = now;
-    return now;
+  /** Stop only the exact detached run whose identity this browser observed. */
+  function _stopExactRun(sessionId) {
+    if (!sessionId) return false;
+    const runId = _streamRunIds.get(sessionId);
+    if (!runId) return false;
+    fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Odysseus-Run-Id': runId },
+    }).catch(() => {});
+    return true;
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -1341,6 +1356,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     // Capture session ID for background stream detection
     const streamSessionId = sessionModule.getCurrentSessionId();
     _streamSessionId = streamSessionId;
+    _terminalSavedStreams.delete(streamSessionId);
+    _streamRunIds.delete(streamSessionId);
     const streamQuery = msg;
     _touchStreamActivity(streamSessionId);
 
@@ -1360,6 +1377,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
+    let _canonicalTerminalSaved = false;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
@@ -1729,14 +1747,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         if (!abortCtrl.signal.aborted) {
           timedOut = true;
           abortCtrl._reason = 'timeout';
-          try {
-            if (streamSessionId) {
-              fetch(`/api/chat/stop/${encodeURIComponent(streamSessionId)}`, {
-                method: 'POST',
-                credentials: 'same-origin',
-              }).catch(() => {});
-            }
-          } catch (_) {}
+          try { _stopExactRun(streamSessionId); } catch (_) {}
           abortCtrl.abort();
         }
       }, timeoutMs);
@@ -1882,6 +1893,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         enableResearchBtn();
         return;
       }
+      const streamRunId = res.headers.get('X-Odysseus-Run-Id') || '';
+      if (streamRunId) _streamRunIds.set(streamSessionId, streamRunId);
 
       // Mark the chat log busy while streaming so screen readers wait for the
       // settled response instead of announcing every token. Cleared in finally.
@@ -1953,9 +1966,17 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         const newRole = document.createElement('div');
         newRole.className = 'role';
         const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-        const requested = holder?._requestedModel || metaS?.model || modelName;
-        const actual = holder?._actualModel || requested;
-        newRole.textContent = _modelRouteLabel(requested, actual) || '';
+        inheritModelRouteState(holder, roundHolder, newWrap, metaS?.model || modelName);
+        const requested = newWrap._requestedModel;
+        const actual = newWrap._actualModel;
+        newRole.textContent = _modelRouteLabel(
+          requested,
+          actual,
+          newWrap._requestedEndpointLabel,
+          newWrap._actualEndpointLabel,
+          newWrap._requestedEndpointId,
+          newWrap._actualEndpointId,
+        ) || '';
         _applyModelColor(newRole, actual);
         newWrap.appendChild(newRole);
         const newBody = document.createElement('div');
@@ -2185,6 +2206,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
       let _nextIsError = false;
       let _streamSawDone = false;
+      let _streamTerminalError = null;
       let _firstVisibleOutputSeen = false;
       const markFirstVisibleOutput = () => {
         if (_firstVisibleOutputSeen) return;
@@ -2310,10 +2332,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
-                const errMsg = json.text || json.error?.message || `Error ${json.status || 'unknown'}`;
-                console.error('Stream error:', errMsg);
+                _streamTerminalError = createTerminalStreamError(json);
+                console.error('Stream error:', _streamTerminalError.message);
                 if (spinner && spinner.element) spinner.destroy();
-                typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
               if (json.delta || json.type === 'agent_prep' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
@@ -2757,18 +2778,6 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                   6000
                 );
                 continue;
-              } else if (json.type === 'model_fallback') {
-                // Model went offline — switched to fallback
-                var _fbData = json.data || {};
-                uiModule.showToast(
-                  `Model ${_fbData.old_model || '?'} offline — switched to ${_fbData.new_model || '?'}`,
-                  5000
-                );
-                // Update the model picker to reflect the new model
-                if (sessionModule && sessionModule.updateModelPicker) {
-                  sessionModule.updateModelPicker();
-                }
-                continue;
               } else if (json.type === 'model_info') {
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
@@ -2776,6 +2785,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                   if (roleEl) {
                     holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
                     holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                    holder._requestedEndpointId = json.requested_endpoint_id || json.endpoint_id || holder._requestedEndpointId || null;
+                    holder._requestedEndpointLabel = json.requested_endpoint_label || json.endpoint_label || holder._requestedEndpointLabel || 'Selected route';
+                    holder._actualEndpointId = json.endpoint_id || holder._actualEndpointId || holder._requestedEndpointId;
+                    holder._actualEndpointLabel = json.endpoint_label || holder._actualEndpointLabel || holder._requestedEndpointLabel;
                     if (json.suffix) holder._roleSuffix = json.suffix;
                     // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
@@ -2783,6 +2796,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                     _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
                       suffix: holder._roleSuffix,
                       characterName: holder._characterName,
+                      requestedEndpointId: holder._requestedEndpointId,
+                      requestedEndpointLabel: holder._requestedEndpointLabel,
+                      actualEndpointId: holder._actualEndpointId,
+                      actualEndpointLabel: holder._actualEndpointLabel,
                     });
                   }
                 }
@@ -2793,9 +2810,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 if (!_isBg) {
                   var _selM = _shortModel(json.selected_model || '');
                   var _ansM = _shortModel(json.answered_by || '');
-                  uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
-                  if (holder) {
-                    var _rEl = holder.querySelector('.role');
+                  uiModule.showToast('Fallback: ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  var _fallbackHolder = applyModelRouteEventState(json, holder, roundHolder, modelName);
+                  if (_fallbackHolder) {
+                    var _rEl = _fallbackHolder.querySelector('.role');
                     if (_rEl) {
                       var _tsS = _rEl.querySelector('.role-timestamp');
                       _rEl.textContent = _ansM + ' (fallback) ';
@@ -2803,13 +2821,14 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                         (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
                       _applyModelColor(_rEl, json.answered_by);
                       if (_tsS) _rEl.appendChild(_tsS);
-                      holder._requestedModel = json.selected_model || holder._requestedModel || modelName;
-                      const _hasResolvedActual = holder._actualModel && !_sameModelName(holder._actualModel, holder._requestedModel);
-                      holder._actualModel = _hasResolvedActual ? holder._actualModel : (json.answered_by || holder._actualModel || holder._requestedModel);
-                      _setRoleModelLabel(_rEl, holder._requestedModel, holder._actualModel, {
-                        suffix: holder._roleSuffix,
-                        characterName: holder._characterName,
+                      _setRoleModelLabel(_rEl, _fallbackHolder._requestedModel, _fallbackHolder._actualModel, {
+                        suffix: _fallbackHolder._roleSuffix,
+                        characterName: _fallbackHolder._characterName,
                         reason: json.reason,
+                        requestedEndpointId: _fallbackHolder._requestedEndpointId,
+                        requestedEndpointLabel: _fallbackHolder._requestedEndpointLabel,
+                        actualEndpointId: _fallbackHolder._actualEndpointId,
+                        actualEndpointLabel: _fallbackHolder._actualEndpointLabel,
                       });
                     }
                   }
@@ -2853,12 +2872,15 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                   try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
                 }
               } else if (json.type === 'model_actual') {
-                if (!_isBg && holder) {
-                  holder._requestedModel = json.requested_model || holder._requestedModel || modelName;
-                  holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
-                  _setRoleModelLabel(holder.querySelector('.role'), holder._requestedModel, holder._actualModel, {
-                    suffix: holder._roleSuffix,
-                    characterName: holder._characterName,
+                if (!_isBg) {
+                  var _modelHolder = applyModelRouteEventState(json, holder, roundHolder, modelName);
+                  if (_modelHolder) _setRoleModelLabel(_modelHolder.querySelector('.role'), _modelHolder._requestedModel, _modelHolder._actualModel, {
+                    suffix: _modelHolder._roleSuffix,
+                    characterName: _modelHolder._characterName,
+                    requestedEndpointId: _modelHolder._requestedEndpointId,
+                    requestedEndpointLabel: _modelHolder._requestedEndpointLabel,
+                    actualEndpointId: _modelHolder._actualEndpointId,
+                    actualEndpointLabel: _modelHolder._actualEndpointLabel,
                   });
                 }
               } else if (json.type === 'attachments') {
@@ -2944,15 +2966,60 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                   const detail = before && after && before > after ? ` (${after}/${before} messages sent)` : '';
                   uiModule.showToast(`Context trimmed for this model${detail}`);
                 }
+              } else if (json.type === 'agent_terminal' || json.type === 'chat_terminal') {
+                // The backend persisted canonical partial output, sanitized
+                // failure metadata, and actual-route provenance before this
+                // event. The terminal catch below reloads that exact record.
+                _canonicalTerminalSaved = true;
+                _terminalSavedStreams.add(streamSessionId);
+                const priorMetrics = metrics;
+                metrics = json.data || metrics;
+                if (metrics && streamRunId) {
+                  metrics._costRecordId = _metricsCostRecordId(streamRunId, json);
+                }
+                // Direct Chat may have emitted provider usage before its
+                // terminal event. Carry that already-recorded state onto the
+                // canonical terminal metadata instead of billing it twice.
+                if (priorMetrics && priorMetrics._costRecorded && metrics) {
+                  metrics._costRecorded = true;
+                }
+                if (_isBg) {
+                  var bgTerminal = _backgroundStreams.get(streamSessionId);
+                  if (bgTerminal) {
+                    if (
+                      bgTerminal.metrics
+                      && bgTerminal.metrics._costRecorded
+                      && metrics
+                    ) {
+                      metrics._costRecorded = true;
+                    }
+                    bgTerminal.metrics = metrics;
+                    bgTerminal.status = 'completed';
+                    if (metrics) {
+                      chatRenderer.recordSessionMetricsCost(metrics, streamSessionId);
+                    }
+                  }
+                  continue;
+                }
+                if (holder && metrics) {
+                  applyModelMetricsState(metrics, holder, roundHolder, modelName);
+                  const terminalMetricsTarget = _metricsTargetForTurn();
+                  if (terminalMetricsTarget) displayMetrics(terminalMetricsTarget, metrics);
+                }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
+                if (metrics && streamRunId) {
+                  metrics._costRecordId = _metricsCostRecordId(streamRunId, json);
+                }
                 if (!_isBg && holder && metrics) {
-                  holder._requestedModel = metrics.requested_model || holder._requestedModel || modelName;
-                  holder._actualModel = metrics.model || holder._actualModel || holder._requestedModel;
+                  applyModelMetricsState(metrics, holder, roundHolder, modelName);
                 }
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
-                  if (bgM) bgM.metrics = json.data;
+                  if (bgM) {
+                    bgM.metrics = json.data;
+                    chatRenderer.recordSessionMetricsCost(bgM.metrics, streamSessionId);
+                  }
                   continue;
                 }
                 if (metrics) {
@@ -3341,9 +3408,17 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 const newRole = document.createElement('div');
                 newRole.className = 'role';
                 const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-                const _roundRequested = holder?._requestedModel || metaS?.model;
-                const _roundActual = holder?._actualModel || _roundRequested;
-                newRole.textContent = _modelRouteLabel(_roundRequested, _roundActual) || '';
+                inheritModelRouteState(holder, roundHolder, newWrap, metaS?.model || modelName);
+                const _roundRequested = newWrap._requestedModel;
+                const _roundActual = newWrap._actualModel;
+                newRole.textContent = _modelRouteLabel(
+                  _roundRequested,
+                  _roundActual,
+                  newWrap._requestedEndpointLabel,
+                  newWrap._actualEndpointLabel,
+                  newWrap._requestedEndpointId,
+                  newWrap._actualEndpointId,
+                ) || '';
                 _applyModelColor(newRole, _roundActual);
                 newWrap.appendChild(newRole);
                 const newBody = document.createElement('div');
@@ -3449,6 +3524,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         }
       }
 
+      if (_streamTerminalError) {
+        throw _streamTerminalError;
+      }
       if (!_streamSawDone) {
         throw new Error('Stream closed before completion');
       }
@@ -3467,15 +3545,25 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-        const _finalActualModel = metrics?.model || holder._actualModel || finalMeta?.model;
-        const _finalRequestedModel = metrics?.requested_model || holder._requestedModel || finalMeta?.model || _finalActualModel;
+        const _finalModelHolder = applyModelMetricsState(
+          metrics,
+          holder,
+          roundHolder,
+          finalMeta?.model || modelName,
+        ) || holder;
+        const _finalActualModel = _finalModelHolder._actualModel || finalMeta?.model;
+        const _finalRequestedModel = _finalModelHolder._requestedModel || finalMeta?.model || _finalActualModel;
         // Prepend character name if set
         var _charNameFinal = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
-        const roleEl = holder.querySelector('.role');
+        const roleEl = _finalModelHolder.querySelector('.role');
         if (roleEl) {
           _setRoleModelLabel(roleEl, _finalRequestedModel, _finalActualModel, {
-            suffix: holder._roleSuffix,
-            characterName: _charNameFinal || holder._characterName,
+            suffix: _finalModelHolder._roleSuffix,
+            characterName: _charNameFinal || _finalModelHolder._characterName,
+            requestedEndpointId: _finalModelHolder._requestedEndpointId,
+            requestedEndpointLabel: _finalModelHolder._requestedEndpointLabel,
+            actualEndpointId: _finalModelHolder._actualEndpointId,
+            actualEndpointLabel: _finalModelHolder._actualEndpointLabel,
           });
         }
         holder.dataset.raw = accumulated;
@@ -3747,7 +3835,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         // Error happened while backgrounded — update map, don't touch DOM
         console.error('Background stream error:', err);
         var bgErr = _backgroundStreams.get(streamSessionId);
-        if (bgErr && bgErr.status === 'completed') {
+        if (bgErr && (
+          bgErr.status === 'completed' || _terminalSavedStreams.has(streamSessionId)
+        )) {
+          bgErr.status = 'completed';
           // [DONE] was already processed — this error is benign (e.g. reader.read() after close)
           // Don't override the completed status; just ensure the completed dot stays
           if (sessionModule && sessionModule.clearStreaming) {
@@ -3907,7 +3998,30 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           // cap. Only auto-recover from connection-class failures; deterministic
           // errors (unsupported tools, 4xx/5xx, parse failures) surface right away
           // instead of burning the nudge budget on a guaranteed-to-fail retry.
-          if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
+          if (!(isRecoverableStreamError(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
+            if (err.terminalStreamError) {
+              if (_canonicalTerminalSaved || accumulated.trim()) {
+                // Let this stream's finally block clear foreground state before
+                // reselecting; otherwise selectSession would detach the already
+                // terminal reader and leave a stale background-stream marker.
+                setTimeout(async () => {
+                  if (sessionModule.getCurrentSessionId() === streamSessionId) {
+                    await sessionModule.selectSession(streamSessionId, { showLoading: false });
+                  } else {
+                    await sessionModule.loadSessions();
+                  }
+                }, 0);
+              } else {
+                const terminalBody = roundHolder && roundHolder.querySelector('.body');
+                if (terminalBody) {
+                  const terminalNote = document.createElement('div');
+                  terminalNote.style.cssText = 'color: var(--color-error); font-style: italic; padding: 4px 0;';
+                  terminalNote.textContent = `[Error: ${err.message}]`;
+                  terminalBody.appendChild(terminalNote);
+                }
+              }
+              return;
+            }
             const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
               let errMsg = `Error: ${err.message}`;
@@ -3921,6 +4035,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         }
       }
     } finally {
+      if (_streamSessionId === streamSessionId) _streamSessionId = null;
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
@@ -3939,6 +4054,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
       // Only reset UI state if still on the stream's session and was never backgrounded
       const _isBgFinally = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
+      _terminalSavedStreams.delete(streamSessionId);
 
       if (!_isBgFinally) {
         // Reset button to idle state
@@ -4047,29 +4163,20 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           || _streamSessionId
           || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
-          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+          _stopExactRun(_sid);
         }
       } catch (_) {}
     }
   }
 
   // ── Stall watchdog ──────────────────────────────────────────────
-  // Auto-recover a turn whose stream died (connection drop) or went silent:
-  // preserve the partial, then re-submit a completion handshake by reusing the
-  // existing continue/resume path. Returns false at the cap so the caller can
-  // surface the failure instead of nudging forever.
+  // Auto-recover a turn whose browser stream died by reconnecting to the exact
+  // detached server run. Returns false at the cap so the caller can surface
+  // the failure instead of retrying forever.
   // Only auto-recover from connection-class failures (the genuine "silently
   // died" case). Deterministic errors — unsupported tools, HTTP 4xx/5xx, JSON
   // parse failures — will fail identically on retry, so surfacing them
   // immediately is both more honest and avoids wasting the nudge budget.
-  function _isRecoverableStreamErr(err) {
-    if (!err) return false;
-    if (err.name === 'TypeError') return true;   // fetch/reader network failure
-    const m = (err.message || '').toLowerCase();
-    if (/\btool\b|unsupported|json|parse|\b4\d\d\b|\b5\d\d\b/.test(m)) return false;
-    return /network|fetch|connection|reset|closed|aborted|stream|tim(?:e|ed)\s?out|econn|eof/.test(m);
-  }
-
   function _tryAutoRecover(holder, accumulated, sessionId) {
     if (_autoNudges >= _AUTO_NUDGE_CAP) return false;
     _autoNudges++;
@@ -4080,28 +4187,18 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           markdownModule.processWithThinking(markdownModule.squashOutsideCode(accumulated));
       } catch (_) {}
     }
-    _pendingContinue = holder || null;   // merge the continuation into the same bubble
-    _hideUserBubble = true;              // no user bubble for the handshake
-    _autoContinuePending = true;         // don't reset the counter on this submit
-    const _abandon = () => {             // clear the pending flags so they can't
-      _pendingContinue = null;           // leak into whatever chat is now open
-      _hideUserBubble = false;
-      _autoContinuePending = false;
-    };
-    // Defer so the stream's finally resets state first — otherwise the send
-    // button is still in "stop" mode and clicking it would toggle, not send.
-    setTimeout(() => {
+    // The server run is detached and keeps its exact pinned model/tool state.
+    // Reconnect to that run instead of submitting a new user turn, which would
+    // cancel it, retry the selected model, and risk duplicating side effects.
+    setTimeout(async () => {
       // The stream that died may not be the chat the user is now looking at —
-      // never inject the recovery handshake into the wrong conversation.
-      if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) { _abandon(); return; }
-      const msgInput = uiModule.el('message');
-      const sb = document.querySelector('.send-btn');
-      if (!msgInput || !sb) { _abandon(); return; }
-      const tail = (accumulated || '').slice(-400);
-      msgInput.value = tail
-        ? `The stream dropped before you finished. It ended with:\n\n${tail}\n\nIf the task is fully complete, reply with just: DONE. Otherwise continue exactly where you left off and finish it — do not repeat what you already wrote.`
-        : `The stream dropped before you produced anything. If the task is already done, reply with just: DONE. Otherwise complete it now.`;
-      sb.click();
+      // never attach the recovery reader to the wrong conversation.
+      if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) return;
+      const resumed = await resumeStream(sessionId, holder || null);
+      if (!resumed && holder && holder.isConnected) {
+        const body = holder.querySelector('.body');
+        if (body) typewriterInto(body, 'Connection lost. The existing run could not be resumed.');
+      }
     }, 200);
     return true;
   }
@@ -4257,9 +4354,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       abortCurrentRequest();
       return;
     }
-    // Store background stream state
+    const terminalSaved = _terminalSavedStreams.has(sessionId);
+    // Store background stream state. A canonical terminal event can precede
+    // its SSE error event; preserve completion if the user switches sessions
+    // during that gap instead of creating a fresh running/error marker.
     _backgroundStreams.set(sessionId, {
-      status: 'running',
+      status: terminalSaved ? 'completed' : 'running',
       accumulated: currentAccumulated,
       sourcesHtml: '',
       findingsData: null,
@@ -4268,8 +4368,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       metrics: null,
     });
     // Mark session with pulsing dot in sidebar
-    if (sessionModule && sessionModule.markStreaming) {
+    if (!terminalSaved && sessionModule && sessionModule.markStreaming) {
       sessionModule.markStreaming(sessionId);
+    } else if (terminalSaved && sessionModule && sessionModule.clearStreaming) {
+      sessionModule.clearStreaming(sessionId);
     }
     // Clear local state WITHOUT aborting the fetch
     if (currentAbort === active.abortCtrl) currentAbort = null;
@@ -4296,7 +4398,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
    * reloaded from the DB so its full render stays faithful. Returns true if it
    * attached, false to let the caller fall back to spinner+poll.
    */
-  export async function resumeStream(sessionId) {
+  export async function resumeStream(sessionId, replaceHolder = null) {
     if (!sessionId) return false;
     if (hasActiveStream(sessionId)) return false;
 
@@ -4307,9 +4409,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       return false;
     }
     if (!res.ok || !res.body) return false;
+    const resumeRunId = res.headers.get('X-Odysseus-Run-Id') || '';
+    if (resumeRunId) _streamRunIds.set(sessionId, resumeRunId);
 
     const box = document.getElementById('chat-history');
     if (!box) return false;
+    if (replaceHolder && replaceHolder.parentNode) replaceHolder.remove();
 
     // Block duplicate re-attach attempts while this reader is live. A dedicated
     // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
@@ -4324,6 +4429,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) +
       ' <span class="role-timestamp">' + roleTs + '</span></div>' +
       '<div class="body"><div class="stream-content"></div></div>';
+    holder._requestedModel = meta && meta.model;
+    holder._actualModel = holder._requestedModel;
     _applyModelColor(holder.querySelector('.role'), meta && meta.model);
     const contentDiv = holder.querySelector('.stream-content');
     box.appendChild(holder);
@@ -4341,6 +4448,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     let gotDelta = false;
     let leftSession = false;
     let metricsData = null;
+    let replayError = null;
+    let canonicalTerminalSeen = false;
     // "Rich" responses (tool calls, sources, doc streaming, multi-round) need the
     // full canonical render, which is rebuilt from the saved DB record on reload.
     // Plain text replies can be finalized in place without a reload.
@@ -4377,6 +4486,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         const parts = buffer.split('\n\n');
         buffer = parts.pop();
         for (const part of parts) {
+          const eventIsError = part.split('\n').some(l => l.trim() === 'event: error');
+          if (eventIsError) rich = true;
           const line = part.split('\n').find(l => l.startsWith('data: '));
           if (!line) continue;
           const payload = line.slice(6);
@@ -4386,7 +4497,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           }
           let json;
           try { json = JSON.parse(payload); } catch (_) { continue; }
-          if (json.delta) {
+          if (eventIsError) {
+            replayError = createTerminalStreamError(json);
+          } else if (json.delta) {
             roundText += json.delta;
             if (!docFenceOpened && (roundText.includes('```create_document\n') || roundText.includes('```document\n') || roundText.includes('```documen\n'))) {
               docFenceOpened = true;
@@ -4402,6 +4515,64 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             if (documentModule) documentModule.streamDocDelta(json.content || json.delta || '');
           } else if (json.type === 'metrics') {
             metricsData = json.data || metricsData;
+            if (metricsData && resumeRunId) {
+              metricsData._costRecordId = _metricsCostRecordId(resumeRunId, json);
+            }
+            if (metricsData) {
+              chatRenderer.recordSessionMetricsCost(metricsData, sessionId);
+            }
+          } else if (json.type === 'fallback') {
+            // Replay can attach after the selected route has already failed.
+            // Reflect the fallback immediately, then reload the canonical
+            // multi-round record when the detached run completes.
+            rich = true;
+            const fallbackHolder = applyModelRouteEventState(json, holder, null, meta && meta.model);
+            if (fallbackHolder) {
+              _setRoleModelLabel(
+                fallbackHolder.querySelector('.role'),
+                fallbackHolder._requestedModel,
+                fallbackHolder._actualModel,
+                {
+                  reason: json.reason,
+                  requestedEndpointId: fallbackHolder._requestedEndpointId,
+                  requestedEndpointLabel: fallbackHolder._requestedEndpointLabel,
+                  actualEndpointId: fallbackHolder._actualEndpointId,
+                  actualEndpointLabel: fallbackHolder._actualEndpointLabel,
+                },
+              );
+            }
+            uiModule.showToast(
+              'Fallback: ' + _shortModel(json.selected_model || '') + ' failed — answered by ' +
+              _shortModel(json.answered_by || ''),
+              6000,
+            );
+          } else if (json.type === 'model_actual') {
+            rich = true;
+            const modelHolder = applyModelRouteEventState(json, holder, null, meta && meta.model);
+            if (modelHolder) {
+              _setRoleModelLabel(
+                modelHolder.querySelector('.role'),
+                modelHolder._requestedModel,
+                modelHolder._actualModel,
+                {
+                  requestedEndpointId: modelHolder._requestedEndpointId,
+                  requestedEndpointLabel: modelHolder._requestedEndpointLabel,
+                  actualEndpointId: modelHolder._actualEndpointId,
+                  actualEndpointLabel: modelHolder._actualEndpointLabel,
+                },
+              );
+            }
+          } else if (json.type === 'agent_terminal' || json.type === 'chat_terminal') {
+            // The server has already persisted canonical partial content plus
+            // a sanitized failure note and actual route provenance.  Do not
+            // finalize replayed deltas as a successful local-only answer.
+            rich = true;
+            canonicalTerminalSeen = true;
+            metricsData = json.data || metricsData;
+            if (metricsData && resumeRunId) {
+              metricsData._costRecordId = _metricsCostRecordId(resumeRunId, json);
+            }
+            if (metricsData) displayMetrics(holder, metricsData);
           } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
                      json.type === 'tool_progress' || json.type === 'agent_step' ||
                      json.type === 'web_sources' || json.type === 'rag_sources' ||
@@ -4412,7 +4583,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         }
       }
     } catch (e) {
-      // Network drop or parse failure: fall through to the reload below.
+      // Network drop or parse failure: fall through to the canonical reload.
+      rich = true;
     }
 
     cleanup();
@@ -4421,6 +4593,18 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
     const onThisSession = sessionModule.getCurrentSessionId &&
                           sessionModule.getCurrentSessionId() === sessionId;
+
+    // A failure before substantive output has no persisted assistant record to
+    // recover through a canonical reload. Keep its sanitized provider/request
+    // error visible in the replay holder instead of deleting the only evidence.
+    if (onThisSession && replayError && !canonicalTerminalSeen) {
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = 'color: var(--color-error); font-style: italic; padding: 4px 0;';
+      errorDiv.textContent = `[Error: ${replayError.message}]`;
+      contentDiv.appendChild(errorDiv);
+      uiModule.scrollHistory();
+      return true;
+    }
 
     // Plain text reply: finalize in place. Replace the live bubble with a
     // canonical single message (markdown + footer actions + metrics) using the
@@ -4438,6 +4622,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     // reload from the DB for the full canonical render.
     if (holder._docWritingThread && holder._docWritingThread.parentNode) holder._docWritingThread.remove();
     if (holder.parentNode) holder.remove();
+    if (metricsData) {
+      chatRenderer.recordSessionMetricsCost(metricsData, sessionId);
+    }
     if (onThisSession) sessionModule.selectSession(sessionId);
     else sessionModule.loadSessions();
     return true;
