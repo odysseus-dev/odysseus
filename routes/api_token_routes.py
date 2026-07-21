@@ -8,26 +8,12 @@ from fastapi import APIRouter, HTTPException, Request, Form
 
 from core.database import get_db_session, ApiToken
 from core.middleware import require_admin
+from src.api_token_capabilities import ALL_API_TOKEN_SCOPES
 from src.auth_helpers import get_current_user
 
 MAX_NAME_LEN = 100
 DEFAULT_SCOPES = "chat"
-ALLOWED_SCOPES = {
-    "chat",
-    "todos:read",
-    "todos:write",
-    "documents:read",
-    "documents:write",
-    "email:read",
-    "email:draft",
-    "email:send",
-    "calendar:read",
-    "calendar:write",
-    "memory:read",
-    "memory:write",
-    "cookbook:read",
-    "cookbook:launch",
-}
+ALLOWED_SCOPES = ALL_API_TOKEN_SCOPES
 TOKEN_PROFILES = {
     "chat": ["chat"],
     "codex_todos": ["todos:read", "todos:write"],
