@@ -64,30 +64,6 @@ def test_companion_bearer_reads_all_require_chat_scope():
             "documents:write",
             "documents:read",
         ),
-        ("GET", "/api/codex/cookbook/tasks", "cookbook:read", "chat"),
-        ("GET", "/api/codex/cookbook/servers", "cookbook:launch", "chat"),
-        (
-            "GET",
-            "/api/codex/cookbook/output/serve-1",
-            "cookbook:read",
-            "chat",
-        ),
-        ("GET", "/api/codex/cookbook/cached", "cookbook:read", "chat"),
-        ("GET", "/api/codex/cookbook/presets", "cookbook:read", "chat"),
-        ("POST", "/api/codex/cookbook/serve", "cookbook:launch", "chat"),
-        (
-            "POST",
-            "/api/codex/cookbook/stop/serve-1",
-            "cookbook:launch",
-            "cookbook:read",
-        ),
-        (
-            "POST",
-            "/api/codex/cookbook/preset/default",
-            "cookbook:launch",
-            "cookbook:read",
-        ),
-        ("POST", "/api/codex/cookbook/adopt", "cookbook:launch", "chat"),
     ],
 )
 def test_codex_route_families_require_their_existing_scopes(
@@ -147,6 +123,31 @@ def test_bootstrap_downloads_require_at_least_one_accepted_scope():
 )
 def test_privileged_and_owner_attributing_ui_routes_remain_blocked(method, path):
     decision = authorize_api_token_route(method, path, ALL_API_TOKEN_SCOPES)
+
+    assert decision.allowed is False
+    assert decision.error == API_TOKEN_FORBIDDEN_ERROR
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/codex/cookbook/tasks"),
+        ("GET", "/api/codex/cookbook/servers"),
+        ("GET", "/api/codex/cookbook/output/serve-1"),
+        ("GET", "/api/codex/cookbook/cached"),
+        ("GET", "/api/codex/cookbook/presets"),
+        ("POST", "/api/codex/cookbook/serve"),
+        ("POST", "/api/codex/cookbook/stop/serve-1"),
+        ("POST", "/api/codex/cookbook/preset/default"),
+        ("POST", "/api/codex/cookbook/adopt"),
+    ],
+)
+def test_legacy_cookbook_scopes_are_inert_at_the_bearer_boundary(method, path):
+    decision = authorize_api_token_route(
+        method,
+        path,
+        ["cookbook:read", "cookbook:launch"],
+    )
 
     assert decision.allowed is False
     assert decision.error == API_TOKEN_FORBIDDEN_ERROR
@@ -218,6 +219,31 @@ def test_asgi_root_path_is_removed_before_matching():
     assert wrong_prefix.allowed is False
 
 
+@pytest.mark.parametrize(
+    ("root_path", "path", "raw_path"),
+    [
+        ("/odysseus/", "/odysseus//api/models", b"/odysseus//api/models"),
+        ("/", "//api/models", b"//api/models"),
+    ],
+)
+def test_asgi_root_path_with_trailing_slash_is_removed_before_matching(
+    root_path,
+    path,
+    raw_path,
+):
+    decision = authorize_api_token_request(
+        "GET",
+        {
+            "root_path": root_path,
+            "path": path,
+            "raw_path": raw_path,
+        },
+        ["chat"],
+    )
+
+    assert decision.allowed is True
+
+
 @pytest.mark.parametrize("encoded", [b"%2f", b"%2F", b"%5c", b"%5C", b"%00"])
 def test_encoded_path_delimiters_fail_closed(encoded):
     decision = authorize_api_token_request(
@@ -230,6 +256,26 @@ def test_encoded_path_delimiters_fail_closed(encoded):
     )
 
     assert decision.allowed is False
+
+
+@pytest.mark.parametrize(
+    ("decoded", "encoded"),
+    [("?", b"%3F"), ("#", b"%23")],
+)
+def test_encoded_calendar_uid_characters_follow_the_decoded_router_path(
+    decoded,
+    encoded,
+):
+    decision = authorize_api_token_request(
+        "DELETE",
+        {
+            "path": f"/api/codex/calendar/events/team{decoded}primary",
+            "raw_path": b"/api/codex/calendar/events/team" + encoded + b"primary",
+        },
+        ["calendar:write"],
+    )
+
+    assert decision.allowed is True
 
 
 def test_encoded_static_letters_follow_the_decoded_router_path():
@@ -302,7 +348,24 @@ def test_manifest_matches_runtime_scoped_router_inventory():
         ("POST", "/api/v1/chat"),
         ("GET", "/api/models"),
     }
-    expected.update(_router_inventory(setup_codex_routes()))
+    codex_inventory = _router_inventory(setup_codex_routes())
+    cookbook_inventory = {
+        route
+        for route in codex_inventory
+        if route[1].startswith("/api/codex/cookbook/")
+    }
+    assert cookbook_inventory == {
+        ("GET", "/api/codex/cookbook/tasks"),
+        ("GET", "/api/codex/cookbook/servers"),
+        ("GET", "/api/codex/cookbook/output/{session_id}"),
+        ("GET", "/api/codex/cookbook/cached"),
+        ("GET", "/api/codex/cookbook/presets"),
+        ("POST", "/api/codex/cookbook/serve"),
+        ("POST", "/api/codex/cookbook/stop/{session_id}"),
+        ("POST", "/api/codex/cookbook/preset/{name}"),
+        ("POST", "/api/codex/cookbook/adopt"),
+    }
+    expected.update(codex_inventory - cookbook_inventory)
     expected.update(_router_inventory(setup_claude_routes()))
     expected.update(companion_inventory - companion_pairing)
     actual = {
@@ -328,8 +391,6 @@ def test_accepted_scope_catalog_is_explicit_and_has_no_admin_scope():
         "calendar:write",
         "memory:read",
         "memory:write",
-        "cookbook:read",
-        "cookbook:launch",
     }
 
 
@@ -340,4 +401,5 @@ def test_token_minting_and_route_checks_share_the_scope_catalog():
     assert ALLOWED_SCOPES is ALL_API_TOKEN_SCOPES
     assert codex_routes.TODO_READ_SCOPES <= ALL_API_TOKEN_SCOPES
     assert codex_routes.EMAIL_READ_SCOPES <= ALL_API_TOKEN_SCOPES
-    assert codex_routes.COOKBOOK_READ_SCOPES <= ALL_API_TOKEN_SCOPES
+    assert codex_routes.COOKBOOK_READ_SCOPES.isdisjoint(ALL_API_TOKEN_SCOPES)
+    assert codex_routes.COOKBOOK_LAUNCH_SCOPES.isdisjoint(ALL_API_TOKEN_SCOPES)

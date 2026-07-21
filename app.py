@@ -396,10 +396,18 @@ if AUTH_ENABLED:
             # bearer token still follows its token capability boundary; local
             # requests without one keep the documented bypass behavior.
             auth_header = request.headers.get("authorization", "")
+            auth_scheme, auth_separator, auth_credentials = auth_header.partition(" ")
+            raw_api_token = (
+                auth_credentials.lstrip(" ")
+                if auth_separator and auth_scheme.casefold() == "bearer"
+                else ""
+            )
+            if not raw_api_token.startswith("ody_"):
+                raw_api_token = ""
             if (
                 LOCALHOST_BYPASS
                 and _is_trusted_loopback(request)
-                and not auth_header.startswith("Bearer ody_")
+                and not raw_api_token
             ):
                 return await call_next(request)
             if not auth_manager.is_configured:
@@ -409,8 +417,8 @@ if AUTH_ENABLED:
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
 
             # --- Bearer token auth (API tokens for external integrations) ---
-            if auth_header.startswith("Bearer ody_"):
-                raw_token = auth_header[7:]
+            if raw_api_token:
+                raw_token = raw_api_token
                 # Sanity check: tokens are "ody_" + 43 chars of base64
                 if len(raw_token) < 12 or len(raw_token) > 100:
                     return JSONResponse(status_code=401, content={"error": "Invalid API token"})
