@@ -16,25 +16,27 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core.middleware import require_admin
+from src.api_token_capabilities import (
+    CALENDAR_READ_SCOPES,
+    CALENDAR_WRITE_SCOPES,
+    COOKBOOK_LAUNCH_SCOPES,
+    COOKBOOK_READ_SCOPES,
+    DOCS_READ_SCOPES,
+    DOCS_WRITE_SCOPES,
+    EMAIL_DRAFT_SCOPES,
+    EMAIL_READ_SCOPES,
+    EMAIL_SEND_SCOPES,
+    MEMORY_READ_SCOPES,
+    MEMORY_WRITE_SCOPES,
+    TODO_READ_SCOPES,
+    TODO_WRITE_SCOPES,
+)
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
 
 
-COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
-COOKBOOK_LAUNCH_SCOPES = {"cookbook:launch"}
-TODO_READ_SCOPES = {"todos:read", "todos:write"}
-TODO_WRITE_SCOPES = {"todos:write"}
-EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
-EMAIL_DRAFT_SCOPES = {"email:draft", "email:send"}
-EMAIL_SEND_SCOPES = {"email:send"}
-MEMORY_READ_SCOPES = {"memory:read", "memory:write"}
-MEMORY_WRITE_SCOPES = {"memory:write"}
-CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
-CALENDAR_WRITE_SCOPES = {"calendar:write"}
-DOCS_READ_SCOPES = {"documents:read", "documents:write"}
-DOCS_WRITE_SCOPES = {"documents:write"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
 
 

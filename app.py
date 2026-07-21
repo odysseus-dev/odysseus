@@ -392,9 +392,15 @@ if AUTH_ENABLED:
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
-            # Cloudflare tunnel / reverse proxy. Keep LOCALHOST_BYPASS=false for
-            # network-exposed deployments regardless.
-            if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+            # Cloudflare tunnel / reverse proxy. An explicitly presented ody_
+            # bearer token still follows its token capability boundary; local
+            # requests without one keep the documented bypass behavior.
+            auth_header = request.headers.get("authorization", "")
+            if (
+                LOCALHOST_BYPASS
+                and _is_trusted_loopback(request)
+                and not auth_header.startswith("Bearer ody_")
+            ):
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
@@ -403,7 +409,6 @@ if AUTH_ENABLED:
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
 
             # --- Bearer token auth (API tokens for external integrations) ---
-            auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer ody_"):
                 raw_token = auth_header[7:]
                 # Sanity check: tokens are "ody_" + 43 chars of base64
@@ -426,11 +431,11 @@ if AUTH_ENABLED:
                             matched_scopes = scopes or []
                             break
                     if matched_id:
-                        from src.api_token_capabilities import authorize_api_token_route
+                        from src.api_token_capabilities import authorize_api_token_request
 
-                        route_decision = authorize_api_token_route(
+                        route_decision = authorize_api_token_request(
                             request.method,
-                            path,
+                            request.scope,
                             matched_scopes,
                         )
                         if not route_decision.allowed:
