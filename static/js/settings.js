@@ -2574,7 +2574,7 @@ async function initReminderSettings() {
   // regardless of channel). The hint should make that clear so
   // users don't think they have to choose between channels.
   const CHANNEL_HINTS = {
-    browser: 'Reminders appear as browser notifications inside Odysseus.',
+    browser: 'Reminders appear as browser notifications inside NOMAD.',
     email: 'Reminders are emailed and shown as a browser notification.',
     ntfy: 'Reminders are pushed via ntfy AND shown as a browser notification.',
     webhook: 'Reminders are POSTed to the selected integration AND shown as a browser notification. Use {{title}} and {{message}} in the payload template.',
@@ -5312,7 +5312,7 @@ async function initUnifiedIntegrations() {
               </button>
             </div>
             <div id="uf-codex-config-body" style="display:none;">
-              <div style="font-size:11px;opacity:0.62;margin:4px 0 6px;">Toggle which Odysseus tools this agent can use. New agents start with chat only.</div>
+              <div style="font-size:11px;opacity:0.62;margin:4px 0 6px;">Toggle which NOMAD tools this agent can use. New agents start with chat only.</div>
               <div id="uf-codex-inline-scopes"></div>
             </div>
           </div>

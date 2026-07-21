@@ -211,7 +211,7 @@ export function initKeyboardShortcuts(modules) {
           } else {
             sessionModule.setCurrentSessionId(null);
             el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Odysseus Chat';
+            el('current-meta').textContent = 'NOMAD Chat';
             Storage.remove('lastSessionId');
             if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
           }

@@ -1,0 +1,1160 @@
+/* ================================================================
+   NOMAD / ORBITAL INTELLIGENCE
+   Monochrome kinetic interface layer — 2026
+   ================================================================ */
+
+:root {
+  --orb-black: #030303;
+  --orb-ink: #080808;
+  --orb-panel: rgba(8, 8, 8, 0.72);
+  --orb-panel-hard: rgba(4, 4, 4, 0.92);
+  --orb-white: #f4f3ed;
+  --orb-dim: #9b9b94;
+  --orb-line: rgba(244, 243, 237, 0.18);
+  --orb-line-hot: rgba(244, 243, 237, 0.62);
+  --orb-signal: #ff453a;
+  --orb-radius: 2px;
+  --orb-ease: cubic-bezier(.16, 1, .3, 1);
+  --accent: var(--orb-signal);
+  --accent-primary: var(--orb-signal);
+  --accent-error: var(--orb-signal);
+  --color-accent: var(--orb-signal);
+  --color-brand-blue: var(--orb-white);
+  --color-link-hover: var(--orb-white);
+  --color-subheader: var(--orb-dim);
+}
+
+html { background: var(--orb-black); }
+
+/* Shared boot/loading language ----------------------------------- */
+#app-loader {
+  color: var(--orb-white) !important;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255,255,255,.07), transparent 29%),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,.012) 3px 4px),
+    #030303 !important;
+}
+#app-loader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 49.95%, rgba(255,255,255,.05) 50%, transparent 50.05%),
+    linear-gradient(transparent 49.95%, rgba(255,255,255,.04) 50%, transparent 50.05%);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(circle, #000, transparent 66%);
+}
+.nomad-loader-shell {
+  position: relative;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 32px));
+  padding: 20px 22px 13px;
+  border: 1px solid rgba(244,243,237,.17);
+  background: rgba(0,0,0,.34);
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  box-shadow: 0 28px 90px rgba(0,0,0,.78), inset 0 1px rgba(255,255,255,.05);
+}
+.nomad-loader-shell::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 0;
+  width: 52px;
+  height: 1px;
+  background: var(--orb-signal);
+  box-shadow: 0 0 12px rgba(255,69,58,.8);
+  animation: nomad-loader-signal 1.4s steps(2) infinite;
+}
+#loader-wave {
+  min-height: 17em;
+  margin: 0;
+  color: rgba(244,243,237,.9) !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  overflow: visible;
+  font: 9px/1 "Fira Code", ui-monospace, monospace !important;
+  letter-spacing: 0;
+  text-align: center;
+  text-shadow: 0 0 13px rgba(255,255,255,.15);
+  filter: contrast(1.12);
+}
+.nomad-loader-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(244,243,237,.12);
+  color: rgba(244,243,237,.43);
+  font: 7px/1 "Fira Code", ui-monospace, monospace;
+  letter-spacing: .18em;
+}
+#loader-counter { color: rgba(244,243,237,.72); font-variant-numeric: tabular-nums; }
+.ai-spinner-ascii {
+  color: var(--orb-white) !important;
+  font: 8px/1 "Fira Code", ui-monospace, monospace !important;
+  letter-spacing: .08em;
+  text-shadow: 0 0 9px rgba(255,255,255,.16);
+}
+.spinner-whirlpool,
+.ai-spinner-whirlpool { filter: grayscale(1) contrast(1.18); }
+@keyframes nomad-loader-signal { 50% { opacity: .25; transform: scaleX(.35); transform-origin: left; } }
+
+body {
+  background: var(--orb-black) !important;
+  color: var(--orb-white);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  isolation: isolate;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 49.94%, rgba(255,255,255,.045) 50%, transparent 50.06%),
+    linear-gradient(transparent 49.94%, rgba(255,255,255,.035) 50%, transparent 50.06%);
+  background-size: 80px 80px;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,.8), transparent 78%);
+}
+
+button, input, select, textarea { font-family: inherit; }
+code, pre, kbd, .orbital-hud, .orbital-marquee, .chat-meta-overlay,
+.section-title, .model-picker-btn, .timestamp, .response-metrics {
+  font-family: "Fira Code", ui-monospace, monospace !important;
+}
+
+/* Ambient system -------------------------------------------------- */
+.orbital-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 72% 36%, rgba(255,255,255,.04), transparent 36%),
+    linear-gradient(145deg, #030303 0%, #090909 52%, #010101 100%);
+}
+
+#orbital-ascii-stage { position: absolute; inset: 0; opacity: 1; }
+
+.orbital-blob {
+  position: absolute;
+  border-radius: 43% 57% 63% 37% / 49% 37% 63% 51%;
+  filter: blur(62px);
+  mix-blend-mode: screen;
+  opacity: .2;
+  will-change: transform, border-radius;
+}
+.orbital-blob-a {
+  width: 46vw; height: 46vw; right: -8vw; top: -16vw;
+  background: radial-gradient(circle at 35% 35%, #fff 0, #777 20%, #151515 55%, transparent 70%);
+  animation: orbital-drift-a 18s var(--orb-ease) infinite alternate;
+}
+.orbital-blob-b {
+  width: 42vw; height: 36vw; left: 20vw; bottom: -24vw;
+  background: radial-gradient(circle at 55% 25%, #bdbdb8 0, #333 34%, transparent 68%);
+  animation: orbital-drift-b 23s ease-in-out infinite alternate;
+}
+.orbital-blob-c {
+  width: 20vw; height: 48vw; left: 4vw; top: 10vh;
+  background: radial-gradient(ellipse, rgba(255,69,58,.75), transparent 62%);
+  opacity: .055;
+  animation: orbital-drift-c 14s ease-in-out infinite alternate;
+}
+
+.orbital-grain {
+  position: absolute; inset: -50%; opacity: .055;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.85'/%3E%3C/svg%3E");
+  transform: rotate(.001deg);
+  animation: orbital-grain .22s steps(2) infinite;
+}
+
+.orbital-scanline {
+  position: absolute; left: 0; right: 0; height: 18vh; top: -20vh;
+  background: linear-gradient(transparent, rgba(255,255,255,.025), transparent);
+  animation: orbital-scan 9s linear infinite;
+}
+
+.orbital-hud {
+  position: absolute; display: flex; flex-direction: column; gap: 3px;
+  color: var(--orb-white); font-size: 8px; letter-spacing: .14em;
+  text-transform: uppercase; opacity: .48;
+}
+.orbital-hud b { font-size: 10px; font-weight: 500; letter-spacing: .08em; }
+.orbital-hud span { color: var(--orb-dim); }
+.orbital-hud-nw { top: 17px; left: 20px; }
+.orbital-hud-ne { top: 17px; right: 20px; text-align: right; }
+.orbital-hud-sw { bottom: 28px; left: 20px; flex-direction: row; align-items: center; }
+.orbital-hud-se { bottom: 24px; right: 20px; text-align: right; }
+.orbital-hud-sw i {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--orb-white);
+  box-shadow: 0 0 12px rgba(255,255,255,.8); animation: orbital-pulse 2s infinite;
+}
+
+.orbital-marquee {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 17px;
+  border-top: 1px solid rgba(255,255,255,.1); overflow: hidden;
+  color: rgba(255,255,255,.46); font-size: 7px; line-height: 16px;
+  letter-spacing: .18em; white-space: nowrap;
+}
+.orbital-marquee div { display: inline-flex; min-width: max-content; animation: orbital-marquee 32s linear infinite; }
+.orbital-marquee span { padding-right: 8vw; }
+
+/* App frame ------------------------------------------------------- */
+.chat-container {
+  z-index: 1;
+  margin: 10px 10px 24px 0 !important;
+  padding: 0 22px 12px !important;
+  border: 1px solid var(--orb-line);
+  border-radius: 18px 2px 18px 2px;
+  background: linear-gradient(135deg, rgba(10,10,10,.3), rgba(2,2,2,.16));
+  box-shadow: inset 0 1px rgba(255,255,255,.04), 0 24px 80px rgba(0,0,0,.48);
+  backdrop-filter: blur(5px) saturate(.7);
+}
+
+.chat-container::before {
+  content: 'NOMAD // PRIMARY INTERFACE';
+  position: absolute; top: 13px; left: 18px; z-index: 4;
+  color: rgba(255,255,255,.38); font: 8px/1 "Fira Code", monospace;
+  letter-spacing: .16em;
+}
+
+.chat-top-bar {
+  min-height: 42px !important;
+  padding: 0 12px !important;
+  border-bottom: 1px solid var(--orb-line);
+}
+.chat-meta-overlay {
+  color: var(--orb-white) !important; opacity: .72 !important;
+  font-size: 9px !important; text-transform: uppercase; letter-spacing: .13em;
+}
+.chat-meta-overlay::before { content: '[ ACTIVE VOYAGE ]  '; color: var(--orb-signal); }
+
+.sidebar {
+  z-index: 4;
+  margin: 10px 8px 24px 10px;
+  height: auto !important;
+  align-self: stretch;
+  border: 1px solid var(--orb-line) !important;
+  border-radius: 2px 18px 2px 18px;
+  background: rgba(4,4,4,.75) !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.045), 0 22px 70px rgba(0,0,0,.55);
+  backdrop-filter: blur(28px) saturate(.5);
+  overflow: hidden;
+}
+.sidebar::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,.055), transparent 18%, transparent 82%, rgba(255,255,255,.025));
+}
+.sidebar-header {
+  min-height: 74px !important; border-bottom: 1px solid var(--orb-line);
+  padding: 12px 14px !important; align-items: flex-end !important;
+}
+.sidebar,
+.sidebar :is(.list-item, .list-item .grow, button, select, input,
+             .section-title-label, .sidebar-user-bar, .user-bar-name,
+             .user-bar-role, .model-chat-btn, .list-item-plus-label,
+             .dropdown-item, .dropdown-item-compact) {
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif !important;
+}
+.sidebar .list-item,
+.sidebar .section-title-label {
+  letter-spacing: -.015em;
+  font-weight: 500;
+}
+.sidebar-brand { margin: 0 !important; overflow: visible !important; }
+.sidebar-brand-title {
+  position: relative; color: var(--orb-white) !important; background: none !important;
+  -webkit-text-fill-color: currentColor !important; font-size: 20px !important;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  font-weight: 700 !important; letter-spacing: -.05em !important; text-transform: uppercase;
+}
+.sidebar-brand-title::before { content: '△ '; color: var(--orb-signal); font-weight: 400; }
+.sidebar-brand-title::after {
+  content: attr(data-orbital-label); position: absolute; left: 1px; top: calc(100% + 5px);
+  color: var(--orb-dim); font: 7px/1 "Fira Code", monospace;
+  letter-spacing: .19em; white-space: nowrap;
+}
+.sidebar-hamburger { color: var(--orb-white) !important; opacity: .45; }
+.sidebar-inner { padding: 10px 8px 64px !important; }
+.sidebar-user-bar { border-top: 1px solid var(--orb-line) !important; background: rgba(0,0,0,.54) !important; }
+
+.section { border-top: 1px solid rgba(255,255,255,.08); padding-top: 7px !important; margin-top: 7px; }
+.section-title {
+  color: var(--orb-dim) !important; font-size: 8px !important;
+  text-transform: uppercase; letter-spacing: .15em; font-weight: 500 !important;
+}
+.section-title::before { content: '— '; color: var(--orb-signal); }
+
+.list-item, .section-header-flex, .sidebar-user-bar, .model-chat-btn {
+  border-radius: var(--orb-radius) !important;
+}
+.list-item {
+  color: rgba(244,243,237,.68) !important; border: 1px solid transparent !important;
+  transition: color .18s, background .18s, border-color .18s, transform .18s !important;
+}
+.list-item:hover {
+  color: var(--orb-white) !important; background: rgba(255,255,255,.055) !important;
+  border-color: rgba(255,255,255,.09) !important; transform: translateX(3px);
+}
+.list-item.active, .list-item.active-session {
+  color: #090909 !important; background: var(--orb-white) !important;
+  border-color: var(--orb-white) !important; box-shadow: 0 0 28px rgba(255,255,255,.08);
+}
+.list-item.active svg, .list-item.active-session svg { color: #090909 !important; }
+
+/* Welcome / kinetic typography ----------------------------------- */
+#welcome-screen {
+  width: min(74vw, 920px); align-items: flex-start !important; text-align: left !important;
+  top: 39% !important; left: 7.5% !important; transform: translateY(-50%) !important;
+}
+#welcome-screen::before {
+  content: '0001  /  PRIVATE ORBIT  /  LOCAL SIGNAL';
+  color: var(--orb-signal); font: 8px/1 "Fira Code", monospace;
+  letter-spacing: .2em; margin-bottom: 18px;
+}
+#welcome-screen .welcome-name {
+  position: relative; margin: 0 0 22px !important; overflow: visible;
+  color: var(--orb-white) !important; background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+  font-size: clamp(4.2rem, 10vw, 9.5rem) !important; line-height: .72 !important;
+  letter-spacing: -.09em !important; text-transform: uppercase; font-weight: 750 !important;
+  filter: drop-shadow(0 12px 30px rgba(0,0,0,.9));
+  animation: orbital-type-in .9s var(--orb-ease) both !important;
+}
+#welcome-screen .welcome-name::after {
+  content: attr(data-orbital-label); display: block; margin: 22px 0 0 7px;
+  color: var(--orb-dim); font: 8px/1 "Fira Code", monospace;
+  letter-spacing: .38em; -webkit-text-fill-color: var(--orb-dim);
+}
+.welcome-boat { display: none; }
+#welcome-screen .welcome-sub {
+  max-width: 460px !important; color: var(--orb-white) !important; opacity: .62 !important;
+  font-size: 12px !important; letter-spacing: .04em;
+}
+#welcome-screen .welcome-tip {
+  margin-top: 16px !important; color: var(--orb-dim) !important; opacity: .52 !important;
+  font: 9px/1.5 "Fira Code", monospace; letter-spacing: .05em;
+}
+.incognito-btn {
+  border-radius: 2px !important; text-transform: uppercase; letter-spacing: .12em;
+  border-color: var(--orb-line) !important; color: var(--orb-white) !important;
+}
+
+/* Chat / message surfaces ---------------------------------------- */
+.chat-history { --chat-max: 880px !important; padding-top: 16px; }
+.msg { border-radius: 2px !important; padding: 16px 18px !important; animation-duration: .48s !important; }
+.msg-user {
+  --nomad-cut: 14px;
+  width: min(82%, 760px) !important;
+  min-width: min(280px, 82%) !important;
+  padding: 0 !important;
+  color: var(--orb-white) !important;
+  background:
+    linear-gradient(112deg, rgba(255,255,255,.018), rgba(255,255,255,.06) 72%, rgba(255,69,58,.04)),
+    rgba(3,3,3,.68) !important;
+  border: 1px solid rgba(244,243,237,.2) !important;
+  border-right-color: rgba(255,69,58,.62) !important;
+  border-radius: 0 !important;
+  clip-path: polygon(
+    var(--nomad-cut) 0,
+    100% 0,
+    100% calc(100% - var(--nomad-cut)),
+    calc(100% - var(--nomad-cut)) 100%,
+    0 100%,
+    0 var(--nomad-cut)
+  );
+  box-shadow:
+    inset -2px 0 var(--orb-signal),
+    inset 0 1px rgba(255,255,255,.035),
+    0 20px 65px rgba(0,0,0,.34) !important;
+  backdrop-filter: blur(24px) saturate(.45);
+  -webkit-backdrop-filter: blur(24px) saturate(.45);
+  transition: border-color .2s ease, background .2s ease, transform .2s ease !important;
+}
+.msg-user:hover {
+  border-color: rgba(244,243,237,.36) !important;
+  border-right-color: var(--orb-signal) !important;
+  background:
+    linear-gradient(112deg, rgba(255,255,255,.025), rgba(255,255,255,.075) 72%, rgba(255,69,58,.055)),
+    rgba(3,3,3,.76) !important;
+}
+.msg-user .role {
+  align-self: stretch;
+  justify-content: flex-end;
+  min-height: 27px;
+  margin: 0 !important;
+  padding: 7px 16px 6px 24px;
+  color: rgba(244,243,237,.6) !important;
+  background: rgba(0,0,0,.24);
+  border-bottom: 1px solid rgba(244,243,237,.09);
+  font-size: 7px !important;
+  letter-spacing: .2em !important;
+}
+.msg-user .role::before {
+  width: 5px !important;
+  height: 5px !important;
+  margin-right: 1px;
+  border-radius: 0 !important;
+  background: var(--orb-signal) !important;
+  box-shadow: 0 0 9px rgba(255,69,58,.72);
+  transform: rotate(45deg);
+}
+.msg-user .role::after {
+  content: 'UPLINK';
+  order: -1;
+  margin-right: auto;
+  color: rgba(244,243,237,.25);
+  font: 7px/1 "Fira Code", monospace;
+  letter-spacing: .18em;
+}
+.msg-user .role-timestamp {
+  color: rgba(244,243,237,.33) !important;
+  font-size: 7px !important;
+  letter-spacing: .16em;
+}
+.msg-user .body {
+  box-sizing: border-box;
+  padding: 17px 20px 18px !important;
+  color: rgba(244,243,237,.94) !important;
+  font-size: 15px !important;
+  line-height: 1.55 !important;
+  text-align: left;
+}
+.msg-user .msg-footer {
+  align-self: stretch;
+  justify-content: flex-end;
+  margin: 0 !important;
+  padding: 0 13px 10px;
+}
+.msg-user .msg-actions { gap: 1px; }
+.msg-user :is(.footer-copy-btn, .msg-action-btn, .regen-btn, .fork-btn) {
+  color: rgba(244,243,237,.34) !important;
+  border-radius: 0 !important;
+}
+.msg-user :is(.footer-copy-btn, .msg-action-btn, .regen-btn, .fork-btn):hover {
+  color: var(--orb-white) !important;
+  background: rgba(255,255,255,.055) !important;
+}
+.msg-ai {
+  background: rgba(6,6,6,.72) !important; border: 1px solid var(--orb-line) !important;
+  border-radius: 2px 14px 14px 14px !important; box-shadow: inset 3px 0 var(--orb-white);
+  backdrop-filter: blur(18px);
+}
+.msg .role { text-transform: uppercase; font: 9px/1.2 "Fira Code", monospace; letter-spacing: .13em; }
+.msg-ai .role::before { border-radius: 0 !important; transform: rotate(45deg); background: var(--orb-white) !important; }
+.msg-user.msg-user-queued {
+  color: var(--orb-white) !important;
+  background: rgba(5,5,5,.62) !important;
+  border-color: rgba(255,69,58,.38) !important;
+  border-right-color: var(--orb-signal) !important;
+}
+@media (max-width: 720px) {
+  .msg-user {
+    width: calc(100% - 18px) !important;
+    max-width: calc(100% - 18px) !important;
+    min-width: 0 !important;
+    --nomad-cut: 10px;
+  }
+  .msg-user .body { padding: 14px 15px 15px !important; font-size: 14px !important; }
+  .msg-user .role { padding-inline: 15px; }
+}
+pre {
+  background: #020202 !important; color: var(--orb-white) !important;
+  border-color: var(--orb-line) !important; border-radius: 2px !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.04);
+}
+
+/* Composer -------------------------------------------------------- */
+.chat-input-bar {
+  position: relative; z-index: 5; max-width: 880px !important;
+  padding: 13px 14px !important; border-radius: 2px 18px 2px 18px !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  background: rgba(3,3,3,.82) !important;
+  box-shadow: 0 22px 70px rgba(0,0,0,.65), inset 0 1px rgba(255,255,255,.08) !important;
+  backdrop-filter: blur(30px) saturate(.5);
+  transition: border-color .25s, box-shadow .25s, transform .25s !important;
+}
+.chat-input-bar::before {
+  content: 'TRANSMISSION CHANNEL'; position: absolute; left: 14px; top: -19px;
+  color: rgba(255,255,255,.5); font: 7px/1 "Fira Code", monospace; letter-spacing: .2em;
+}
+.chat-input-bar:focus-within {
+  border-color: var(--orb-white) !important; transform: translateY(-2px);
+  box-shadow: 0 26px 90px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.12) !important;
+}
+.chat-input-bar textarea#message { color: var(--orb-white) !important; font-size: 15px !important; }
+.chat-input-bar textarea#message::placeholder { color: rgba(255,255,255,.34) !important; }
+.input-icon-btn, .mode-toggle, .model-picker-btn, .send-btn {
+  border-radius: 2px !important; border-color: var(--orb-line) !important;
+  color: var(--orb-white) !important; background: rgba(255,255,255,.035) !important;
+}
+.input-icon-btn:hover, .model-picker-btn:hover { background: var(--orb-white) !important; color: #050505 !important; }
+.mode-toggle-btn { text-transform: uppercase; letter-spacing: .1em; font-size: 9px !important; }
+.mode-toggle-btn.active { background: var(--orb-white) !important; color: #050505 !important; border-radius: 1px !important; }
+.send-btn {
+  background: var(--orb-white) !important; color: #050505 !important;
+  box-shadow: 0 0 24px rgba(255,255,255,.13) !important;
+}
+.send-btn:hover { background: var(--orb-signal) !important; color: #fff !important; transform: rotate(-3deg) scale(1.05); }
+.model-picker-menu, .dropdown, .modal-content {
+  background: rgba(3,3,3,.96) !important; border: 1px solid var(--orb-line-hot) !important;
+  border-radius: 2px 14px 2px 14px !important; backdrop-filter: blur(30px);
+}
+
+/* Controls, rails, selection ------------------------------------- */
+::selection { background: var(--orb-white); color: #050505; }
+::-webkit-scrollbar { width: 4px !important; height: 4px !important; }
+::-webkit-scrollbar-track { background: transparent !important; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.4) !important; border: 0 !important; border-radius: 0 !important; }
+.icon-rail { background: rgba(3,3,3,.86) !important; border-color: var(--orb-line) !important; backdrop-filter: blur(24px); }
+.icon-rail, .hamburger-btn, #mobile-menu-btn { z-index: 4; }
+.icon-rail-btn { border-radius: 2px !important; color: rgba(255,255,255,.64) !important; }
+.icon-rail-btn:hover { color: #050505 !important; background: var(--orb-white) !important; }
+
+@keyframes orbital-drift-a {
+  to { transform: translate(-14vw, 14vh) rotate(35deg) scale(.82); border-radius: 60% 40% 35% 65% / 35% 55% 45% 65%; }
+}
+@keyframes orbital-drift-b {
+  to { transform: translate(18vw, -18vh) rotate(-28deg) scale(1.16); border-radius: 33% 67% 57% 43% / 64% 31% 69% 36%; }
+}
+@keyframes orbital-drift-c { to { transform: translate(28vw, 10vh) rotate(18deg) scaleX(1.5); } }
+@keyframes orbital-grain {
+  0% { transform: translate3d(-2%, 1%, 0); }
+  25% { transform: translate3d(3%, -2%, 0); }
+  50% { transform: translate3d(-1%, 3%, 0); }
+  75% { transform: translate3d(2%, 2%, 0); }
+  100% { transform: translate3d(-3%, -1%, 0); }
+}
+@keyframes orbital-scan { to { transform: translateY(130vh); } }
+@keyframes orbital-pulse { 50% { opacity: .28; transform: scale(.65); } }
+@keyframes orbital-marquee { to { transform: translateX(-50%); } }
+@keyframes orbital-type-in {
+  from { opacity: 0; transform: translateY(38px); clip-path: inset(0 100% 0 0); }
+  to { opacity: 1; transform: none; clip-path: inset(0 0 0 0); }
+}
+
+@media (max-width: 900px) {
+  .orbital-hud, .orbital-marquee { display: none; }
+  .sidebar { margin: 0 !important; border-radius: 0 18px 18px 0 !important; }
+  .chat-container { margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+  #welcome-screen { width: 86vw; left: 7vw !important; top: 38% !important; }
+  #welcome-screen .welcome-name { font-size: clamp(3rem, 18vw, 6rem) !important; }
+  .chat-container.welcome-active .chat-input-bar { margin-bottom: 0 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbital-blob, .orbital-grain, .orbital-scanline, .orbital-marquee div,
+  #welcome-screen .welcome-name { animation: none !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; }
+}
+
+@media print {
+  .orbital-atmosphere { display: none !important; }
+  .chat-container { border: 0 !important; background: #fff !important; box-shadow: none !important; }
+}
+
+/* ================================================================
+   SECONDARY SURFACES / SIDE-CARS / TOOL WINDOWS
+   Shared component grammar for the rest of NOMAD.
+   ================================================================ */
+
+/* Window frames --------------------------------------------------- */
+.modal:not(.hidden) {
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.82), rgba(0,0,0,.42)),
+    repeating-linear-gradient(90deg, transparent 0 79px, rgba(255,255,255,.025) 80px) !important;
+  backdrop-filter: blur(12px) saturate(.35) !important;
+}
+
+.modal-content,
+.memory-modal-content,
+.tasks-modal-content,
+.settings-modal-content,
+.admin-modal-content,
+.preset-modal-content,
+.doclib-modal-content,
+.gallery-modal-content,
+.email-window-modal,
+.email-reader-tab-modal,
+#theme-popup,
+#cookbook-modal .modal-content,
+#research-overlay .modal-content,
+#compare-model-overlay .modal-content {
+  color: var(--orb-white) !important;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.035), transparent 22%),
+    rgba(3,3,3,.94) !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  border-radius: 2px 20px 2px 20px !important;
+  box-shadow:
+    0 35px 120px rgba(0,0,0,.82),
+    inset 0 1px rgba(255,255,255,.08),
+    inset 1px 0 rgba(255,255,255,.025) !important;
+  backdrop-filter: blur(32px) saturate(.45) !important;
+  animation: nomad-window-enter .42s var(--orb-ease) both !important;
+}
+
+.modal-content::after,
+.search-popup::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: min(150px, 24%); height: 1px;
+  background: var(--orb-signal);
+  box-shadow: 0 0 18px rgba(255,69,58,.45);
+  pointer-events: none;
+}
+
+.modal-header {
+  min-height: 44px;
+  margin: -10px -10px 10px !important;
+  padding: 0 10px !important;
+  background: rgba(2,2,2,.88) !important;
+  border-bottom: 1px solid var(--orb-line) !important;
+  border-radius: 1px 18px 0 0;
+}
+.modal-header::before {
+  content: 'NMD / WINDOW';
+  margin-right: 11px;
+  color: var(--orb-signal);
+  font: 7px/1 "Fira Code", monospace;
+  letter-spacing: .16em;
+}
+.modal-header h4,
+.doclib-modal-content .modal-header h4,
+.gallery-modal-content .modal-header h4,
+.email-reader-tab-modal .modal-header h4 {
+  color: var(--orb-white) !important;
+  font: 600 11px/1 "Fira Code", monospace !important;
+  letter-spacing: .12em !important;
+  text-transform: uppercase;
+}
+.modal-header h4 svg { color: var(--orb-signal); }
+
+.close-btn, .modal-close, .minimize-btn, .modal-minimize-btn {
+  width: 27px !important; height: 27px !important;
+  color: rgba(255,255,255,.66) !important;
+  background: transparent !important;
+  border: 1px solid var(--orb-line) !important;
+  border-radius: 1px !important;
+  transition: color .16s, background .16s, border-color .16s, transform .16s !important;
+}
+.close-btn:hover, .modal-close:hover {
+  color: white !important; background: var(--orb-signal) !important;
+  border-color: var(--orb-signal) !important; transform: rotate(4deg);
+}
+.minimize-btn:hover, .modal-minimize-btn:hover {
+  color: #050505 !important; background: var(--orb-white) !important;
+  border-color: var(--orb-white) !important;
+}
+.modal-body { scrollbar-gutter: stable; }
+
+/* Tabs and side navigation --------------------------------------- */
+:is(.admin-tabs, .memory-tabs, .preset-tabs, .compare-mode-tabs, .settings-sidebar) {
+  background: rgba(0,0,0,.38) !important;
+  border-color: var(--orb-line) !important;
+}
+:is(.admin-tab, .memory-tab, .preset-tab, .compare-mode-tab, .settings-sidebar-item, .settings-nav-item) {
+  color: rgba(244,243,237,.52) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 1px !important;
+  font-family: "Fira Code", monospace !important;
+  font-size: 9px !important;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  transition: color .16s, background .16s, border-color .16s, transform .16s !important;
+}
+:is(.admin-tab, .memory-tab, .preset-tab, .compare-mode-tab, .settings-sidebar-item, .settings-nav-item):hover {
+  color: var(--orb-white) !important;
+  border-color: var(--orb-line) !important;
+}
+:is(.admin-tab, .memory-tab, .preset-tab, .compare-mode-tab, .settings-sidebar-item, .settings-nav-item).active {
+  color: #050505 !important;
+  background: var(--orb-white) !important;
+  border-color: var(--orb-white) !important;
+  box-shadow: 0 0 24px rgba(255,255,255,.08) !important;
+}
+.settings-sidebar {
+  border-right: 1px solid var(--orb-line) !important;
+  border-radius: 0 !important;
+}
+.settings-sidebar-label,
+.admin-rag-section-label,
+.compare-section-label,
+.cookbook-field-label,
+.date-section-header,
+.doclib-research-section-label {
+  color: var(--orb-dim) !important;
+  font-family: "Fira Code", monospace !important;
+  font-size: 8px !important;
+  letter-spacing: .14em !important;
+  text-transform: uppercase;
+}
+
+/* Form controls --------------------------------------------------- */
+.modal-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), textarea, select),
+.search-popup input,
+.dropdown input,
+.doc-editor-pane :is(input, textarea, select),
+.cookbook-field-input {
+  color: var(--orb-white) !important;
+  background: rgba(255,255,255,.025) !important;
+  border: 1px solid var(--orb-line) !important;
+  border-radius: 1px !important;
+  box-shadow: inset 0 1px 8px rgba(0,0,0,.38) !important;
+  caret-color: var(--orb-signal);
+  transition: background .16s, border-color .16s, box-shadow .16s !important;
+}
+.modal-content :is(input, textarea, select):focus,
+.search-popup input:focus,
+.doc-editor-pane :is(input, textarea, select):focus,
+.cookbook-field-input:focus {
+  outline: none !important;
+  background: rgba(255,255,255,.045) !important;
+  border-color: var(--orb-line-hot) !important;
+  box-shadow: inset 3px 0 var(--orb-signal), 0 0 20px rgba(255,255,255,.025) !important;
+}
+.modal-content ::placeholder, .search-popup ::placeholder { color: rgba(244,243,237,.28) !important; }
+.modal-content label { color: rgba(244,243,237,.68); }
+.modal-content select option { background: #050505; color: var(--orb-white); }
+
+/* Buttons and segmented controls --------------------------------- */
+.modal-content button:not(.close-btn):not(.modal-close):not(.minimize-btn):not(.modal-minimize-btn),
+.search-popup button,
+.plan-window-content button,
+.ctx-popup button,
+.ctx-detail-popup button {
+  color: rgba(244,243,237,.74);
+  background: rgba(255,255,255,.035);
+  border-color: var(--orb-line);
+  border-radius: 1px !important;
+}
+.modal-content button:not(:disabled):not(.close-btn):not(.modal-close):not(.minimize-btn):not(.modal-minimize-btn):hover,
+.search-popup button:not(:disabled):hover,
+.plan-window-content button:not(:disabled):hover {
+  color: #050505 !important;
+  background: var(--orb-white) !important;
+  border-color: var(--orb-white) !important;
+}
+.modal-content :is(.danger, .admin-btn-delete, .dropdown-item-danger, .cookbook-stop-btn):hover {
+  color: white !important; background: var(--orb-signal) !important; border-color: var(--orb-signal) !important;
+}
+
+/* Cards, rows and data surfaces ---------------------------------- */
+:is(.admin-card, .task-card, .note-card, .doclib-card, .gallery-card,
+    .prompt-template-card, .user-template-card, .compare-pane,
+    .cookbook-card, .cookbook-group, .cookbook-saved-item,
+    .admin-user-row, .admin-ep-item, .admin-rag-item,
+    .calendar-event, .cal-event, .email-card, .memory-item) {
+  color: var(--orb-white) !important;
+  background: rgba(255,255,255,.022) !important;
+  border: 1px solid var(--orb-line) !important;
+  border-radius: 1px 12px 1px 12px !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.025) !important;
+  transition: border-color .18s, background .18s, transform .18s, box-shadow .18s !important;
+}
+:is(.task-card, .note-card, .doclib-card, .gallery-card,
+    .prompt-template-card, .user-template-card, .compare-pane,
+    .cookbook-card, .cookbook-saved-item,
+    .admin-user-row, .admin-ep-item, .admin-rag-item):hover {
+  background: rgba(255,255,255,.045) !important;
+  border-color: rgba(255,255,255,.35) !important;
+  box-shadow: inset 2px 0 var(--orb-white), 0 16px 38px rgba(0,0,0,.24) !important;
+}
+:is(.doclib-card, .gallery-card, .task-card).selected,
+:is(.doclib-card, .gallery-card, .task-card):has(input[type="checkbox"]:checked) {
+  border-color: var(--orb-white) !important;
+  box-shadow: inset 3px 0 var(--orb-signal) !important;
+}
+.admin-card h2, .cookbook-card-title, .doclib-card-title, .task-card h3 {
+  color: var(--orb-white) !important;
+  letter-spacing: -.015em;
+}
+
+/* Tables ---------------------------------------------------------- */
+.modal-content table,
+.compare-pane table,
+.cookbook-body table {
+  border-collapse: collapse !important;
+  background: rgba(0,0,0,.26) !important;
+  border: 1px solid var(--orb-line) !important;
+}
+.modal-content th,
+.compare-pane th,
+.cookbook-body th {
+  color: var(--orb-dim) !important;
+  background: rgba(255,255,255,.035) !important;
+  border-color: var(--orb-line) !important;
+  font: 8px/1.3 "Fira Code", monospace !important;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.modal-content td, .compare-pane td, .cookbook-body td { border-color: var(--orb-line) !important; }
+.modal-content tr:hover td { background: rgba(255,255,255,.025); }
+
+/* Menus, command palette and contextual popouts ------------------ */
+:is(.dropdown, .session-dropdown, .export-dropdown-menu, .model-picker-menu,
+    .email-filter-menu, .md-toolbar-overflow-menu, .memory-item-dropdown,
+    .cookbook-gpu-popup, .cookbook-saved-menu, .cookbook-gpu-split-menu,
+    .ctx-popup, .ctx-detail-popup, .plan-window-content) {
+  color: var(--orb-white) !important;
+  background: rgba(3,3,3,.97) !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  border-radius: 1px 12px 1px 12px !important;
+  box-shadow: 0 24px 70px rgba(0,0,0,.78), inset 0 1px rgba(255,255,255,.06) !important;
+  backdrop-filter: blur(26px) saturate(.4) !important;
+}
+:is(.dropdown-item, .dropdown-item-compact, .export-dropdown-item,
+    .email-filter-item, .md-toolbar-overflow-item) {
+  color: rgba(244,243,237,.66) !important;
+  background: transparent !important;
+  border-color: rgba(255,255,255,.07) !important;
+  border-radius: 1px !important;
+}
+:is(.dropdown-item, .dropdown-item-compact, .export-dropdown-item,
+    .email-filter-item, .md-toolbar-overflow-item):hover,
+:is(.dropdown-item, .dropdown-item-compact, .export-dropdown-item,
+    .email-filter-item, .md-toolbar-overflow-item):focus-visible {
+  color: #050505 !important;
+  background: var(--orb-white) !important;
+}
+.dropdown-divider { border-color: var(--orb-line) !important; }
+.search-overlay { background: rgba(0,0,0,.72) !important; backdrop-filter: blur(18px) !important; }
+.search-popup {
+  position: relative;
+  background: rgba(3,3,3,.96) !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  border-radius: 1px 16px 1px 16px !important;
+  box-shadow: 0 35px 120px rgba(0,0,0,.84) !important;
+}
+.search-popup::before {
+  content: 'NOMAD / COMMAND INDEX'; display: block;
+  padding: 10px 16px 0; color: var(--orb-signal);
+  font: 7px/1 "Fira Code", monospace; letter-spacing: .18em;
+}
+.search-result-item { border-radius: 1px !important; border: 1px solid transparent; }
+.search-result-item:hover, .search-result-item.selected {
+  color: #050505 !important; background: var(--orb-white) !important; border-color: var(--orb-white) !important;
+}
+.search-result-item:hover *, .search-result-item.selected * { color: #050505 !important; }
+
+/* Toasts, confirms and minimized-window dock --------------------- */
+.toast {
+  color: var(--orb-white) !important;
+  background: rgba(3,3,3,.94) !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  border-left: 3px solid var(--orb-white) !important;
+  border-radius: 1px 12px 1px 12px !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,.72) !important;
+  backdrop-filter: blur(24px) !important;
+}
+.toast.error { border-left-color: var(--orb-signal) !important; }
+#styled-confirm-overlay { background: rgba(0,0,0,.8) !important; backdrop-filter: blur(18px) !important; }
+#modal-dock {
+  left: auto !important; right: 16px !important; bottom: max(18px, var(--composer-clearance, 0px)) !important;
+  gap: 6px !important; padding: 0 !important;
+}
+.modal-dock-item {
+  color: var(--orb-white) !important; background: rgba(3,3,3,.94) !important;
+  border: 1px solid var(--orb-line-hot) !important; border-radius: 1px !important;
+  box-shadow: 0 12px 38px rgba(0,0,0,.62) !important;
+  font-family: "Fira Code", monospace; font-size: 9px !important; letter-spacing: .06em;
+}
+.modal-dock-item:hover { color: #050505 !important; background: var(--orb-white) !important; }
+
+/* Document editor / writing sidecar ------------------------------ */
+.doc-editor-pane {
+  color: var(--orb-white) !important;
+  background: rgba(3,3,3,.96) !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  border-radius: 1px 18px 1px 18px !important;
+  box-shadow: 0 28px 100px rgba(0,0,0,.78), inset 0 1px rgba(255,255,255,.06) !important;
+}
+.doc-editor-header, .doc-tab-bar, .doc-md-toolbar {
+  color: var(--orb-white) !important;
+  background: rgba(2,2,2,.92) !important;
+  border-color: var(--orb-line) !important;
+}
+.doc-tab, .doc-tab-new, .doc-tab-arrow, .doc-tab-play, .doc-md-toolbar button {
+  color: rgba(244,243,237,.58) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  border-radius: 1px !important;
+}
+.doc-tab:hover, .doc-tab-new:hover, .doc-tab-arrow:hover, .doc-tab-play:hover, .doc-md-toolbar button:hover {
+  color: var(--orb-white) !important; background: rgba(255,255,255,.06) !important;
+}
+.doc-tab.active, .doc-tab-play.active, .doc-md-toolbar button.is-active {
+  color: #050505 !important; background: var(--orb-white) !important;
+}
+.doc-editor-wrap, .doc-editor-textarea, .doc-editor-highlight {
+  color: var(--orb-white) !important; background: #050505 !important;
+}
+
+/* Gallery, cookbook, compare and research ------------------------ */
+.gallery-card img { filter: saturate(.78) contrast(1.05); transition: filter .2s, transform .3s var(--orb-ease); }
+.gallery-card:hover img { filter: saturate(1) contrast(1.08); transform: scale(1.015); }
+.gallery-card-info { background: linear-gradient(transparent, rgba(0,0,0,.94)) !important; }
+.cookbook-body, .cookbook-output-pre, .cookbook-cmd-preview {
+  color: var(--orb-white) !important; background: #050505 !important;
+}
+.cookbook-section-header, .cookbook-saved-header, .compare-pane .pane-header {
+  color: var(--orb-white) !important; background: rgba(255,255,255,.035) !important;
+  border-color: var(--orb-line) !important;
+}
+.compare-pane.winner { border-color: var(--orb-white) !important; box-shadow: inset 3px 0 var(--orb-white) !important; }
+.compare-pane.loser { opacity: .54; filter: grayscale(1); }
+.research-progress-bar, .progress-bar, [class*="progress-fill"] {
+  border-radius: 0 !important;
+  background: var(--orb-white) !important;
+  box-shadow: 0 0 18px rgba(255,255,255,.22);
+}
+
+/* Switches, checks and status ------------------------------------ */
+.admin-slider, .vis-switch {
+  background: rgba(255,255,255,.08) !important;
+  border: 1px solid var(--orb-line) !important;
+  border-radius: 1px !important;
+}
+.admin-switch input:checked + .admin-slider,
+input:checked + .vis-switch {
+  background: var(--orb-white) !important;
+  border-color: var(--orb-white) !important;
+}
+.admin-slider::before, .vis-switch::before { border-radius: 0 !important; background: var(--orb-dim) !important; }
+.admin-switch input:checked + .admin-slider::before,
+input:checked + .vis-switch::before { background: #050505 !important; }
+.sidebar-notif-dot, .cookbook-notif-dot, .overflow-active-dot { background: var(--orb-signal) !important; box-shadow: 0 0 12px rgba(255,69,58,.7) !important; }
+
+@keyframes nomad-window-enter {
+  from { opacity: 0; transform: translateY(22px) scale(.985); clip-path: inset(0 0 100% 0); }
+  to { opacity: 1; transform: none; clip-path: inset(0); }
+}
+
+@media (max-width: 768px) {
+  .modal-content, .doc-editor-pane {
+    border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important;
+  }
+  .modal-header { border-radius: 0 !important; }
+  .settings-sidebar { background: #050505 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-content, .doc-editor-pane { animation: none !important; }
+}
+
+/* Native sidecars and specialized workspaces --------------------- */
+.notes-pane,
+.note-fullscreen-overlay {
+  color: var(--orb-white) !important;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.03), transparent 24%),
+    rgba(3,3,3,.96) !important;
+  border: 1px solid var(--orb-line-hot) !important;
+  border-radius: 1px 18px 1px 18px !important;
+  box-shadow: 0 30px 100px rgba(0,0,0,.8), inset 0 1px rgba(255,255,255,.06) !important;
+  backdrop-filter: blur(30px) saturate(.45) !important;
+}
+.notes-pane-header, .note-fullscreen-header {
+  color: var(--orb-white) !important;
+  background: rgba(2,2,2,.9) !important;
+  border-bottom: 1px solid var(--orb-line) !important;
+}
+.notes-pane-header::before {
+  content: 'NMD / FIELD NOTES';
+  color: var(--orb-signal); font: 7px/1 "Fira Code", monospace; letter-spacing: .16em;
+}
+.notes-pane :is(input, textarea, select),
+.note-fullscreen-overlay :is(input, textarea, select) {
+  color: var(--orb-white) !important; background: rgba(255,255,255,.025) !important;
+  border: 1px solid var(--orb-line) !important; border-radius: 1px !important;
+}
+.notes-pane :is(input, textarea, select):focus {
+  outline: none !important; border-color: var(--orb-line-hot) !important;
+  box-shadow: inset 3px 0 var(--orb-signal) !important;
+}
+.notes-label-chip, .note-reminder-tag, .note-goal-pill, .notes-quick-type-pill {
+  color: rgba(244,243,237,.65) !important; background: rgba(255,255,255,.035) !important;
+  border: 1px solid var(--orb-line) !important; border-radius: 1px !important;
+}
+.notes-label-chip.active, .notes-label-chip:hover {
+  color: #050505 !important; background: var(--orb-white) !important; border-color: var(--orb-white) !important;
+}
+.notes-today-progress { border-radius: 0 !important; background: rgba(255,255,255,.09) !important; }
+.notes-today-progress > * { border-radius: 0 !important; background: var(--orb-white) !important; }
+
+.ge-editor-body, .ge-canvas-area, .ge-right-panel,
+.ge-topbar, .ge-toolbar, .ge-layers, .ge-controls {
+  color: var(--orb-white) !important; background: #050505 !important;
+  border-color: var(--orb-line) !important;
+}
+.ge-topbar, .ge-toolbar { background: rgba(2,2,2,.94) !important; }
+.ge-right-panel { box-shadow: inset 1px 0 var(--orb-line) !important; }
+.ge-tool-btn, .ge-icon-btn, .ge-btn, .ge-layer-btn, .ge-stacked-btn {
+  color: rgba(244,243,237,.6) !important; background: transparent !important;
+  border-color: transparent !important; border-radius: 1px !important;
+}
+.ge-tool-btn:hover, .ge-icon-btn:hover, .ge-btn:hover, .ge-layer-btn:hover, .ge-stacked-btn:hover {
+  color: var(--orb-white) !important; background: rgba(255,255,255,.065) !important;
+}
+.ge-tool-btn.active, .ge-icon-btn.active, .ge-btn-primary, .ge-layer-item.active {
+  color: #050505 !important; background: var(--orb-white) !important; border-color: var(--orb-white) !important;
+}
+.ge-layer-item {
+  color: rgba(244,243,237,.7) !important; background: rgba(255,255,255,.022) !important;
+  border: 1px solid var(--orb-line) !important; border-radius: 1px !important;
+}
+:is(.ge-adj-popup, .ge-fx-popup, .ge-filter-menu, .ge-filter-modal,
+    .ge-edge-menu, .ge-image-menu, .ge-merge-menu, .ge-resize-menu,
+    .ge-save-menu, .ge-inpaint-popover, .ge-inpaint-popup, .ge-shortcuts-card) {
+  color: var(--orb-white) !important; background: rgba(3,3,3,.97) !important;
+  border: 1px solid var(--orb-line-hot) !important; border-radius: 1px 12px 1px 12px !important;
+  box-shadow: 0 22px 70px rgba(0,0,0,.8), inset 0 1px rgba(255,255,255,.06) !important;
+  backdrop-filter: blur(24px) !important;
+}
+.ge-section-title, .ge-fx-group-title, .ge-layers-title {
+  color: var(--orb-dim) !important; font: 8px/1 "Fira Code", monospace !important;
+  letter-spacing: .14em; text-transform: uppercase;
+}
+
+#minimized-dock { gap: 5px !important; }
+.minimized-dock-chip, .ge-fx-dock-chip {
+  color: rgba(244,243,237,.72) !important; background: rgba(3,3,3,.94) !important;
+  border: 1px solid var(--orb-line-hot) !important; border-radius: 1px !important;
+  box-shadow: 0 14px 42px rgba(0,0,0,.65) !important;
+  font: 9px/1 "Fira Code", monospace !important; letter-spacing: .06em;
+  backdrop-filter: blur(20px) !important;
+}
+.minimized-dock-chip:hover, .minimized-dock-chip.chip-active, .ge-fx-dock-chip:hover {
+  color: #050505 !important; background: var(--orb-white) !important; border-color: var(--orb-white) !important;
+}
+#dock-trash-zone {
+  color: white !important; background: rgba(3,3,3,.96) !important;
+  border: 1px solid var(--orb-signal) !important; border-radius: 1px !important;
+  box-shadow: 0 0 40px rgba(255,69,58,.2) !important;
+}
+
+.modal.modal-right-docked .modal-content,
+.modal.modal-left-docked .modal-content,
+.notes-pane.modal-right-docked,
+.notes-pane.modal-left-docked {
+  border-radius: 0 !important;
+  border-top-color: var(--orb-line-hot) !important;
+  animation: nomad-dock-enter .32s var(--orb-ease) both !important;
+}
+@keyframes nomad-dock-enter {
+  from { opacity: .25; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal.modal-right-docked .modal-content,
+  .modal.modal-left-docked .modal-content,
+  .notes-pane { animation: none !important; }
+}
+
+/* Docked windows are workspace columns, not full-screen modal veils. */
+.modal.modal-left-docked,
+.modal.modal-right-docked,
+.research-overlay.modal-left-docked,
+.research-overlay.modal-right-docked {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none;
+}
+.modal.modal-left-docked > .modal-content,
+.modal.modal-right-docked > .modal-content,
+.research-overlay.modal-left-docked > .modal-content,
+.research-overlay.modal-right-docked > .modal-content {
+  pointer-events: auto;
+}
+
+/* orbital.css gives the chat a deliberate outer gutter. Preserve it without
+   stomping the dock widths maintained by modalSnap.js. */
+body.left-dock-active:not(.email-doc-split-active) .chat-container {
+  margin-left: calc(var(--left-dock-w, 0px) + 10px) !important;
+}
+body.right-dock-active .chat-container {
+  margin-right: calc(var(--right-dock-w, 0px) + 10px) !important;
+}
+
+/* Sidebar -> workspace drag affordance -------------------------- */
+[data-nomad-tool][draggable="true"] { cursor: grab; }
+[data-nomad-tool][draggable="true"]:active { cursor: grabbing; }
+[data-nomad-tool].nomad-drag-source {
+  color: var(--orb-white) !important;
+  background: rgba(255,255,255,.07) !important;
+  box-shadow: inset 2px 0 var(--orb-signal) !important;
+}
+.nomad-drop-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  grid-template-columns: minmax(150px, 28%) 1fr minmax(150px, 28%);
+  gap: 10px;
+  padding: 12px;
+  pointer-events: none;
+  background: rgba(0,0,0,.28);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  opacity: 0;
+  transition: opacity .14s ease;
+}
+.nomad-drop-layer.is-visible { opacity: 1; pointer-events: auto; }
+.nomad-drop-zone {
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: rgba(244,243,237,.5);
+  border: 1px dashed rgba(244,243,237,.28);
+  background: rgba(3,3,3,.58);
+  font: 700 9px/1 "Fira Code", monospace;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  transition: color .12s ease, border-color .12s ease, background .12s ease, transform .12s ease;
+}
+.nomad-drop-zone::before {
+  content: attr(data-index);
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  color: var(--orb-signal);
+  font-size: 7px;
+}
+.nomad-drop-zone[data-side="left"] { border-radius: 1px 1px 1px 18px; }
+.nomad-drop-zone[data-side="center"] { margin: 14vh 0; border-color: rgba(244,243,237,.16); }
+.nomad-drop-zone[data-side="right"] { border-radius: 1px 18px 1px 1px; }
+.nomad-drop-zone.is-target {
+  color: var(--orb-white);
+  border-color: var(--orb-white);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 20px, rgba(255,255,255,.025) 20px 21px),
+    rgba(8,8,8,.9);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.2), 0 0 50px rgba(255,255,255,.07);
+  transform: scale(.992);
+}
+.nomad-drop-zone.is-target::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 58px;
+  height: 1px;
+  background: var(--orb-signal);
+  box-shadow: 0 0 12px rgba(255,69,58,.8);
+}
+/* Native HTML drag is intentionally desktop-width gated, not pointer-type
+   gated: Windows touch laptops often report a coarse primary pointer even
+   while the user is actively using a mouse or trackpad. */
+@media (max-width: 760px) {
+  .nomad-drop-layer { display: none !important; }
+  [data-nomad-tool][draggable="true"] { cursor: pointer; }
+}

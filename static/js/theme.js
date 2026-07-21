@@ -9,6 +9,13 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
+  nomad:      { bg:'#050505', fg:'#f4f3ed', panel:'#0a0a0a', border:'#3f3f3b', red:'#ff453a',
+                advanced: { userBubbleBg:'#f4f3ed', aiBubbleBg:'#080808', bubbleBorder:'#3f3f3b',
+                            sidebarBg:'#030303', brandColor:'#ff453a', brandMixTo:'#f4f3ed',
+                            hamburgerColor:'#f4f3ed', inputBg:'#030303', inputBorder:'#75756f',
+                            sendBtnBg:'#f4f3ed', sendBtnHover:'#ff453a', codeBg:'#020202',
+                            codeFg:'#f4f3ed', toggleActive:'#f4f3ed', accentPrimary:'#ff453a',
+                            accentError:'#ff453a' } },
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
@@ -31,7 +38,7 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
-const DEFAULT_THEME = 'dark';
+const DEFAULT_THEME = 'nomad';
 const LS_KEY = 'odysseus-theme';
 const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
 
@@ -184,7 +191,7 @@ const ADV_KEYS = [
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
+  { key: 'brandColor',         css: '--brand-color',       label: 'NOMAD Signal',      group: 'Sidebar' },
   { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
   { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
   { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
@@ -458,12 +465,30 @@ export function applyBgPattern(pattern) {
 }
 
 export function getSaved() {
-  const obj = Storage.getJSON(LS_KEY, null);
+  let obj = Storage.getJSON(LS_KEY, null);
   // Migration: 'chatgpt' preset was renamed to 'gpt'
   if (obj && obj.name === 'chatgpt') obj.name = 'gpt';
   // Migration: 'sakura' preset was renamed to 'ume'
   if (obj && obj.name === 'sakura') obj.name = 'ume';
+  // Migration: move installs still using the untouched legacy blue default
+  // onto NOMAD. Deliberately preserve customized dark themes and every other
+  // explicit theme choice.
+  if (_isLegacyDefaultTheme(obj)) {
+    obj = { name: 'nomad', colors: THEMES.nomad };
+    Storage.setJSON(LS_KEY, obj);
+    _syncToServer(obj);
+  }
   return obj;
+}
+
+function _isLegacyDefaultTheme(obj) {
+  const c = obj && obj.colors;
+  return obj?.name === 'dark'
+    && c?.bg?.toLowerCase() === '#282c34'
+    && c?.fg?.toLowerCase() === '#9cdef2'
+    && c?.panel?.toLowerCase() === '#111111'
+    && c?.border?.toLowerCase() === '#355a66'
+    && c?.red?.toLowerCase() === '#e06c75';
 }
 
 export function save(name, colors, opts) {
@@ -647,7 +672,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${name === 'nomad' ? 'NOMAD' : (name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name))}
     </div>
   `).join('');
 
@@ -947,8 +972,8 @@ export function initThemeUI() {
       if (ds) ds.value = DEFAULT_DENSITY;
       if (ps) ps.value = 'none';
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
-      const darkSwatch = grid.querySelector('[data-theme="dark"]');
-      if (darkSwatch) darkSwatch.classList.add('active');
+      const defaultSwatch = grid.querySelector(`[data-theme="${DEFAULT_THEME}"]`);
+      if (defaultSwatch) defaultSwatch.classList.add('active');
     });
   }
 
@@ -2084,9 +2109,13 @@ export default themeModule;
 async function _initWithSync() {
   // If no local theme, try loading from server (cross-device sync)
   if (!getSaved()) {
-    const serverTheme = await _loadFromServer();
+    let serverTheme = await _loadFromServer();
     if (serverTheme && serverTheme.colors) {
       if (serverTheme.name === 'sakura') serverTheme.name = 'ume';
+      if (_isLegacyDefaultTheme(serverTheme)) {
+        serverTheme = { name: 'nomad', colors: THEMES.nomad };
+        _syncToServer(serverTheme);
+      }
       Storage.setJSON(LS_KEY, serverTheme);
       applyColors(serverTheme.colors);
     }

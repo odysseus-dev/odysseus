@@ -9,7 +9,10 @@ class Spinner {
     // Different animation frames
     this.animations = {
       spinner: ['|', '/', '-', '\\'],
-      wave: ['▁▂▃', '▂▃▄', '▃▄▅', '▄▅▆', '▅▆▅', '▆▅▄', '▅▄▃', '▄▃▂', '▃▂▁']
+      wave: [
+        '[ .oO@ ]', '[ .O@o ]', '[ oO@. ]', '[ O@.o ]',
+        '[ @.oO ]', '[ .o@O ]', '[ o@O. ]', '[ @Oo. ]'
+      ]
     };
 
     this.animation = animation;
@@ -34,7 +37,7 @@ class Spinner {
       return this._createWhirlpoolElement();
     }
     const span = document.createElement('span');
-    span.className = 'ai-spinner';
+    span.className = 'ai-spinner ai-spinner-ascii';
     span.style.cssText = 'font-family: monospace; white-space: pre;';
     this.element = span;
     this.updateDisplay();
@@ -178,8 +181,8 @@ class Spinner {
     if (!this._wpColors) {
       const s = getComputedStyle(document.documentElement);
       this._wpColors = {
-        fg: s.getPropertyValue('--red').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2',
-        track: s.getPropertyValue('--border').trim() || '#355a66',
+        fg: s.getPropertyValue('--orb-white').trim() || s.getPropertyValue('--fg').trim() || '#f4f3ed',
+        track: s.getPropertyValue('--orb-line').trim() || s.getPropertyValue('--border').trim() || '#3a3a38',
       };
     }
     const fg = this._wpColors.fg;
