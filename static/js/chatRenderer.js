@@ -615,10 +615,36 @@ export function sameModelName(left, right) {
     || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
 }
 
-export function modelRouteLabel(requestedModel, actualModel) {
+function shortEndpointLabel(label) {
+  const value = modelValue(label);
+  if (!value) return '';
+  return value.length > 18 ? value.slice(0, 17) + '…' : value;
+}
+
+export function modelRouteLabel(
+  requestedModel,
+  actualModel,
+  requestedEndpointLabel = '',
+  actualEndpointLabel = '',
+  requestedEndpointId = '',
+  actualEndpointId = '',
+) {
   const requested = modelValue(requestedModel);
   const actual = modelValue(actualModel) || requested;
-  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
+  const requestedRoute = modelValue(requestedEndpointId || requestedEndpointLabel);
+  const actualRoute = modelValue(actualEndpointId || actualEndpointLabel);
+  const routeChanged = Boolean(
+    actualRoute
+    && requestedRoute
+    && actualRoute !== requestedRoute
+  );
+  if (!requested || sameModelName(requested, actual)) {
+    const model = shortModel(actual || requested);
+    if (!routeChanged) return model;
+    const from = shortEndpointLabel(requestedEndpointLabel || 'Selected route');
+    const to = shortEndpointLabel(actualEndpointLabel || actualEndpointId);
+    return model + ' (' + from + ' -> ' + to + ')';
+  }
   return shortModel(requested) + ' -> ' + shortModel(actual);
 }
 
@@ -629,10 +655,24 @@ export function replyModelPair(modelName, metadata) {
   if (actualFromMeta || requestedFromMeta) {
     const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
     const requested = requestedFromMeta || actual;
-    return { requestedModel: requested, actualModel: actual };
+    return {
+      requestedModel: requested,
+      actualModel: actual,
+      requestedEndpointId: meta.requested_endpoint_id || null,
+      requestedEndpointLabel: meta.requested_endpoint_label || 'Selected route',
+      actualEndpointId: meta.endpoint_id || null,
+      actualEndpointLabel: meta.endpoint_label || meta.requested_endpoint_label || 'Selected route',
+    };
   }
   const fallback = modelValue(modelName);
-  return { requestedModel: fallback, actualModel: fallback };
+  return {
+    requestedModel: fallback,
+    actualModel: fallback,
+    requestedEndpointId: null,
+    requestedEndpointLabel: 'Selected route',
+    actualEndpointId: null,
+    actualEndpointLabel: 'Selected route',
+  };
 }
 
 /**
@@ -824,10 +864,48 @@ export function isCostTrackedEndpoint(url) {
 }
 
 /** Cost for the current turn, returning null for non-billable endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = _currentEndpointUrl();
-  if (!isCostTrackedEndpoint(url)) return null;
+function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, selectedEndpointUrl) {
+  // Foreground fallback can answer on a different endpoint than the session's
+  // selected route. Prefer the backend's non-secret actual-route
+  // classification; retain the selected-endpoint check for older history.
+  if (endpointCostTracked === false) return null;
+  const selectedUrl = selectedEndpointUrl === undefined
+    ? _currentEndpointUrl()
+    : selectedEndpointUrl;
+  if (endpointCostTracked !== true && !isCostTrackedEndpoint(selectedUrl)) {
+    return null;
+  }
   return getModelCost(model, inputTokens, outputTokens);
+}
+
+/** Sum cost using the route/model that produced each Agent round. */
+function _metricsBillableCost(metrics, model, inputTokens, outputTokens, selectedEndpointUrl) {
+  const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
+  if (!buckets.length) {
+    return _billableCost(
+      model,
+      inputTokens,
+      outputTokens,
+      metrics.endpoint_cost_tracked,
+      selectedEndpointUrl,
+    );
+  }
+  let total = 0;
+  let hasPricedUsage = false;
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    const bucketCost = _billableCost(
+      bucket.model || model,
+      Number(bucket.input_tokens) || 0,
+      Number(bucket.output_tokens) || 0,
+      bucket.endpoint_cost_tracked,
+      selectedEndpointUrl,
+    );
+    if (bucketCost === null) continue;
+    total += bucketCost;
+    hasPricedUsage = true;
+  }
+  return hasPricedUsage ? total : null;
 }
 
 export function getImageCost(model, quality, size) {
@@ -844,6 +922,8 @@ export function getImageCost(model, quality, size) {
 
 /* ── Session cost helpers ─────────────────────────────────────────── */
 const _COST_KEY = 'ody-session-cost';
+const _COST_RUNS_KEY = 'ody-session-cost-runs';
+const _MAX_COST_RUNS_PER_SESSION = 256;
 
 /** Return the accumulated cost for the current (or given) session. */
 export function getSessionCost(sessionId) {
@@ -851,7 +931,14 @@ export function getSessionCost(sessionId) {
   if (!sid) return 0;
   try {
     const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-    return costs[sid] || 0;
+    const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+    const recordedRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
+      ? Object.values(runCosts[sid])
+      : [];
+    return (costs[sid] || 0) + recordedRuns.reduce(
+      (total, value) => total + (Number(value) || 0),
+      0,
+    );
   } catch (_e) { return 0; }
 }
 
@@ -863,6 +950,9 @@ export function resetSessionCost(sessionId) {
     const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
     delete costs[sid];
     localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+    const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+    delete runCosts[sid];
+    localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
   } catch (_e) { /* ignore */ }
   updateSessionCostUI();
 }
@@ -871,21 +961,8 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
-  // cloud-rate calculation may have left in localStorage for this session.
-  const _url = _currentEndpointUrl();
-  if (!isCostTrackedEndpoint(_url)) {
-    const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (sid && getSessionCost(sid) > 0) {
-      try {
-        const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        delete costs[sid];
-        localStorage.setItem(_COST_KEY, JSON.stringify(costs));
-      } catch (_e) { /* ignore */ }
-    }
-    el.style.display = 'none';
-    return;
-  }
+  // The ledger records billable work already performed in this session. A
+  // selected local endpoint does not erase cost from a paid fallback route.
   const cost = getSessionCost();
   if (cost > 0) {
     el.textContent = '$' + (cost < 0.01 ? cost.toFixed(4) : cost < 1 ? cost.toFixed(3) : cost.toFixed(2));
@@ -893,6 +970,61 @@ export function updateSessionCostUI() {
   } else {
     el.style.display = 'none';
   }
+}
+
+/** Record one metrics payload in a session ledger at most once. */
+export function recordSessionMetricsCost(metrics, sessionId, selectedEndpointUrl) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const cost = _metricsBillableCost(
+    metrics,
+    metrics.model || 'Unknown',
+    metrics.input_tokens || 0,
+    metrics.output_tokens || 0,
+    selectedEndpointUrl,
+  );
+  if (metrics._fromHistory) return cost;
+  const sid = sessionId || (
+    window.sessionModule && window.sessionModule.getCurrentSessionId()
+  );
+  if (!sid || cost === null) return cost;
+  const runId = typeof metrics._costRecordId === 'string'
+    ? metrics._costRecordId.trim()
+    : '';
+  if (metrics._costRecorded && !runId) return cost;
+  metrics._costRecorded = true;
+  if (runId) {
+    try {
+      const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+      const sessionRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
+        ? runCosts[sid]
+        : {};
+      // Assigning by detached-run identity is replay-idempotent even when a
+      // refresh produces a fresh metrics object or two tabs race to write it.
+      sessionRuns[runId] = cost;
+      const entries = Object.entries(sessionRuns);
+      if (entries.length > _MAX_COST_RUNS_PER_SESSION) {
+        const overflow = entries.slice(0, entries.length - _MAX_COST_RUNS_PER_SESSION);
+        const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
+        costs[sid] = (costs[sid] || 0) + overflow.reduce(
+          (total, entry) => total + (Number(entry[1]) || 0),
+          0,
+        );
+        overflow.forEach(([oldRunId]) => delete sessionRuns[oldRunId]);
+        localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+      }
+      runCosts[sid] = sessionRuns;
+      localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
+    } catch (_e) { /* ignore */ }
+  } else {
+    try {
+      const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
+      costs[sid] = (costs[sid] || 0) + cost;
+      localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+    } catch (_e) { /* ignore */ }
+  }
+  const currentSid = window.sessionModule && window.sessionModule.getCurrentSessionId();
+  if (currentSid === sid) updateSessionCostUI();
+  return cost;
 }
 
 /** Create a timestamp span for role labels.
@@ -1874,23 +2006,19 @@ export function displayMetrics(messageElement, metrics) {
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
   const model = metrics.model || 'Unknown';
-  const cost = _billableCost(model, inputTokens, outputTokens);
+  const cost = _metricsBillableCost(
+    metrics,
+    model,
+    inputTokens,
+    outputTokens,
+  );
 
   // Nothing useful to show — bail out (only if ALL metrics are missing)
   if (!responseTime && !inputTokens && !outputTokens && tps == null && !ctxPct) return;
 
-  // Accumulate session cost (only on fresh metrics, not history reload)
-  if (!metrics._fromHistory) {
-    const _sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (_sid && cost !== null) {
-      try {
-        const _costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        _costs[_sid] = (_costs[_sid] || 0) + cost;
-        localStorage.setItem(_COST_KEY, JSON.stringify(_costs));
-      } catch (_e) { /* ignore */ }
-      updateSessionCostUI();
-    }
-  }
+  // Rendering can occur when metrics arrive and again after [DONE]. The
+  // ledger mutation is idempotent for that shared payload.
+  recordSessionMetricsCost(metrics);
 
   // Keep token counts in the Message Stats popup; the footer should stay slim.
   const costStr0 = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : null;
@@ -2307,9 +2435,19 @@ export function addMessage(role, content, modelName, metadata) {
     const textRaw = Array.isArray(content) ? markdownModule.renderContent(content) : content;
 
     // --- Agent multi-bubble reconstruction from saved metadata ---
-    if (role === 'assistant' && metadata && metadata.tool_events && metadata.tool_events.length > 0) {
+    if (
+      role === 'assistant'
+      && metadata
+      && (
+        (Array.isArray(metadata.tool_events) && metadata.tool_events.length > 0)
+        || (Array.isArray(metadata.round_texts) && metadata.round_texts.length > 1)
+      )
+    ) {
       const roundTexts = metadata.round_texts || [];
-      const toolEvents = metadata.tool_events;
+      const roundModels = metadata.round_models || [];
+      const roundEndpointIds = metadata.round_endpoint_ids || [];
+      const roundEndpointLabels = metadata.round_endpoint_labels || [];
+      const toolEvents = metadata.tool_events || [];
       let pendingAskUser = null;
       let lastWrap = null;
       let firstMsgAi = null;
@@ -2322,7 +2460,8 @@ export function addMessage(role, content, modelName, metadata) {
         toolsByRound[r].push(ev);
       }
 
-      const maxRound = Math.max(...Object.keys(toolsByRound).map(Number), roundTexts.length);
+      const toolRounds = Object.keys(toolsByRound).map(Number);
+      const maxRound = Math.max(toolRounds.length ? Math.max(...toolRounds) : 0, roundTexts.length);
 
       for (let r = 0; r < maxRound; r++) {
         const roundNum = r + 1;
@@ -2334,10 +2473,31 @@ export function addMessage(role, content, modelName, metadata) {
           const roleEl = document.createElement('div');
           roleEl.className = 'role';
           const pair = replyModelPair(modelName, metadata);
-          const contModel = pair.actualModel || pair.requestedModel;
-          roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
-          if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
-            roleEl.title = pair.requestedModel + ' -> ' + contModel;
+          const contModel = roundModels[r] || pair.actualModel || pair.requestedModel;
+          const contEndpointId = r < roundEndpointIds.length
+            ? roundEndpointIds[r]
+            : pair.actualEndpointId;
+          const contEndpointLabel = r < roundEndpointLabels.length
+            ? roundEndpointLabels[r]
+            : pair.actualEndpointLabel;
+          roleEl.textContent = modelRouteLabel(
+            pair.requestedModel,
+            contModel,
+            pair.requestedEndpointLabel,
+            contEndpointLabel,
+            pair.requestedEndpointId,
+            contEndpointId,
+          );
+          if (
+            pair.requestedModel
+            && contModel
+            && (
+              !sameModelName(pair.requestedModel, contModel)
+              || (pair.requestedEndpointId && contEndpointId && pair.requestedEndpointId !== contEndpointId)
+            )
+          ) {
+            roleEl.title = pair.requestedModel + ' -> ' + contModel
+              + ' (' + pair.requestedEndpointLabel + ' -> ' + contEndpointLabel + ')';
           }
           applyModelColor(roleEl, contModel);
           if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
@@ -2492,7 +2652,14 @@ export function addMessage(role, content, modelName, metadata) {
     const isCompacted = metadata?.compacted;
     const replyModels = replyModelPair(modelName, metadata);
     const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(
+      replyModels.requestedModel,
+      resolvedModel,
+      replyModels.requestedEndpointLabel,
+      replyModels.actualEndpointLabel,
+      replyModels.requestedEndpointId,
+      replyModels.actualEndpointId,
+    );
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2503,8 +2670,14 @@ export function addMessage(role, content, modelName, metadata) {
     }
     r.textContent = _roleText;
     if (role !== 'user') {
-      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && !sameModelName(replyModels.requestedModel, resolvedModel)) {
-        r.title = replyModels.requestedModel + ' -> ' + resolvedModel;
+      const endpointChanged = Boolean(
+        replyModels.requestedEndpointId
+        && replyModels.actualEndpointId
+        && replyModels.requestedEndpointId !== replyModels.actualEndpointId
+      );
+      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && (!sameModelName(replyModels.requestedModel, resolvedModel) || endpointChanged)) {
+        r.title = replyModels.requestedModel + ' -> ' + resolvedModel
+          + ' (' + replyModels.requestedEndpointLabel + ' -> ' + replyModels.actualEndpointLabel + ')';
       }
       if (!isSlash && !isCompacted) applyModelColor(r, resolvedModel);
       r.appendChild(roleTimestamp(metadata?.timestamp));
@@ -2788,6 +2961,7 @@ const chatRenderer = {
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
+  recordSessionMetricsCost,
   roleTimestamp,
   stripToolBlocks,
   copyMessageText,
