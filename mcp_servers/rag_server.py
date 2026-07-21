@@ -54,10 +54,11 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "add_directory", "remove_directory"],
+                        "enum": ["search", "list", "add_directory", "remove_directory"],
                         "description": "The action to perform",
                     },
                     "directory": {"type": "string", "description": "Directory path (for add/remove)"},
+                    "query": {"type": "string", "description": "Search query for indexed documents"},
                 },
                 "required": ["action"],
             },
@@ -100,6 +101,36 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         except Exception as e:
             return [TextContent(type="text", text=f"Error: {e}")]
 
+    elif action == "search":
+        query = arguments.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return [TextContent(type="text", text="Error: search needs a query")]
+
+        if not _rag_manager:
+            return [TextContent(type="text", text="Error: RAG manager not available")]
+
+        try:
+            results = _rag_manager.search(query.strip(), k=5)
+
+            if not results:
+                return [TextContent(type="text", text=f"No documents found for '{query}'.")]
+
+            lines = [f"Found {len(results)} results for '{query}':"]
+
+            for result in results:
+                metadata = result.get("metadata", {})
+                filename = metadata.get("filename", metadata.get("source", "unknown"))
+                similarity = result.get("similarity", 0)
+                document = result.get("document", "")
+
+                lines.append(
+                    f"\n[{filename}] similarity={similarity}\n{document[:1000]}"
+                )
+
+            return [TextContent(type="text", text="\n".join(lines))]
+
+        except Exception as e:
+            return [TextContent(type="text", text=f"Error: RAG search failed: {e}")]
     elif action == "add_directory":
         _dir = arguments.get("directory")
         directory = _dir.strip() if isinstance(_dir, str) else ""
