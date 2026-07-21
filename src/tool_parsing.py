@@ -60,6 +60,21 @@ def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
     tag = m.group(1).lower()
     inline = (m.group(2) or "").strip()
     body = (m.group(3) or "").strip()
+    # Qwen sometimes emits tool calls as ```json fences:
+    # {
+    #   "tool": "web_search",
+    #   ...
+    # }
+    if tag == "json":
+        try:
+            obj = json.loads(body)
+            tool = obj.get("tool")
+            if isinstance(tool, str) and tool in TOOL_TAGS:
+                obj = dict(obj)
+                obj.pop("tool", None)
+                return tool, json.dumps(obj)
+        except Exception:
+            pass
     if not inline:
         return tag, body
     if tag in _CODE_FENCE_TAGS:
@@ -609,6 +624,30 @@ def _raw_openai_tool_call_to_block(value) -> Optional[ToolBlock]:
         return None
     if not isinstance(value, dict):
         return None
+    # Support Qwen-style tool calls:
+    # {
+    #   "tool": "web_fetch",
+    #   "params": {...}
+    # }
+    if "tool" in value or "action" in value:
+        tool_name = str(value.get("tool") or value.get("action") or "").strip()
+        args = value.get("params") or {
+            k: v for k, v in value.items()
+            if k not in ("tool", "action")
+        }
+
+        if not isinstance(args, dict):
+            args = {}
+
+        fn = {
+            "name": tool_name,
+            "arguments": json.dumps(args),
+        }
+
+        value = {
+            "function": fn,
+        }
+
     fn = value.get("function")
     if not isinstance(fn, dict):
         return None
@@ -733,9 +772,44 @@ def _raw_openai_tool_call_to_block(value) -> Optional[ToolBlock]:
         content = json.dumps(args) if args else ""
     return ToolBlock(tool_type, str(content or ""))
 
+def _parse_raw_qwen_tool_json(text: str) -> Optional[ToolBlock]:
+    try:
+        match = re.search(r'\{[\s\S]*"tool"\s*:\s*"([^"]+)"[\s\S]*\}', text)
+        if not match:
+            return None
+
+        data = json.loads(match.group(0))
+
+        tool = data.get("tool")
+        params = data.get("params", {})
+
+        if not tool:
+            return None
+
+        if tool not in TOOL_TAGS:
+            return None
+
+        if tool == "bash":
+            content = params.get("command", "")
+        elif tool == "web_search":
+            content = params.get("query", "")
+        elif tool == "web_fetch":
+            content = params.get("url", "")
+        elif tool == "read_file":
+            content = params.get("path", "")
+        else:
+            content = json.dumps(params)
+
+        return ToolBlock(tool, content)
+
+    except Exception:
+        return None
 
 def _parse_raw_openai_tool_call_json(text: str) -> Optional[ToolBlock]:
-    if not isinstance(text, str) or '"function"' not in text:
+    if not isinstance(text, str):
+        return None
+
+    if '"function"' not in text and '"tool"' not in text:
         return None
     decoder = json.JSONDecoder()
     for match in re.finditer(r"[\[{]", text):
@@ -1387,6 +1461,12 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # Example: {"function":{"arguments":"{\"action\":\"add\"}","name":"manage_memory"},"type":"function"}
     if not blocks:
         block = _parse_raw_openai_tool_call_json(text)
+        if block:
+            blocks.append(block)
+
+ # Pattern 4e: Qwen-style raw JSON tool calls leaked as assistant text.
+    if not blocks:
+        block = _parse_raw_qwen_tool_json(text)
         if block:
             blocks.append(block)
 

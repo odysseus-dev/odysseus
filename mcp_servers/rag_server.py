@@ -48,16 +48,33 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="manage_rag",
-            description="Manage RAG indexed documents. List indexed files, add directories, or remove directories.",
+            description="Search and manage RAG-indexed personal documents. Use action='search' whenever the user asks about information in their personal documents or knowledge base.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "add_directory", "remove_directory"],
+                        "enum": [
+                            "search",
+                            "list",
+                            "add_directory",
+                            "remove_directory",
+                        ],
                         "description": "The action to perform",
                     },
-                    "directory": {"type": "string", "description": "Directory path (for add/remove)"},
+                    "directory": {
+                        "type": "string",
+                        "description": "Directory path (for add/remove)",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for action='search'",
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Maximum search results",
+                        "default": 5,
+                    },
                 },
                 "required": ["action"],
             },
@@ -73,7 +90,50 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     _ensure_init()
     action = arguments.get("action", "")
 
-    if action == "list":
+    if action == "search":
+        query = arguments.get("query", "")
+        query = query.strip() if isinstance(query, str) else ""
+
+        if not query:
+            return [TextContent(type="text", text="Error: search requires a query")]
+
+        if not _rag_manager:
+            return [TextContent(type="text", text="Error: RAG manager not available")]
+
+        try:
+            k = int(arguments.get("k", 5))
+            k = max(1, min(k, 10))
+            results = _rag_manager.search(query, k=k)
+
+            if not results:
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"No personal documents matched '{query}'.",
+                    )
+                ]
+
+            lines = [f"Personal document results for '{query}':"]
+
+            for result in results:
+                metadata = result.get("metadata", {})
+                filename = metadata.get(
+                    "filename",
+                    metadata.get("source", "unknown"),
+                )
+                similarity = result.get("similarity", 0)
+                document = result.get("document", "")
+
+                lines.append(
+                    f"\n[{filename} | similarity {similarity:.3f}]\n{document}"
+                )
+
+            return [TextContent(type="text", text="\n".join(lines))]
+
+        except Exception as e:
+            return [TextContent(type="text", text=f"RAG search error: {e}")]
+
+    elif action == "list":
         if not _personal_docs_manager:
             return [TextContent(type="text", text="Personal docs manager not available. RAG may not be configured.")]
         try:

@@ -470,54 +470,119 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 # ---------------------------------------------------------------------------
 
 async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
-    """Manage RAG indexed documents: list, add_directory, remove_directory.
+    """Search and manage RAG-indexed personal documents.
 
     Content format:
-      Line 1: action (list|add_directory|remove_directory)
-      Line 2: directory path (for add/remove)
+      Line 1: action (search|list|add_directory|remove_directory)
+      Line 2: search query or directory path
+      Line 3: optional maximum results for search
     """
     lines = content.strip().split("\n")
-    if not lines:
+    if not lines or not lines[0].strip():
         return {"error": "No action specified"}
+
     action = lines[0].strip().lower()
 
-    if action == "list":
+    if action == "search":
+        if len(lines) < 2 or not lines[1].strip():
+            return {"error": "search needs line 2: search query"}
+
+        if not _rag_manager:
+            return {"error": "RAG manager not available"}
+
+        query = lines[1].strip()
+
+        try:
+            k = int(lines[2].strip()) if len(lines) >= 3 else 5
+        except ValueError:
+            k = 5
+
+        k = max(1, min(k, 10))
+
+        try:
+            results = _rag_manager.search(query, k=k)
+
+            if not results:
+                return {"results": f"No personal documents matched '{query}'."}
+
+            result_lines = [
+                f"Found {len(results)} personal-document results for '{query}':"
+            ]
+
+            for result in results:
+                metadata = result.get("metadata", {}) or {}
+                filename = metadata.get(
+                    "filename",
+                    metadata.get("source", "unknown"),
+                )
+                similarity = result.get("similarity", 0)
+                document = result.get("document", "")
+
+                result_lines.append(
+                    f"\n[{filename} | similarity {similarity:.3f}]\n{document}"
+                )
+
+            return {"results": "\n".join(result_lines)}
+
+        except Exception as e:
+            return {"error": f"RAG search failed: {e}"}
+
+    elif action == "list":
         if not _personal_docs_manager:
-            return {"results": "Personal docs manager not available. RAG may not be configured."}
+            return {
+                "results": (
+                    "Personal docs manager not available. "
+                    "RAG may not be configured."
+                )
+            }
+
         try:
             files = []
-            if hasattr(_personal_docs_manager, 'index'):
+            if hasattr(_personal_docs_manager, "index"):
                 files = _personal_docs_manager.index or []
+
             dirs = []
-            if hasattr(_personal_docs_manager, 'get_indexed_directories'):
+            if hasattr(_personal_docs_manager, "get_indexed_directories"):
                 dirs = _personal_docs_manager.get_indexed_directories()
 
             result_lines = []
+
             if dirs:
                 result_lines.append(f"**Indexed directories ({len(dirs)}):**")
-                for d in dirs:
-                    result_lines.append(f"  - `{d}`")
+                for directory in dirs:
+                    result_lines.append(f"  - `{directory}`")
+
             if files:
                 result_lines.append(f"\n**Indexed files ({len(files)}):**")
-                for f in files[:50]:
-                    name = f.get("name", str(f)) if isinstance(f, dict) else str(f)
+                for file_info in files[:50]:
+                    name = (
+                        file_info.get("name", str(file_info))
+                        if isinstance(file_info, dict)
+                        else str(file_info)
+                    )
                     result_lines.append(f"  - {name}")
+
                 if len(files) > 50:
                     result_lines.append(f"  ... and {len(files) - 50} more")
 
             if not result_lines:
                 return {"results": "No files or directories indexed in RAG."}
+
             return {"results": "\n".join(result_lines)}
+
         except Exception as e:
             return {"error": str(e)}
 
     elif action == "add_directory":
         if len(lines) < 2:
             return {"error": "add_directory needs line 2: directory path"}
+
         directory = lines[1].strip()
 
         import os
-        directory = os.path.expanduser(directory)
+
+        directory = os.path.abspath(os.path.expanduser(directory))
+
         if not os.path.isdir(directory):
             return {"error": f"Directory not found: {directory}"}
 
@@ -526,34 +591,63 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
 
         try:
             result = _rag_manager.index_personal_documents(directory)
-            indexed = result.get("indexed", 0) if isinstance(result, dict) else 0
-            return {"action": "add_directory", "directory": directory,
-                    "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)"}
+            indexed = (
+                result.get("indexed_count", result.get("indexed", 0))
+                if isinstance(result, dict)
+                else 0
+            )
+
+            if (
+                _personal_docs_manager
+                and hasattr(_personal_docs_manager, "add_directory")
+            ):
+                _personal_docs_manager.add_directory(directory, index=False)
+
+            return {
+                "action": "add_directory",
+                "directory": directory,
+                "results": (
+                    f"Directory '{directory}' added to RAG index "
+                    f"({indexed} chunks indexed)"
+                ),
+            }
+
         except Exception as e:
             return {"error": f"Failed to index directory: {e}"}
 
     elif action == "remove_directory":
         if len(lines) < 2:
             return {"error": "remove_directory needs line 2: directory path"}
+
         directory = lines[1].strip()
+
+        import os
+
+        directory = os.path.abspath(os.path.expanduser(directory))
 
         if not _personal_docs_manager:
             return {"error": "Personal docs manager not available"}
 
         try:
-            if hasattr(_personal_docs_manager, 'remove_directory'):
-                # Performs a targeted per-directory delete (#1660). The previous
-                # unconditional _rag_manager.rebuild_index() here wiped the whole
-                # collection on every remove (even for untracked dirs) and has
-                # been removed.
+            if hasattr(_personal_docs_manager, "remove_directory"):
                 _personal_docs_manager.remove_directory(directory)
-            return {"action": "remove_directory", "directory": directory,
-                    "results": f"Directory '{directory}' removed from RAG index"}
+
+            return {
+                "action": "remove_directory",
+                "directory": directory,
+                "results": f"Directory '{directory}' removed from RAG index",
+            }
+
         except Exception as e:
             return {"error": f"Failed to remove directory: {e}"}
 
     else:
-        return {"error": f"Unknown action '{action}'. Use: list, add_directory, remove_directory"}
+        return {
+            "error": (
+                f"Unknown action '{action}'. Use: search, list, "
+                "add_directory, remove_directory"
+            )
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1123,6 +1217,11 @@ async def dispatch_ai_tool(
         action = content.split("\n")[0].strip()[:40]
         desc = f"manage_memory: {action}"
         result = await do_manage_memory(content, session_id, owner=owner)
+
+    elif tool == "manage_rag":
+        action = content.split("\n")[0].strip()[:40]
+        desc = f"manage_rag: {action}"
+        result = await do_manage_rag(content, session_id)
 
     elif tool == "ui_control":
         action = content.split("\n")[0].strip()[:60]
