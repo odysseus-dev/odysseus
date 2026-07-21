@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import get_route_path
 
 from src.owner_identity import INTERNAL_TOOL_USER, auth_disabled
@@ -45,6 +45,9 @@ def path_is_route_or_child(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
+CODEX_COOKBOOK_PREFIX = "/api/codex/cookbook"
+
+
 def is_cors_preflight(method: str, headers) -> bool:
     """True for a genuine CORS preflight: an OPTIONS request carrying the
     Access-Control-Request-Method header. Such requests are credential-less by
@@ -52,6 +55,59 @@ def is_cors_preflight(method: str, headers) -> bool:
     401s the preflight and breaks every cross-origin browser/WebView client.
     Pure so it can be unit-tested without standing up the app."""
     return method == "OPTIONS" and "access-control-request-method" in headers
+
+
+def is_codex_cookbook_path(path: str) -> bool:
+    """Match only the duplicate Codex Cookbook route family."""
+    return path == CODEX_COOKBOOK_PREFIX or path.startswith(
+        f"{CODEX_COOKBOOK_PREFIX}/"
+    )
+
+
+def is_odysseus_bearer_authorization(value: str | None) -> bool:
+    """Recognize the Bearer scheme with normal case and whitespace freedom."""
+    if not isinstance(value, str):
+        return False
+    parts = value.strip().split(None, 1)
+    return (
+        len(parts) == 2
+        and parts[0].casefold() == "bearer"
+        and parts[1].startswith("ody_")
+    )
+
+
+def require_codex_cookbook_browser(request: Request) -> None:
+    """Reject bearer and internal-tool principals at the shared boundary."""
+    current_user = getattr(request.state, "current_user", None)
+    authorization = request.headers.get("authorization", "")
+    internal_header = request.headers.get(INTERNAL_TOOL_HEADER)
+    has_internal_header = bool(
+        internal_header
+        and secrets.compare_digest(internal_header, INTERNAL_TOOL_TOKEN)
+    )
+    if (
+        getattr(request.state, "api_token", False)
+        or current_user == "api"
+        or current_user == INTERNAL_TOOL_USER
+        or is_odysseus_bearer_authorization(authorization)
+        or has_internal_header
+    ):
+        raise HTTPException(403, "Forbidden")
+
+
+class CodexCookbookBoundaryMiddleware(BaseHTTPMiddleware):
+    """Apply the Codex Cookbook principal gate before request-body parsing."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if is_codex_cookbook_path(get_route_path(request.scope)):
+            try:
+                require_codex_cookbook_browser(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
+                )
+        return await call_next(request)
 
 
 def require_admin(request: Request):
