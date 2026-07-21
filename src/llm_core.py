@@ -2031,7 +2031,10 @@ async def llm_call_async(
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+        if (
+            (_is_ollama_openai_compat_url(url) or provider == "ollama")
+            and _supports_thinking(model)
+        ):
             payload["think"] = False
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
@@ -2189,9 +2192,11 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
-            payload["tools"] = tools
+           payload["tools"] = tools
+        if _is_ollama_openai_compat_url(url):
+          payload["tool_choice"] = "required"
         elif tool_choice_none:
-            payload["tool_choice"] = "none"
+          payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
         # activates thinking mode and returns structured reasoning_content.
         # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
@@ -2499,6 +2504,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     try:
         client = _get_http_client()
         h = await apply_kimi_code_headers_async(client, h, target_url)
+        if _is_ollama_openai_compat_url(target_url):
+            logger.info(
+                "[ollama-payload] model=%r think=%r tool_choice=%r tools=%d url=%s",
+                payload.get("model"),
+                payload.get("think"),
+                payload.get("tool_choice"),
+                len(payload.get("tools") or []),
+                target_url,
+            )
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
             _clear_host_dead(target_url)
             if r.status_code != 200:

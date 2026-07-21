@@ -462,6 +462,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
     "manage_session": "- ```manage_session``` — Rename, archive, delete, fork, switch, or `list` chats (the UI calls them 'chats'; 'session' is internal). Line 1 = action (list/switch/rename/archive/unarchive/delete/important/unimportant/truncate/fork), Line 2 = exact chat id from `list_sessions` (or `current` where supported). For delete/archive/truncate, always list first and reuse the exact id; never invent placeholder ids. `switch`/`open` returns a clickable anchor link the user can tap to open the chat — use for \"open my X chat\".",
     "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts about the USER themselves, their preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this' about themselves, states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories. DO NOT use for info about another person (their address, phone, email, birthday) — that goes in `manage_contact`. If the user pastes an address/phone with a name and says 'save this for <person>', use `manage_contact add` with the address arg, NOT manage_memory.",
+    "manage_rag": "- ```manage_rag``` — Search and manage the user's indexed personal knowledge base. Line 1 = action (list/search/add_directory/remove_directory). For search, line 2 = query and optional line 3 = result count; use 5 results by default. For directory actions, line 2 = path. You MUST search before answering questions about the user's own systems, projects, notes, documentation, technical history, Markdown files, wiki, vault, or indexed directories. Do not substitute model memory for a knowledge-base search. Base the answer on retrieved content and mention the filenames used.",
     "manage_skills": "- ```manage_skills``` — Skill registry (SKILL.md format). Args (JSON): {\"action\": \"list|view|view_ref|search|add|edit|patch|publish|delete\", ...}. `list` returns the index of available skills (published + teacher-escalation drafts); `view name=foo` fetches the full SKILL.md; `view_ref name=foo path=...` loads a reference file under the skill directory. For `add`, provide an explicit kebab-case `name` and only report the exact returned name, because storage may normalize or dedupe it. Use this BEFORE doing domain work — there may already be a procedure (published or draft) that prescribes the correct steps. Drafts written by the teacher loop are authoritative guidance even though they're not yet published.",
     "manage_tasks": "- ```manage_tasks``` — Create and manage scheduled background tasks (recurring AI jobs). Args (JSON): {\"action\": \"list|create|edit|delete|pause|resume|run\", ...}",
     "manage_endpoints": "- ```manage_endpoints``` — Add, remove, or configure AI model API endpoints. Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}. Use when user wants to add a new AI provider.",
@@ -781,6 +782,24 @@ def _detect_admin_intent(messages: List[Dict]) -> bool:
             if isinstance(content, list):
                 content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
             content_lower = content.lower()
+
+            # Merely asking what notes contain is a knowledge-base/RAG query,
+            # not document administration. Only treat note(s) as admin intent
+            # when paired with an explicit management action.
+            note_admin_actions = (
+                "open", "list", "create", "edit", "update", "delete",
+                "rename", "archive", "tidy", "manage", "write", "save",
+            )
+            if "note" in content_lower:
+                non_note_keywords = [
+                    kw for kw in _ADMIN_KEYWORDS
+                    if kw not in {"note", "notes"}
+                ]
+                return (
+                    any(kw in content_lower for kw in non_note_keywords)
+                    or any(action in content_lower for action in note_admin_actions)
+                )
+
             return any(kw in content_lower for kw in _ADMIN_KEYWORDS)
     return False
 
@@ -1030,7 +1049,25 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
         domains.add("documents")
-    if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
+
+    # Personal/local indexed knowledge-base requests are RAG intent, not web
+    # search intent. The generic word "search" must not route these to web.
+    local_rag_intent = has(
+        r"\b(?:my|the|local|personal|indexed)\s+knowledge[ -]?base\b",
+        r"\b(?:search|find|read|check|look through|look in|show)\b.{0,40}\bmy\s+(?:files|notes|docs|documents|documentation|markdown|wiki|vault)\b",
+        r"\bwhat\s+do(?:es)?\s+my\s+(?:notes|docs|documents|documentation|markdown|wiki|vault)\s+say\b",
+        r"\baccording to my\s+(?:notes|docs|documents|documentation|markdown|wiki|vault)\b",
+        r"\bindexed\s+(?:files|notes|docs|documents|directories)\b",
+    )
+    if local_rag_intent:
+        domains.add("rag")
+        # Read/search requests for "my notes" refer to indexed knowledge-base
+        # content, not the reminders/to-do note store.
+        domains.discard("notes_calendar_tasks")
+        domains.discard("documents")
+
+    if (not local_rag_intent
+            and has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b")):
         domains.add("web")
     if has(
         r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
@@ -1936,6 +1973,9 @@ def _build_system_prompt(
                     max_items=_skill_max_injected,
                     min_confidence=_skill_min_conf,
                 ) if _skill_max_injected > 0 else []
+
+                logger.warning(f"Injected skills: {[s.get('name') for s in relevant_skills]}")
+
                 lines = [""]
                 if relevant_skills:
                     # Bump the "uses" counter on every skill we actually surface
@@ -2846,6 +2886,11 @@ async def stream_agent_loop(
             })
         if "email" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
+        if "rag" in (_intent.get("domains") or set()):
+            _relevant_tools.add("manage_rag")
+            # Do not let generic web tools compete with explicit personal-KB
+            # retrieval, especially for smaller local models.
+            _relevant_tools.difference_update(WEB_TOOL_NAMES)
         if "web" in (_intent.get("domains") or set()):
             _relevant_tools.update(WEB_TOOL_NAMES)
             _blocked_web_tools = sorted(WEB_TOOL_NAMES & disabled_tools)
@@ -3070,7 +3115,7 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
+    _compact_agent_prompt = _is_api_model
     messages, mcp_schemas = _build_system_prompt(
         messages, model, _prompt_active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
@@ -3337,6 +3382,20 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+        # Final defensive schema clamp. Regardless of which branch assembled
+        # the schemas, never send tools outside the per-turn relevance set.
+        if _relevant_tools is not None:
+            _final_schema_names = set(_relevant_tools)
+            if _needs_admin:
+                _final_schema_names |= _ADMIN_TOOLS
+            all_tool_schemas = [
+                schema for schema in (all_tool_schemas or [])
+                if (
+                    schema.get("function", {}).get("name")
+                    or schema.get("name")
+                ) in _final_schema_names
+            ]
+
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
@@ -3600,6 +3659,60 @@ async def stream_agent_loop(
             is_api_model=(_is_api_model and not guide_only),
             allow_fenced_for_api=_ody_doc_finetune_mode,
         )
+
+        # Enforce the native tool allowlist actually sent to the model.
+        # Some local models hallucinate valid-but-unoffered tool names; never
+        # execute those calls merely because they exist in the global registry.
+        if used_native and tool_blocks:
+            # Enforce the per-turn relevance allowlist, not merely every
+            # schema sent by the API compatibility layer. That broader schema
+            # list includes globally available tools such as manage_documents.
+            _allowed_native_tools = {
+                str(name)
+                for name in (
+                    _relevant_tools
+                    if _relevant_tools is not None
+                    else (_tool_names_sent or [])
+                )
+                if name
+            }
+            _allowed_blocks = []
+            _allowed_calls = []
+            _rejected_native_tools = []
+
+            for _idx, _block in enumerate(tool_blocks):
+                _call = converted_calls[_idx] if _idx < len(converted_calls) else {}
+                _call_name = str((_call or {}).get("name") or _block.tool_type or "")
+                if _call_name in _allowed_native_tools:
+                    _allowed_blocks.append(_block)
+                    if _idx < len(converted_calls):
+                        _allowed_calls.append(_call)
+                else:
+                    _rejected_native_tools.append(_call_name)
+
+            if _rejected_native_tools:
+                logger.warning(
+                    "[agent-tools] rejected native calls not offered this round: %s; allowed=%s",
+                    _rejected_native_tools,
+                    sorted(_allowed_native_tools),
+                )
+                tool_blocks = _allowed_blocks
+                converted_calls = _allowed_calls
+                native_tool_calls = _allowed_calls
+
+                if not tool_blocks:
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "Your previous tool call was rejected because that tool was not "
+                            "available for this request. Retry using only one of the tools "
+                            f"offered this round: {', '.join(sorted(_allowed_native_tools))}. "
+                            "For questions about the user's notes or indexed documentation, "
+                            "use manage_rag with action='search'."
+                        ),
+                    })
+                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                    continue
         if _ody_doc_stream_create_mode and tool_blocks:
             create_idx = next(
                 (idx for idx, block in enumerate(tool_blocks) if block.tool_type == "create_document"),
@@ -3998,6 +4111,33 @@ async def stream_agent_loop(
         tool_result_texts = []  # plain text for native tool role messages
         budget_hit = False
         for i, block in enumerate(tool_blocks):
+            # Hard per-turn allowlist enforcement at the final execution point.
+            # Never execute a globally registered tool that was not selected
+            # for this request.
+            if (
+                _relevant_tools is not None
+                and block.tool_type not in _relevant_tools
+            ):
+                logger.warning(
+                    "[agent-tools] blocked unselected tool before execution: %s; selected=%s",
+                    block.tool_type,
+                    sorted(_relevant_tools),
+                )
+                desc = f"{block.tool_type}: NOT AVAILABLE THIS TURN"
+                result = {
+                    "error": (
+                        f"Tool '{block.tool_type}' was not selected for this request. "
+                        "Use one of the tools available this turn. For indexed notes "
+                        "or personal documentation, use manage_rag with action='search'."
+                    ),
+                    "exit_code": 1,
+                    "blocked": True,
+                }
+                formatted = format_tool_result(desc, result)
+                tool_results.append(formatted)
+                tool_result_texts.append(formatted)
+                continue
+
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
                 yield f'data: {json.dumps({"type": "budget_exceeded", "limit": max_tool_calls, "used": total_tool_calls})}\n\n'

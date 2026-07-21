@@ -410,6 +410,39 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_rag",
+            "description": "Search the user's indexed personal knowledge base before answering questions about their own systems, projects, notes, documentation, technical history, Markdown files, or other local information. Do not rely on model memory when the answer may exist in the knowledge base. Use search first and base the answer on the retrieved documents, mentioning relevant filenames.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "search", "add_directory", "remove_directory"],
+                        "description": "The action to perform"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Knowledge-base search query"
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Maximum number of search results",
+                        "default": 5,
+                        "minimum": 1,
+                        "maximum": 20
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory path for add_directory or remove_directory"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_models",
             "description": "List all available AI models across configured endpoints. Optionally filter by keyword.",
             "parameters": {
@@ -1448,6 +1481,15 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = "list"
             if args.get("category"):
                 content += "\n" + args["category"]
+        else:
+            content = action
+    elif tool_type == "manage_rag":
+        action = args.get("action", "")
+        if action == "search":
+            content = "search\n" + str(args.get("query") or args.get("text") or "")
+            content += "\n" + str(args.get("k", 5))
+        elif action in ("add_directory", "remove_directory"):
+            content = action + "\n" + str(args.get("path") or "")
         else:
             content = action
     elif tool_type == "list_models":
