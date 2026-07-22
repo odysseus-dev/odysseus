@@ -852,7 +852,7 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
-from routes.vault_routes import setup_vault_routes
+from routes.vault.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
