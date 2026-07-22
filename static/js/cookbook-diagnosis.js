@@ -832,6 +832,20 @@ export const ERROR_PATTERNS = [
     fixes: [],
   },
   {
+    // Rust build without cargo: some deps (outlines_core, older tokenizers)
+    // ship Rust extensions and fall back to an sdist build when no wheel
+    // matches — which needs the Rust toolchain. Must precede the generic
+    // build-failure entry below.
+    match: (text) => {
+      const TAIL = text.slice(-6000);
+      if (/Application startup complete|Uvicorn running on/i.test(TAIL)) return false;
+      return /can't find Rust compiler|cargo(?:: command)? not found|rustc[^\n]*not found/i.test(TAIL);
+    },
+    message: 'A dependency builds a Rust extension from source (no prebuilt wheel for this Python/platform), but the Rust compiler is not installed on the server. The install did not finish.',
+    suggestion: 'Suggested action: install the Rust toolchain on the server (Arch: sudo pacman -S rust · Debian/Ubuntu: sudo apt install cargo · or rustup.rs), then retry the install.',
+    fixes: [],
+  },
+  {
     // Dependency-install (pip) build failure — a required package failed to
     // build its wheel (common when an old sdist's setup.py breaks on a newer
     // Python, e.g. basicsr on 3.13). This is an install problem, NOT a serve

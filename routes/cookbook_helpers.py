@@ -1358,6 +1358,11 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "download a GGUF build of this model (repo name usually ends in -GGUF, file like Q4_K_M.gguf)", "op": "manual"}],
         ),
         (
+            r"can't find Rust compiler|cargo: command not found",
+            "A dependency builds a Rust extension from source (no prebuilt wheel for this Python/platform), but the Rust compiler is not installed on this server.",
+            [{"label": "install the Rust toolchain (Arch: pacman -S rust / Debian: apt install cargo / rustup.rs), then retry", "op": "manual"}],
+        ),
+        (
             r"No such file or directory: 'nvcc'|FileNotFoundError[^\n]*'nvcc'|nvcc: command not found",
             "A dependency tried to compile CUDA kernels during install, but nvcc (the CUDA compiler) is not on this server's PATH (Arch installs the toolkit to /opt/cuda, which non-login shells never see).",
             [{"label": "install the CUDA toolkit (Arch: pacman -S cuda / Debian: apt install nvidia-cuda-toolkit), or expose an existing /opt/cuda install: ln -s /opt/cuda/bin/nvcc /usr/local/bin/nvcc and ln -sfn /opt/cuda /usr/local/cuda", "op": "manual"}],

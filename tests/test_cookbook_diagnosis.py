@@ -81,3 +81,19 @@ def test_diagnose_nvcc_missing_during_pip_build():
     assert diagnosis is not None
     assert "nvcc" in diagnosis["message"]
     assert "/opt/cuda" in diagnosis["suggestions"][0]["label"]
+
+
+def test_diagnose_rust_compiler_missing_during_pip_build():
+    output = """
+      running build_rust
+      error: can't find Rust compiler
+      [end of output]
+    ERROR: Failed building wheel for outlines_core
+    error: failed-wheel-build-for-install
+    """
+
+    diagnosis = _diagnose_serve_output(output)
+
+    assert diagnosis is not None
+    assert "Rust" in diagnosis["message"]
+    assert "pacman -S rust" in diagnosis["suggestions"][0]["label"]
