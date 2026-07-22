@@ -1105,6 +1105,33 @@ function _shQuote(value) {
   return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
 }
 
+// Fetch the tail of a task's persisted runner log (/tmp/odysseus-tmux/<sid>.log).
+// The tmux pane is NOT authoritative: the runner drops into an interactive
+// shell after the process exits (so the user can inspect), whose greeting
+// overwrites the pane — and after a page reload with the tmux server gone
+// there is no pane at all. The log file survives both. Returns '' when the
+// log is unreachable (Windows sessions use a different log path — pane
+// handling there is unchanged).
+async function _fetchTaskLogTail(task, lines = 200) {
+  if (_isWindows(task) || !task?.sessionId || !/^[A-Za-z0-9_-]+$/.test(task.sessionId)) return '';
+  const inner = `tail -n ${lines} /tmp/odysseus-tmux/${task.sessionId}.log 2>/dev/null`;
+  const host = _taskRemoteHost(task);
+  // Remote side runs via `sh -c` (a simple command every login shell parses);
+  // double-quoted so the local shell strips one layer and ssh forwards the rest.
+  const cmd = host
+    ? `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(`sh -c ${_shQuote(inner)}`)}`
+    : inner;
+  try {
+    const r = await fetch('/api/shell/exec', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd, timeout: 10 }),
+    });
+    const d = await r.json().catch(() => ({}));
+    return (d.stdout || '').trim();
+  } catch { return ''; }
+}
+
 function _taskLooksOllama(task, outputText = '') {
   const haystack = `${task?.payload?.backend || ''} ${task?.payload?._cmd || ''} ${task?.payload?._fields?.backend || ''} ${outputText || ''}`;
   return /\bollama\b/i.test(haystack) || /Ollama API ready on port\s+\d+/i.test(haystack);
@@ -2684,15 +2711,29 @@ export function _renderRunningTab() {
           }});
         }
         if (_shouldOfferCrashReport(task)) {
-          items.push({ group: 'copy', label: 'Copy crash report', action: 'copy-crash-report', custom: () => {
-            const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+          items.push({ group: 'copy', label: 'Copy crash report', action: 'copy-crash-report', custom: async () => {
+            let out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+            // The pane is routinely overwritten by the post-exit shell
+            // greeting — a crash report built from it shows the user's
+            // neofetch banner instead of the actual error. Prefer the
+            // persisted runner log whenever the pane lacks the exit sentinel.
+            if (!/=== Process exited with code /.test(out)) {
+              const logTail = await _fetchTaskLogTail(task);
+              if (logTail) out = logTail;
+            }
             _copyText(_buildCrashReport(task, out));
             uiModule.showToast('Copied crash report');
           }});
         }
         // Copy the last 50 lines of the task's output/log.
-        items.push({ group: 'copy', label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
-          const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+        items.push({ group: 'copy', label: 'Copy last 50 lines', action: 'copy-log', custom: async () => {
+          let out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+          if (!out.trim() || !/=== Process exited with code /.test(out)) {
+            // On-screen output empty or missing the exit sentinel — fall back
+            // to the persisted runner log before giving up.
+            const logTail = await _fetchTaskLogTail(task);
+            if (logTail) out = logTail;
+          }
           const last = out.split('\n').slice(-50).join('\n');
           if (!last.trim()) {
             uiModule.showToast('No log content available yet');
@@ -3052,7 +3093,21 @@ async function _reconnectTask(el, task) {
           continue;
         }
 
-        const lastOutput = output.textContent || '';
+        let lastOutput = output.textContent || '';
+        // The on-screen output can be empty or stale (fresh page load after
+        // the tmux server died) or overwritten by the post-exit interactive
+        // shell's greeting — the persisted runner log is the authority.
+        // Without this, a task that finished cleanly (exit-0 sentinel +
+        // DOWNLOAD_OK sitting in the log) gets mislabeled "crashed" just
+        // because its session no longer exists.
+        if (!/=== Process exited with code /.test(lastOutput)) {
+          const _logTail = await _fetchTaskLogTail(task);
+          if (_logTail) {
+            lastOutput = _logTail;
+            output.textContent = _logTail;
+            _updateTask(task.sessionId, { output: _logTail.slice(-5000) });
+          }
+        }
         // Pip tasks (Reinstall vLLM / Upgrade torch / etc.) must skip the
         // generic serve `_diagnose` step. Their output is pip's own and the
         // error patterns there (torch ABI traceback, "No module named torch",
