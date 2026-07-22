@@ -1046,6 +1046,11 @@ def setup_shell_routes() -> APIRouter:
         "make":            {"debian": ["make"], "arch": ["make"], "fedora": ["make"], "alpine": ["make"], "suse": ["make"], "macos": []},
         "git":             {"debian": ["git"], "arch": ["git"], "fedora": ["git"], "alpine": ["git"], "suse": ["git"], "macos": ["git"]},
         "tmux":            {"debian": ["tmux"], "arch": ["tmux"], "fedora": ["tmux"], "alpine": ["tmux"], "suse": ["tmux"], "macos": ["tmux"]},
+        # Rust toolchain — canonical name is the binary (`cargo`) because the
+        # remote prereq probe does `command -v <name>`. Arch/brew ship it as
+        # the `rust` package; everywhere else `cargo` pulls the toolchain.
+        "cargo":           {"debian": ["cargo"], "arch": ["rust"], "fedora": ["cargo"], "alpine": ["cargo"], "suse": ["cargo"], "macos": ["rust"]},
+        "uv":              {"debian": ["uv"], "arch": ["uv"], "fedora": ["uv"], "alpine": ["uv"], "suse": ["uv"], "macos": ["uv"]},
     }
     _BACKEND_EXTRAS = {
         "cuda":   {"debian": ["nvidia-cuda-toolkit"], "arch": ["cuda"], "fedora": ["cuda-toolkit"], "alpine": [], "suse": ["cuda"], "macos": []},
@@ -1146,6 +1151,24 @@ def setup_shell_routes() -> APIRouter:
                 "target": "remote",
                 "kind": "system",
                 "install_hint": "Install Docker on the selected server and allow this user to run docker.",
+            },
+            {
+                "name": "uv",
+                "pip": "",
+                "desc": "Fetches a supported standalone Python for the venv when the system Python is outside the serving range",
+                "category": "System",
+                "target": "remote",
+                "kind": "system",
+                "install_hint": "Install uv with pacman/apt/dnf/apk/zypper/brew; the Python environment row uses it to fetch Python 3.13.",
+            },
+            {
+                "name": "cargo",
+                "pip": "",
+                "desc": "Rust toolchain — needed when a pip dependency builds a Rust extension from source (outlines_core, older tokenizers)",
+                "category": "System",
+                "target": "remote",
+                "kind": "system",
+                "install_hint": "Install the Rust toolchain (Arch: rust, Debian/Fedora/Alpine/openSUSE: cargo, macOS: brew install rust).",
             },
             # Note: cmake / gcc / git are not separate dependency rows —
             # they're declared as `system_prereqs` on llama_cpp (and any
@@ -1631,7 +1654,7 @@ def setup_shell_routes() -> APIRouter:
         ssh_port = body.get("ssh_port")
         # Names users can request — must match canonical names used in the
         # deps catalog's `system_prereqs` field and on the System rows.
-        ALLOWED = {"cmake", "build-essential", "g++", "gcc", "git", "tmux", "make"}
+        ALLOWED = {"cmake", "build-essential", "g++", "gcc", "git", "tmux", "make", "cargo", "uv"}
         pkgs = [str(p).strip() for p in raw if str(p).strip() in ALLOWED]
         if not pkgs:
             return {"ok": False, "error": "no installable packages requested (allowlist: " + ", ".join(sorted(ALLOWED)) + ")"}
@@ -1639,7 +1662,8 @@ def setup_shell_routes() -> APIRouter:
         # as-is; pacman has base-devel for build-essential, etc.
         def _apt(names): return list(names)
         def _pacman(names):
-            return ["base-devel" if n == "build-essential" else n for n in names]
+            # cargo → rust: Arch ships the toolchain as the `rust` package.
+            return [{"build-essential": "base-devel", "cargo": "rust"}.get(n, n) for n in names]
         def _dnf(names):
             out = []
             for n in names:
@@ -1661,7 +1685,8 @@ def setup_shell_routes() -> APIRouter:
                 else: out.append(n)
             return out
         def _brew(names):
-            return [n for n in names if n not in ("build-essential", "g++", "gcc", "make")]
+            # cargo → rust: Homebrew's formula for the toolchain is `rust`.
+            return [{"cargo": "rust"}.get(n, n) for n in names if n not in ("build-essential", "g++", "gcc", "make")]
         # Build a single shell snippet that detects the package manager and
         # runs the right install. Non-interactive sudo (-n) only — if sudo
         # asks for a password the script reports it instead of hanging.

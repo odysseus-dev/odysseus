@@ -1068,7 +1068,7 @@ async function _fetchDependencies() {
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
-    const _systemInstallable = new Set(['tmux']);
+    const _systemInstallable = new Set(['tmux', 'cargo', 'uv']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
@@ -1321,7 +1321,7 @@ async function _fetchDependencies() {
         } else {
           const how = chk.candidate === 'uv' ? 'uv will fetch Python 3.13'
             : (chk.candidate && chk.candidate !== 'none') ? `will use ${chk.candidate}`
-            : `no suitable interpreter found (system python3 is ${chk.system_python || 'unknown'}) — Install shows what to add`;
+            : `no suitable interpreter found (system python3 is ${chk.system_python || 'unknown'}) — install uv (System row below), then retry`;
           _pyenvState.textContent = `no venv · ${how}`;
           _pyenvSlot.innerHTML = `<button type="button" class="cookbook-dep-tag cookbook-dep-install" title="Create the venv and configure this server to use it">Install</button>`;
         }
