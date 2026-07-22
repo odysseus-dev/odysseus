@@ -3142,6 +3142,20 @@ async function _reconnectTask(el, task) {
             await new Promise(r => setTimeout(r, 5000));
             continue;
           }
+          if (vData.exit_code !== 1) {
+            // has-session neither succeeded (0) nor reported "no such
+            // session" (tmux exits 1) — this is a transport failure (ssh
+            // exits 255, timeouts 124, shell-exec errors). A dropped
+            // connection is a UI-signal problem, not a job-state change
+            // (#2709): the job may well still be running. Show
+            // "reconnecting" and keep polling instead of classifying the
+            // task from stale output.
+            const _rcBadge = el.querySelector('.cookbook-task-status');
+            if (_rcBadge) { _rcBadge.textContent = 'reconnecting…'; _rcBadge.className = 'cookbook-task-status cookbook-task-running'; }
+            failCount = 0;
+            await new Promise(r => setTimeout(r, 10000));
+            continue;
+          }
         } catch {
           await new Promise(r => setTimeout(r, 10000));
           continue;
