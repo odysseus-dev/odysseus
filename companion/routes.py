@@ -76,7 +76,9 @@ def has_companion_scope(request: Request) -> bool:
     if not getattr(request.state, "api_token", False):
         return True
     scopes = getattr(request.state, "api_token_scopes", None) or []
-    return "companion" in scopes
+    if isinstance(scopes, str):
+        scopes = [scope.strip() for scope in scopes.split(",")]
+    return "companion" in {str(scope).strip() for scope in scopes if str(scope).strip()}
 
 
 def _auth_disabled() -> bool:
