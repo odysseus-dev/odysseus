@@ -940,6 +940,64 @@ def setup_cookbook_routes() -> APIRouter:
             "exit_code": code,
         }
 
+    class CookbookVenvSetupRequest(BaseModel):
+        host: str
+        ssh_port: str | None = None
+        path: str | None = None
+
+    _VENV_PATH_RE = re.compile(r"^[A-Za-z0-9_./~-]+$")
+
+    @router.post("/api/cookbook/setup-venv")
+    async def setup_cookbook_venv(request: Request, req: CookbookVenvSetupRequest):
+        """Create a Python venv on a Cookbook server so pip installs and
+        serve engines have a working, PEP 668-safe environment. Admin only.
+
+        Runs `python3 -m venv <path>` on the target and verifies pip works
+        inside it. The caller (Settings → Servers) then stores env=venv +
+        the path on the server profile.
+        """
+        require_admin(request)
+        host = validate_remote_host(req.host)
+        ssh_port = validate_ssh_port(req.ssh_port)
+        path = (req.path or "~/odysseus-venv").strip().rstrip("/")
+        # Same charset the shell routes accept for venv paths. The path is
+        # deliberately interpolated unquoted so a leading ~ expands on the
+        # remote — the regex (no spaces, no shell metacharacters) keeps that
+        # safe.
+        if not _VENV_PATH_RE.match(path) or path.startswith("-"):
+            raise HTTPException(400, "Invalid venv path")
+        inner = (
+            f"python3 -m venv {path} && "
+            f"{path}/bin/python3 -m pip --version"
+        )
+        try:
+            # `sh -lc` so the command survives non-POSIX remote login shells
+            # (fish/csh). ensurepip bootstraps pip on first creation, which
+            # can take a while on slow disks — hence the generous timeout.
+            code, stdout, stderr = await run_ssh_command_async(
+                host,
+                ssh_port,
+                "sh -lc " + shlex.quote(inner),
+                timeout=180,
+                connect_timeout=6,
+                strict_host_key_checking=False,
+            )
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "venv creation timed out after 180s"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        out_txt = stdout.decode("utf-8", errors="replace").strip()
+        err_txt = stderr.decode("utf-8", errors="replace").strip()
+        if code != 0:
+            detail = (err_txt or out_txt)[-400:]
+            # Debian/Ubuntu strip ensurepip out of the python3 package; the
+            # stock failure message ("ensurepip is not available") already
+            # names the fix, but make the package explicit for the toast.
+            if "ensurepip" in detail:
+                detail += " — install the venv module first (Debian/Ubuntu: sudo apt install python3-venv), then retry."
+            return {"ok": False, "error": f"venv creation failed on {host}: {detail}"}
+        return {"ok": True, "path": path, "pip": out_txt.splitlines()[-1] if out_txt else ""}
+
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))
 

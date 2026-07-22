@@ -2315,6 +2315,48 @@ export function _hwfitInit() {
         _testServerConnection(entry);
       });
     }
+    // Venv: create a Python venv on the server and configure the profile to
+    // use it — one click instead of shelling in, running python -m venv, and
+    // typing the path into the env fields by hand.
+    const venvBtn = entry.querySelector('.cookbook-server-venv-btn');
+    if (venvBtn && !venvBtn.dataset.bound) {
+      venvBtn.dataset.bound = '1';
+      venvBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const host = entry.querySelector('.cookbook-srv-host')?.value.trim() || '';
+        if (!host) { uiModule.showToast('Enter the server host first'); return; }
+        const port = entry.querySelector('.cookbook-srv-port')?.value.trim() || '';
+        const envSel = entry.querySelector('.cookbook-srv-env');
+        const pathInput = entry.querySelector('.cookbook-srv-path');
+        const path = (envSel?.value === 'venv' && pathInput?.value.trim()) || '~/odysseus-venv';
+        const msg = entry.querySelector('.cookbook-srv-test-msg');
+        venvBtn.disabled = true;
+        if (msg) msg.textContent = 'creating venv…';
+        try {
+          const res = await fetch('/api/cookbook/setup-venv', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, ssh_port: port || undefined, path }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            if (envSel) envSel.value = 'venv';
+            if (pathInput) pathInput.value = data.path || path;
+            _syncServers();
+            if (msg) msg.textContent = 'venv ready';
+            uiModule.showToast(`Venv ready at ${data.path || path} — this server now installs into it`);
+          } else {
+            if (msg) msg.textContent = 'venv failed';
+            uiModule.showToast(data.error || data.detail || `Venv setup failed (HTTP ${res.status})`, 12000);
+          }
+        } catch (err) {
+          if (msg) msg.textContent = 'venv failed';
+          uiModule.showToast(`Venv setup failed: ${err}`, 9000);
+        } finally {
+          venvBtn.disabled = false;
+        }
+      });
+    }
     // Default-server toggle: exclusive checkmark in the entry title. The chosen
     // server is what Cookbook lands on (all dropdowns) on the next open.
     const _defBtn = entry.querySelector('.cookbook-srv-default');
