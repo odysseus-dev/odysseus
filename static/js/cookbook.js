@@ -1148,7 +1148,10 @@ async function _fetchDependencies() {
       // AND the backend is known). The box doubles as the source of truth
       // for the "Install build deps" button's failure toast — both surfaces
       // show the same string for the same target.
-      const _instCmd = (_bdm.length && pkg.install_cmd_for_target) ? String(pkg.install_cmd_for_target) : '';
+      // Render the command box for build-prereq rows AND standalone System
+      // rows — the sudo-error toast tells users to run "the shown install
+      // command", so it must actually be shown.
+      const _instCmd = ((_bdm.length || pkg.kind === 'system') && pkg.install_cmd_for_target) ? String(pkg.install_cmd_for_target) : '';
       const _instCmdOs = pkg.install_cmd_os ? String(pkg.install_cmd_os) : '';
       const _instCmdBe = pkg.install_cmd_backend ? String(pkg.install_cmd_backend) : '';
       const _instLabel = (_instCmdOs && _instCmdBe) ? `${_instCmdOs} + ${_instCmdBe}` : (_instCmdOs || _instCmdBe || 'this target');

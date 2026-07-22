@@ -1542,6 +1542,21 @@ def setup_shell_routes() -> APIRouter:
             # works (e.g. llama-cpp-python already imports cleanly), the
             # build toolchain is irrelevant and surfacing it as a red
             # flag confuses users ("ready" + "missing" on the same row).
+            # Standalone System rows (tmux / uv / cargo): attach the target's
+            # exact install command. Without this, the passwordless-sudo
+            # failure toast says "run the shown install command" while the
+            # row shows no command at all — the command box only rendered
+            # for build-prereq rows.
+            if (
+                pkg.get("kind") == "system"
+                and pkg.get("installed") is False
+                and pkg["name"] in _PKG_NAMES
+                and target_os_id
+            ):
+                _syscmd = _install_cmd_for_target(target_os_id, "", [pkg["name"]])
+                if _syscmd:
+                    pkg["install_cmd_for_target"] = _syscmd
+                    pkg["install_cmd_os"] = target_os_id
             _prereqs = list(pkg.get("system_prereqs") or [])
             if _prereqs:
                 if on_remote:
