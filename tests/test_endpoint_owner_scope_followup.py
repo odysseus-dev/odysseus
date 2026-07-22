@@ -358,7 +358,7 @@ def test_compare_start_rejects_unowned_endpoint_id(monkeypatch):
 
 
 def test_compare_endpoint_key_lookup_is_owner_scoped():
-    body = Path("routes/compare_routes.py").read_text(encoding="utf-8")
+    body = Path("routes/compare/compare_routes.py").read_text(encoding="utf-8")
     start_body = body.split("def start_comparison", 1)[1].split("# Store comparison record", 1)[0]
     helper_body = body.split("def _owned_endpoint_by_url", 1)[1].split("class RecordVoteRequest", 1)[0]
     id_helper_body = body.split("def _owned_endpoint_by_id", 1)[1].split("class RecordVoteRequest", 1)[0]

@@ -372,7 +372,15 @@ async def test_callback_valid_owner_writes_encrypted_tokens_to_intended_account(
     from core.database import EmailAccount
 
     db, Factory = _make_db()
-    _make_account(db, account_id="acct-v", owner="alice", imap_host="", smtp_host="")
+    _make_account(
+        db,
+        account_id="acct-v",
+        owner="alice",
+        imap_host="",
+        smtp_host="",
+        imap_user="alice@nyu.edu",
+        smtp_user="ALICE@NYU.EDU",
+    )
     _make_account(db, account_id="acct-other", owner="alice")  # must stay untouched
     db.close()
 
@@ -405,6 +413,166 @@ async def test_callback_valid_owner_writes_encrypted_tokens_to_intended_account(
     assert _dec(target.oauth_access_token) == raw_access
     assert _dec(target.oauth_refresh_token) == raw_refresh
     assert other.oauth_access_token is None, "tokens must only touch the intended account"
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_token_for_a_different_mailbox_identity():
+    """Reconnecting with another Google identity must not replace the token
+    while retaining the original IMAP/SMTP login names."""
+    from routes.email_helpers import make_oauth_state
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    from core.database import EmailAccount
+
+    db, Factory = _make_db()
+    _make_account(
+        db,
+        account_id="acct-reconnect",
+        owner="alice",
+        imap_user="alice@example.edu",
+        smtp_user="alice@example.edu",
+        oauth_provider="google",
+        oauth_access_token=_enc("ya29.existing_access"),
+        oauth_refresh_token=_enc("1//existing_refresh"),
+    )
+    db.close()
+
+    token_resp = mock.MagicMock()
+    token_resp.raise_for_status = mock.MagicMock()
+    token_resp.json.return_value = {
+        "access_token": "ya29.other_access",
+        "refresh_token": "1//other_refresh",
+        "expires_in": 3600,
+    }
+    userinfo_resp = mock.MagicMock()
+    userinfo_resp.is_success = True
+    userinfo_resp.json.return_value = {
+        "email": "other@example.edu",
+        "name": "Other User",
+    }
+
+    state = make_oauth_state("acct-reconnect", "alice")
+    with mock.patch("httpx.post", return_value=token_resp), \
+         mock.patch("httpx.get", return_value=userinfo_resp), \
+         mock.patch("core.database.SessionLocal", Factory):
+        resp = await _callback_endpoint()(
+            code="4/code",
+            state=state,
+            error=None,
+            request=_FakeRequest(),
+        )
+
+    assert "email_oauth_error=identity_verification_failed" in _location(resp)
+    verify_db = Factory()
+    row = verify_db.query(EmailAccount).filter(
+        EmailAccount.id == "acct-reconnect"
+    ).first()
+    verify_db.close()
+    assert _dec(row.oauth_access_token) == "ya29.existing_access"
+    assert _dec(row.oauth_refresh_token) == "1//existing_refresh"
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_reconnect_without_a_fresh_refresh_token():
+    """A same-identity access token cannot be paired with an unproven refresh
+    token retained from a previously mixed row."""
+    from routes.email_helpers import make_oauth_state
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    from core.database import EmailAccount
+
+    db, Factory = _make_db()
+    _make_account(
+        db,
+        account_id="acct-refresh-proof",
+        owner="alice",
+        imap_user="alice@example.edu",
+        smtp_user="alice@example.edu",
+        oauth_provider="google",
+        oauth_access_token=_enc("ya29.existing_access"),
+        oauth_refresh_token=_enc("1//refresh_for_other_identity"),
+    )
+    db.close()
+
+    token_resp = mock.MagicMock()
+    token_resp.raise_for_status = mock.MagicMock()
+    token_resp.json.return_value = {
+        "access_token": "ya29.same_identity_access",
+        "expires_in": 3600,
+    }
+
+    state = make_oauth_state("acct-refresh-proof", "alice")
+    with mock.patch("httpx.post", return_value=token_resp), \
+         mock.patch("httpx.get") as userinfo_get, \
+         mock.patch("core.database.SessionLocal", Factory):
+        resp = await _callback_endpoint()(
+            code="4/code",
+            state=state,
+            error=None,
+            request=_FakeRequest(),
+        )
+
+    assert "email_oauth_error=token_exchange_failed" in _location(resp)
+    userinfo_get.assert_not_called()
+    verify_db = Factory()
+    row = verify_db.query(EmailAccount).filter(
+        EmailAccount.id == "acct-refresh-proof"
+    ).first()
+    verify_db.close()
+    assert _dec(row.oauth_access_token) == "ya29.existing_access"
+    assert _dec(row.oauth_refresh_token) == "1//refresh_for_other_identity"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("userinfo_result", [None, {}, {"email": None}])
+async def test_callback_requires_verified_mailbox_identity(userinfo_result):
+    """A failed or incomplete userinfo lookup must not persist fresh tokens."""
+    from routes.email_helpers import make_oauth_state
+    from core.database import EmailAccount
+
+    db, Factory = _make_db()
+    _make_account(
+        db,
+        account_id="acct-no-identity",
+        owner="alice",
+        imap_user="alice@example.edu",
+        smtp_user="alice@example.edu",
+    )
+    db.close()
+
+    token_resp = mock.MagicMock()
+    token_resp.raise_for_status = mock.MagicMock()
+    token_resp.json.return_value = {
+        "access_token": "ya29.unverified_access",
+        "refresh_token": "1//unverified_refresh",
+        "expires_in": 3600,
+    }
+    if userinfo_result is None:
+        userinfo_call = mock.Mock(side_effect=RuntimeError("userinfo unavailable"))
+    else:
+        userinfo_resp = mock.MagicMock()
+        userinfo_resp.is_success = True
+        userinfo_resp.json.return_value = userinfo_result
+        userinfo_call = mock.Mock(return_value=userinfo_resp)
+
+    state = make_oauth_state("acct-no-identity", "alice")
+    with mock.patch("httpx.post", return_value=token_resp), \
+         mock.patch("httpx.get", userinfo_call), \
+         mock.patch("core.database.SessionLocal", Factory):
+        resp = await _callback_endpoint()(
+            code="4/code",
+            state=state,
+            error=None,
+            request=_FakeRequest(),
+        )
+
+    assert "email_oauth_error=identity_verification_failed" in _location(resp)
+    verify_db = Factory()
+    row = verify_db.query(EmailAccount).filter(
+        EmailAccount.id == "acct-no-identity"
+    ).first()
+    verify_db.close()
+    assert row.oauth_provider is None
+    assert row.oauth_access_token is None
+    assert row.oauth_refresh_token is None
 
 
 # ── Token refresh scenarios ───────────────────────────────────────
@@ -578,3 +746,53 @@ async def test_account_list_response_does_not_expose_token_values():
     assert acct["oauth_provider"] == "google"   # status is exposed
     assert "oauth_access_token" not in acct      # token value is not
     assert "oauth_refresh_token" not in acct
+
+
+@pytest.mark.asyncio
+async def test_config_response_does_not_expose_oauth_storage_fields():
+    """The client-facing config route must not serialize the encrypted token
+    fields returned by the internal transport helper."""
+    from routes.email_routes import setup_email_routes
+    from src.secret_storage import encrypt as _enc
+
+    encrypted_access = _enc("ya29.internal_access_token")
+    encrypted_refresh = _enc("1//internal_refresh_token")
+    internal_cfg = {
+        "account_id": "acct-config",
+        "account_name": "Google Workspace",
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_security": "starttls",
+        "smtp_user": "alice@example.edu",
+        "smtp_password": "",
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "imap_user": "alice@example.edu",
+        "imap_password": "",
+        "imap_starttls": False,
+        "from_address": "alice@example.edu",
+        "oauth_provider": "google",
+        "oauth_access_token": encrypted_access,
+        "oauth_refresh_token": encrypted_refresh,
+        "oauth_token_expiry": "4102444800",
+        "display_name": "Alice",
+    }
+
+    router = setup_email_routes()
+    get_config = None
+    for route in router.routes:
+        if route.path == "/api/email/config" and "GET" in getattr(route, "methods", set()):
+            get_config = route.endpoint
+            break
+    assert get_config is not None, "email config route not found"
+
+    with mock.patch("routes.email_routes._get_email_config", return_value=internal_cfg.copy()), \
+         mock.patch("routes.email_routes._load_settings", return_value={}):
+        result = await get_config(owner="alice")
+
+    assert result["oauth_provider"] == "google"
+    assert "oauth_access_token" not in result
+    assert "oauth_refresh_token" not in result
+    assert "oauth_token_expiry" not in result
+    assert encrypted_access not in json.dumps(result)
+    assert encrypted_refresh not in json.dumps(result)

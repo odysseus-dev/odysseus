@@ -1035,13 +1035,23 @@ def _coerce_imap_timeout_seconds(raw: str | None) -> int:
 _IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IMAP_TIMEOUT_SECONDS"))
 
 
-def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
+def _open_imap_connection(
+    host: str,
+    port: int,
+    *,
+    starttls: bool,
+    timeout: int = _IMAP_TIMEOUT_SECONDS,
+    ssl_context=None,
+):
     """Open an IMAP connection using the configured security mode."""
     port = int(port or 993)
     if starttls:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
         try:
-            conn.starttls()
+            if ssl_context:
+                conn.starttls(ssl_context=ssl_context)
+            else:
+                conn.starttls()
         except Exception:
             # Don't leak the open plain socket if the STARTTLS upgrade is
             # rejected; close it before propagating. (#3174)
@@ -1051,7 +1061,8 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
                 pass
             raise
     elif port == 993:
-        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+        kwargs = {"ssl_context": ssl_context} if ssl_context else {}
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout, **kwargs)
     else:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
     try:

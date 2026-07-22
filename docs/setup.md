@@ -196,6 +196,34 @@ docker compose exec odysseus nvidia-smi -L
 
 For first-time local model testing on 8 GB laptop GPUs, start with GGUF/Q4 models on llama.cpp before trying GPTQ/AWQ models on vLLM or SGLang. This keeps the first run simpler while confirming GPU passthrough works.
 
+**WSL2 + snap Docker.** If the NVIDIA check fails with this error, Docker may be
+installed via snap:
+
+```text
+failed to fulfil mount request: open /usr/lib/wsl/lib/libdxcore.so: no such file or directory
+```
+
+Check with `snap list docker` or:
+
+```bash
+docker info --format '{{.DockerRootDir}}'
+```
+
+A Docker root under `/var/snap/docker/` means snap confinement can prevent
+Docker from seeing WSL2's `/usr/lib/wsl/lib` GPU libraries even when the files
+exist on the host. Reinstalling or reconfiguring `nvidia-container-toolkit` will
+not fix that. Remove snap Docker, install the official apt-based Docker Engine
+([Docker docs](https://docs.docker.com/engine/install/ubuntu/)), then configure
+the NVIDIA runtime again:
+
+```bash
+sudo snap remove docker
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Then re-run `scripts/check-docker-gpu.sh`.
+
 Safety notes:
 - The app never installs host GPU runtime automatically.
 - The app never edits `.env` automatically.
