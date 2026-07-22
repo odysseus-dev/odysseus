@@ -1358,6 +1358,11 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "download a GGUF build of this model (repo name usually ends in -GGUF, file like Q4_K_M.gguf)", "op": "manual"}],
         ),
         (
+            r"No such file or directory: 'nvcc'|FileNotFoundError[^\n]*'nvcc'|nvcc: command not found",
+            "A dependency tried to compile CUDA kernels during install, but nvcc (the CUDA compiler) is not on this server's PATH (Arch installs the toolkit to /opt/cuda, which non-login shells never see).",
+            [{"label": "install the CUDA toolkit (Arch: pacman -S cuda / Debian: apt install nvidia-cuda-toolkit), or expose an existing /opt/cuda install: ln -s /opt/cuda/bin/nvcc /usr/local/bin/nvcc and ln -sfn /opt/cuda /usr/local/cuda", "op": "manual"}],
+        ),
+        (
             r"No module named pip",
             "This server's Python has no pip module, so dependency installs cannot run (Arch and other minimal distros ship pip separately).",
             [{"label": "configure a venv for this server in Cookbook Settings → Servers (recommended), or install pip on the target (Arch: pacman -S python-pip / Debian: apt install python3-pip)", "op": "manual"}],

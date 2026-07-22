@@ -63,3 +63,21 @@ def test_diagnose_pep668_externally_managed():
     assert diagnosis is not None
     assert "PEP 668" in diagnosis["message"]
     assert "venv" in diagnosis["suggestions"][0]["label"]
+
+
+def test_diagnose_nvcc_missing_during_pip_build():
+    output = """
+      File "/usr/lib/python3.14/subprocess.py", line 1990, in _execute_child
+          raise child_exception_type(errno_num, err_msg, err_filename)
+      FileNotFoundError: [Errno 2] No such file or directory: 'nvcc'
+      [end of output]
+    error: metadata-generation-failed
+    x Encountered error while generating package metadata.
+    |-> flashinfer_python
+    """
+
+    diagnosis = _diagnose_serve_output(output)
+
+    assert diagnosis is not None
+    assert "nvcc" in diagnosis["message"]
+    assert "/opt/cuda" in diagnosis["suggestions"][0]["label"]

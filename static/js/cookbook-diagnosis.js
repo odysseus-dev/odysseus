@@ -815,6 +815,23 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    // CUDA build without nvcc: a dependency (flashinfer, some vLLM/SGLang
+    // extras) compiles CUDA kernels at install time and calls `nvcc`
+    // directly. When the CUDA toolkit isn't installed — or lives off-PATH
+    // (Arch installs to /opt/cuda, which non-login shells never see) — the
+    // build dies with FileNotFoundError: 'nvcc'. Must precede the generic
+    // build-failure entry below, which otherwise shadows this with
+    // misleading "older package on newer Python" advice.
+    match: (text) => {
+      const TAIL = text.slice(-6000);
+      if (/Application startup complete|Uvicorn running on/i.test(TAIL)) return false;
+      return /No such file or directory: 'nvcc'|FileNotFoundError[^\n]*'nvcc'|nvcc: (?:command )?not found/i.test(TAIL);
+    },
+    message: 'A dependency tried to compile CUDA kernels during install, but nvcc (the CUDA compiler) is not on the server’s PATH. The install did not finish.',
+    suggestion: 'Suggested action: install the CUDA toolkit on the server (Arch: sudo pacman -S cuda · Debian/Ubuntu: sudo apt install nvidia-cuda-toolkit). If it is already installed under /opt/cuda, expose it to non-login shells: sudo ln -s /opt/cuda/bin/nvcc /usr/local/bin/nvcc && sudo ln -sfn /opt/cuda /usr/local/cuda — then retry the install.',
+    fixes: [],
+  },
+  {
     // Dependency-install (pip) build failure — a required package failed to
     // build its wheel (common when an old sdist's setup.py breaks on a newer
     // Python, e.g. basicsr on 3.13). This is an install problem, NOT a serve
