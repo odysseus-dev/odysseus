@@ -48,7 +48,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="manage_rag",
-            description="Manage RAG indexed documents. List indexed files, add directories, or remove directories.",
+            description="Search personal indexed documents and manage RAG sources. Use this to answer questions from the user's documents, list indexed files, add directories, or remove directories.",
             inputSchema={
                 "type": "object",
                 "properties": {

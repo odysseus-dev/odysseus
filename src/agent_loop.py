@@ -304,6 +304,10 @@ _DOMAIN_RULES = {
 - Use file tools for real disk files. Use document tools only for editor documents.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
 - Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+    "personal_docs": """\
+## Personal document rules
+- Use `manage_rag` or `mcp__rag__manage_rag` to search indexed personal documents.
+- Answer from retrieved document content; do not use editor-document tools for these questions.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -323,6 +327,7 @@ _DOMAIN_RULES = {
 _DOMAIN_TOOL_MAP = {
     "web": set(WEB_TOOL_NAMES),
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
+    "personal_docs": {"manage_rag", "mcp__rag__manage_rag"},
     "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
@@ -462,6 +467,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
     "manage_session": "- ```manage_session``` — Rename, archive, delete, fork, switch, or `list` chats (the UI calls them 'chats'; 'session' is internal). Line 1 = action (list/switch/rename/archive/unarchive/delete/important/unimportant/truncate/fork), Line 2 = exact chat id from `list_sessions` (or `current` where supported). For delete/archive/truncate, always list first and reuse the exact id; never invent placeholder ids. `switch`/`open` returns a clickable anchor link the user can tap to open the chat — use for \"open my X chat\".",
     "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts about the USER themselves, their preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this' about themselves, states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories. DO NOT use for info about another person (their address, phone, email, birthday) — that goes in `manage_contact`. If the user pastes an address/phone with a name and says 'save this for <person>', use `manage_contact add` with the address arg, NOT manage_memory.",
+    "manage_rag": "- ```manage_rag``` — Search the user's indexed personal documents. For questions asking what documents say, mention, contain, or specify, call with JSON: {\"action\": \"search\", \"query\": \"<question or keywords>\"}. Use the returned document passages to answer. Do NOT substitute `manage_documents`, which only manages editor documents.",
     "manage_skills": "- ```manage_skills``` — Skill registry (SKILL.md format). Args (JSON): {\"action\": \"list|view|view_ref|search|add|edit|patch|publish|delete\", ...}. `list` returns the index of available skills (published + teacher-escalation drafts); `view name=foo` fetches the full SKILL.md; `view_ref name=foo path=...` loads a reference file under the skill directory. For `add`, provide an explicit kebab-case `name` and only report the exact returned name, because storage may normalize or dedupe it. Use this BEFORE doing domain work — there may already be a procedure (published or draft) that prescribes the correct steps. Drafts written by the teacher loop are authoritative guidance even though they're not yet published.",
     "manage_tasks": "- ```manage_tasks``` — Create and manage scheduled background tasks (recurring AI jobs). Args (JSON): {\"action\": \"list|create|edit|delete|pause|resume|run\", ...}",
     "manage_endpoints": "- ```manage_endpoints``` — Add, remove, or configure AI model API endpoints. Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}. Use when user wants to add a new AI provider.",
@@ -1026,7 +1032,13 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         r"ruby|php|swift|kotlin|bash|shell|html|css|sql)\b",
         r"\b(?:code|script|program|game|function|class|module|app)\b",
     )
-    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
+    _personal_docs_query = has(
+        r"\b(?:what|search|find|according to)\b.{0,60}\b(?:my\s+)?(?:documents?|docs?)\b",
+        r"\b(?:my\s+)?(?:documents?|docs?)\b.{0,60}\b(?:say|mention|contain|about)\b",
+    )
+    if _personal_docs_query:
+        domains.add("personal_docs")
+    elif has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
         domains.add("documents")
     if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
         domains.add("documents")
@@ -3593,6 +3605,21 @@ async def stream_agent_loop(
             if _ody_doc_finetune_mode
             else round_response
         )
+        # Small local models sometimes confuse editor documents with indexed
+        # personal documents. Only for personal-document Q&A, redirect an
+        # invented manage_documents call to the available RAG search tool.
+        if "personal_docs" in (_intent.get("domains") or set()):
+            for _tc in native_tool_calls:
+                if _tc.get("name") == "manage_documents":
+                    _tc["name"] = "manage_rag"
+                    _tc["arguments"] = json.dumps({
+                        "action": "search",
+                        "query": _last_user,
+                    })
+                    logger.info(
+                        "[agent] remapped manage_documents -> manage_rag for personal_docs query"
+                    )
+
         tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
             _normalized_doc_round,
             native_tool_calls,

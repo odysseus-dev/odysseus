@@ -410,6 +410,31 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_rag",
+            "description": "Search the user's indexed personal documents and manage RAG directories. Use search to answer questions based on document contents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["search", "list", "add_directory", "remove_directory"]
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for indexed personal documents"
+                    },
+                    "directory": {
+                        "type": "string",
+                        "description": "Directory path for add_directory or remove_directory"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_models",
             "description": "List all available AI models across configured endpoints. Optionally filter by keyword.",
             "parameters": {
@@ -1448,6 +1473,14 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = "list"
             if args.get("category"):
                 content += "\n" + args["category"]
+        else:
+            content = action
+    elif tool_type == "manage_rag":
+        action = args.get("action", "")
+        if action == "search":
+            content = "search\n" + str(args.get("query", ""))
+        elif action in ("add_directory", "remove_directory"):
+            content = action + "\n" + str(args.get("directory", ""))
         else:
             content = action
     elif tool_type == "list_models":

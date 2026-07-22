@@ -470,18 +470,48 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 # ---------------------------------------------------------------------------
 
 async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
-    """Manage RAG indexed documents: list, add_directory, remove_directory.
+    """Search and manage RAG indexed documents.
 
     Content format:
-      Line 1: action (list|add_directory|remove_directory)
-      Line 2: directory path (for add/remove)
+      Line 1: action (search|list|add_directory|remove_directory)
+      Line 2: query or directory path
     """
     lines = content.strip().split("\n")
     if not lines:
         return {"error": "No action specified"}
     action = lines[0].strip().lower()
 
-    if action == "list":
+    if action == "search":
+        if len(lines) < 2 or not lines[1].strip():
+            return {"error": "search needs line 2: search query"}
+        if not _rag_manager:
+            return {"error": "RAG manager not available"}
+
+        query = lines[1].strip()
+        try:
+            results = _rag_manager.search(query, k=5)
+            if not results:
+                return {"results": f"No personal documents matched '{query}'."}
+
+            result_lines = [
+                f"Found {len(results)} personal-document results for '{query}':"
+            ]
+            for result in results:
+                metadata = result.get("metadata", {}) or {}
+                filename = metadata.get(
+                    "filename", metadata.get("source", "unknown")
+                )
+                similarity = result.get("similarity", 0)
+                document = result.get("document", "")
+                result_lines.append(
+                    f"\n[{filename} | similarity {similarity:.3f}]\n{document}"
+                )
+
+            return {"results": "\n".join(result_lines)}
+        except Exception as e:
+            return {"error": f"RAG search failed: {e}"}
+
+    elif action == "list":
         if not _personal_docs_manager:
             return {"results": "Personal docs manager not available. RAG may not be configured."}
         try:
@@ -1123,6 +1153,11 @@ async def dispatch_ai_tool(
         action = content.split("\n")[0].strip()[:40]
         desc = f"manage_memory: {action}"
         result = await do_manage_memory(content, session_id, owner=owner)
+
+    elif tool == "manage_rag":
+        action = content.split("\n")[0].strip()[:40]
+        desc = f"manage_rag: {action}"
+        result = await do_manage_rag(content, session_id)
 
     elif tool == "ui_control":
         action = content.split("\n")[0].strip()[:60]
