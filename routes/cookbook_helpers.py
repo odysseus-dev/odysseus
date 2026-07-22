@@ -865,16 +865,21 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      fi')
     runner_lines.append('      _odysseus_prebuilt_url="$(curl -fsSL --max-time 15 https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4 | grep -iE "$_odysseus_pat" | grep -iv "arm\\|aarch64" | head -1)"')
     runner_lines.append('    fi')
-    # Accept any of unzip / bsdtar / python3 -m zipfile as the extractor.
-    # python3 is essentially always present on modern Linux, so this lets
-    # the prebuilt path work on minimal Ubuntu installs that lack `unzip`.
-    runner_lines.append('    if [ -n "$_odysseus_prebuilt_url" ] && (command -v unzip >/dev/null 2>&1 || command -v bsdtar >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1); then')
+    # Preserve the release asset extension so the extractor can select
+    # the correct format. Linux llama.cpp assets are commonly .tar.gz,
+    # while some release assets are .zip.
+    runner_lines.append('    if [ -n "$_odysseus_prebuilt_url" ] && command -v python3 >/dev/null 2>&1; then')
     runner_lines.append('      echo "[odysseus] Found prebuilt llama-server: $_odysseus_prebuilt_url"')
     runner_lines.append('      mkdir -p ~/bin "$HOME/.cache/odysseus/llama-cpp-prebuilt" && cd "$HOME/.cache/odysseus/llama-cpp-prebuilt"')
-    runner_lines.append('      rm -f llama-cpp.zip')
-    runner_lines.append('      if curl -fsSL --max-time 120 "$_odysseus_prebuilt_url" -o llama-cpp.zip && [ -s llama-cpp.zip ]; then')
+    runner_lines.append('      case "$_odysseus_prebuilt_url" in')
+    runner_lines.append('        *.tar.gz|*.tgz) _odysseus_archive="llama-cpp.tar.gz" ;;')
+    runner_lines.append('        *.zip) _odysseus_archive="llama-cpp.zip" ;;')
+    runner_lines.append('        *) _odysseus_archive="" ;;')
+    runner_lines.append('      esac')
+    runner_lines.append('      rm -f llama-cpp.zip llama-cpp.tar.gz')
+    runner_lines.append('      if [ -n "$_odysseus_archive" ] && curl -fsSL --max-time 120 "$_odysseus_prebuilt_url" -o "$_odysseus_archive" && [ -s "$_odysseus_archive" ]; then')
     runner_lines.append('        rm -rf build && mkdir -p build')
-    runner_lines.append('        if command -v unzip >/dev/null 2>&1; then unzip -qq -o llama-cpp.zip -d build; elif command -v bsdtar >/dev/null 2>&1; then bsdtar -xf llama-cpp.zip -C build; else python3 -c "import zipfile; zipfile.ZipFile(\\"llama-cpp.zip\\").extractall(\\"build\\")"; fi')
+    runner_lines.append('        python3 -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])" "$_odysseus_archive" build')
     runner_lines.append('        _odysseus_extracted="$(find build -type f -name llama-server 2>/dev/null | head -1)"')
     runner_lines.append('        if [ -n "$_odysseus_extracted" ]; then')
     runner_lines.append('          chmod +x "$_odysseus_extracted"')

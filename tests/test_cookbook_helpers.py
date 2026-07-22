@@ -956,3 +956,14 @@ def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
     ]:
         with pytest.raises(HTTPException):
             _validate_serve_cmd(cmd)
+
+
+def test_llama_cpp_linux_prebuilt_extraction_supports_tar_gz_and_zip():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert "*.tar.gz|*.tgz" in script
+    assert "*.zip" in script
+    assert "shutil.unpack_archive" in script
+    assert 'zipfile.ZipFile("llama-cpp.zip")' not in script
