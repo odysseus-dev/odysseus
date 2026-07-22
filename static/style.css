@@ -2091,13 +2091,6 @@ body.bg-pattern-sparkles {
       overflow: hidden;
       transition: min-height 0.25s ease-out;
     }
-    /* Keep old collapsed class for any legacy elements still in the DOM */
-    .msg-collapsed {
-      min-height: unset !important;
-      padding: 4px 10px !important;
-      opacity: 0.45;
-      animation: none !important;
-    }
     .msg .role {
       font-weight: 600;
       margin-bottom: 6px;
@@ -9292,14 +9285,6 @@ body.fullwidth-chat .chat-history {
   box-sizing: border-box;
   content-visibility: auto;
   contain-intrinsic-size: auto 80px;
-}
-.agent-thread.msg-collapsed {
-  padding: 2px 0 2px 22px;
-  opacity: 0.35;
-  min-height: unset;
-}
-.agent-thread.msg-collapsed::before {
-  opacity: 0.3;
 }
 .agent-thread::before {
   content: '';

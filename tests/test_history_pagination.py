@@ -308,6 +308,40 @@ def test_total_excludes_hidden_messages(monkeypatch):
     assert contents == ["message-0", "message-1", "message-3"]
 
 
+def test_paginated_total_and_offsets_exclude_hidden_messages(monkeypatch):
+    """Hidden DB rows never consume visible page slots or offset positions."""
+    SessionLocal, _engine, _tmp = _setup_temp_db(monkeypatch)
+    messages = _make_messages(8)
+    messages[1] = ChatMessage(role="assistant", content="message-1", metadata={"hidden": True})
+    messages[5] = ChatMessage(role="assistant", content="message-5", metadata={"hidden": True})
+    _seed_db("s4-page", messages, SessionLocal)
+
+    session = _FakeSession(messages)
+    session.id = "s4-page"
+    _manager, client = _build_app(monkeypatch, session)
+
+    recent = client.get("/api/history/s4-page?limit=3")
+    assert recent.status_code == 200
+    assert recent.json()["total"] == 6
+    assert recent.json()["offset"] == 3
+    assert [m["content"] for m in recent.json()["history"]] == [
+        "message-4", "message-6", "message-7",
+    ]
+
+    older = client.get("/api/history/s4-page?limit=3&offset=0")
+    assert older.status_code == 200
+    assert older.json()["total"] == 6
+    assert not older.json()["has_more_before"]
+    assert older.json()["has_more_after"]
+    assert [m["content"] for m in older.json()["history"]] == [
+        "message-0", "message-2", "message-3",
+    ]
+
+    assert set(m["content"] for m in recent.json()["history"]).isdisjoint(
+        m["content"] for m in older.json()["history"]
+    )
+
+
 def test_no_limit_returns_all_non_hidden_messages(monkeypatch):
     """Without `?limit`, every non-hidden message is returned."""
     messages = _make_messages(5)

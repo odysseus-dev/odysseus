@@ -153,25 +153,43 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 if db_session is None:
                     raise HTTPException(404, f"Session '{session_id}' not found")
 
-                total = (
-                    db.query(DbChatMessage)
+                # Pagination is defined over browser-visible messages. Hidden
+                # compaction/context rows must not participate in the count or
+                # offset math, otherwise pages can be short/empty and visible
+                # messages can be skipped. Read only ids + metadata for the
+                # index pass so large message bodies are still fetched solely
+                # for the requested page.
+                visible_ids = []
+                indexed_rows = (
+                    db.query(DbChatMessage.id, DbChatMessage.meta_data)
                     .filter(DbChatMessage.session_id == session_id)
-                    .count()
-                )
-                page_offset = int(offset) if offset is not None else max(total - page_limit, 0)
-                page_offset = max(0, min(page_offset, total))
-                rows = (
-                    db.query(DbChatMessage)
-                    .filter(DbChatMessage.session_id == session_id)
-                    .order_by(DbChatMessage.timestamp)
-                    .offset(page_offset)
-                    .limit(page_limit)
+                    .order_by(DbChatMessage.timestamp, DbChatMessage.id)
                     .all()
                 )
-                history_dict = [
-                    entry for entry in (_db_history_entry(m) for m in rows)
-                    if not (entry.get("metadata") or {}).get("hidden")
-                ]
+                for message_id, meta_data in indexed_rows:
+                    metadata = {}
+                    if meta_data:
+                        try:
+                            metadata = json.loads(meta_data) or {}
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            metadata = {}
+                    if not metadata.get("hidden"):
+                        visible_ids.append(message_id)
+
+                total = len(visible_ids)
+                page_offset = int(offset) if offset is not None else max(total - page_limit, 0)
+                page_offset = max(0, min(page_offset, total))
+                page_ids = visible_ids[page_offset:page_offset + page_limit]
+                rows_by_id = {}
+                if page_ids:
+                    rows_by_id = {
+                        row.id: row
+                        for row in db.query(DbChatMessage)
+                        .filter(DbChatMessage.id.in_(page_ids))
+                        .all()
+                    }
+                rows = [rows_by_id[mid] for mid in page_ids if mid in rows_by_id]
+                history_dict = [_db_history_entry(m) for m in rows]
                 return {
                     "history": history_dict,
                     "model": db_session.model,
@@ -181,7 +199,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     "limit": page_limit,
                     "total": total,
                     "has_more_before": page_offset > 0,
-                    "has_more_after": page_offset + len(rows) < total,
+                    "has_more_after": page_offset + len(history_dict) < total,
                 }
             finally:
                 db.close()

@@ -31,6 +31,8 @@ const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key 
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
 let _historyPager = null;
+let _historyRenderGroupSeq = 0;
+let _activeHistoryTurnGroup = null;
 
 function _paintSessionLoading(chatHistory, label = 'Loading chat') {
   if (!chatHistory) return;
@@ -109,7 +111,7 @@ function _historyUrl(id, { limit = null, offset = null } = {}) {
   return url.toString();
 }
 
-function _addHistoryMessageWithFullRenderer(role, content, modelName, meta) {
+function _addHistoryMessageWithFullRenderer(role, content, modelName, meta, trimGroup) {
   const box = document.getElementById('chat-history');
   if (!box) return [];
   const marker = document.createComment('history-message');
@@ -122,9 +124,22 @@ function _addHistoryMessageWithFullRenderer(role, content, modelName, meta) {
     throw e;
   }
   const nodes = [];
+  let round = 0;
+  let activeTrimGroup = trimGroup;
   let node = marker.nextSibling;
   while (node) {
     const next = node.nextSibling;
+    if (node.nodeType === Node.ELEMENT_NODE && trimGroup) {
+      // One persisted assistant message may expand into dozens of complete
+      // agent rounds. Treat each continuation bubble plus its following tool
+      // thread as an atomic trim group; treating the whole persisted message
+      // as one group would remove an entire long run when it alone exceeds the
+      // window.
+      if (role === 'assistant' && node.classList.contains('msg-continuation')) {
+        activeTrimGroup = `${trimGroup}-round-${++round}`;
+      }
+      node.dataset.domTrimGroup = activeTrimGroup;
+    }
     nodes.push(node);
     node = next;
   }
@@ -133,6 +148,10 @@ function _addHistoryMessageWithFullRenderer(role, content, modelName, meta) {
 }
 
 function _renderHistoryMessage(msg, modelName) {
+  if (msg.role === 'user' || !_activeHistoryTurnGroup) {
+    _activeHistoryTurnGroup = `history-turn-${++_historyRenderGroupSeq}`;
+  }
+  const trimGroup = _activeHistoryTurnGroup;
   const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
   let displayContent;
   if (typeof msg.content === 'string') {
@@ -159,7 +178,7 @@ function _renderHistoryMessage(msg, modelName) {
       displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
     }
   }
-  return _addHistoryMessageWithFullRenderer(msg.role, displayContent, modelName, meta);
+  return _addHistoryMessageWithFullRenderer(msg.role, displayContent, modelName, meta, trimGroup);
 }
 
 function _clearHistoryPager() {
@@ -204,6 +223,7 @@ function _installHistoryPager(id, pageInfo, modelName) {
       const res = await fetch(_historyUrl(_historyPager.sessionId, { limit: nextLimit, offset: nextOffset }));
       const data = await res.json();
       if (!_historyPager || _historyPager.sessionId !== currentSessionId) return;
+      _activeHistoryTurnGroup = null;
       const newEls = [];
       for (const msg of data.history || []) {
         if (msg.role !== 'user' && msg.role !== 'assistant') continue;
@@ -220,6 +240,12 @@ function _installHistoryPager(id, pageInfo, modelName) {
       }
       const heightDelta = box.scrollHeight - beforeHeight;
       box.scrollTop += heightDelta;
+      // Keep a bounded sliding window while the user walks backward. Trim the
+      // newest off-screen groups so the older page they requested remains in
+      // view; reopening the session restores the recent window from the DB.
+      if (window.chatModule && window.chatModule.trimChatHistoryDOM) {
+        window.chatModule.trimChatHistoryDOM({ from: 'end' });
+      }
     } catch (e) {
       console.warn('Failed to load older chat history:', e);
     } finally {
@@ -1764,9 +1790,23 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     window.compareModule.deactivate(true);
     return; // deactivate does a page reload
   }
+  const prevSessionId = currentSessionId;
+  // Detachment is an admission decision. Make it before changing the active
+  // session, URL, navigation token, or DOM so a saturated background pool can
+  // safely leave this response in the foreground.
+  if (prevSessionId !== id && window.chatModule?.detachCurrentStream) {
+    try {
+      if (window.chatModule.detachCurrentStream(prevSessionId) === false) {
+        uiModule.showError('Finish one of the 10 background responses before switching chats.');
+        return false;
+      }
+    } catch (e) {
+      console.warn('detachCurrentStream error:', e);
+      return false;
+    }
+  }
   try {
     const navToken = ++_sessionNavToken;
-    const prevSessionId = currentSessionId;
     _clearHistoryPager();
     // Re-archive peeked session when navigating away
     _checkPeekCleanup(id);
@@ -1796,21 +1836,6 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
 
-    // Detach any in-flight stream to background instead of aborting
-    try {
-      if (window.chatModule) {
-        if (window.chatModule.detachCurrentStream) {
-          window.chatModule.detachCurrentStream(prevSessionId);
-        } else if (window.chatModule.abortCurrentRequest) {
-          window.chatModule.abortCurrentRequest();
-        }
-      }
-    } catch (e) {
-      console.warn('detachCurrentStream error:', e);
-      if (window.chatModule && window.chatModule.abortCurrentRequest) {
-        window.chatModule.abortCurrentRequest();
-      }
-    }
     // Reset send button to idle state
     if (window._updateSendBtnIcon) window._updateSendBtnIcon();
     const sendBtn = document.querySelector('.send-btn');
@@ -1959,6 +1984,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
          <p>Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.</p>`,
         'OpenClaw');
     } else if (msgHistory.length) {
+      _activeHistoryTurnGroup = null;
       for (const msg of msgHistory) {
         try {
           _renderHistoryMessage(msg, modelName);
@@ -2094,11 +2120,14 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
 let _pendingChat = null; // { url, modelId, endpointId }
 
 export function createDirectChat(url, modelId, endpointId) {
-  _sessionNavToken++;
   // Detach any active stream so it doesn't interfere with the new chat
   if (window.chatModule && window.chatModule.detachCurrentStream) {
-    window.chatModule.detachCurrentStream(currentSessionId);
+    if (window.chatModule.detachCurrentStream(currentSessionId) === false) {
+      uiModule.showError('Finish one of the 10 background responses before starting a new chat.');
+      return false;
+    }
   }
+  _sessionNavToken++;
   // Stop an active GROUP chat too — otherwise its in-flight parallel/round-robin
   // streams keep rendering into the brand-new chat (abort the group's fetches).
   if (window.groupModule && window.groupModule.isActive && window.groupModule.isActive()) {
@@ -2711,7 +2740,7 @@ async function _arcPeekOpen(sid) {
     _peekingSessionId = sid;
     closeArchive();
     // Load history directly without unarchiving
-    const res = await fetch(`${API_BASE}/api/history/${sid}?limit=400`);
+    const res = await fetch(_historyUrl(sid, { limit: _historyPageLimit() }));
     const data = await res.json();
     const history = data.history || [];
 
@@ -2728,17 +2757,22 @@ async function _arcPeekOpen(sid) {
     if (chatBox) chatBox.innerHTML = '';
     if (window.chatModule && window.chatModule.hideWelcomeScreen) window.chatModule.hideWelcomeScreen();
 
-    const addMsg = window.chatModule && window.chatModule.addMessage;
-    if (addMsg) {
-      for (const msg of history) {
-        if (msg.role === 'user' || msg.role === 'assistant') {
-          const model = String((msg.metadata && msg.metadata.model) || '');
-          const content = typeof msg.content === 'string' ? msg.content : (Array.isArray(msg.content) ? msg.content : String(msg.content || ''));
-          try { addMsg(msg.role, content, model, msg.metadata || null); } catch (e) { console.warn('Failed to render message:', e); }
-        }
+    _activeHistoryTurnGroup = null;
+    for (const msg of history) {
+      if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+      try {
+        _renderHistoryMessage(msg, data.model || meta?.model || '');
+      } catch (e) {
+        console.warn('Failed to render archived message:', e);
       }
     }
     if (window.uiModule) window.uiModule.scrollHistory();
+    _installHistoryPager(sid, {
+      offset: data.offset,
+      limit: data.limit,
+      total: data.total,
+      has_more_before: !!data.has_more_before,
+    }, data.model || meta?.model || null);
     if (window.chatModule && window.chatModule.trimChatHistoryDOM) {
       window.chatModule.trimChatHistoryDOM();
     }

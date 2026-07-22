@@ -87,20 +87,12 @@ def test_background_error_branch_frees_resources_like_done_path():
 
 def test_normal_finalize_sweeps_running_tool_nodes_for_leaked_intervals():
     text = _full_source()
-    marker = "document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));"
-    occurrences = [m.start() for m in re.finditer(re.escape(marker), text)]
-    assert len(occurrences) >= 2
-
-    # At least one occurrence (the normal finalize path) must be immediately
-    # followed by the running-node interval sweep, same as the user-Stop
-    # handler and the error path already do.
-    found_sweep_after = False
-    for start in occurrences:
-        tail = text[start : start + 700]
-        if "_waveInterval" in tail and "_elapsedTicker" in tail and "agent-thread-node.running" in tail:
-            found_sweep_after = True
-            break
-    assert found_sweep_after, "no '.streaming' removal site sweeps running tool nodes afterward"
+    marker = "_chatHistoryBox.querySelectorAll(':scope > .agent-thread.streaming')"
+    start = text.index(marker)
+    tail = text[start : start + 900]
+    assert "_chatHistoryBox.querySelectorAll('.agent-thread-node.running')" in tail
+    assert "_waveInterval" in tail
+    assert "_elapsedTicker" in tail
 
 
 # ── 4. _trimChatHistoryDOM protects live nodes without stalling the sweep ──
@@ -112,21 +104,17 @@ def test_protected_history_node_covers_all_required_cases():
     assert "'agent-thinking-dots'" in body
     assert ".agent-thread.streaming" in body
     assert ".agent-thread-node.running" in body
-    assert "#doc-stream-indicator" in body
+    assert '[data-doc-writing="1"]' in body
 
 
 def test_trim_chat_history_dom_skips_protected_nodes_without_stopping():
     body = _function_body("_trimChatHistoryDOM")
 
-    assert "_isProtectedHistoryNode(el)" in body
-    # The walk must `continue` past a protected node (skip it and keep
-    # sweeping), never `break` out of the loop entirely — a `break` here
-    # would mean one streaming node early in a long turn stalls the whole
-    # sweep and defeats the OOM cap.
-    protected_check = body.index("_isProtectedHistoryNode(el)")
-    following = body[protected_check : protected_check + 120]
+    assert "group.some(_isProtectedHistoryNode)" in body
+    # A protected group is skipped while the scan continues to other groups.
+    protected_check = body.index("group.some(_isProtectedHistoryNode)")
+    following = body[protected_check : protected_check + 180]
     assert "continue" in following
-    assert "break" not in following
 
 
 # ── 5. _teardownLiveThinking centralizes RAF/timer teardown ────────────────
@@ -167,7 +155,9 @@ def test_done_handler_finalizes_thinking_box_while_still_open():
     marker = "// Force-close thinking if still open (model never output boundary)"
     idx = text.index(marker)
     tail = text[idx : idx + 400]
+    assert "_closeOpenThinkingMarkup()" in tail
     assert "_teardownLiveThinking(true)" in tail
+    assert tail.index("_closeOpenThinkingMarkup()") < tail.index("_teardownLiveThinking(true)")
 
 
 def test_clean_think_close_uses_shared_teardown_helper():
@@ -187,13 +177,63 @@ def test_agent_step_finalizes_thinking_before_round_text_resets():
     idx = text.index(marker)
     # Grab enough of the handler body to see both the teardown call and the
     # later `roundText = '';` reset.
-    chunk = text[idx : idx + 2400]
+    chunk = text[idx : idx + 3000]
     assert "_teardownLiveThinking(true)" in chunk
     assert "roundText = '';" in chunk
     assert chunk.index("_teardownLiveThinking(true)") < chunk.index("roundText = '';")
     # Must also run before _renderStream(), which would otherwise clobber the
     # thinking box's DOM if a think tag is still unclosed.
     assert chunk.index("_teardownLiveThinking(true)") < chunk.index("_renderStream();")
+
+
+def test_protocol_close_updates_both_accumulators_and_flag():
+    body = _function_body("_closeOpenThinkingMarkup")
+    assert "accumulated += '</think>';" in body
+    assert "roundText += '</think>';" in body
+    assert "currentAccumulated = accumulated;" in body
+    assert "_thinkOpen = false;" in body
+
+
+def test_tool_start_closes_protocol_before_ui_teardown():
+    text = _full_source()
+    idx = text.index("} else if (json.type === 'tool_start') {")
+    chunk = text[idx : idx + 700]
+    assert "_closeOpenThinkingMarkup();" in chunk
+    assert "_teardownLiveThinking(true);" in chunk
+    assert chunk.index("_closeOpenThinkingMarkup();") < chunk.index("_teardownLiveThinking(true);")
+
+
+def test_background_limit_is_enforced_at_detach_admission():
+    text = _full_source()
+    start = text.index("export function detachCurrentStream(sessionId)")
+    body = text[start : start + 1800]
+    assert "_purgeStaleBackgroundStreams();" in body
+    assert "runningCount >= MAX_BACKGROUND_STREAMS" in body
+    assert "return false;" in body
+    assert body.index("runningCount >= MAX_BACKGROUND_STREAMS") < body.index("_backgroundStreams.set(sessionId")
+
+
+def test_foreground_completion_releases_turn_and_reapplies_dom_bound():
+    text = _full_source()
+    assert "node.dataset.domTrimGroup === _domTrimGroup" in text
+    assert "if (!_isBgFinal) _trimChatHistoryDOM();" in text
+
+
+def test_agent_step_starts_a_new_atomic_trim_group():
+    text = _full_source()
+    idx = text.index("} else if (json.type === 'agent_step') {")
+    chunk = text[idx : idx + 3200]
+    group_reset = chunk.index("_domTrimGroup = 'live-round-'")
+    continuation = chunk.index("newWrap.dataset.domTrimGroup = _domTrimGroup")
+    assert group_reset < continuation
+
+
+def test_dom_trimmer_removes_complete_tagged_groups():
+    body = _function_body("_trimChatHistoryDOM")
+    assert "node.dataset.domTrimGroup === groupId" in body
+    assert "group.some(_isProtectedHistoryNode)" in body
+    assert "group.forEach(_releaseHistoryNode)" in body
+    assert "options.from === 'end'" in body
 
 
 def test_catch_block_finalizes_thinking_before_render_stream_clobbers_it():

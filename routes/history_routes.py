@@ -15,4 +15,3 @@ import sys as _sys
 from routes.history import history_routes as _canonical  # noqa: F401
 
 _sys.modules[__name__] = _canonical
-

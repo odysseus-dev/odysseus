@@ -29,12 +29,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   // ── DOM memory guard ──
-  // Long agent runs can create thousands of DOM nodes (one per tool call +
-  // text bubble). Without a cap the browser tab bloats to multiple GB and
-  // freezes. Instead of deleting old messages (which erases the visual
-  // timeline), we collapse them into lightweight placeholders that preserve
-  // the conversation shape while freeing 95%+ of the DOM memory. The full
-  // history lives on the server and is re-fetched on session switch.
+  // Long agent runs can create thousands of rendered timeline elements. Keep
+  // a bounded top-level window while preserving complete message/turn groups;
+  // the full canonical history remains on the server and is restored when the
+  // session is reopened or paged in the opposite direction.
   var MAX_CHAT_DOM_NODES = 150;
   (function _initMaxDomNodes() {
     var box = document.getElementById('chat-history');
@@ -54,54 +52,64 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (el.querySelector) {
       if (el.querySelector('.agent-thread.streaming')) return true;
       if (el.querySelector('.agent-thread-node.running')) return true;
-      if (el.querySelector('#doc-stream-indicator')) return true;
+      if (el.querySelector('[data-doc-writing="1"]')) return true;
     }
     return false;
   }
 
-  function _trimChatHistoryDOM() {
+  function _releaseHistoryNode(el) {
+    if (!el) return;
+    if (el._waveInterval) { clearInterval(el._waveInterval); el._waveInterval = null; }
+    if (el._elapsedTicker) { clearInterval(el._elapsedTicker); el._elapsedTicker = null; }
+    if (el._spinner) { try { el._spinner.destroy(); } catch (_) {} }
+    el.querySelectorAll('.agent-thread-node').forEach(function(n) {
+      if (n._waveInterval) { clearInterval(n._waveInterval); n._waveInterval = null; }
+      if (n._elapsedTicker) { clearInterval(n._elapsedTicker); n._elapsedTicker = null; }
+    });
+    el.querySelectorAll('img[src^="data:"]').forEach(function(img) { img.src = ''; });
+    var styled = [el].concat(Array.from(el.querySelectorAll('[style*="data:"]')));
+    styled.forEach(function(node) {
+      var bg = node.style && node.style.backgroundImage;
+      if (bg && /url\(["']?data:/i.test(bg)) node.style.backgroundImage = '';
+    });
+    el.remove();
+  }
+
+  function _trimChatHistoryDOM(options) {
     var box = document.getElementById('chat-history');
     if (!box) return;
-    var children = box.children;
-    if (children.length <= MAX_CHAT_DOM_NODES) return;
+    var fromEnd = options && options.from === 'end';
+    if (box.children.length <= MAX_CHAT_DOM_NODES) return;
     var keepFloor = Math.min(20, Math.floor(MAX_CHAT_DOM_NODES / 4));
 
-    // Walk from the oldest child toward the keepFloor boundary. Protected
-    // (live/streaming) nodes are skipped in place rather than stopping the
-    // sweep entirely — during one very long turn every node belonging to
-    // that turn may be `.streaming`, and bailing at the first one would mean
-    // nothing ever gets reclaimed, defeating the OOM cap. Completed nodes
-    // interleaved among protected ones are still removed as we pass them.
-    var maxIdx = Math.max(0, children.length - keepFloor);
-    for (var i = 0; i < maxIdx && children.length > MAX_CHAT_DOM_NODES; i++) {
-      var el = children[i];
-      if (!el) break;
-
-      if (_isProtectedHistoryNode(el)) {
-        continue; // skip, don't remove, don't stop the walk
+    // Remove one complete group per pass. Re-snapshot after each removal so a
+    // live/protected group can be skipped without invalidating indices. When
+    // older history is prepended we trim from the newest edge; normal live
+    // growth trims from the oldest edge.
+    while (box.children.length > MAX_CHAT_DOM_NODES) {
+      var children = Array.from(box.children);
+      var start = fromEnd ? children.length - 1 : 0;
+      var stop = fromEnd ? keepFloor - 1 : children.length - keepFloor;
+      var step = fromEnd ? -1 : 1;
+      var removed = false;
+      var skippedGroups = new Set();
+      for (var i = start; fromEnd ? i > stop : i < stop; i += step) {
+        var el = children[i];
+        if (!el) continue;
+        var groupId = el.dataset && el.dataset.domTrimGroup;
+        if (groupId && skippedGroups.has(groupId)) continue;
+        var group = groupId
+          ? children.filter(function(node) { return node.dataset && node.dataset.domTrimGroup === groupId; })
+          : [el];
+        if (group.some(_isProtectedHistoryNode)) {
+          if (groupId) skippedGroups.add(groupId);
+          continue;
+        }
+        group.forEach(_releaseHistoryNode);
+        removed = true;
+        break;
       }
-
-      // Tear down any per-node intervals
-      if (el._waveInterval) { clearInterval(el._waveInterval); el._waveInterval = null; }
-      if (el._elapsedTicker) { clearInterval(el._elapsedTicker); el._elapsedTicker = null; }
-      if (el._spinner) { try { el._spinner.destroy(); } catch (_) {} }
-      el.querySelectorAll('.agent-thread-node').forEach(function(n) {
-        if (n._waveInterval) { clearInterval(n._waveInterval); n._waveInterval = null; }
-        if (n._elapsedTicker) { clearInterval(n._elapsedTicker); n._elapsedTicker = null; }
-      });
-      el.querySelectorAll('img[src^="data:"]').forEach(function(img) {
-        img.src = '';
-      });
-      // Also clear data-URI background images in inline styles
-      var bg = el.style && el.style.backgroundImage;
-      if (bg && bg.indexOf('url("data:') === 0) {
-        el.style.backgroundImage = '';
-      } else if (bg && bg.indexOf("url('data:") === 0) {
-        el.style.backgroundImage = '';
-      }
-
-      el.remove();
-      i--; // children shifted, re-check this index
+      if (!removed) break;
     }
   }
 
@@ -273,6 +281,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       thread = document.createElement('div');
       thread.className = 'agent-thread streaming has-bottom';
       thread.dataset.docWriting = '1';
+      if (msg.dataset.domTrimGroup) thread.dataset.domTrimGroup = msg.dataset.domTrimGroup;
       const prev = msg.previousElementSibling;
       if (prev && (prev.classList.contains('msg') || prev.classList.contains('agent-thread'))) {
         thread.classList.add('has-top');
@@ -993,6 +1002,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // round's reasoning in its own <think>…</think> instead of leaking rounds 2+ as text.
     let _thinkOpen = false;
     let holder = null;
+    let _domTrimGroup = null;
     let finalMeta = null;
     let spinner = null;
     let timedOut = false;
@@ -1366,6 +1376,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const box = el('chat-history');
       holder = document.createElement('div');
       holder.className = 'msg msg-ai streaming';
+      _domTrimGroup = 'live-turn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      holder.dataset.domTrimGroup = _domTrimGroup;
+      var _precedingTurnNode = box.lastElementChild;
+      if (_precedingTurnNode && _precedingTurnNode.classList.contains('msg-user')) {
+        _precedingTurnNode.dataset.domTrimGroup = _domTrimGroup;
+      }
 
       // Track holder globally so stop button can access it
       currentHolder = holder;
@@ -1717,6 +1733,18 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         }
       }
 
+      // VLLM-style reasoning deltas are wrapped locally with synthetic think
+      // tags. Terminal protocol events do not necessarily send a non-thinking
+      // delta, so close both raw accumulators and reset the protocol flag before
+      // finalizing the visible thinking box.
+      function _closeOpenThinkingMarkup() {
+        if (!_thinkOpen) return;
+        accumulated += '</think>';
+        roundText += '</think>';
+        currentAccumulated = accumulated;
+        _thinkOpen = false;
+      }
+
       function _replyAfterClosedThinking(text) {
         text = markdownModule.normalizeThinkingMarkup(text || '');
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
@@ -1908,6 +1936,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 break;
               }
               // Force-close thinking if still open (model never output boundary)
+              _closeOpenThinkingMarkup();
               if (isThinking) {
                 isThinking = false;
                 _teardownLiveThinking(true);
@@ -2167,7 +2196,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 } else if (!hasUnclosedThink && isThinking) {
                   if (_thinkRenderTimer) { clearTimeout(_thinkRenderTimer); _thinkRenderTimer = null; }
                   isThinking = false;
-                  var _thinkTextLen = _liveThinkInner ? _liveThinkInner.textContent.trim().length : 0;
+                  var _thinkTextLen = _extractLiveThinkText(roundText).trim().length;
 
                   // If thinking was trivially short (< 20 chars), remove the section entirely
                   // Models sometimes emit <think>The</think> or similar noise
@@ -2611,9 +2640,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
+                _closeOpenThinkingMarkup();
                 if (isThinking) {
+                  _teardownLiveThinking(true);
                   isThinking = false;
-                  cancelAnimationFrame(_thinkTimerRAF);
                   var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
                   if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
@@ -2669,6 +2699,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 } else {
                   threadWrap = document.createElement('div');
                   threadWrap.className = 'agent-thread';
+                  if (_domTrimGroup) threadWrap.dataset.domTrimGroup = _domTrimGroup;
                   // Extend line up to connect to chat bubble above (if there is one)
                   const _prevSib = chatBox.lastElementChild;
                   const _hasBubbleAbove = _prevSib && (_prevSib.classList.contains('msg') && _prevSib.style.display !== 'none');
@@ -2947,6 +2978,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // timer from the previous round keeps running against a bubble
                 // that's about to be replaced, and _renderStream() below would
                 // clobber the thinking box's DOM before it's ever finalized.
+                _closeOpenThinkingMarkup();
                 if (isThinking) _teardownLiveThinking(true);
                 _renderStream();
                 // Mark thread as connected to bubble below
@@ -2958,11 +2990,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 currentToolBubble = null;
                 roundFinalized = false;
                 isThinking = false;
+                _domTrimGroup = 'live-round-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
                 _docFenceOpened = false;
                 _docFenceContentStart = -1;
                 const box = document.getElementById('chat-history');
                 const newWrap = document.createElement('div');
                 newWrap.className = 'msg msg-ai msg-continuation streaming';
+                if (_domTrimGroup) newWrap.dataset.domTrimGroup = _domTrimGroup;
                 // Add model name label
                 const newRole = document.createElement('div');
                 newRole.className = 'role';
@@ -3085,12 +3119,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       // Stop any thread pulse animations
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      const _chatHistoryBox = document.getElementById('chat-history');
+      if (_chatHistoryBox) _chatHistoryBox.querySelectorAll(':scope > .agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // Clean up any tool node still left "running" on a clean [DONE] (e.g. a
       // tool_output that never arrived for the last call) — same sweep as the
       // user-Stop handler and the error path, so its per-node tickers
       // (_waveInterval / _elapsedTicker) don't keep firing forever.
-      document.querySelectorAll('.agent-thread-node.running').forEach(node => {
+      if (_chatHistoryBox) _chatHistoryBox.querySelectorAll('.agent-thread-node.running').forEach(node => {
         if (node._waveInterval) { clearInterval(node._waveInterval); node._waveInterval = null; }
         if (node._elapsedTicker) { clearInterval(node._elapsedTicker); node._elapsedTicker = null; }
         node.classList.remove('running');
@@ -3099,6 +3134,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Remove streaming class from all round bubbles
       holder.classList.remove('streaming');
       if (roundHolder && roundHolder !== holder) roundHolder.classList.remove('streaming');
+      if (_chatHistoryBox && _domTrimGroup) {
+        Array.from(_chatHistoryBox.children).forEach(function(node) {
+          if (node.dataset && node.dataset.domTrimGroup === _domTrimGroup) {
+            node.classList.remove('streaming');
+          }
+        });
+      }
 
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
@@ -3359,6 +3401,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         }
       } // end if (!_isBgFinal)
 
+      if (!_isBgFinal) _trimChatHistoryDOM();
+
     } catch (err) {
       // Finalize any still-open live thinking box BEFORE _renderStream() below —
       // when a think tag is still unclosed, _renderStream() overwrites
@@ -3366,13 +3410,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // detaches _liveThinkInner from the DOM. Flushing after that point would
       // write into an orphaned node and be a silent no-op, and the live
       // RAF/debounce timer would keep running unbounded.
+      _closeOpenThinkingMarkup();
       if (isThinking) _teardownLiveThinking(true);
       _renderStream();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      const _catchHistoryBox = document.getElementById('chat-history');
+      if (_catchHistoryBox) _catchHistoryBox.querySelectorAll(':scope > .agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // Check if this stream was running in background
       const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
 
@@ -3885,10 +3931,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    */
   export function detachCurrentStream(sessionId) {
     if (!isStreaming || !currentAbort) {
-      // Not streaming — fall through to abort
-      abortCurrentRequest();
-      return;
+      return true;
     }
+    _purgeStaleBackgroundStreams();
+    var runningCount = 0;
+    _backgroundStreams.forEach(function(entry) {
+      if (entry.status === 'running') runningCount++;
+    });
+    if (runningCount >= MAX_BACKGROUND_STREAMS) return false;
     // Store background stream state
     _backgroundStreams.set(sessionId, {
       status: 'running',
@@ -3912,6 +3962,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // Reset submit button so the new chat is ready to send
     const submitBtn = document.querySelector('.send-btn');
     if (submitBtn) updateSubmitButton('idle', submitBtn);
+    return true;
   }
 
   // _notifyStreamComplete and _insertStreamDoneToast now in chatStream.js
