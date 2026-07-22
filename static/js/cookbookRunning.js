@@ -1132,6 +1132,57 @@ async function _fetchTaskLogTail(task, lines = 200) {
   } catch { return ''; }
 }
 
+// Background completion sweep. _reconnectTask only polls while the Running
+// tab is visible AND the task card is expanded — so a download/pip install
+// that finished on a collapsed card stayed "running" indefinitely, with the
+// exit sentinel sitting unread in the runner log. Every 45s, check running
+// download-type tasks' logs and classify from the sentinel, no audience
+// required. Serve tasks are excluded: a live server has no exit sentinel,
+// and their ready/error semantics belong to the serve poller.
+const _COMPLETION_SWEEP_MS = 45 * 1000;
+let _completionSweepTimer = null;
+let _completionSweepBusy = false;
+
+function _startCompletionSweep() {
+  if (_completionSweepTimer) return;
+  _completionSweepTimer = setInterval(_sweepRunningTaskCompletion, _COMPLETION_SWEEP_MS);
+}
+
+async function _sweepRunningTaskCompletion() {
+  if (_completionSweepBusy) return;
+  _completionSweepBusy = true;
+  try {
+    const running = _loadTasks().filter(t =>
+      t && t.type === 'download'
+      && String(t.status || '') === 'running'
+      && !_isWindows(t));
+    for (const t of running) {
+      const tail = await _fetchTaskLogTail(t, 80);
+      if (!tail) continue;                    // no log yet / unreachable — leave alone
+      const m = tail.match(/=== Process exited with code (-?\d+) ===/);
+      if (!m) continue;                       // still genuinely running
+      const code = parseInt(m[1], 10);
+      const ok = code === 0 && !tail.includes('DOWNLOAD_FAILED');
+      _updateTask(t.sessionId, { status: ok ? 'done' : 'crashed', output: tail.slice(-5000) });
+      if (ok) {
+        _refreshDepsAfterInstall(t);
+        // The runner keeps the tmux session open for inspection; a task we
+        // just classified done doesn't need it any more (mirrors the live
+        // DOWNLOAD_OK branch). Best-effort.
+        fetch('/api/shell/exec', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: _tmuxCmd(t, `kill-session -t ${t.sessionId}`) }),
+        }).catch(() => {});
+      }
+      _showCookbookNotif(!ok);
+      _renderRunningTab();
+    }
+  } finally {
+    _completionSweepBusy = false;
+  }
+}
+
 function _taskLooksOllama(task, outputText = '') {
   const haystack = `${task?.payload?.backend || ''} ${task?.payload?._cmd || ''} ${task?.payload?._fields?.backend || ''} ${outputText || ''}`;
   return /\bollama\b/i.test(haystack) || /Ollama API ready on port\s+\d+/i.test(haystack);
@@ -2041,6 +2092,9 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
 // ── Render Running tab ──
 
 export function _renderRunningTab() {
+  // Completion no longer requires an audience — start the background sweep
+  // (idempotent) so collapsed tasks still flip done/crashed from their logs.
+  _startCompletionSweep();
   // Auto-clear the sidebar notif (the bright-icon highlight) when no tasks
   // are actively running or errored. _showCookbookNotif fires on each task
   // event but the matching clear only ran on modal-open, so the highlight
