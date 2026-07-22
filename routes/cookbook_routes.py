@@ -1983,6 +1983,63 @@ def setup_cookbook_routes() -> APIRouter:
                 "error": _missing_binary_message("tmux", remote or "local server"),
                 "session_id": session_id,
             }
+        if is_pip_install and not is_windows and not local_windows:
+            # Preflight: verify pip actually exists for the python that will
+            # run the install, BEFORE creating a task. Without this, a target
+            # whose python has no pip (Arch ships python-pip separately)
+            # produces a runner that dies in <1s with "No module named pip"
+            # and then sits in an interactive shell — the task shows
+            # "running" indefinitely with no obvious error.
+            _py_m = re.search(r"(?:^|\s)(\S*python[0-9.]*)\s+-m\s+pip\s+install", req.cmd)
+            _py_bin = _py_m.group(1) if _py_m else "python3"
+            _ep = _safe_env_prefix(req.env_prefix) if req.env_prefix else None
+            _preflight_inner = (
+                f"{_ep} && " if _ep else ""
+            ) + f"{_py_bin} -m pip --version"
+            try:
+                if remote:
+                    # `sh -lc '<cmd>'` so the probe survives non-POSIX remote
+                    # login shells (fish/csh) — a simple command every shell
+                    # parses identically.
+                    _pf_code, _pf_out, _pf_err = await run_ssh_command_async(
+                        remote,
+                        req.ssh_port,
+                        "sh -lc " + shlex.quote(_preflight_inner),
+                        timeout=15,
+                        connect_timeout=6,
+                        strict_host_key_checking=False,
+                    )
+                else:
+                    _pf_proc = await asyncio.create_subprocess_exec(
+                        "bash", "-lc", _preflight_inner,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _pf_out, _pf_err = await asyncio.wait_for(_pf_proc.communicate(), timeout=15)
+                    _pf_code = _pf_proc.returncode or 0
+            except Exception:
+                # Preflight is advisory — an unreachable host or timeout here
+                # falls through to the normal launch path, whose own errors
+                # already surface connection problems.
+                _pf_code = 0
+            if _pf_code != 0:
+                _pf_tail = (
+                    (_pf_err or b"").decode("utf-8", errors="replace").strip()
+                    or (_pf_out or b"").decode("utf-8", errors="replace").strip()
+                )[-300:]
+                _target_label = remote or "this server"
+                return {
+                    "ok": False,
+                    "error": (
+                        f"pip is not available for {_py_bin} on {_target_label}"
+                        + (f": {_pf_tail}" if _pf_tail else "")
+                        + ". Configure a venv for this server in Cookbook → Settings → Servers "
+                        "(recommended — also avoids PEP 668 'externally-managed-environment' blocks), "
+                        "or install pip on the target (Arch: sudo pacman -S python-pip · "
+                        "Debian/Ubuntu: sudo apt install python3-pip)."
+                    ),
+                    "session_id": session_id,
+                }
         if _needs_binary(req.cmd, "docker") and not await _binary_available("docker", remote, req.ssh_port, windows=is_windows):
             local_host_docker_blocked = (
                 not remote

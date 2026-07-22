@@ -34,3 +34,32 @@ def test_diagnose_sglang_native_dependency_errors():
     assert any("libnuma-dev" in label for label in labels)
     assert any("python3.12-dev" in label for label in labels)
     assert any("sglang-kernel" in label for label in labels)
+
+
+def test_diagnose_missing_pip_module():
+    output = """
+    [odysseus] HF token: NOT SET
+    /usr/bin/python3: No module named pip
+
+    === Process exited with code 1 ===
+    """
+
+    diagnosis = _diagnose_serve_output(output)
+
+    assert diagnosis is not None
+    assert "no pip module" in diagnosis["message"]
+    assert "venv" in diagnosis["suggestions"][0]["label"]
+
+
+def test_diagnose_pep668_externally_managed():
+    output = """
+    error: externally-managed-environment
+    x This environment is externally managed
+    hint: See PEP 668 for the detailed specification.
+    """
+
+    diagnosis = _diagnose_serve_output(output)
+
+    assert diagnosis is not None
+    assert "PEP 668" in diagnosis["message"]
+    assert "venv" in diagnosis["suggestions"][0]["label"]

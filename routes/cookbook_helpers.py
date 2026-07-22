@@ -1358,6 +1358,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "download a GGUF build of this model (repo name usually ends in -GGUF, file like Q4_K_M.gguf)", "op": "manual"}],
         ),
         (
+            r"No module named pip",
+            "This server's Python has no pip module, so dependency installs cannot run (Arch and other minimal distros ship pip separately).",
+            [{"label": "configure a venv for this server in Cookbook Settings → Servers (recommended), or install pip on the target (Arch: pacman -S python-pip / Debian: apt install python3-pip)", "op": "manual"}],
+        ),
+        (
+            r"externally-managed-environment",
+            "This server's system Python is PEP 668 locked — pip refuses to install into it.",
+            [{"label": "configure a venv for this server in Cookbook Settings → Servers; installs will target the venv automatically", "op": "manual"}],
+        ),
+        (
             r"No module named 'torch'|No module named torch|No module named 'diffusers'|No module named diffusers",
             "Diffusion serving requires PyTorch and diffusers.",
             [{"label": "install diffusers[torch] in Cookbook Dependencies", "op": "dependency", "package": "diffusers[torch]"}],
