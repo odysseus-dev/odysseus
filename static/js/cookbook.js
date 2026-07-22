@@ -1258,6 +1258,78 @@ async function _fetchDependencies() {
       _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', _serverDeps),
     ].join('');
 
+    // ── Python environment row (remote servers) ─────────────────────────
+    // The venv is the foundation every pip row below installs into: PEP 668
+    // distros refuse system-python installs, and the serving stack needs an
+    // interpreter in a supported range (numba and friends guard at build
+    // time, not in metadata). Pinned above the package sections with live
+    // state from /api/cookbook/setup-venv {check:true}; its Install/Fix
+    // button creates or rebuilds the venv and wires the server profile.
+    if (_depHost) {
+      const _pyenvRow = document.createElement('div');
+      _pyenvRow.className = 'cookbook-dep-row';
+      _pyenvRow.id = 'cookbook-dep-pyenv';
+      _pyenvRow.innerHTML =
+        `<div class="cookbook-dep-info">`
+        + `<div class="memory-item-title">Python environment</div>`
+        + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">Venv that the packages below install into and serves run from.</div>`
+        + `<div class="memory-item-meta" data-pyenv-state style="font-size:10px;opacity:0.65;margin-top:3px;">checking…</div>`
+        + `</div>`
+        + `<span data-pyenv-slot></span>`;
+      list.prepend(_pyenvRow);
+      const _pyenvState = _pyenvRow.querySelector('[data-pyenv-state]');
+      const _pyenvSlot = _pyenvRow.querySelector('[data-pyenv-slot]');
+      const _pyenvPath = _depVenv || '~/odysseus-venv';
+      const _pyenvPost = (body) => fetch('/api/cookbook/setup-venv', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: _depHost, ssh_port: _depPort || undefined, path: _pyenvPath, ...body }),
+      }).then(r => r.json().catch(() => ({})));
+      const _pyenvSetup = async (btn) => {
+        btn.disabled = true;
+        _pyenvState.textContent = 'setting up venv… (may download an interpreter — up to a few minutes)';
+        const data = await _pyenvPost({}).catch(err => ({ ok: false, error: String(err) }));
+        if (data.ok) {
+          // Wire the server profile so every install/serve below targets it.
+          const srv = (_envState.servers || []).find(s => s.host === _depHost);
+          if (srv) { srv.env = 'venv'; srv.envPath = data.path; }
+          if (_envState.remoteHost === _depHost) { _envState.env = 'venv'; _envState.envPath = data.path; }
+          _persistEnvState();
+          uiModule.showToast(`Venv ready at ${data.path}${data.python ? ` (Python ${data.python})` : ''} — packages below install into it`);
+          _fetchDependencies();
+        } else {
+          btn.disabled = false;
+          _pyenvState.textContent = 'setup failed — see message';
+          uiModule.showToast(data.error || 'Venv setup failed', { duration: 20000, action: 'OK', onAction: () => {} });
+        }
+      };
+      _pyenvPost({ check: true }).then(chk => {
+        if (!chk.ok) { _pyenvState.textContent = `check failed: ${chk.error || 'unreachable'}`; return; }
+        const range = chk.supported_range || '3.10–3.13';
+        if (chk.venv && chk.venv_python_in_range) {
+          _pyenvState.textContent = `venv @ ${chk.path} · Python ${chk.venv_python} · supported (${range})`;
+          _pyenvSlot.innerHTML = `<span class="cookbook-dep-tag cookbook-dep-installed" title="Venv ready — installs and serves use it">Ready</span>`;
+          // Profile might not be wired even though the venv exists (e.g.
+          // created manually) — wire it silently so installs target it.
+          const srv = (_envState.servers || []).find(s => s.host === _depHost);
+          if (srv && (srv.env !== 'venv' || !srv.envPath)) { srv.env = 'venv'; srv.envPath = chk.path; _persistEnvState(); }
+          return;
+        }
+        if (chk.venv) {
+          _pyenvState.textContent = `venv @ ${chk.path} · Python ${chk.venv_python} — outside the serving-supported range (${range}); rebuild it on a supported interpreter`;
+          _pyenvSlot.innerHTML = `<button type="button" class="cookbook-dep-tag cookbook-dep-install" title="Recreate the venv on a supported Python (existing venv is replaced)">Fix</button>`;
+        } else {
+          const how = chk.candidate === 'uv' ? 'uv will fetch Python 3.13'
+            : (chk.candidate && chk.candidate !== 'none') ? `will use ${chk.candidate}`
+            : `no suitable interpreter found (system python3 is ${chk.system_python || 'unknown'}) — Install shows what to add`;
+          _pyenvState.textContent = `no venv · ${how}`;
+          _pyenvSlot.innerHTML = `<button type="button" class="cookbook-dep-tag cookbook-dep-install" title="Create the venv and configure this server to use it">Install</button>`;
+        }
+        const btn = _pyenvSlot.querySelector('button');
+        if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); _pyenvSetup(btn); });
+      }).catch(() => { _pyenvState.textContent = 'check failed — server unreachable?'; });
+    }
+
     // Shared install/update routine — used by the Install button and the
     // "Update" item in an installed package's ⋮ menu. `upgrade` adds pip -U;
     // `statusEl`, when given, shows "Installing…/Updating…" and is disabled.

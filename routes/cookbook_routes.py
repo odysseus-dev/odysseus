@@ -944,17 +944,36 @@ def setup_cookbook_routes() -> APIRouter:
         host: str
         ssh_port: str | None = None
         path: str | None = None
+        check: bool = False
 
     _VENV_PATH_RE = re.compile(r"^[A-Za-z0-9_./~-]+$")
 
+    # The serving stack's realistic Python window. Upstream metadata is not
+    # trustworthy here — numba ships a build-time version guard instead of
+    # requires-python, so pip discovers the ceiling only after minutes of
+    # sdist work. Cookbook enforces the known-good range up front instead.
+    SERVING_PYTHON_RANGE = (310, 314)  # >=3.10, <3.14
+    SERVING_PYTHON_RANGE_LABEL = "3.10–3.13"
+    # Newest in-range first; bare python3 is checked against the range too.
+    _VENV_PY_CANDIDATES = "python3.13 python3.12 python3.11 python3.10"
+
+    def _serving_python_in_range(ver: str) -> bool:
+        m = re.fullmatch(r"(\d+)\.(\d+)", (ver or "").strip())
+        if not m:
+            return False
+        n = int(m.group(1)) * 100 + int(m.group(2))
+        return SERVING_PYTHON_RANGE[0] <= n < SERVING_PYTHON_RANGE[1]
+
     @router.post("/api/cookbook/setup-venv")
     async def setup_cookbook_venv(request: Request, req: CookbookVenvSetupRequest):
-        """Create a Python venv on a Cookbook server so pip installs and
-        serve engines have a working, PEP 668-safe environment. Admin only.
+        """Create (or, with check=true, inspect) a Python venv on a Cookbook
+        server so pip installs and serve engines have a working, PEP 668-safe
+        environment on a serving-compatible interpreter. Admin only.
 
-        Runs `python3 -m venv <path>` on the target and verifies pip works
-        inside it. The caller (Settings → Servers) then stores env=venv +
-        the path on the server profile.
+        Interpreter selection, newest first: a versioned python3.x inside
+        SERVING_PYTHON_RANGE → bare python3 if its version is in range → a
+        uv-managed standalone build (downloaded on the target by uv) → an
+        actionable error naming what to install.
         """
         require_admin(request)
         host = validate_remote_host(req.host)
@@ -966,37 +985,116 @@ def setup_cookbook_routes() -> APIRouter:
         # safe.
         if not _VENV_PATH_RE.match(path) or path.startswith("-"):
             raise HTTPException(400, "Invalid venv path")
-        inner = (
-            f"python3 -m venv {path} && "
-            f"{path}/bin/python3 -m pip --version"
+        _pyver = "import sys;print(\"%d.%d\"%sys.version_info[:2])"
+        _pick_lines = (
+            'best=""; '
+            f'for p in {_VENV_PY_CANDIDATES}; do command -v "$p" >/dev/null 2>&1 && best="$p" && break; done; '
+            'if [ -z "$best" ] && command -v python3 >/dev/null 2>&1; then '
+            f"sv=\"$(python3 -c '{_pyver}' 2>/dev/null || true)\"; "
+            'case "$sv" in 3.10|3.11|3.12|3.13) best=python3;; esac; fi; '
         )
+        if req.check:
+            # Inspection only — powers the Dependencies "Python environment"
+            # row. Reports the venv state, its interpreter version, and what
+            # a create would use.
+            inner = (
+                f'if [ -x {path}/bin/python3 ]; then '
+                f"echo \"VENV $({path}/bin/python3 -c '{_pyver}' 2>/dev/null || echo '?')\"; "
+                'else echo NOVENV; fi; '
+                + _pick_lines +
+                'if [ -n "$best" ]; then echo "CAND $best"; '
+                'elif command -v uv >/dev/null 2>&1; then echo "CAND uv"; '
+                'else echo "CAND none"; fi; '
+                f"echo \"SYS $(python3 -c '{_pyver}' 2>/dev/null || echo none)\""
+            )
+            timeout_s = 20
+        else:
+            inner = (
+                # Rebuilding over an existing venv (e.g. one created on an
+                # out-of-range interpreter) must start clean — stale
+                # lib/pythonX.Y trees otherwise linger. Only remove a dir
+                # that is actually a venv (pyvenv.cfg present).
+                f'if [ -f {path}/pyvenv.cfg ]; then rm -rf {path}; fi; '
+                + _pick_lines +
+                'if [ -n "$best" ]; then '
+                f'"$best" -m venv {path} && {path}/bin/python3 -m pip --version; '
+                'elif command -v uv >/dev/null 2>&1; then '
+                # --seed installs pip (Cookbook drives installs via python -m
+                # pip); uv downloads the standalone interpreter if needed.
+                f'uv venv --seed --python 3.13 {path} && {path}/bin/python3 -m pip --version; '
+                'else '
+                f"echo \"ODYSSEUS_NO_INTERPRETER $(python3 -c '{_pyver}' 2>/dev/null || echo none)\" >&2; exit 41; "
+                'fi && '
+                f"echo \"PYVER $({path}/bin/python3 -c '{_pyver}')\""
+            )
+            timeout_s = 300  # uv may download a ~40MB interpreter build
         try:
             # `sh -lc` so the command survives non-POSIX remote login shells
-            # (fish/csh). ensurepip bootstraps pip on first creation, which
-            # can take a while on slow disks — hence the generous timeout.
+            # (fish/csh).
             code, stdout, stderr = await run_ssh_command_async(
                 host,
                 ssh_port,
                 "sh -lc " + shlex.quote(inner),
-                timeout=180,
+                timeout=timeout_s,
                 connect_timeout=6,
                 strict_host_key_checking=False,
             )
         except asyncio.TimeoutError:
-            return {"ok": False, "error": "venv creation timed out after 180s"}
+            return {"ok": False, "error": f"venv {'check' if req.check else 'creation'} timed out after {timeout_s}s"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
         out_txt = stdout.decode("utf-8", errors="replace").strip()
         err_txt = stderr.decode("utf-8", errors="replace").strip()
+        if req.check:
+            if code != 0:
+                return {"ok": False, "error": (err_txt or out_txt)[-300:] or "venv check failed"}
+            venv_ver = None
+            candidate = None
+            system_python = None
+            for line in out_txt.splitlines():
+                line = line.strip()
+                if line.startswith("VENV "):
+                    venv_ver = line[5:].strip()
+                elif line.startswith("CAND "):
+                    candidate = line[5:].strip()
+                elif line.startswith("SYS "):
+                    system_python = line[4:].strip()
+            return {
+                "ok": True,
+                "path": path,
+                "venv": venv_ver is not None,
+                "venv_python": venv_ver,
+                "venv_python_in_range": _serving_python_in_range(venv_ver or ""),
+                "candidate": candidate or "none",
+                "system_python": system_python,
+                "supported_range": SERVING_PYTHON_RANGE_LABEL,
+            }
         if code != 0:
             detail = (err_txt or out_txt)[-400:]
+            if "ODYSSEUS_NO_INTERPRETER" in detail:
+                sysver = (re.search(r"ODYSSEUS_NO_INTERPRETER (\S+)", detail) or [None, "unknown"])[1]
+                return {
+                    "ok": False,
+                    "error": (
+                        f"No Python in the serving-supported range ({SERVING_PYTHON_RANGE_LABEL}) found on {host} "
+                        f"(system python3 is {sysver}), and uv is not installed to fetch one. "
+                        "Install uv on the target (Arch: sudo pacman -S uv · Debian/Ubuntu: sudo apt install uv · "
+                        "or a distro python like python3.12/python3.12-venv), then retry."
+                    ),
+                }
             # Debian/Ubuntu strip ensurepip out of the python3 package; the
             # stock failure message ("ensurepip is not available") already
             # names the fix, but make the package explicit for the toast.
             if "ensurepip" in detail:
                 detail += " — install the venv module first (Debian/Ubuntu: sudo apt install python3-venv), then retry."
             return {"ok": False, "error": f"venv creation failed on {host}: {detail}"}
-        return {"ok": True, "path": path, "pip": out_txt.splitlines()[-1] if out_txt else ""}
+        pyver_m = re.search(r"^PYVER (\S+)", out_txt, re.M)
+        return {
+            "ok": True,
+            "path": path,
+            "python": pyver_m.group(1) if pyver_m else "",
+            "pip": next((l for l in out_txt.splitlines() if l.startswith("pip ")), ""),
+        }
 
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))

@@ -2344,7 +2344,7 @@ export function _hwfitInit() {
             if (pathInput) pathInput.value = data.path || path;
             _syncServers();
             if (msg) msg.textContent = 'venv ready';
-            uiModule.showToast(`Venv ready at ${data.path || path} — this server now installs into it`);
+            uiModule.showToast(`Venv ready at ${data.path || path}${data.python ? ` (Python ${data.python})` : ''} — this server now installs into it`);
           } else {
             if (msg) msg.textContent = 'venv failed';
             uiModule.showToast(data.error || data.detail || `Venv setup failed (HTTP ${res.status})`, 12000);
