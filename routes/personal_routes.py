@@ -145,25 +145,6 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         """Get the current RAG manager, retrying init if needed."""
         return get_rag_manager()
 
-    def _resolve_allowed_personal_dir(directory: str) -> str:
-        """Resolve a user-supplied personal-docs path under the allowed root."""
-        if not directory:
-            raise HTTPException(400, "Directory path is required")
-
-        # realpath (not abspath) so a symlink inside PERSONAL_DIR that points
-        # outside it is resolved before the commonpath confinement check below;
-        # abspath only normalises `..` and would let such a symlink escape.
-        base_abs = os.path.realpath(PERSONAL_DIR)
-        candidate = directory if os.path.isabs(directory) else os.path.join(base_abs, directory)
-        resolved = os.path.realpath(candidate)
-        try:
-            in_base = os.path.commonpath([resolved, base_abs]) == base_abs
-        except ValueError:
-            in_base = False
-        if not in_base:
-            raise HTTPException(403, "Directory must be inside personal documents")
-        return resolved
-    
     @router.get("")
     def api_personal_list(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
         """Enhanced version that includes directories"""
@@ -193,7 +174,20 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         """
         directory = directory_request.directory
         try:
-            directory = _resolve_allowed_personal_dir(directory)
+            if not directory:
+                raise HTTPException(400, "Directory path is required")
+
+            # Keep normalization and the explicit prefix guard in this route:
+            # CodeQL carries the safe-access fact from startswith() to the
+            # filesystem sinks below only within this dataflow scope.
+            base_abs = os.path.realpath(PERSONAL_DIR)
+            candidate = directory if os.path.isabs(directory) else os.path.join(base_abs, directory)
+            directory = os.path.realpath(candidate)
+            base_prefix = base_abs if base_abs.endswith(os.sep) else base_abs + os.sep
+            if not directory.startswith(base_abs):
+                raise HTTPException(403, "Directory must be inside personal documents")
+            if directory != base_abs and not directory.startswith(base_prefix):
+                raise HTTPException(403, "Directory must be inside personal documents")
             
             # Security check - ensure directory exists and is accessible
             if not os.path.exists(directory):
@@ -243,11 +237,19 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             JSON response confirming removal
         """
         try:
-            # Confine to PERSONAL_DIR — parity with add_directory_to_rag (which
-            # resolves the path the same way). Without this, an arbitrary or
-            # `..`-escaping path is passed straight to
-            # personal_docs_manager.remove_directory / rag.remove_directory.
-            directory = _resolve_allowed_personal_dir(directory)
+            if not directory:
+                raise HTTPException(400, "Directory path is required")
+
+            # Keep this guard local to the request source and removal sinks so
+            # CodeQL can prove the normalized path is confined.
+            base_abs = os.path.realpath(PERSONAL_DIR)
+            candidate = directory if os.path.isabs(directory) else os.path.join(base_abs, directory)
+            directory = os.path.realpath(candidate)
+            base_prefix = base_abs if base_abs.endswith(os.sep) else base_abs + os.sep
+            if not directory.startswith(base_abs):
+                raise HTTPException(403, "Directory must be inside personal documents")
+            if directory != base_abs and not directory.startswith(base_prefix):
+                raise HTTPException(403, "Directory must be inside personal documents")
 
             logger.info(f"Removing directory from RAG: {directory}")
 
