@@ -6,6 +6,8 @@ import logging
 from typing import List, Dict, Set, Any, Tuple
 from dataclasses import dataclass
 
+from src.index_walk import prune_index_dirs, is_indexable_file
+
 from src.markitdown_runtime import MARKITDOWN_EXTS
 
 logger = logging.getLogger(__name__)
@@ -94,13 +96,22 @@ def tokenize(s: str) -> Set[str]:
     return set(t for t in tokens if t not in config.STOP_WORDS and len(t) > 1)
 
 def load_personal_index(
-    personal_dir: str, 
+    personal_dir: str,
     extensions: Tuple[str, ...] = config.DEFAULT_EXTENSIONS
 ) -> List[Dict[str, Any]]:
-    """Load and index personal documents."""
+    """Load and index personal documents.
+
+    Skips hidden and junk directories and hidden files via the shared
+    ``index_walk`` policy, so the keyword index matches the vector index and a
+    real vault/repo does not sweep in ``.obsidian/`` / ``.git/`` /
+    ``node_modules/`` content (#5559).
+    """
     files = []
-    for root, _, names in os.walk(personal_dir):
+    for root, dirs, names in os.walk(personal_dir):
+        prune_index_dirs(dirs)
         for name in sorted(names):
+            if not is_indexable_file(name):
+                continue
             p = os.path.join(root, name)
             if not os.path.isfile(p):
                 continue
