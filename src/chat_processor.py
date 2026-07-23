@@ -113,7 +113,15 @@ class ChatProcessor:
         doc_freq = Counter()  # token -> how many memories contain it
         mem_token_cache = {}  # mem_id -> set of content tokens
         for mem in mem_entries:
-            toks = set(_content_tokens(mem["text"]))
+            searchable_text = " ".join(
+                part for part in (
+                    str(mem.get("text") or ""),
+                    str(mem.get("session_id") or ""),
+                    str(mem.get("category") or ""),
+                )
+                if part
+            )
+            toks = set(_content_tokens(searchable_text))
             mem_token_cache[mem["id"]] = toks
             for t in toks:
                 doc_freq[t] += 1

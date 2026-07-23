@@ -1199,14 +1199,19 @@ def _minimal_saved_memory_message(messages: List[Dict]) -> Optional[Dict]:
             break
     if not facts:
         return None
-    logger.info("[agent-intent] odysseus doc minimal memory facts=%s", len(facts))
+    logger.info(
+        "[agent-intent] odysseus doc minimal memory facts=%s",
+        len(facts),
+    )
     return {
         "role": "user",
         "content": (
-            "Saved user memory facts from Odysseus Brain. These are the same "
-            "user facts available in the normal prompt path. Use them when "
-            "the user asks for personalization, identity, background, "
-            "preferences, or anything about \"me\" or \"my\":\n"
+            "Saved user memory facts from Odysseus Brain. These are authoritative "
+            "for questions about the user. Answer only from these facts. Do not infer, "
+            "expand, recommend, or add unstated details. If the facts do not answer the "
+            "question, say that the answer is not stored. Use them when the user asks "
+            "about personalization, identity, background, preferences, or anything "
+            "about \"me\" or \"my\":\n"
             + "\n".join(f"- {fact}" for fact in facts)
         ),
     }
@@ -1372,7 +1377,7 @@ def _looks_like_memory_identity_turn(text: str) -> bool:
     q = re.sub(r"\bhwho\b", "who", q)
     return bool(re.search(
         r"\b("
-        r"who am i|who i am|what'?s my name|what is my name|where do i live|"
+        r"who am i|who i am|what'?s my\b|what is my\b|where do i live|"
         r"what do you know about me|about me|relate to me|use what you know|"
         r"remember\b|forget\b|my preference|my preferences|i prefer|"
         r"my memory|memories about me"
@@ -3101,7 +3106,7 @@ async def stream_agent_loop(
             "[agent-intent] odysseus notes minimal prompt active messages=%s",
             len(messages),
         )
-    elif _ody_qwen_finetune_model and not plan_mode and not approved_plan and not guide_only:
+    elif (_ody_qwen_finetune_model or _ody_memory_identity_turn) and not plan_mode and not approved_plan and not guide_only:
         messages = _minimal_odysseus_general_messages(
             messages,
             include_memory=True,
@@ -3275,6 +3280,7 @@ async def stream_agent_loop(
     # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
     # so the user can resume instead of the turn silently stalling.
     _exhausted_rounds = False
+    _explicit_remember_injected = False
 
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -3593,6 +3599,31 @@ async def stream_agent_loop(
             if _ody_doc_finetune_mode
             else round_response
         )
+        # Small local models sometimes acknowledge an explicit memory request
+        # without actually calling manage_memory. For a narrow "remember ..."
+        # request, supply the missing write call rather than silently losing it.
+        if not native_tool_calls and not _explicit_remember_injected:
+            _remember_match = re.match(
+                r"^\s*(?:please\s+)?remember(?:\s+that|\s+this\s*[:,-]?)?\s+(.+?)\s*$",
+                _last_user,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if _remember_match:
+                _memory_text = _remember_match.group(1).strip()
+                if _memory_text:
+                    native_tool_calls.append({
+                        "name": "manage_memory",
+                        "arguments": json.dumps({
+                            "action": "add",
+                            "text": _memory_text,
+                        }),
+                    })
+                    _explicit_remember_injected = True
+                    logger.info(
+                        "[agent] injected manage_memory add for explicit remember request"
+                    )
+
+
         tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
             _normalized_doc_round,
             native_tool_calls,
