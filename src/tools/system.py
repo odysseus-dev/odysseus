@@ -555,6 +555,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
     ("POST",   "/api/cookbook/packages/install"),
     ("POST",   "/api/cookbook/rebuild-engine"),
     ("POST",   "/api/cookbook/kill-pid"),
+    ("POST",   "/api/cookbook/stop-session"),
     # Use the named tools (download_model / serve_model) — they handle
     # host-name resolution, per-host env_prefix, AND register the task
     # in cookbook state so it shows in the UI + list_downloads. Hitting
@@ -679,6 +680,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "Don't POST /api/cookbook/rebuild-engine via app_api — engine rebuild mutates local or remote host state. Use the dedicated Cookbook UI/flow instead.", "exit_code": 1}
         if "/api/cookbook/kill-pid" in path:
             return {"error": "Don't POST /api/cookbook/kill-pid via app_api — process signalling is host control. Use the dedicated Cookbook stop/diagnostic flow instead.", "exit_code": 1}
+        if "/api/cookbook/stop-session" in path:
+            return {"error": "Don't POST /api/cookbook/stop-session via app_api — session stop is host process control. Use stop_served_model, cancel_download, or the Cookbook UI stop flow instead.", "exit_code": 1}
         if "/api/model/download" in path:
             return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the venv env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
         if "/api/model/serve" in path:
