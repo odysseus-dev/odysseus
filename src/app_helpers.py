@@ -1,5 +1,6 @@
 # src/app_helpers.py
 import base64
+import json
 import logging
 import os
 
@@ -8,6 +9,37 @@ from fastapi.responses import HTMLResponse
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
+
+
+def _login_theme_json() -> str:
+    """Active profile theme as a script-safe JSON literal for the login page.
+
+    The pre-auth login page can't fetch /api/prefs/theme (401) and a fresh
+    device has nothing in localStorage, so without this it always renders the
+    built-in default. We inject the profile's active theme so login matches
+    the theme set in-app. Only a single-user instance is handled — with more
+    than one user there's no way to know whose theme to show before sign-in,
+    so we return "null" and let the client fall back to localStorage/default.
+    Returns the string "null" (a valid JS literal) on any miss or error.
+    """
+    try:
+        from src.constants import USER_PREFS_FILE
+        with open(USER_PREFS_FILE, "r", encoding="utf-8") as f:
+            users = (json.load(f) or {}).get("_users", {})
+        if len(users) != 1:
+            return "null"
+        theme = next(iter(users.values())).get("theme")
+        if not isinstance(theme, dict) or not theme.get("colors"):
+            return "null"
+        # Escape so the JSON can't break out of the surrounding <script>.
+        return (
+            json.dumps(theme)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+    except Exception:
+        return "null"
 
 def read_if_exists(path: str) -> str:
     """Read file if it exists, return empty string otherwise."""
@@ -46,6 +78,10 @@ def serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
         raise HTTPException(500, "Internal server error")
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
+    # Only the login page carries this placeholder; skip the prefs read for
+    # every other template (index, backgrounds) that doesn't need it.
+    if "{{LOGIN_THEME}}" in html:
+        html = html.replace("{{LOGIN_THEME}}", _login_theme_json())
     return HTMLResponse(html)
 
 

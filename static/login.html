@@ -23,7 +23,12 @@
   };
   var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
   try {
-    var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+    // Prefer the profile's active theme injected by the server (so the login
+    // page matches the in-app theme on ANY device, even a first visit with an
+    // empty localStorage). Falls back to this device's localStorage, then to
+    // the default :root palette below. The server substitutes a theme object
+    // or the literal null in the parenthesized slot on the next line.
+    var t = ({{LOGIN_THEME}}) || JSON.parse(localStorage.getItem('odysseus-theme'));
     var s = document.documentElement.style;
     if (t && t.colors) {
       var c = t.colors;
