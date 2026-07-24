@@ -4787,7 +4787,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     if (msgIndex < 0) return;
 
     const bodyEl = userMsgElement.querySelector('.body');
-    const currentText = (userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
+    let currentText = (userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
     currentText = currentText.replace(/\s*\[\d+ attachment\(s\)\]$/, '');
 
     // Replace body with an editable textarea
