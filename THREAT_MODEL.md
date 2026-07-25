@@ -72,7 +72,7 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 These are open, acknowledged, and contributor help is welcome:
 
-1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal.
+1. **Linux sandbox portability.** Agent `bash`, Python, tmux, and detached background commands run through a networkless bubblewrap profile with a cleared environment, private temp/home, a single writable workspace, credential-path overlays, read-only `.git` metadata, resource limits, and explicit hiding of Odysseus data/log roots even when they sit below a broader selected workspace. The Docker image includes bubblewrap. Sandboxed process execution fails closed when that profile is unavailable; a portable equivalent for non-Linux hosts is not implemented yet. The sandbox intentionally omits `/proc`, so commands that require process inspection degrade rather than gaining access to the app process namespace.
 
 2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
 

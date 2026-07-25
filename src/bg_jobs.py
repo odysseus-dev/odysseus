@@ -1,4 +1,4 @@
-"""Background job execution for the agent's `bash` tool.
+"""Sandboxed background job execution for the agent's `bash` tool.
 
 Long commands (installs, ffmpeg, model downloads) should NOT block the chat
 stream — a multi-minute held SSE connection is fragile (model-stops-early,
@@ -14,16 +14,17 @@ Design goals:
   * Bounded: a hard max-runtime marks a runaway job failed and STILL triggers
     a follow-up ("timed out"), so you always hear back.
 
-This module only owns launch + state. The monitor / agent re-invocation lives
-in the caller (so this stays import-light and unit-testable).
+This module only owns launch + state. Model commands execute inside the same
+Linux bubblewrap profile as foreground Bash; a tiny isolated Python wrapper
+outside the sandbox only records output and the exit code. The monitor / agent
+re-invocation lives in the caller (so this stays import-light and unit-testable).
 """
 
 from __future__ import annotations
 
 import json
-import os
-import shlex
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -32,13 +33,15 @@ from typing import Any, Dict, List, Optional
 from core.atomic_io import atomic_write_json
 from core.platform_compat import (
     detached_popen_kwargs,
-    find_bash,
-    git_bash_path,
     kill_process_tree,
     pid_alive,
 )
 
 from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
+from src.execution_sandbox import (
+    environment_for_sandbox_launcher,
+    sandbox_command,
+)
 
 _JOBS_DIR = Path(BG_JOBS_DIR)
 _STORE = Path(BG_JOBS_FILE)
@@ -52,6 +55,35 @@ _MAX_OUTPUT_CHARS = 16000
 # files) is kept before pruning, so neither the store nor data/bg_jobs/ grows
 # without bound. The agent has already consumed the result by then.
 _RETENTION_S = 3600  # 1 hour after follow-up
+
+_DETACHED_SANDBOX_WRAPPER = """
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+argv = json.loads(sys.argv[1])
+log_path = Path(sys.argv[2])
+exit_path = Path(sys.argv[3])
+code = 1
+try:
+    with log_path.open("wb") as output:
+        completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            env={},
+            check=False,
+        )
+        code = int(completed.returncode)
+except Exception as exc:
+    try:
+        log_path.write_text(f"sandbox launch failed: {exc}\\n", encoding="utf-8")
+    except Exception:
+        pass
+exit_path.write_text(str(code), encoding="utf-8")
+""".strip()
 
 
 def _load() -> Dict[str, Dict[str, Any]]:
@@ -91,51 +123,30 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     log_path = _JOBS_DIR / f"{job_id}.log"
     exit_path = _JOBS_DIR / f"{job_id}.exit"
 
-    # The user command goes in its OWN script file, run as a child `bash`. This
-    # is what isolates it: an `exit` inside it only ends that child (so the
-    # wrapper still records the exit code), and — unlike textually wrapping the
-    # command in `( … )` — the wrapper can't be broken by an unbalanced paren or
-    # a trailing line-continuation in the command. `$?` is the child's real
-    # exit status.
-    bash = find_bash()
-    if bash:
-        # POSIX, or Windows with Git Bash/WSL. The user command goes in its OWN
-        # script file, run as a child `bash` — an `exit` inside it only ends
-        # that child (so the wrapper still records the exit code), and an
-        # unbalanced paren / trailing line-continuation in the command can't
-        # break the wrapper. `$?` is the child's real exit status. Paths are
-        # emitted as POSIX (forward-slash) + shell-quoted so Git Bash on Windows
-        # handles drive paths and spaces correctly.
-        cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-        cmd_path.write_text(command + "\n", encoding="utf-8")
-        lp, xp, cp = (shlex.quote(git_bash_path(p)) for p in (log_path, exit_path, cmd_path))
-        script_path = _JOBS_DIR / f"{job_id}.sh"
-        script_path.write_text(
-            f"bash {cp} > {lp} 2>&1\n"
-            f"echo $? > {xp}\n",
-            encoding="utf-8",
-        )
-        argv = [bash, str(script_path)]
-    else:
-        # Windows without any bash installed: cmd.exe wrapper. The command runs
-        # in its own child .cmd so %ERRORLEVEL% is the command's real exit code.
-        child_path = _JOBS_DIR / f"{job_id}.child.cmd"
-        child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")
-        script_path = _JOBS_DIR / f"{job_id}.cmd"
-        script_path.write_text(
-            "@echo off\r\n"
-            f'call "{child_path}" > "{log_path}" 2>&1\r\n'
-            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
-            encoding="utf-8",
-        )
-        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+    cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+    cmd_path.write_text(command + "\n", encoding="utf-8")
+    sandbox_argv = sandbox_command(
+        ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
+        workspace=cwd or "",
+        readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
+    )
+    argv = [
+        sys.executable,
+        "-I",
+        "-c",
+        _DETACHED_SANDBOX_WRAPPER,
+        json.dumps(sandbox_argv),
+        str(log_path),
+        str(exit_path),
+    ]
 
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
-        cwd=cwd or None,
+        cwd=None,
+        env=environment_for_sandbox_launcher(),
         **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 

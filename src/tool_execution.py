@@ -30,9 +30,13 @@ from src.tool_security import (
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.constants import (
+    AGENT_WORKSPACE_DIR,
+    MAX_OUTPUT_CHARS,
+    MAX_READ_CHARS,
+    MAX_DIFF_LINES,
+)
 from src.tool_utils import _truncate, get_mcp_manager
-
 
 class _MissingToolSecurityContext:
     pass
@@ -45,12 +49,11 @@ class _NoToolSecurityContext:
 _MISSING_TOOL_SECURITY_CONTEXT = _MissingToolSecurityContext()
 NO_TOOL_SECURITY_CONTEXT = _NoToolSecurityContext()
 
-# Persistent working directory for agent subprocesses.
-# Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
-# (/app/data) and the local data directory for manual installs.
-# Using this as cwd and HOME prevents the agent from silently creating files
-# in ephemeral container layers that are lost on the next rebuild.
-_AGENT_WORKDIR = DATA_DIR
+# Dedicated persistent workspace for agent subprocesses when the user did not
+# select an explicit workspace.  Keeping it below (rather than equal to)
+# DATA_DIR lets the process sandbox mount this directory without exposing app
+# databases, auth state, uploads, logs, or provider credentials.
+_AGENT_WORKDIR = AGENT_WORKSPACE_DIR
 
 
 
@@ -537,18 +540,9 @@ async def _direct_fallback(
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
 ) -> Optional[Dict]:
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
-    }
-
     try:
         ctx = {
             "progress_cb": progress_cb,
-            "subproc_env": _subproc_env,
             "session_id": session_id,
             "owner": owner,
         }
@@ -871,7 +865,21 @@ async def _execute_tool_block_impl(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            try:
+                rec = bg_jobs.launch(
+                    _bg_cmd,
+                    session_id=session_id,
+                    cwd=agent_cwd(),
+                )
+            except Exception as exc:
+                return (
+                    "bash (background): BLOCKED",
+                    {
+                        "error": f"Unable to launch sandboxed background job: {exc}",
+                        "exit_code": 1,
+                        "blocked": True,
+                    },
+                )
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
