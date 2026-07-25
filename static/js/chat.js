@@ -5738,6 +5738,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       const decoder = new TextDecoder();
       let buffer = '';
       let newText = '';
+      let _rwNextIsError = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -5747,6 +5748,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         buffer = lines.pop() || '';
 
         for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            if (line.slice(7).trim() === 'error') _rwNextIsError = true;
+            continue;
+          }
           if (!line.startsWith('data: ')) continue;
           const payload = line.slice(6).trim();
           if (payload === '[DONE]') continue;
@@ -5754,9 +5759,14 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             const data = JSON.parse(payload);
             // The endpoint streams `event: error\ndata: {error,status}` on
             // failure — surface it instead of silently hanging on "Rewriting…".
-            if (data.error) {
-              throw new Error(data.error || ('HTTP ' + (data.status || 500)));
+            // Provider HTTP errors (e.g. 401 auth failures) arrive with a "text"
+            // field rather than "error" -- check both, and also honour the SSE
+            // event type flag set above.
+            if (_rwNextIsError || data.error || data.text) {
+              _rwNextIsError = false;
+              throw new Error(data.error || data.text || ('HTTP ' + (data.status || 500)));
             }
+            _rwNextIsError = false;
             // Reasoning tokens (vLLM --reasoning-parser: Qwen3 / DeepSeek-R1)
             // arrive as separate {delta, thinking:true} chunks. They are NOT
             // the rewrite — fold them away so they don't pollute the result.
