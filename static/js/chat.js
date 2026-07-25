@@ -24,6 +24,16 @@ import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
 
+  // Does this error actually mean "the model cannot do tool calls"?
+  //
+  // Matching a bare "tool" or "auto" anywhere in the message catches far too
+  // much — a tool timing out, an MCP server dropping, anything mentioning
+  // "automatic" — and the consequences are not cosmetic: the real error is
+  // replaced, the UI leaves agent mode, and the choice is persisted. Match the
+  // provider's actual wording instead (Ollama: "<model> does not support
+  // tools").
+  const TOOLS_UNSUPPORTED_RE = /does\s*n[o']?t\s+support\s+tools?|tools?\s+(?:are\s+)?not\s+supported/i;
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -1861,8 +1871,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           if (m) errText = m[1].replace(/\\"/g, '"');
           else if (errBody.length < 200) errText = errBody;
         } catch {}
-        // Auto-switch to chat mode for tool-related errors
-        if (errText.includes('tool') || errText.includes('auto')) {
+        // Auto-switch to chat mode when the model genuinely cannot do tools.
+        // Anything else keeps its own error text and stays in agent mode.
+        if (TOOLS_UNSUPPORTED_RE.test(errText)) {
           errText = 'This model doesn\'t support agent tools — switched to Chat mode. Try again.';
           const _ab = document.getElementById('mode-agent-btn');
           const _cb = document.getElementById('mode-chat-btn');
@@ -3911,8 +3922,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
               let errMsg = `Error: ${err.message}`;
-              // Add hint for tool-call errors
-              if (err.message && (err.message.includes('tool') || err.message.includes('auto'))) {
+              // Add hint only when the error really is "no tool support" —
+              // appending it to an unrelated failure sends the user off
+              // switching modes instead of reading the actual error.
+              if (err.message && TOOLS_UNSUPPORTED_RE.test(err.message)) {
                 errMsg += '\n\nThis model may not support tools — try switching to Chat mode.';
               }
               typewriterInto(errorHolder, errMsg);
