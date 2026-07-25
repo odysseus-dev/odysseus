@@ -95,3 +95,15 @@ def test_frontend_uses_one_renderer_for_live_and_restored_cards():
     assert "export function renderAskUserCard" in renderer
     assert "renderAskUserCard(pendingAskUser" in renderer
     assert "if (role === 'user') removeAskUserCards(box)" in renderer
+
+
+def test_tool_approval_card_submits_only_opaque_decision_metadata():
+    chat = (ROOT / "static" / "js" / "chat.js").read_text(encoding="utf-8")
+    renderer = (ROOT / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+
+    assert "odysseus:tool-approval" in renderer
+    assert "approval_id: aq.approval_id" in renderer
+    assert "fd.append('tool_approval_id'" in chat
+    assert "fd.append('tool_approval_decision'" in chat
+    assert "fd.append('tool_approval_content'" not in chat
+    assert "aq.action.content || ''" in renderer

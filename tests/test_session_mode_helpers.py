@@ -26,7 +26,13 @@ def _load_db_helpers():
     """Load only the helper bodies under test, without importing SQLAlchemy."""
     db_path = Path(__file__).parents[1] / "core" / "database.py"
     tree = ast.parse(db_path.read_text(encoding="utf-8"), filename=str(db_path))
-    wanted = {"get_db_session", "get_session_mode", "set_session_mode"}
+    wanted = {
+        "get_db_session",
+        "get_session_mode",
+        "set_session_mode",
+        "get_session_security_mode",
+        "set_session_security_mode",
+    }
     helper_nodes = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in wanted
@@ -79,4 +85,24 @@ def test_get_session_mode_does_not_leak_on_error(monkeypatch):
     db, sess = _mock_session(monkeypatch)
     sess.query.return_value.filter.return_value.scalar.side_effect = RuntimeError("database is locked")
     assert db.get_session_mode("s1") is None
+    sess.close.assert_called_once()
+
+
+def test_security_mode_defaults_safely_and_validates_writes(monkeypatch):
+    db, sess = _mock_session(monkeypatch)
+    sess.query.return_value.filter.return_value.scalar.return_value = "unexpected"
+
+    assert db.get_session_security_mode("s1") == "sandbox"
+    assert db.set_session_security_mode("s1", "not-a-mode") is False
+    sess.query.return_value.filter.return_value.update.assert_not_called()
+
+
+def test_security_mode_persists_valid_value(monkeypatch):
+    db, sess = _mock_session(monkeypatch)
+
+    assert db.set_session_security_mode("s1", "ask") is True
+    sess.query.return_value.filter.return_value.update.assert_called_once_with(
+        {"security_mode": "ask"}
+    )
+    sess.commit.assert_called_once()
     sess.close.assert_called_once()

@@ -43,6 +43,7 @@ from core.platform_compat import (
 )
 
 from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
+from src.agent_run_policy import ExecutionProfile
 from src.execution_sandbox import (
     SandboxNetworkProfile,
     environment_for_sandbox_launcher,
@@ -52,7 +53,6 @@ from src.execution_sandbox import (
 from src.process_execution import (
     FULL_ACCESS_WARNING,
     ProcessExecutionMode,
-    configured_process_execution_mode,
     process_capability,
 )
 
@@ -220,6 +220,7 @@ def launch(
     session_id: str,
     cwd: Optional[str] = None,
     max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
+    execution_profile: str = ExecutionProfile.WORKSPACE_SANDBOX.value,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
@@ -248,7 +249,11 @@ def launch(
 
     try:
         _write_private_file(cmd_path, command + "\n")
-        execution_mode = configured_process_execution_mode()
+        execution_mode = (
+            ProcessExecutionMode.FULL_ACCESS
+            if execution_profile == ExecutionProfile.HOST_FULL_ACCESS.value
+            else ProcessExecutionMode.SANDBOX
+        )
         capability = process_capability().for_mode(execution_mode)
         if not capability.supports(network_profile):
             raise RuntimeError(
@@ -310,6 +315,7 @@ def launch(
             "ended_at": None,
             "exit_code": None,
             "max_runtime_s": max_runtime_s,
+            "execution_profile": execution_profile,
             "network_profile": network_profile.value,
             "execution_mode": execution_mode.value,
             "network_enforcement": (

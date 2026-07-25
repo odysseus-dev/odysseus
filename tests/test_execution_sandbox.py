@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from src.agent_run_policy import AgentRunPolicy
+from src.tool_capabilities import ToolRunSecurityContext
 from src.execution_sandbox import (
     SandboxNetworkProfile,
     SandboxUnavailable,
@@ -1302,3 +1304,82 @@ def test_detached_background_job_uses_sandbox(
     assert current["exit_code"] == 0
     assert "background-ok" in current["output"]
     assert (workspace / "bg-write.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_explicit_full_access_runs_bash_with_host_visibility(
+    tmp_path,
+    monkeypatch,
+):
+    import src.tool_execution as tool_execution
+    from src.agent_tools import ToolBlock
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside-visible"
+    outside.write_text("host", encoding="utf-8")
+    monkeypatch.setenv("ODYSSEUS_FULL_ACCESS_TEST", "visible")
+    monkeypatch.setattr(
+        tool_execution,
+        "owner_is_admin_or_single_user",
+        lambda owner: True,
+    )
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: None)
+
+    _, result = await tool_execution.execute_tool_block(
+        ToolBlock(
+            "bash",
+            (
+                f"test -e {outside!s} "
+                '&& test "$ODYSSEUS_FULL_ACCESS_TEST" = visible '
+                "&& printf host-ok"
+            ),
+        ),
+        owner="admin",
+        workspace=str(workspace),
+        security_context=ToolRunSecurityContext(),
+        run_policy=AgentRunPolicy.for_mode("full_access"),
+    )
+
+    assert result["exit_code"] == 0
+    assert "host-ok" in result["output"]
+
+
+def test_explicit_full_access_background_job_uses_host_profile(
+    tmp_path,
+    monkeypatch,
+):
+    from src import bg_jobs
+
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside-visible"
+    outside.write_text("host", encoding="utf-8")
+    monkeypatch.setenv("ODYSSEUS_FULL_ACCESS_TEST", "visible")
+    monkeypatch.setattr(bg_jobs, "_JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(bg_jobs, "_STORE", tmp_path / "jobs.json")
+
+    record = bg_jobs.launch(
+        (
+            f"test -e {outside!s} "
+            '&& test "$ODYSSEUS_FULL_ACCESS_TEST" = visible '
+            f'&& test "$(pwd)" = "{workspace!s}" '
+            "&& printf host-background-ok"
+        ),
+        session_id="full-access-session",
+        cwd=str(workspace),
+        max_runtime_s=10,
+        execution_profile="host_full_access",
+    )
+    deadline = time.time() + 10
+    current = record
+    while current.get("status") == "running" and time.time() < deadline:
+        time.sleep(0.05)
+        current = bg_jobs.get(record["id"]) or current
+
+    assert current["status"] == "done", current
+    assert current["exit_code"] == 0
+    assert "host-background-ok" in current["output"]
+    assert current["execution_profile"] == "host_full_access"
