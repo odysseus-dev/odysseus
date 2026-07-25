@@ -56,7 +56,26 @@ def _fork_handler(router):
 
 
 def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
+    import core.database as database
+
     monkeypatch.setattr(mod, "_verify_session_owner", lambda *a, **k: None)
+    provenance = {
+        "external_untrusted_context_seen": True,
+        "workspace_untrusted_context_seen": False,
+        "odysseus_untrusted_context_seen": False,
+        "private_data_context_seen": False,
+    }
+    merged = []
+    monkeypatch.setattr(
+        database,
+        "get_session_agent_provenance",
+        lambda session_id: provenance,
+    )
+    monkeypatch.setattr(
+        database,
+        "merge_session_agent_provenance",
+        lambda session_id, state: merged.append((session_id, state)) or True,
+    )
 
     source = _FakeSession(name="Original", owner="alice")
     source.history = [
@@ -87,3 +106,4 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
     # ...and the source session's _db_id values are untouched.
     assert source.history[0].metadata["_db_id"] == "src-0"
     assert source.history[1].metadata["_db_id"] == "src-1"
+    assert merged == [(result["id"], provenance)]

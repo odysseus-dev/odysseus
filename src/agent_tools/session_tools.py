@@ -447,9 +447,23 @@ async def manage_session(content: str, session_id: Optional[str] = None, owner: 
             if keep_count > 0:
                 history = history[:keep_count]
             from core.models import ChatMessage as InMemoryMsg
+            from core.database import (
+                get_session_agent_provenance,
+                merge_session_agent_provenance,
+            )
             new_sess = _session_manager.get_session(new_sid)
             for msg in history:
-                new_sess.add_message(InMemoryMsg(msg["role"], msg["content"]))
+                new_sess.add_message(
+                    InMemoryMsg(
+                        msg["role"],
+                        msg["content"],
+                        msg.get("metadata"),
+                    )
+                )
+            merge_session_agent_provenance(
+                new_sid,
+                get_session_agent_provenance(target_sid),
+            )
             try:
                 from src.event_bus import fire_event
                 fire_event("session_created", owner)

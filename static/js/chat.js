@@ -2888,6 +2888,19 @@ import { loadPanel } from './panels.js';
                 if (!_isBg) _appendGeneratedImageBubble(json);
                 continue;
               }
+              if (json.type === 'provenance_update') {
+                const provenance = json.state && typeof json.state === 'object'
+                  ? json.state
+                  : {};
+                if (!_isBg) window.__odysseusSetProvenance?.(provenance);
+                if (sessionModule && typeof sessionModule.getSessions === 'function') {
+                  const currentMeta = sessionModule.getSessions().find(
+                    (item) => String(item.id) === String(streamSessionId)
+                  );
+                  if (currentMeta) currentMeta.agent_provenance = provenance;
+                }
+                continue;
+              }
               if (json.type === 'agent_prep') {
                 if (!_isBg) {
                   _cancelThinkingTimer();

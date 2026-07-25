@@ -33,5 +33,7 @@ from core.database import (  # explicit re-exports for IDE/type-checker visibili
     get_detailed_stats,
     update_session_last_accessed,
     get_session_by_id,
+    get_session_agent_provenance,
+    merge_session_agent_provenance,
     archive_session,
 )

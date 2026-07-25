@@ -14,7 +14,12 @@ from src.agent_run_policy import (
     parse_agent_run_mode,
 )
 from src.tool_approvals import ToolApprovalStore
-from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_tool
+from src.tool_capabilities import (
+    ToolRunSecurityContext,
+    ToolEffect,
+    capabilities_for_action,
+    capabilities_for_tool,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,11 +130,79 @@ def _pending(store, **overrides):
         "content": "printf exact",
         "workspace": "/tmp/workspace",
         "security_mode": "ask",
-        "external_untrusted_context_seen": True,
+        "security_context": ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
         "capabilities": capabilities_for_tool("bash"),
     }
     values.update(overrides)
     return store.create(**values)
+
+
+def test_private_read_is_classified_from_exact_action_and_requires_approval():
+    policy = AgentRunPolicy.for_mode("sandbox")
+    context = ToolRunSecurityContext()
+    read = '{"action":"list"}'
+    write = '{"action":"create","name":"daily"}'
+
+    assert capabilities_for_action("manage_tasks", read).effects == {
+        ToolEffect.READ_PRIVATE
+    }
+    assert policy.authorize(
+        "manage_tasks", context, read
+    ).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
+    assert policy.authorize(
+        "manage_tasks", context, write
+    ).outcome is AuthorizationOutcome.ALLOW_SANDBOXED
+    assert capabilities_for_action(
+        "manage_tasks", '{"action":"invented"}'
+    ).effects == {
+        ToolEffect.READ_PRIVATE,
+        ToolEffect.WRITE_PRIVATE,
+    }
+
+
+def test_private_context_requires_exact_approval_before_brokered_egress():
+    policy = AgentRunPolicy.for_mode("sandbox")
+    context = ToolRunSecurityContext(private_data_context_seen=True)
+
+    decision = policy.authorize("web_search", context, "private-derived query")
+
+    assert decision.outcome is AuthorizationOutcome.REQUIRE_APPROVAL
+    assert "private" in (decision.reason or "").lower()
+
+
+def test_workspace_context_requires_exact_approval_before_brokered_egress():
+    policy = AgentRunPolicy.for_mode("sandbox")
+    context = ToolRunSecurityContext(workspace_untrusted_context_seen=True)
+
+    decision = policy.authorize("web_search", context, "source-derived query")
+
+    assert decision.outcome is AuthorizationOutcome.REQUIRE_APPROVAL
+    assert "workspace" in (decision.reason or "").lower()
+
+
+def test_workspace_and_odysseus_untrusted_context_gate_high_impact_actions():
+    policy = AgentRunPolicy.for_mode("sandbox")
+
+    for context in (
+        ToolRunSecurityContext(workspace_untrusted_context_seen=True),
+        ToolRunSecurityContext(odysseus_untrusted_context_seen=True),
+    ):
+        assert policy.authorize(
+            "bash", context, "printf risky"
+        ).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
+
+
+def test_approval_digest_binds_complete_provenance_snapshot():
+    store = ToolApprovalStore()
+    context = ToolRunSecurityContext(
+        workspace_untrusted_context_seen=True,
+        private_data_context_seen=True,
+    )
+    pending = _pending(store, security_context=context)
+
+    assert pending.provenance == ("workspace_untrusted", "private_data")
 
 
 def test_approval_is_bound_to_exact_action_and_claimed_once():

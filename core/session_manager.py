@@ -26,6 +26,22 @@ from .models import set_session_manager_instance, get_session_manager_instance
 
 logger = logging.getLogger(__name__)
 
+def _db_agent_provenance(db_session: DbSession) -> Dict[str, bool]:
+    return {
+        "external_untrusted_context_seen": bool(
+            getattr(db_session, "agent_external_untrusted_seen", False)
+        ),
+        "workspace_untrusted_context_seen": bool(
+            getattr(db_session, "agent_workspace_untrusted_seen", False)
+        ),
+        "odysseus_untrusted_context_seen": bool(
+            getattr(db_session, "agent_odysseus_untrusted_seen", False)
+        ),
+        "private_data_context_seen": bool(
+            getattr(db_session, "agent_private_data_seen", False)
+        ),
+    }
+
 
 def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
     """Return a stable ISO timestamp for chat message metadata."""
@@ -151,6 +167,7 @@ class SessionManager:
             owner=getattr(db_session, "owner", None),
             is_important=getattr(db_session, "is_important", False) or False,
             security_mode=getattr(db_session, "security_mode", None) or "sandbox",
+            agent_provenance=_db_agent_provenance(db_session),
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -210,6 +227,7 @@ class SessionManager:
             owner=getattr(db_session, 'owner', None),
             is_important=getattr(db_session, 'is_important', False) or False,
             security_mode=getattr(db_session, "security_mode", None) or "sandbox",
+            agent_provenance=_db_agent_provenance(db_session),
         )
 
         # The rows just loaded are the whole transcript, so they — not the
@@ -495,6 +513,7 @@ class SessionManager:
             session.security_mode = (
                 getattr(db_session, "security_mode", None) or "sandbox"
             )
+            session.agent_provenance = _db_agent_provenance(db_session)
             return True
         except Exception as e:
             logger.error(f"Error syncing session metadata {session_id}: {e}")

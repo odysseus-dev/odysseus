@@ -40,6 +40,7 @@ from src.foreground_model_routing import (
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from src.execution_sandbox import network_profile_for_internet_preference
+from src.provenance import ContextSensitivity, ProvenanceOrigin
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
@@ -824,13 +825,24 @@ def setup_chat_routes(
                 research_ctx = await research_handler.call_research_service(
                     message, _r_ep, _r_model, llm_headers=_r_headers
                 )
-                research_message = untrusted_context_message("research context", research_ctx)
+                research_message = untrusted_context_message(
+                    "research context",
+                    research_ctx,
+                    origin=ProvenanceOrigin.EXTERNAL,
+                    sensitivity=ContextSensitivity.PUBLIC,
+                )
                 ctx.messages.insert(len(ctx.preface), research_message)
                 if foreground_policy.enabled:
                     getattr(ctx, "route_messages", ctx.messages).insert(
                         len(ctx.preface),
                         research_message,
                     )
+                from core.database import merge_session_agent_provenance
+                from src.provenance import provenance_from_messages
+                merge_session_agent_provenance(
+                    session,
+                    provenance_from_messages([research_message]),
+                )
             except Exception as e:
                 logger.error(f"Research failed: {e}")
 
@@ -1649,6 +1661,9 @@ def setup_chat_routes(
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
 
+            from core.database import get_session_agent_provenance
+            yield f"data: {json.dumps({'type': 'provenance_update', 'state': get_session_agent_provenance(session)})}\n\n"
+
             # The client sent a workspace the server refused to bind (deleted
             # folder, file path, sensitive dir, filesystem root). Tell it up
             # front so the UI can clear the pill instead of displaying a
@@ -2420,6 +2435,7 @@ def setup_chat_routes(
                                     "intent_nudge_exhausted",
                                     "ask_user",
                                     "plan_update",
+                                    "provenance_update",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _event_round = data.get("round", 1)
@@ -2705,8 +2721,19 @@ def setup_chat_routes(
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
-            msg = untrusted_context_message("injected research context", f"Research Context: {context}")
+            msg = untrusted_context_message(
+                "injected research context",
+                f"Research Context: {context}",
+                origin=ProvenanceOrigin.EXTERNAL,
+                sensitivity=ContextSensitivity.PUBLIC,
+            )
             sess.add_message(ChatMessage(msg["role"], msg["content"], metadata=msg.get("metadata")))
+            from core.database import merge_session_agent_provenance
+            from src.provenance import provenance_from_messages
+            merge_session_agent_provenance(
+                session_id,
+                provenance_from_messages([msg]),
+            )
             session_manager.save_sessions()
             return {"status": "context_injected"}
         except KeyError:

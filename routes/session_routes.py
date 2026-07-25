@@ -269,8 +269,25 @@ def setup_session_routes(
             last_msg_map = {}
             mode_map = {}
             security_mode_map = {}
+            provenance_map = {}
             msg_count_map = {}
-            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.security_mode, DbSession.message_count).filter(DbSession.archived == False)
+            q = db.query(
+                DbSession.id,
+                DbSession.folder,
+                DbSession.total_input_tokens,
+                DbSession.total_output_tokens,
+                DbSession.is_important,
+                DbSession.created_at,
+                DbSession.updated_at,
+                DbSession.last_message_at,
+                DbSession.mode,
+                DbSession.security_mode,
+                DbSession.message_count,
+                DbSession.agent_external_untrusted_seen,
+                DbSession.agent_workspace_untrusted_seen,
+                DbSession.agent_odysseus_untrusted_seen,
+                DbSession.agent_private_data_seen,
+            ).filter(DbSession.archived == False)
             q = owner_filter(q, DbSession, user)
             rows = q.all()
             for row in rows:
@@ -288,6 +305,20 @@ def setup_session_routes(
                 )
                 mode_map[row.id] = row.mode
                 security_mode_map[row.id] = row.security_mode or "sandbox"
+                provenance_map[row.id] = {
+                    "external_untrusted_context_seen": bool(
+                        row.agent_external_untrusted_seen
+                    ),
+                    "workspace_untrusted_context_seen": bool(
+                        row.agent_workspace_untrusted_seen
+                    ),
+                    "odysseus_untrusted_context_seen": bool(
+                        row.agent_odysseus_untrusted_seen
+                    ),
+                    "private_data_context_seen": bool(
+                        row.agent_private_data_seen
+                    ),
+                }
                 msg_count_map[row.id] = row.message_count or 0
             # Sessions with active documents that have content
             from sqlalchemy import func
@@ -322,6 +353,7 @@ def setup_session_routes(
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
                      "security_mode": security_mode_map.get(s.id, "sandbox"),
+                     "agent_provenance": provenance_map.get(s.id, {}),
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
                     if not s.archived

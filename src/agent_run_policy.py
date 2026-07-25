@@ -14,11 +14,12 @@ from typing import Any
 
 import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
-    POST_EXTERNAL_BLOCKED_EFFECTS,
+    POST_SENSITIVE_BLOCKED_EFFECTS,
+    POST_UNTRUSTED_BLOCKED_EFFECTS,
     ToolCapabilities,
     ToolEffect,
     ToolRunSecurityContext,
-    capabilities_for_tool,
+    capabilities_for_action,
 )
 
 
@@ -81,6 +82,7 @@ _ASK_RISK_EFFECTS = frozenset(
 
 _SANDBOX_ALWAYS_APPROVE_EFFECTS = frozenset(
     {
+        ToolEffect.READ_PRIVATE,
         ToolEffect.NETWORK_EGRESS,
         ToolEffect.EXTERNAL_SIDE_EFFECT,
         ToolEffect.ADMIN_CHANGE,
@@ -152,9 +154,10 @@ class AgentRunPolicy:
         self,
         tool_name: Any,
         security_context: ToolRunSecurityContext,
+        content: Any = None,
     ) -> ToolAuthorization:
         """Classify an action without consulting model-generated text."""
-        capabilities = capabilities_for_tool(tool_name)
+        capabilities = capabilities_for_action(tool_name, content)
 
         if self.mode is AgentRunMode.FULL_ACCESS:
             return ToolAuthorization(
@@ -189,17 +192,21 @@ class AgentRunPolicy:
                 capabilities,
             )
 
-        if (
-            tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED
-            and security_context.external_untrusted_context_seen
-            and capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
+        if security_context.sensitive_data_context_seen and (
+            capabilities.effects & POST_SENSITIVE_BLOCKED_EFFECTS
         ):
             return ToolAuthorization(
                 AuthorizationOutcome.REQUIRE_APPROVAL,
-                (
-                    "External untrusted context influenced this run; "
-                    "this exact action requires user approval."
-                ),
+                "Workspace or private data influenced this thread; this exact egress action requires user approval.",
+                capabilities,
+            )
+
+        if security_context.any_untrusted_context_seen and (
+            capabilities.effects & POST_UNTRUSTED_BLOCKED_EFFECTS
+        ):
+            return ToolAuthorization(
+                AuthorizationOutcome.REQUIRE_APPROVAL,
+                "Untrusted context influenced this thread; this exact action requires user approval.",
                 capabilities,
             )
 

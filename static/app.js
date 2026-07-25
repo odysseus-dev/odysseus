@@ -852,6 +852,9 @@ function initializeEventListeners() {
     if (typeof window.__odysseusSetSecurityMode === 'function') {
       window.__odysseusSetSecurityMode('sandbox');
     }
+    if (typeof window.__odysseusSetProvenance === 'function') {
+      window.__odysseusSetProvenance({});
+    }
     // Reset research overflow dot (but don't touch research state — caller manages that)
     const _overflowRes = el('overflow-research-btn');
     if (_overflowRes) _overflowRes.classList.remove('active');
@@ -1895,6 +1898,26 @@ function initializeEventListeners() {
     });
     window.__odysseusSetSecurityMode = setSecurityMode;
     setSecurityMode(loadToggleState().security_mode || 'sandbox');
+  })();
+
+  // ── Monotonic thread provenance indicator ──
+  (function initAgentProvenanceIndicator() {
+    const indicator = el('agent-provenance-indicator');
+    if (!indicator) return;
+    window.__odysseusSetProvenance = (rawState) => {
+      const state = rawState && typeof rawState === 'object' ? rawState : {};
+      const labels = [];
+      if (state.external_untrusted_context_seen) labels.push('External');
+      if (state.workspace_untrusted_context_seen) labels.push('Workspace');
+      if (state.odysseus_untrusted_context_seen) labels.push('Odysseus');
+      if (state.private_data_context_seen) labels.push('Private');
+      indicator.hidden = labels.length === 0;
+      indicator.textContent = labels.length ? `Context: ${labels.join(' · ')}` : '';
+      indicator.title = labels.length
+        ? `This thread has seen ${labels.join(', ')} context. These labels only accumulate; policy may require exact approval before later actions.`
+        : '';
+    };
+    window.__odysseusSetProvenance({});
   })();
 
   (function initPlanToggle() {

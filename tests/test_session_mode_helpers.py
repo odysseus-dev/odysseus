@@ -32,6 +32,8 @@ def _load_db_helpers():
         "set_session_mode",
         "get_session_security_mode",
         "set_session_security_mode",
+        "get_session_agent_provenance",
+        "merge_session_agent_provenance",
     }
     helper_nodes = [
         node for node in tree.body
@@ -104,5 +106,47 @@ def test_security_mode_persists_valid_value(monkeypatch):
     sess.query.return_value.filter.return_value.update.assert_called_once_with(
         {"security_mode": "ask"}
     )
+    sess.commit.assert_called_once()
+    sess.close.assert_called_once()
+
+
+def test_agent_provenance_read_defaults_and_maps_all_dimensions(monkeypatch):
+    db, sess = _mock_session(monkeypatch)
+    sess.query.return_value.filter.return_value.first.return_value = (
+        True,
+        False,
+        True,
+        True,
+    )
+
+    assert db.get_session_agent_provenance("s1") == {
+        "external_untrusted_context_seen": True,
+        "workspace_untrusted_context_seen": False,
+        "odysseus_untrusted_context_seen": True,
+        "private_data_context_seen": True,
+    }
+    sess.close.assert_called_once()
+
+
+def test_agent_provenance_merge_only_sets_true_bits(monkeypatch):
+    db, sess = _mock_session(monkeypatch)
+    sess.query.return_value.filter.return_value.update.return_value = 1
+
+    assert db.merge_session_agent_provenance(
+        "s1",
+        {
+            "external_untrusted_context_seen": False,
+            "workspace_untrusted_context_seen": True,
+            "odysseus_untrusted_context_seen": False,
+            "private_data_context_seen": True,
+        },
+    ) is True
+    _, kwargs = sess.query.return_value.filter.return_value.update.call_args
+    values = sess.query.return_value.filter.return_value.update.call_args.args[0]
+    assert values == {
+        "agent_workspace_untrusted_seen": True,
+        "agent_private_data_seen": True,
+    }
+    assert kwargs == {"synchronize_session": False}
     sess.commit.assert_called_once()
     sess.close.assert_called_once()

@@ -528,6 +528,7 @@ async def run_teacher_inline(
     active_email: Optional[Dict[str, str]] = None,
     security_mode: str = "sandbox",
     external_untrusted_context_seen: bool = False,
+    provenance_state: Optional[Dict[str, bool]] = None,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ):
     """Async generator. Yields SSE event strings.
@@ -643,6 +644,7 @@ async def run_teacher_inline(
         active_email=active_email,
         security_mode=security_mode,
         external_untrusted_context_seen=external_untrusted_context_seen,
+        provenance_state=provenance_state,
         network_profile=network_profile,
         _is_teacher_run=True,
     ):

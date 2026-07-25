@@ -109,6 +109,7 @@ class Session:
     is_important: bool = False
     message_count: int = 0
     security_mode: str = "sandbox"
+    agent_provenance: Optional[Dict[str, bool]] = None
 
     def __post_init__(self):
         if self.headers is None:
@@ -116,6 +117,13 @@ class Session:
         # Ensure each session gets its OWN list (not the shared dataclass default)
         if self.history is None:
             self.history = []
+        if self.agent_provenance is None:
+            self.agent_provenance = {
+                "external_untrusted_context_seen": False,
+                "workspace_untrusted_context_seen": False,
+                "odysseus_untrusted_context_seen": False,
+                "private_data_context_seen": False,
+            }
 
     @property
     def _history(self) -> List[ChatMessage]:

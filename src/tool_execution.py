@@ -739,6 +739,7 @@ async def execute_tool_block(
             authorization = run_policy.authorize(
                 getattr(block, "tool_type", None),
                 security_context,
+                getattr(block, "content", None),
             )
             if authorization.outcome is AuthorizationOutcome.REQUIRE_APPROVAL:
                 return (

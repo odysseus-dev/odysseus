@@ -465,7 +465,13 @@ def test_empty_or_missing_history():
     assert _session_is_research_spinoff(SimpleNamespace()) is False
 
 
-async def _build_context_owner_probe(monkeypatch, request_state):
+async def _build_context_owner_probe(
+    monkeypatch,
+    request_state,
+    *,
+    agent_mode=False,
+    incognito=True,
+):
     captured = {
         "prefs_owner": None,
         "preface_owner": None,
@@ -498,6 +504,12 @@ async def _build_context_owner_probe(monkeypatch, request_state):
 
     def fake_build_context_preface(**kwargs):
         captured["preface_owner"] = kwargs["owner"]
+        if agent_mode:
+            captured["agent_private_context"] = {
+                "use_memory": kwargs["use_memory"],
+                "use_rag": kwargs["use_rag"],
+                "use_skills": kwargs["use_skills"],
+            }
         return [], [], []
 
     async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
@@ -507,6 +519,7 @@ async def _build_context_owner_probe(monkeypatch, request_state):
     monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
     monkeypatch.setattr(chat_helpers, "extract_preset", fake_extract_preset)
     monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
+    monkeypatch.setattr(chat_helpers, "fire_message_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(chat_helpers, "load_prefs_for_user", fake_load_prefs)
     monkeypatch.setattr(chat_helpers, "_normalize_model_id_from_cache", lambda sess: None)
     monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
@@ -537,9 +550,10 @@ async def _build_context_owner_probe(monkeypatch, request_state):
         request=request,
         chat_handler=SimpleNamespace(),
         chat_processor=SimpleNamespace(build_context_preface=fake_build_context_preface),
-        message="hello",
+        message="implement the requested fix" if agent_mode else "hello",
         session_id="session-1",
-        incognito=True,
+        incognito=incognito,
+        agent_mode=agent_mode,
     )
 
     return ctx, captured
@@ -579,4 +593,25 @@ async def test_build_chat_context_keeps_cookie_user_owner_scope(monkeypatch):
         "prefs_owner": "bob",
         "preface_owner": "bob",
         "compact_owner": "bob",
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_does_not_ambiently_fetch_private_account_context(
+    monkeypatch,
+):
+    _, captured = await _build_context_owner_probe(
+        monkeypatch,
+        {
+            "api_token": False,
+            "current_user": "alice",
+        },
+        agent_mode=True,
+        incognito=False,
+    )
+
+    assert captured["agent_private_context"] == {
+        "use_memory": False,
+        "use_rag": False,
+        "use_skills": False,
     }
