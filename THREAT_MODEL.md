@@ -60,6 +60,16 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 **Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
 
+### Agent Run Authority
+
+Model output requests an action; it does not authorize one. `src/tool_capabilities.py` classifies each built-in tool's effects and result integrity, while `src/agent_run_policy.py` combines those fixed classifications with the thread's server-owned security mode:
+
+- **Ask:** public and workspace observation can proceed, but private reads, writes, code execution, egress, external side effects, UI effects, admin changes, destructive actions, and unknown tools require an exact approval.
+- **Sandbox (default):** code execution stays inside the workspace sandbox. Network egress, external side effects, admin changes, and destructive actions always require an exact approval. Once external untrusted context has influenced the run, any later high-impact action also requires approval.
+- **Full access:** an admin or intentional single-user deployment may explicitly opt into direct execution with that user's normal OS permissions. This is never the default, and route, agent-loop, and dispatcher gates reject it for non-admin users.
+
+An approval is an opaque, expiring, one-use server record bound to the owner, session, origin run, exact tool name and input, workspace, security mode, effect classification, and external-context state. The browser submits only the opaque approval ID and the user's approve/deny decision. On approval, the server executes its sealed copy before the next model turn; natural-language confirmation and a model-repeated or modified command carry no authority.
+
 ## Security Headers
 
 `core/middleware.py:SecurityHeadersMiddleware` sets headers on every response:

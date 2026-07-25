@@ -126,6 +126,10 @@ class SessionResponse(BaseModel):
     model: str = Field(..., description="Model being used")
     rag: bool = Field(default=False, description="RAG enabled")
     archived: bool = Field(default=False, description="Whether session is archived")
+    security_mode: str = Field(
+        default="sandbox",
+        description="Agent run authority mode: ask, sandbox, or full_access",
+    )
 
 
 class MemoryResponse(BaseModel):

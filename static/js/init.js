@@ -86,6 +86,16 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
         if (_agent) _agent.style.display = 'none';
         if (_chat) { _chat.classList.add('active'); _chat.click?.(); }
       }
+      if (data.is_admin === false) {
+        const securitySelect = document.getElementById('agent-security-mode');
+        const fullAccess = securitySelect?.querySelector(
+          'option[value="full_access"]'
+        );
+        if (fullAccess) fullAccess.remove();
+        if (securitySelect?.value === 'full_access') {
+          window.__odysseusSetSecurityMode?.('sandbox');
+        }
+      }
     } catch (_) { /* DOM not ready or unexpected shape — UI gates are non-fatal */ }
   } catch (_) { /* anonymous / loopback mode — nothing to do */ }
 })();
