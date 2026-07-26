@@ -897,6 +897,11 @@ def _get_inpaint_pipe():
     model_path = _args.model
     torch_dtype = DTYPE_MAP.get(_args.dtype, torch.bfloat16)
 
+    target_device = _target_device()
+    use_offload = _args.cpu_offload
+    if target_device != "cuda" and use_offload:
+        use_offload = False
+
     # Check if the main pipeline IS already an inpaint pipeline
     pipe_cls_name = type(_pipe).__name__
     if 'inpaint' in pipe_cls_name.lower():
@@ -908,6 +913,8 @@ def _get_inpaint_pipe():
             img2img_cls = getattr(diffusers, img2img_cls_name, None)
             if img2img_cls:
                 _img2img_pipe = img2img_cls.from_pipe(_pipe)
+                if use_offload and _can_cpu_offload(target_device):
+                    _img2img_pipe.enable_model_cpu_offload()
                 logger.info(f"Also loaded img2img from inpaint pipe: {img2img_cls_name}")
         except Exception as e:
             logger.debug(f"Could not create img2img from inpaint: {e}")
@@ -925,6 +932,8 @@ def _get_inpaint_pipe():
         if cls:
             try:
                 _inpaint_pipe = cls.from_pipe(_pipe)
+                if use_offload and _can_cpu_offload(target_device):
+                    _inpaint_pipe.enable_model_cpu_offload()
                 logger.info(f"Loaded inpaint pipeline: {name}")
                 return _inpaint_pipe, 'inpaint'
             except Exception as e:
@@ -951,6 +960,8 @@ def _get_inpaint_pipe():
                     _img2img_pipe = _img2img_pipe.to(f"cuda:{harmonize_gpu}")
                 else:
                     _img2img_pipe = cls.from_pipe(_pipe, torch_dtype=torch_dtype)
+                    if use_offload and _can_cpu_offload(target_device):
+                        _img2img_pipe.enable_model_cpu_offload()
                 logger.info(f"Loaded img2img pipeline: {name}" + (f" on cuda:{harmonize_gpu}" if harmonize_gpu is not None else ""))
                 return _img2img_pipe, 'img2img'
             except Exception as e:
