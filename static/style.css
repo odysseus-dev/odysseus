@@ -41130,3 +41130,99 @@ body.theme-frosted .modal {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
 }
+
+/* ================================
+   ODYSSEUS HUD
+================================ */
+
+.odysseus-hud {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 9999;
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+
+  background: rgba(8, 12, 20, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+
+  color: white;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+
+  box-shadow:
+    0 0 18px rgba(67, 156, 255, 0.22),
+    inset 0 0 12px rgba(255, 255, 255, 0.04);
+}
+
+.odysseus-hud__core {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+
+  background: #63a9ff;
+
+  box-shadow:
+    0 0 8px #63a9ff,
+    0 0 18px rgba(99, 169, 255, 0.75);
+
+  animation: odysseus-idle-pulse 2.4s ease-in-out infinite;
+}
+
+.odysseus-hud__label {
+  line-height: 1;
+  opacity: 0.92;
+}
+
+@keyframes odysseus-idle-pulse {
+  0%,
+  100% {
+    transform: scale(0.92);
+    opacity: 0.72;
+  }
+
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+
+/* ================================
+   ODYSSEUS MICROPHONE CONTROL
+================================ */
+
+.voice-record-btn {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: rgba(8, 12, 20, 0.7);
+  color: white;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.voice-record-btn:hover {
+  border-color: rgba(99, 169, 255, 0.7);
+  box-shadow: 0 0 12px rgba(99, 169, 255, 0.3);
+}
+
+.voice-record-btn.is-recording {
+  background: rgba(160, 24, 32, 0.85);
+  box-shadow: 0 0 16px rgba(255, 70, 80, 0.55);
+}

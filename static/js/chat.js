@@ -758,6 +758,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       submitBtn.dataset.phase = 'processing';
       isStreaming = true;
       _setForegroundChatBusy(true);
+  window.OdysseusHUD?.setState("thinking");
       _startStallWatchdog();
     } else if (state === 'idle') {
       submitBtn.dataset.mode = '';
@@ -2260,6 +2261,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 }
                 // Don't do foreground final render — the checkBackgroundStream poll
                 // will detect 'completed' and reload history cleanly
+                window.OdysseusHUD?.setState("idle");
                 break;
               }
               // Force-close thinking if still open (model never output boundary)
@@ -3941,6 +3943,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       const _isBgFinally = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
 
       if (!_isBgFinally) {
+        if (window.OdysseusHUD?.getState() !== "speaking") {
+            window.OdysseusHUD?.setState("idle");
+        }
         // Reset button to idle state
         updateSubmitButton('idle', submitBtn);
 

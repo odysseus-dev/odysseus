@@ -206,14 +206,17 @@ class AITTSManager {
 
             utterance.onend = () => {
                 this.isPlaying = false;
+        window.OdysseusHUD?.setState("idle");
                 resolve();
             };
             utterance.onerror = (e) => {
                 this.isPlaying = false;
+        window.OdysseusHUD?.setState("idle");
                 reject(new Error('Browser TTS error: ' + e.error));
             };
 
-            window.speechSynthesis.speak(utterance);
+            window.OdysseusHUD?.setState("speaking");
+      window.speechSynthesis.speak(utterance);
             this.isPlaying = true;
         });
     }

@@ -94,10 +94,12 @@ function startBrowserSTT() {
     console.warn('Browser STT error:', e.error);
   };
 
+  window.OdysseusHUD?.setState("listening");
   _recognition.start();
 }
 
 function stopBrowserSTT() {
+  window.OdysseusHUD?.setState("thinking");
   if (_recognition) {
     try { _recognition.stop(); } catch (e) { /* ignore */ }
     _recognition = null;
@@ -109,22 +111,35 @@ function stopBrowserSTT() {
  * Send audio to server for transcription
  */
 async function transcribeOnServer(audioBlob) {
-  const formData = new FormData();
-  formData.append('file', audioBlob, 'audio.webm');
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.webm');
 
-  const res = await fetch('/api/stt/transcribe', {
-    method: 'POST',
-    credentials: 'same-origin',
-    body: formData,
-  });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.message || 'Transcription failed');
-  }
+    try {
+        const res = await fetch('/api/stt/transcribe', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: formData,
+            signal: controller.signal,
+        });
 
-  const data = await res.json();
-  return data.text || '';
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail?.message || 'Transcription failed');
+        }
+
+        const data = await res.json();
+        return data.text || '';
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error('Transcription timed out after 20 seconds');
+        }
+        throw error;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
 }
 
 /**
@@ -152,6 +167,7 @@ export function startRecording(onFileCreated, showToast, showError) {
   // Check for secure context (getUserMedia requires HTTPS or localhost)
   if (!window.isSecureContext) {
     if (showError) showError('Microphone requires HTTPS. Use a reverse proxy with SSL or access via localhost.');
+    window.OdysseusHUD?.setState("idle");
     _resetRecordingUI();
     return;
   }
@@ -175,6 +191,8 @@ export function startRecording(onFileCreated, showToast, showError) {
       };
 
       mediaRecorder.onstop = async () => {
+            window.OdysseusHUD?.setState("thinking");
+            const hudThinkingStartedAt = Date.now();
         stream.getTracks().forEach(track => track.stop());
 
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -212,12 +230,20 @@ export function startRecording(onFileCreated, showToast, showError) {
           if (onFileCreated) onFileCreated(audioFile);
         }
 
+        const hudElapsed = Date.now() - hudThinkingStartedAt;
+        if (hudElapsed < 800) {
+            await new Promise(resolve =>
+                window.setTimeout(resolve, 800 - hudElapsed)
+            );
+        }
+        window.OdysseusHUD?.setState("idle");
         _resetRecordingUI();
       };
 
       mediaRecorder.start();
       isRecording = true;
       recordingStartTime = new Date();
+        window.OdysseusHUD?.setState("listening");
 
       // Start browser STT if that's the provider
       if (_sttProvider === 'browser') {

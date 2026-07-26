@@ -1190,7 +1190,15 @@
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
             <button type="button" class="mode-toggle-btn" id="mode-chat-btn" aria-pressed="false">Chat</button>
           </div>
-          <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
+          <button
+                type="button"
+                id="voice-record-btn"
+                class="voice-record-btn"
+                aria-label="Start voice recording"
+                aria-pressed="false"
+                title="Push to talk"
+              >🎤</button>
+              <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>
           </button>
         </div>
@@ -2530,9 +2538,17 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260723compareicon1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/hudController.js"></script>
+<script type="module" src="/static/js/micControl.js"></script>
 <script type="module" src="/static/app.js?v=20260723tasksbulkfeedback1"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+
+<div id="odysseus-hud" class="odysseus-hud" aria-live="polite">
+  <div class="odysseus-hud__core"></div>
+  <span class="odysseus-hud__label">Idle</span>
+</div>
+
 </body>
 </html>
