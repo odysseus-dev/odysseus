@@ -190,7 +190,15 @@ class McpManager:
             server_params = StdioServerParameters(
                 command=command,
                 args=args,
-                env={**os.environ, **env} if env else None,
+                # `None` is not "inherit the parent environment" — the MCP SDK
+                # substitutes a minimal default one. Callers that pass an env
+                # (the Python builtins, via builtin_python_env) inherit
+                # everything; callers that pass none lose the whole container
+                # environment. The NPX browser server is in the second group,
+                # so it loses PLAYWRIGHT_BROWSERS_PATH and then reports
+                # `Browser "firefox" is not installed` with the browser sitting
+                # one directory away.
+                env={**os.environ, **(env or {})},
             )
 
             stack = AsyncExitStack()
@@ -477,6 +485,14 @@ class McpManager:
         tool_name = parts[2]
 
         session = self._sessions.get(server_id)
+        if not session and self.is_builtin(server_id):
+            # A stdio session can disappear without the process dying — the
+            # teardown races across asyncio tasks. The recovery below only runs
+            # when a call raises, which presupposes a session, so a missing one
+            # was terminal even though reconnecting would have fixed it.
+            logger.warning(f"No session for builtin {server_id}; attempting reconnect")
+            if await self._reconnect_builtin(server_id):
+                session = self._sessions.get(server_id)
         if not session:
             return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
 
@@ -537,7 +553,30 @@ class McpManager:
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
         import sys
-        from src.builtin_mcp import _BUILTIN_SERVERS, builtin_python_env
+        from src.builtin_mcp import (
+            _BUILTIN_SERVERS, _BUILTIN_NPX_SERVERS, _find_npx, builtin_python_env,
+        )
+
+        # NPX-backed builtins (the browser) are builtins too — is_builtin()
+        # says so — but this membership test only knew about the Python ones,
+        # so the browser could never be reconnected.
+        if server_id in _BUILTIN_NPX_SERVERS:
+            cfg = _BUILTIN_NPX_SERVERS[server_id]
+            await self.disconnect_server(server_id)
+            try:
+                ok = await self.connect_server(
+                    server_id=server_id,
+                    name=cfg["name"],
+                    transport="stdio",
+                    command=_find_npx(),
+                    args=cfg["args"],
+                )
+                if ok:
+                    logger.info(f"Reconnected builtin MCP server: {cfg['name']}")
+                return ok
+            except Exception as e:
+                logger.error(f"Failed to reconnect builtin MCP server {cfg['name']}: {e}")
+                return False
 
         if server_id not in _BUILTIN_SERVERS:
             return False
