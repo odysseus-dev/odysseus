@@ -3278,11 +3278,11 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
       _syncReminderClearButton();
     }
     sel.innerHTML = '';
-    const { priority, others } = sortedFolders(data.folders);
+    const { priority, others } = sortedFolders(data.folders, data.roles);
     for (const f of priority) {
       const opt = document.createElement('option');
       opt.value = f;
-      opt.textContent = folderDisplayName(f);
+      opt.textContent = folderDisplayName(f, data.roles && data.roles[f]);
       if (f === state._libFolder) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -3295,7 +3295,7 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
     for (const f of others) {
       const opt = document.createElement('option');
       opt.value = f;
-      opt.textContent = folderDisplayName(f);
+      opt.textContent = folderDisplayName(f, data.roles && data.roles[f]);
       if (f === state._libFolder) opt.selected = true;
       sel.appendChild(opt);
     }

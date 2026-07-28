@@ -470,6 +470,7 @@ def _resolve_folder(conn, preferred: str, role: str) -> str:
         "trash": ("\\Trash",),
         "archive": ("\\Archive", "\\All"),
         "junk": ("\\Junk",),
+        "sent": ("\\Sent",),
     }.get(role, ())
     for f in folders:
         decoded = f.decode() if isinstance(f, bytes) else str(f)
@@ -482,6 +483,7 @@ def _resolve_folder(conn, preferred: str, role: str) -> str:
         "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "Deleted Messages", "Deleted Items"),
         "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail"),
         "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
+        "sent": ("Sent", "[Gmail]/Sent Mail", "[Google Mail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent"),
     }.get(role, ())
     lower_map = {n.lower(): n for n in names}
     for candidate in candidates:
@@ -498,6 +500,8 @@ def _folder_role_from_name(name: str) -> str:
         return "junk"
     if "archive" in lower or "all mail" in lower:
         return "archive"
+    if "sent" in lower:
+        return "sent"
     return ""
 
 
@@ -979,6 +983,7 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     conn = None
     try:
         conn = _imap_connect(account)
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
         select_status, _ = conn.select(_q(folder), readonly=True)
         if select_status != "OK":
             raise ValueError(f"IMAP folder not found: {folder}")
@@ -1109,6 +1114,7 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     try:
         for folder in folders:
             try:
+                folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
                 status, _ = conn.select(_q(folder), readonly=True)
                 if status != "OK":
                     continue

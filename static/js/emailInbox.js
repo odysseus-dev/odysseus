@@ -441,14 +441,15 @@ async function loadFolders() {
     const data = await res.json();
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
-    _populateFolderSelect(select, data.folders);
+    _populateFolderSelect(select, data.folders, data.roles);
   } catch (e) {
     console.error('Failed to load folders:', e);
   }
 }
 
-export function sortedFolders(folders) {
+export function sortedFolders(folders, roles) {
   const roleOf = (folder) => {
+    if (roles && roles[folder]) return roles[folder];
     const f = String(folder || '').toLowerCase();
     if (f === 'inbox') return 'inbox';
     if (f.includes('sent')) return 'sent';
@@ -470,8 +471,14 @@ export function sortedFolders(folders) {
   return { priority: roleOrder.map(role => found.get(role)).filter(Boolean), others };
 }
 
-export function folderDisplayName(folder) {
+export function folderDisplayName(folder, role) {
   const raw = String(folder || '');
+  if (role === 'inbox') return 'INBOX';
+  if (role === 'archive') return 'Archive / All Mail';
+  if (role === 'junk') return 'Junk';
+  if (role === 'trash') return 'Trash';
+  if (role === 'sent') return 'Sent';
+  if (role === 'drafts') return 'Drafts';
   const f = raw.toLowerCase();
   if (f === 'inbox') return 'INBOX';
   if (f.includes('all mail')) return 'Archive / All Mail';
@@ -484,14 +491,14 @@ export function folderDisplayName(folder) {
   return raw;
 }
 
-function _populateFolderSelect(select, folders) {
+function _populateFolderSelect(select, folders, roles) {
   select.innerHTML = '';
-  const { priority, others } = sortedFolders(folders);
+  const { priority, others } = sortedFolders(folders, roles);
 
   for (const folder of priority) {
     const opt = document.createElement('option');
     opt.value = folder;
-    opt.textContent = folderDisplayName(folder);
+    opt.textContent = folderDisplayName(folder, roles && roles[folder]);
     if (folder === _currentFolder) opt.selected = true;
     select.appendChild(opt);
   }
@@ -506,7 +513,7 @@ function _populateFolderSelect(select, folders) {
   for (const folder of others) {
     const opt = document.createElement('option');
     opt.value = folder;
-    opt.textContent = folderDisplayName(folder);
+    opt.textContent = folderDisplayName(folder, roles && roles[folder]);
     if (folder === _currentFolder) opt.selected = true;
     select.appendChild(opt);
   }
