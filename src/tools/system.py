@@ -280,8 +280,21 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
+    # Normalize "add" -> "create": models that were not shown the enum sometimes
+    # emit {"action": "add", ...} (same failure class as manage_skills #4013).
+    if args.get("action") == "add":
+        args["action"] = "create"
     if not args.get("action") and any(args.get(k) is not None for k in ("task", "description", "schedule", "time", "day_of_week")):
         args["action"] = "create"
+    # Flatten a nested "task" object: {"action":"create","task":{"name":"foo",...}}
+    # is equivalent to {"action":"create","name":"foo",...} but some models emit
+    # the former. Hoist the inner fields so the rest of the handler sees them flat.
+    task_obj = args.get("task")
+    if isinstance(task_obj, dict):
+        for _k, _v in task_obj.items():
+            if args.get(_k) is None:
+                args[_k] = _v
+        args.pop("task", None)
     if args.get("task") and not args.get("name"):
         args["name"] = args["task"]
     if args.get("task") and not args.get("prompt"):
@@ -331,6 +344,11 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task_type = args.get("task_type", "llm")
             trigger_type = args.get("trigger_type", "schedule")
 
+            # When the model omits "prompt" but supplies "name", use the name
+            # as the prompt so a bare {"action":"create","name":"foo"} still
+            # produces a runnable task instead of an error.
+            if not args.get("prompt") and args.get("name"):
+                args["prompt"] = args["name"]
             if task_type in ("llm", "research") and not args.get("prompt"):
                 return {"error": "Prompt is required for llm/research tasks", "exit_code": 1}
             if task_type == "action" and not args.get("action_name"):
