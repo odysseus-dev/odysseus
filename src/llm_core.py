@@ -2228,6 +2228,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+            if tools:
+                payload["reasoning_effort"] = "none"
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)
