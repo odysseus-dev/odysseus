@@ -630,14 +630,15 @@ app.include_router(auth_router)
 
 @app.post("/api/activity/heartbeat")
 async def activity_heartbeat():
-    from src.interactive_gate import mark_browser_activity
+    from src.interactive_gate import mark_browser_activity, _enabled as _gate_enabled
     await mark_browser_activity()
-    async def _stop_background():
-        try:
-            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
-        except Exception:
-            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
-    asyncio.create_task(_stop_background())
+    if _gate_enabled():
+        async def _stop_background():
+            try:
+                await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
+            except Exception:
+                logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
+        asyncio.create_task(_stop_background())
     return {"ok": True}
 
 

@@ -63,6 +63,7 @@ _PASSIVE_EXACT_PATHS = {
     "/api/activity/heartbeat",
     "/api/client-perf",
     "/api/tasks/notifications",
+    "/api/tasks/runs/recent",
     "/api/research/active",
     "/api/email/urgency-state",
     # UI idle poll sibling of urgency-state; must not pre-empt background tasks.
