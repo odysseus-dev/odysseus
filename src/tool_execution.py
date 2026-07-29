@@ -687,7 +687,7 @@ async def _execute_tool_block_impl(
     if tool_policy and any(tool_policy.blocks(name) for name in policy_names):
         desc = f"{tool}: BLOCKED"
         result = {
-            "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",
+            "error": tool_policy.reason_for(tool),
             "exit_code": 1,
         }
         logger.warning("Tool policy blocked tool=%s", tool)

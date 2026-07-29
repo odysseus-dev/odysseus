@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Iterable, Mapping, Optional, Set, Tuple
+
+from src.tool_capabilities import blocked_after_external_context
 
 
 GUIDE_ONLY_DIRECTIVE = (
@@ -146,6 +148,9 @@ class ToolPolicy:
     mode: str = "normal"
     block_all_tool_calls: bool = False
     disable_mcp: bool = False
+    # Monotonic for the lifetime of an agent run.  It is server state derived
+    # from message metadata, never from model-visible prompt text.
+    external_context_seen: bool = False
 
     def all_disabled_names(self) -> Set[str]:
         return set(self.disabled_tools) | set(self.hidden_tools)
@@ -153,14 +158,43 @@ class ToolPolicy:
     def blocks(self, tool_name: Optional[str]) -> bool:
         if not tool_name:
             return False
-        return self.block_all_tool_calls or tool_name in self.disabled_tools or tool_name in self.hidden_tools
+        return (
+            self.block_all_tool_calls
+            or tool_name in self.disabled_tools
+            or tool_name in self.hidden_tools
+            or (self.external_context_seen and blocked_after_external_context(tool_name))
+        )
 
     def reason_for(self, tool_name: Optional[str]) -> str:
         if tool_name and tool_name in self.reasons:
             return self.reasons[tool_name]
         if self.block_all_tool_calls and self.mode == "guide_only":
             return "Tool use is disabled for this guide-only turn."
+        if self.external_context_seen and blocked_after_external_context(tool_name):
+            return (
+                "Tool use is blocked because this run contains untrusted external "
+                "context and the tool has not been granted safe server-owned capability."
+            )
         return "Tool use is disabled for this turn."
+
+    def with_external_context(self) -> "ToolPolicy":
+        """Return a policy with the irreversible external-context gate enabled."""
+        return self if self.external_context_seen else replace(self, external_context_seen=True, disable_mcp=True)
+
+
+def messages_contain_untrusted_context(messages: Iterable[object]) -> bool:
+    """Recognise the structured provenance emitted by ``untrusted_context_message``.
+
+    Do not scan content for wrapper strings: the server owns metadata and an
+    attacker must not be able to clear or manufacture authority by text alone.
+    """
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        metadata = message.get("metadata")
+        if isinstance(metadata, Mapping) and metadata.get("trusted") is False:
+            return True
+    return False
 
 
 def detect_guide_only_turn(message: object) -> Optional[str]:

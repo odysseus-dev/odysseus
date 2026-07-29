@@ -24,7 +24,10 @@ from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
-from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
+from src.tool_policy import (
+    GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy,
+    build_effective_tool_policy, messages_contain_untrusted_context,
+)
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -3141,6 +3144,14 @@ async def stream_agent_loop(
     if _upload_msg:
         messages = _insert_before_latest_user(messages, _upload_msg)
 
+    # This is an execution authority transition, not a prompt instruction.
+    # Once untrusted context is present it stays enabled for every subsequent
+    # model round and every tool in a same-batch response.
+    if messages_contain_untrusted_context(messages):
+        tool_policy = (tool_policy or build_effective_tool_policy()).with_external_context()
+        disabled_tools.update(tool_policy.all_disabled_names())
+        mcp_mgr = None
+
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
@@ -3682,6 +3693,13 @@ async def stream_agent_loop(
         active_email=active_email,
         workspace=workspace,
     )
+    # Prompt construction may add editor/email/skill/MCP context.  Re-check
+    # after that server-owned enrichment so later rounds inherit the gate even
+    # when the incoming request itself had no external-content message.
+    if messages_contain_untrusted_context(messages):
+        tool_policy = (tool_policy or build_effective_tool_policy()).with_external_context()
+        disabled_tools.update(tool_policy.all_disabled_names())
+        mcp_schemas = []
     if _ody_doc_finetune_mode and not plan_mode and not approved_plan and not guide_only:
         messages = _minimal_odysseus_doc_messages(
             messages,
@@ -3937,11 +3955,18 @@ async def stream_agent_loop(
                     if t.get("function", {}).get("name") not in disabled_tools
                     and t.get("name") not in disabled_tools
                 ]
+            if tool_policy and tool_policy.external_context_seen:
+                all_tool_schemas = [
+                    t for t in all_tool_schemas
+                    if not tool_policy.blocks(t.get("function", {}).get("name") or t.get("name"))
+                ]
         else:
             # Local: only MCP schemas when message suggests MCP tool usage
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            if tool_policy and tool_policy.external_context_seen:
+                all_tool_schemas = []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
@@ -5068,6 +5093,11 @@ async def stream_agent_loop(
             formatted = format_tool_result(desc, result)
             tool_results.append(formatted)
             tool_result_texts.append(formatted)
+            # Tool output is fed back as untrusted data.  Promote authority
+            # immediately, rather than waiting for the next model round, so a
+            # second call in the same model-produced batch cannot use the
+            # first result as an injection bridge to a higher-impact action.
+            tool_policy = (tool_policy or build_effective_tool_policy()).with_external_context()
             if (
                 _ody_doc_stream_create_mode
                 and block.tool_type == "create_document"
