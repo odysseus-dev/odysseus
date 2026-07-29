@@ -316,3 +316,24 @@ def test_validated_ips_strips_zone_id_and_drops_junk():
         ["93.184.216.34", "fe80::1%eth0", "not-an-ip", None, "2001:db8::5"]
     )
     assert [str(ip) for ip in got] == ["93.184.216.34", "fe80::1", "2001:db8::5"]
+
+
+def test_validated_ips_deduplicates_repeated_addresses():
+    """The resolver is getaddrinfo(host, None) with no socktype filter, so glibc
+    returns one record per socktype and a single-homed host arrives three times
+    over. Duplicates must collapse (first-seen order kept) or the connect
+    fallback wastes its shared deadline retrying one dead address."""
+    got = integrations._validated_ips(
+        ["93.184.216.34", "93.184.216.34", "93.184.216.34"]
+    )
+    assert [str(ip) for ip in got] == ["93.184.216.34"]
+
+    # Order is first-seen, and distinct addresses all survive.
+    got = integrations._validated_ips(
+        ["198.51.100.7", "93.184.216.34", "198.51.100.7", "2001:db8::5"]
+    )
+    assert [str(ip) for ip in got] == ["198.51.100.7", "93.184.216.34", "2001:db8::5"]
+
+    # A zone-id variant is the same address once stripped, so it collapses too.
+    got = integrations._validated_ips(["fe80::1%eth0", "fe80::1%eth1", "fe80::1"])
+    assert [str(ip) for ip in got] == ["fe80::1"]

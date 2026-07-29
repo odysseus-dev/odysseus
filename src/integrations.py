@@ -473,21 +473,33 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
 
 
 def _validated_ips(raw_ips: List[str]) -> List[ipaddress._BaseAddress]:
-    """Return every entry that parses as an IP address, order preserved.
+    """Return every entry that parses as an IP address, de-duplicated, order
+    preserved.
 
     check_outbound_url only reports ok when *all* of these classify as safe, so
     the whole list is guard-approved and any of them is a legitimate connect
     target. Skipping unparseable entries mirrors how the guard walks the same
     resolver output.
+
+    De-duplication matters because the resolver is getaddrinfo(host, None) with
+    no socktype filter, so glibc reports the same address once per socktype
+    (SOCK_STREAM/SOCK_DGRAM/SOCK_RAW) — a single-homed host comes back three
+    times. Without this, the connect fallback would spend the shared deadline
+    retrying one dead address instead of moving on to a genuinely different one.
     """
     ips: List[ipaddress._BaseAddress] = []
+    seen = set()
     for raw in raw_ips:
         if not isinstance(raw, str):
             continue
         try:
-            ips.append(ipaddress.ip_address(raw.split("%")[0]))  # strip IPv6 zone id
+            ip = ipaddress.ip_address(raw.split("%")[0])  # strip IPv6 zone id
         except ValueError:
             continue
+        if ip in seen:
+            continue
+        seen.add(ip)
+        ips.append(ip)
     return ips
 
 
