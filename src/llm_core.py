@@ -1046,7 +1046,18 @@ def _is_openai_hosted_chat_url(url: str) -> bool:
     except Exception:
         return False
     path = (parsed.path or "").rstrip("/")
-    return _host_match(url, "openai.com") and path.endswith("/chat/completions")
+    if not path.endswith("/chat/completions"):
+        return False
+    if _host_match(url, "openai.com"):
+        return True
+    # GitHub Copilot proxies OpenAI's GPT-5.x models through its own
+    # chat/completions endpoint and rejects the same reasoning_effort+tools
+    # combination as OpenAI's own host does (400 on e.g. gpt-5.6-sol) — apply
+    # the same guard there.
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url):
+        return True
+    return False
 
 
 def _model_disallows_reasoning_effort_with_chat_tools(model: str) -> bool:

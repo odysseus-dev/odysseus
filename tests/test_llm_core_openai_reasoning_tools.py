@@ -71,3 +71,31 @@ def test_non_gpt5_model_leaves_reasoning_effort_unchanged():
     )
 
     assert payload["reasoning_effort"] == "high"
+
+
+def test_copilot_chat_tools_force_gpt5_reasoning_effort_none():
+    # GitHub Copilot proxies OpenAI's GPT-5.x models through its own
+    # /chat/completions endpoint and 400s on reasoning_effort + tools the
+    # same way api.openai.com does — the guard must also cover it.
+    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5"]:
+        payload = {"tools": [_tool()], "reasoning_effort": "medium"}
+
+        llm_core._scrub_openai_chat_tool_reasoning(
+            payload,
+            "https://api.githubcopilot.com/chat/completions",
+            model,
+        )
+
+        assert payload["reasoning_effort"] == "none"
+
+
+def test_copilot_enterprise_chat_tools_force_gpt5_reasoning_effort_none():
+    payload = {"tools": [_tool()], "reasoning_effort": "medium"}
+
+    llm_core._scrub_openai_chat_tool_reasoning(
+        payload,
+        "https://copilot-api.example-enterprise.com/chat/completions",
+        "gpt-5.6-sol",
+    )
+
+    assert payload["reasoning_effort"] == "none"
