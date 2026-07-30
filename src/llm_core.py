@@ -1231,10 +1231,18 @@ def _omit_temperature(provider: str, model: str) -> bool:
 # even 0.0 — returns HTTP 400. Earlier Claude models (Opus 4.6 and below, every
 # Sonnet/Haiku) still accept temperature in [0.0, 1.0], so the omission must be
 # version-gated rather than applied to all `claude-*` models.
+#
+# The bare "Claude 5" generation (claude-opus-5, claude-sonnet-5, claude-fable-5
+# — no minor version number) dropped the same sampling params across every
+# model line, not just Opus. Confirmed via live probe 2026-07-30: Anthropic
+# returns HTTP 400 "`temperature` is deprecated for this model." for all three
+# when `temperature` is sent at all, so they need a second, family-wide check
+# since they don't carry a major.minor pair for the Opus-only version gate below.
 def _anthropic_rejects_temperature(model: str) -> bool:
-    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+)."""
+    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+, or the bare Claude 5 generation)."""
     if not isinstance(model, str) or not model:
         return False
+    model_lower = model.lower()
     # `(?<![a-z])` anchors "opus" to a word boundary so a substring match like
     # `oct-opus`/`octopus-4-8` can't be read as Opus (it would otherwise strip
     # temperature). Cap the minor at 1-2 digits and forbid a trailing digit so a
@@ -1242,10 +1250,14 @@ def _anthropic_rejects_temperature(model: str) -> bool:
     # minor match, kept) instead of reading the date `20250514` as a giant minor
     # that would falsely test >= 4.7. Dated 4.7+ snapshots (`claude-opus-4-7-
     # 20260201`) keep their explicit minor and are still matched.
-    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model.lower())
-    if not match:
-        return False
-    return (int(match.group(1)), int(match.group(2))) >= (4, 7)
+    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model_lower)
+    if match and (int(match.group(1)), int(match.group(2))) >= (4, 7):
+        return True
+    # Bare "-5" check: matches claude-opus-5, claude-sonnet-5, claude-fable-5,
+    # and dated snapshots thereof (e.g. claude-sonnet-5-20260615), but not
+    # dotted-version ids like claude-opus-4-5 (Opus 4.5, pre-4.7, still accepts
+    # temperature) since "5" there isn't directly adjacent to the family name.
+    return bool(re.search(r"(?<![a-z])(opus|sonnet|fable)[-_]?5(?!\d)", model_lower))
 
 # Reasoning effort level sent to Mistral thinking-capable models. Mistral's
 # API accepts "high", "medium", "low", "none" — see
