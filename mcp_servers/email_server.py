@@ -2216,28 +2216,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="send_email",
-            description=(
-                "Send a new email via SMTP. Provide recipient(s), subject, and body. "
-                "This sends immediately; for normal assistant-written email, prefer "
-                "draft_email so the user can review and send from Odysseus. "
-                "For replying to an existing thread, use reply_to_email instead. "
-                "Pass `account` to send from a non-default mailbox."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "to": {"type": "string", "description": "Recipient email address(es), comma-separated"},
-                    "subject": {"type": "string", "description": "Email subject line"},
-                    "body": {"type": "string", "description": "Plain text body"},
-                    "cc": {"type": "string", "description": "CC address(es), comma-separated (optional)"},
-                    "bcc": {"type": "string", "description": "BCC address(es), comma-separated (optional)"},
-                    **ACCOUNT_PROP,
-                },
-                "required": ["to", "subject", "body"],
-            },
-        ),
-        Tool(
             name="draft_email",
             description=(
                 "Create a new Odysseus email compose draft document. This DOES NOT send. "
@@ -2711,31 +2689,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=text)]
 
         elif name == "send_email":
-            to = arguments.get("to")
-            subject = arguments.get("subject")
-            body = arguments.get("body")
-            if not to or not subject or body is None:
-                return [TextContent(type="text", text="Error: to, subject, and body are required")]
-            result = _send_email(
-                to=to,
-                subject=subject,
-                body=body,
-                cc=arguments.get("cc"),
-                bcc=arguments.get("bcc"),
-                account=acct,
-            )
-            if "error" in result:
-                return [TextContent(type="text", text=f"Error: {result['error']}")]
-            if result.get("pending"):
-                return [TextContent(
-                    type="text",
-                    text=(
-                        f"Draft staged for approval (pending id: {result.get('pending_id')}). "
-                        "Nothing has been sent yet. Review and approve it in Odysseus before delivery."
-                    ),
-                )]
-            acct_note = f" (from {result['account']})" if result.get("account") else ""
-            return [TextContent(type="text", text=f"Sent email to {result['to']} with subject '{result['subject']}'{acct_note}.")]
+            return [TextContent(
+                type="text",
+                text="send_email is disabled. Use draft_email instead — it opens a reviewable "
+                     "Odysseus compose document with a Send button.",
+            )]
 
         elif name == "draft_email":
             to = arguments.get("to")
