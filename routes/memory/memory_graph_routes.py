@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from services.memory import MemoryManager
-from src.auth_helpers import get_current_user, require_privilege, require_user
+from src.auth_helpers import get_current_user, require_privilege
 from src.memory_graph import (
     DEFAULT_MAX_EDGES_PER_NODE,
     DEFAULT_MIN_SIMILARITY,
@@ -51,7 +51,7 @@ def setup_memory_graph_routes(memory_manager: MemoryManager, memory_vector=None)
         limit: int = Query(1000, ge=1, le=5000),
     ):
         """Return the caller's own memories as a derived node/edge graph."""
-        user = require_user(request)
+        user = _owner(request)
         memories = memory_manager.load(owner=user)
         return build_graph(
             memories,
@@ -77,7 +77,7 @@ def setup_memory_graph_routes(memory_manager: MemoryManager, memory_vector=None)
         `truncated`), the frontend can expand a single node on demand instead
         of the server ever needing to compute/return the entire graph.
         """
-        user = require_user(request)
+        user = _owner(request)
         memories = memory_manager.load(owner=user)
         target = next((m for m in memories if m.get("id") == memory_id), None)
         if target is None:
@@ -105,7 +105,8 @@ def setup_memory_graph_routes(memory_manager: MemoryManager, memory_vector=None)
     def add_memory_link(request: Request, memory_id: str, target_id: str = Query(...)):
         """Create an explicit manual relationship between two of the caller's
         own memories (the Memory Graph View's "draw a link" affordance)."""
-        user = require_privilege(request, "can_manage_memory")
+        require_privilege(request, "can_manage_memory")
+        user = _owner(request)
         if target_id == memory_id:
             raise HTTPException(400, "A memory cannot link to itself")
 
@@ -131,7 +132,8 @@ def setup_memory_graph_routes(memory_manager: MemoryManager, memory_vector=None)
         """Remove a manual relationship. Idempotent — removing a link that
         doesn't exist is not an error, matching how memory delete/pin already
         treat repeat calls as harmless in this codebase."""
-        user = require_privilege(request, "can_manage_memory")
+        require_privilege(request, "can_manage_memory")
+        user = _owner(request)
         all_mem = memory_manager.load_all()
         source = next((m for m in all_mem if m.get("id") == memory_id), None)
         if source is None:
