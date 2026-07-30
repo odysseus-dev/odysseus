@@ -5156,12 +5156,17 @@ async def stream_agent_loop(
     full_response = strip_tool_blocks(full_response).strip()
     if _ody_qwen_finetune_model:
         full_response = _normalize_ody_qwen_text_artifacts(full_response)
-        if (
-            not tool_events
-            and _looks_like_destructive_request(_last_user)
-            and _looks_like_success_claim(full_response)
-        ):
-            full_response = "I couldn't make that change because no matching tool action completed."
+    # Fake-success guard: applies to ALL models, not just the qwen finetune.
+    # If the user asked for a send/delete/reply-style action and zero tools
+    # actually ran this turn, don't let the model's prose claim it happened —
+    # kimi-k3 and others have repeatedly confabulated confident "sent"/"done"
+    # confirmations for actions that never executed (see Odysseus memory log).
+    if (
+        not tool_events
+        and _looks_like_destructive_request(_last_user)
+        and _looks_like_success_claim(full_response)
+    ):
+        full_response = "I couldn't make that change because no matching tool action completed."
     _response_before_tool_summary = full_response
     if tool_events:
         for _ev in reversed(tool_events):
