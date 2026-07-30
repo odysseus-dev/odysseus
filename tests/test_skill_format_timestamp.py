@@ -17,6 +17,8 @@ import time
 import warnings
 from datetime import datetime, timezone
 
+import pytest
+
 from services.memory.skill_format import _now_iso
 
 _ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -33,6 +35,10 @@ def test_now_iso_emits_no_deprecation_warning():
     assert not [w for w in caught if issubclass(w.category, DeprecationWarning)]
 
 
+@pytest.mark.skipif(
+    not hasattr(time, "tzset"),
+    reason="time.tzset is unavailable on this platform",
+)
 def test_now_iso_is_utc_not_local_time():
     """Pin UTC under a non-UTC local timezone, where the two visibly diverge."""
     original_tz = os.environ.get("TZ")
