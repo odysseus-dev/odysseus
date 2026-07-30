@@ -24,7 +24,7 @@ Live checklist. Update as work proceeds. See `docs/handoff.md` for the exact nex
 - [x] Found and fixed a real Milestone-1 backend bug while seeding real data: `memory_graph_routes.py`'s graph/links endpoints used `require_user()` (returns `""`) instead of the rest of the memory routes' `get_current_user()`-based `_owner()` (returns `None`), which meant the graph was always empty and links always 404'd in single-user/no-auth mode. Fixed and committed separately from the M2 frontend commit.
 - [x] Seeded memories cleaned up: all 7 deleted via the real `DELETE /api/memory/{id}` endpoint, confirmed zero orphaned vectors left in the shared Chroma `odysseus_memories_fastembed` collection, demo server process killed (confirmed real PID via `Get-NetTCPConnection`, not the bash job id).
 - [x] Commit M2 work — 4 commits: pre-existing `agent_loop.py` fix (standalone), the M1 owner-scoping fix (standalone), the M2 frontend (module + vendored lib + wiring + CSS), this docs update.
-- [ ] **NOT DONE**: explicit on/off feature-flag setting. Right now the nav item is always visible to anyone with `can_manage_memory` (same gating as the existing Brain button) and the UI carries a static "(beta)" label — there is no separate toggle a user/admin can flip to hide the feature independent of that privilege. The user's instruction said "Feature flag enabled (beta)"; this was interpreted as "ship visible, labeled beta" rather than "build a togglable flag primitive." **Needs confirmation** — see Open Questions in `docs/memory-graph-design.md`.
+- [x] Explicit on/off feature-flag setting — resolved in Milestone 3 (user confirmed the privilege-gate + static "beta" label is sufficient; no separate toggle needed).
 - [x] Automated frontend tests for `memoryGraph.js` pure logic — see Milestone 3.
 
 ## Milestone 3 — Polish (DONE, committed)
@@ -37,6 +37,11 @@ Live checklist. Update as work proceeds. See `docs/handoff.md` for the exact nex
 - [x] Automated frontend tests: `tests/memoryGraph/pureLogic.test.mjs` (10 tests via `node --test`, wrapped by `tests/test_memory_graph_pure_logic_js.py` per the repo's `node:test` + pytest-shim convention) covering category-color resolution, API-response-to-Cytoscape-elements mapping (including dropping edges with dangling endpoints), the fetch query string, demo-graph referential integrity, and the isolate-component BFS.
 - [x] Final regression pass: `node --check` clean on all touched JS; the 27 existing Milestone 1 backend tests + the new JS suite all pass; `pytest --collect-only` across the full suite shows the same 5 pre-existing collection errors as before this session (mcp package version mismatch + one unrelated `UnicodeDecodeError`), zero new failures.
 - [x] `src/agent_loop.py` fix: kept, committed separately (see Session 4) — decided low-risk enough to ship without further debate.
+
+## Distribution
+
+- [x] All work committed locally — 11 commits ahead of `dev` on `feature/memory-graph-view`.
+- [ ] **BLOCKED**: `git push -u origin feature/memory-graph-view` fails with 403 (`Permission to odysseus-dev/odysseus.git denied to yakamoz221`). Needs the user to grant push access, point `origin` at a fork, or push via different credentials — see `docs/handoff.md`.
 
 ## Known pre-existing issues (not introduced by this feature, out of scope to fix here)
 

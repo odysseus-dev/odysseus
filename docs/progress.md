@@ -29,6 +29,17 @@ Session-by-session record. Newest entry on top. See `docs/todos.md` for the live
 | `tests/memoryGraph/graphHarness.mjs`, `tests/memoryGraph/pureLogic.test.mjs`, `tests/test_memory_graph_pure_logic_js.py` | new — pure-logic test suite |
 | `docs/handoff.md`, `docs/progress.md`, `docs/todos.md` | updated to reflect M3 done/verified/committed |
 
+### Push attempt
+
+After M3 was committed, `git push -u origin feature/memory-graph-view` was attempted and failed:
+
+```
+remote: Permission to odysseus-dev/odysseus.git denied to yakamoz221.
+fatal: unable to access '...': The requested URL returned error: 403
+```
+
+The `origin` remote is `https://github.com/odysseus-dev/odysseus.git`; the authenticated GitHub account (`yakamoz221`) doesn't have write access to it. Not something a coding session can fix on its own — needs the user to sort out repo permissions, point at a fork, or push via different credentials. The branch is fully committed locally (11 commits total on top of `dev`) and otherwise ready; see `docs/handoff.md` for the exact next step.
+
 ---
 
 ## Session 4 — Milestone 2 verification, two bugs found and fixed, M2 committed
