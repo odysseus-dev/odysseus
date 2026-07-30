@@ -1,6 +1,6 @@
 # Memory Graph View — Repository Analysis
 
-Status: research only. No application code, dependencies, or database state was modified to produce this document.
+Status: research only at the time this document was originally written. No application code, dependencies, or database state was modified to produce it. **Since then, implementation has begun** — see the "Post-implementation addendum" at the end of this document, plus `docs/progress.md`, `docs/todos.md`, and `docs/handoff.md` for current status.
 
 Scope: this document inventories the parts of the Odysseus codebase relevant to building an interactive, Obsidian-like Memory Graph View, and identifies the safest points to extend the system. A companion document, `docs/memory-graph-design.md`, proposes the actual design based on these findings.
 
@@ -168,3 +168,13 @@ Ranked from safest/most isolated to most invasive:
 5. **Not recommended as a first step**: touching the dormant SQL `memories` table, since it is not the runtime source of truth today and reconciling it would be a separate, larger migration unrelated to shipping a graph view.
 
 No area inspected requires a new database engine, a schema migration to an existing hot-path table, or a new Docker service.
+
+## 20. Post-implementation addendum
+
+Everything above was written before any code existed. Implementation has since started (Milestones 1–2 of `docs/memory-graph-design.md`); this section records what that process confirmed, corrected, or added to the picture above. Full detail lives in `docs/progress.md` / `docs/handoff.md` — this is a short pointer, not a duplicate.
+
+- **§3/§19 confirmed in practice**: the "tab inside the Brain modal" recommendation was *not* what got built — the user's Milestone 2 instructions explicitly asked for a dedicated top-level nav item and a dedicated page, which is what exists now (a new `#tool-memory-graph-btn` in the sidebar Tools section, opening its own `memory-graph-modal`). Worth knowing if you re-read the original §19 recommendation and wonder why it doesn't match the code.
+- **§3 correction**: the "Brain"/"Calendar" modals looked, from `index.html`'s static markup, like they might be simple declarative panels. In practice their real open/close/register logic lives in `app.js` (Brain) or the module itself (`calendar.js`'s `_getModal()`), and `calendar.js`'s pattern — lazily build the modal element in JS, append to `document.body` once, register with `modalManager.js`'s `Modals.register(...)` — turned out to be the cleanest, most self-contained template to copy for a brand-new modal, requiring zero edits to `app.js`'s older hardcoded Escape-key modal-id arrays. `memoryGraph.js` follows this template exactly.
+- **§17 (testing framework) confirmed useful**: the "call the endpoint function directly" convention was followed for all new route tests, plus one deliberate exception — a real `fastapi.testclient.TestClient` test for the route-ordering fix specifically, because that convention *cannot* catch an ordering bug (it never exercises actual Starlette path matching). See `tests/test_memory_graph_route_ordering.py`.
+- **New finding, not in the original analysis**: `src/agent_loop.py` has a pre-existing bug (missing `from typing import Any`) that hard-crashes `app.py` at import time in this sandbox's Python 3.11/3.14 environment. Confirmed via `git stash` to reproduce identically on a clean `dev` checkout — unrelated to this feature, but blocking enough that it had to be patched locally just to launch the app for a demo. See `docs/handoff.md` → Risks for what to do about it.
+- **New finding, not in the original analysis**: the local ChromaDB instance's collections (`odysseus_memories`, `odysseus_rag`) are shared/global regardless of which `ODYSSEUS_DATA_DIR` the app process points at — only the JSON file store and the SQL `owner` column are per-deployment/per-owner. This matters for anyone manually testing against a real Chroma instance: seeded test data must be cleaned up via the real `DELETE` endpoints (which correctly call `memory_vector.remove()`), not just by discarding a scratch data directory.

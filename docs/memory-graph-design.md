@@ -1,6 +1,6 @@
 # Memory Graph View — Design
 
-Status: design only, not yet implemented. This proposal builds on the findings in `docs/memory-graph-analysis.md`. No application code, dependencies, or database state has been changed. Implementation should not begin until this design is reviewed and approved.
+Status: **approved and partially implemented.** This proposal builds on the findings in `docs/memory-graph-analysis.md`. The user approved this design and requested implementation; Milestone 1 (backend) is complete and committed, Milestone 2 (frontend) is written but uncommitted and not yet visually verified. See `docs/progress.md` for the session log, `docs/todos.md` for the live checklist, and `docs/handoff.md` for the exact next task and a "Resolved open questions" note below. The rest of this document is kept as originally written (the plan), with corrections/decisions layered in inline where implementation diverged from the original proposal.
 
 ## Goals / non-goals
 
@@ -178,11 +178,20 @@ Each phase is independently shippable, independently revertable, and does not bl
 - **Performance smoke test**: seed a temporary `MemoryManager` with a few hundred and a few thousand synthetic entries and assert `GET /api/memory/graph` completes within a defined latency budget with a warm cache — a regression guard against an accidental reintroduction of O(n²) pairwise comparison.
 - **Marker tagging**: new tests get the existing `area_routes`/`area_services` markers per `tests/_taxonomy.py` so they're picked up by the same `-m area_routes` selective-run convention the rest of the suite already uses.
 
-## Open questions requiring a decision before implementation
+## Open questions — resolved
 
-1. **Graph library**: confirm Cytoscape.js (recommended, §1) vs. a hand-composed D3 stack vs. a from-scratch canvas renderer. This is the single highest-leverage decision in the whole design.
-2. **Tab-in-modal vs. standalone modal**: confirmed recommendation is a tab inside the existing Brain modal (§1); flag if a standalone full-screen view is actually wanted instead.
-3. **Manual linking (phase 2)**: is user-drawn explicit linking between memories in scope at all, or should the feature stay purely derived-edges-only indefinitely? This affects whether the `links` JSON field (§2) is ever needed.
-4. **Opt-in beta flag vs. shipping straight to default-on**: confirmed recommendation is opt-in first (§8); flag if the team prefers to skip that staging given how isolated the feature already is.
+The four questions originally posed here have since been answered by explicit user instruction (see `docs/progress.md`, Session 1 → Session 2 transition). Recorded here for anyone re-reading this doc without that context:
 
-No further action will be taken until this design (and the open questions above) are reviewed.
+1. **Graph library**: **Cytoscape.js**, as recommended. Vendored at `static/lib/cytoscape.min.js` (3.34.0, MIT), fetched via `npm pack cytoscape@3` rather than a hand-typed CDN URL. D3 and a from-scratch renderer were not pursued.
+2. **Tab-in-modal vs. standalone modal**: **standalone.** The user explicitly asked for "a new Memory Graph navigation item" and "a dedicated Graph page" — this superseded the original tab-in-Brain-modal recommendation. What's built: a new `#tool-memory-graph-btn` in the sidebar Tools section, opening its own `memory-graph-modal` (built and registered exactly like `calendar.js`'s modal — see `docs/handoff.md` for why that template was chosen over the Brain modal's own pattern).
+3. **Manual linking**: **in scope**, from Milestone 1 onward, not deferred to a later phase. `POST /api/memory/{id}/links` / `DELETE /api/memory/{id}/links/{target_id}` shipped in the same backend milestone as the read endpoint, and the frontend's "Link mode" toolbar toggle + per-node "Start link" action + per-relationship remove (×) in the detail panel shipped in Milestone 2.
+4. **Opt-in beta flag vs. default-on**: **neither, precisely.** The user's instruction was "Feature flag enabled (beta)," which was implemented as: the nav item is visible by default (gated only by the existing `can_manage_memory` privilege, same as every other memory entry point) and carries a static "beta" label in the modal header — there is no separate togglable setting. This is flagged as an explicit open question needing confirmation in `docs/handoff.md`, since "feature flag" could reasonably have meant an actual on/off switch (the original Phase 2 proposal below, under "Migration strategy") rather than just a visible label.
+
+## Deviations from the original plan worth knowing
+
+Beyond the four resolved questions above, implementation diverged from the letter of this document in two ways, both deliberate and both recorded in more detail in `docs/handoff.md`:
+
+- **§3 API design** describes per-request query params (`category`, `min_similarity`, `max_edges_per_node`, etc.) driving what the server returns. What's actually built: the frontend fetches once per open (or after a mutation) at a generous floor (`min_similarity=0.5`, `max_edges_per_node=8`) and does all category/similarity/search filtering **client-side** against that cached graph via Cytoscape's own display/class toggling. The query params themselves still exist and work server-side (see `routes/memory/memory_graph_routes.py`); the frontend just doesn't re-hit them on every filter interaction, trading a slightly-higher initial payload for instant filter feedback.
+- **§4 UI design**'s edge-type distinction (similarity solid/opacity-by-weight, session dashed, manual distinct-color-solid) was carried through as specified. The legend, search-highlight, and category-filter-chip pieces were all built in Milestone 2 rather than deferred to "Milestone 3 polish" as this document's phasing loosely implied — the user's Milestone 2 instructions listed them as hard requirements for that milestone, not nice-to-haves.
+
+No further action will be taken beyond what's recorded in `docs/todos.md` until the user resumes work.
