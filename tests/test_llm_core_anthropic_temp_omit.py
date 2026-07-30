@@ -29,6 +29,13 @@ from src.llm_core import _anthropic_rejects_temperature, _build_anthropic_payloa
         "anthropic/claude-opus-4-7",  # tolerate a provider-prefixed id
         "claude-opus-4-10",  # future minor still >= 4.7
         "claude-opus-5-0",  # future major
+        # Major-only ids: a missing minor reads as `.0`, so these are >= 4.7 too
+        # (issue #5753). Before the fix the version pattern required a minor, so
+        # these fell through to "accepts temperature" and every call 400'd.
+        "claude-opus-5",
+        "claude-opus-5-20260101",  # major-only + dated snapshot
+        "anthropic/claude-opus-5",  # major-only behind a provider prefix
+        "claude-opus-6",  # future major-only
     ],
 )
 def test_opus_47_plus_rejects_temperature(model):
@@ -48,7 +55,10 @@ def test_opus_47_plus_rejects_temperature(model):
         "claude-opus-4-6-20251201",  # dated 4.6 snapshot — older, still keeps temperature
         "claude-sonnet-4-6",
         "claude-3-5-sonnet",
-        "claude-3-opus-20240229",  # legacy Claude 3 Opus — no opus-N-M pattern, kept
+        "claude-3-opus-20240229",  # legacy Claude 3 Opus — date directly after
+        # "opus-", so the major must not swallow it as version 20240229 (that is
+        # what makes capping the major at 1-2 digits necessary once the minor
+        # became optional in #5753).
         "claude-haiku-4-5",
         "claude-x",
         "octopus-4-8",  # "opus" only as a substring of another word — must not match
@@ -85,6 +95,20 @@ def test_payload_keeps_temperature_for_older_models():
     assert payload["temperature"] == 0.3
     # Older models retain the [0,1] clamp (Nietzsche preset at 1.2 -> 1.0).
     assert _payload("claude-3-5-sonnet", 1.2)["temperature"] == 1.0
+
+
+def test_payload_omits_temperature_for_major_only_opus_5():
+    # Issue #5753: the scheduled-task path calls stream_agent_loop() without a
+    # temperature and inherits its 0.3 default, so `claude-opus-5` 400'd on every
+    # run and surfaced as "the model returned an empty response". Interactive chat
+    # leaves temperature None and never hit it.
+    assert "temperature" not in _payload("claude-opus-5", 0.3)
+
+
+def test_payload_keeps_temperature_for_legacy_claude_3_opus():
+    # Guards the major-digit cap: `opus-20240229` must not parse as version
+    # 20240229, or Claude 3 Opus would silently lose the caller's temperature.
+    assert _payload("claude-3-opus-20240229", 0.5)["temperature"] == 0.5
 
 
 def test_payload_keeps_temperature_for_dated_opus_4_0():
