@@ -692,7 +692,7 @@ from routes.history.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
 
 # Search
-from routes.search_routes import setup_search_routes
+from routes.search.search_routes import setup_search_routes
 app.include_router(setup_search_routes(config))
 
 # Presets

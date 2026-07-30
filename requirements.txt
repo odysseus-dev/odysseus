@@ -38,7 +38,10 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+# Built-in servers use the v1 low-level Server decorator API. MCP SDK v2 is a
+# breaking rewrite, so keep fresh installs on the maintained v1 line until the
+# servers are migrated together.
+mcp<2
 pyotp
 qrcode[pil]
 croniter

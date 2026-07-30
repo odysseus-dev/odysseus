@@ -153,15 +153,22 @@ module.exports = async ({ github, context, core }) => {
     }
   }
 
+  const LABEL_BAD  = 'needs more info';
+  const LABEL_GOOD = 'ready for review';
+
+  // Closed issues are no longer awaiting review.
+  // This also prevents later edits to closed issues from restoring the label.
+  if (issue.state === 'closed') {
+    await dropLabel(LABEL_GOOD);
+    return;
+  }
+
   // ── Find existing bot comment to update in-place ──────────────────────────
   const MARKER = '<!-- issue-description-check -->';
   const { data: comments } = await github.rest.issues.listComments({
     owner, repo, issue_number: issue.number,
   });
   const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes(MARKER));
-
-  const LABEL_BAD  = 'needs more info';
-  const LABEL_GOOD = 'ready for review';
 
   if (failures.length === 0) {
     if (existing) {

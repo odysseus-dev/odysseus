@@ -2,7 +2,7 @@ name: ci / issue description check
 
 on:
   issues:
-    types: [opened, edited, reopened]
+    types: [opened, edited, reopened, closed]
 
 permissions:
   issues: write
