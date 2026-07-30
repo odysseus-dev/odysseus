@@ -67,7 +67,8 @@ let _minSimilarity = 0.75;
 let _linkMode = false;
 let _linkSourceId = null;
 let _selectedId = null;
-let _escHandler = null;
+let _isolateRootId = null; // set = only this node's connected component is shown
+let _keyHandler = null;
 let _resizeWired = false;
 
 // ---- lazy-load Cytoscape, mirroring documentLibrary.js's ensureXLSX/ensureMammoth ----
@@ -117,10 +118,16 @@ function _getModal() {
           <div class="memory-graph-canvas-wrap" style="position:relative;flex:1;min-width:0;">
             <div class="memory-graph-canvas" id="memory-graph-canvas"></div>
             <div class="memory-graph-demo-banner hidden" id="memory-graph-demo-banner">Showing demo data — add memories to see your real graph</div>
+            <div class="memory-graph-demo-banner hidden" id="memory-graph-isolate-banner"></div>
             <div class="memory-graph-legend" id="memory-graph-legend">
-              <div class="memory-graph-legend-row"><span class="memory-graph-legend-line"></span><span>similarity</span></div>
-              <div class="memory-graph-legend-row"><span class="memory-graph-legend-line dashed"></span><span>same session</span></div>
-              <div class="memory-graph-legend-row"><span class="memory-graph-legend-line" style="border-top-color:var(--red);"></span><span>manual link</span></div>
+              <div class="memory-graph-legend-header" id="memory-graph-legend-toggle">
+                <span>Legend</span><span class="memory-graph-legend-caret">▾</span>
+              </div>
+              <div class="memory-graph-legend-body">
+                <div class="memory-graph-legend-row"><span class="memory-graph-legend-line"></span><span>similarity</span></div>
+                <div class="memory-graph-legend-row"><span class="memory-graph-legend-line dashed"></span><span>same session</span></div>
+                <div class="memory-graph-legend-row"><span class="memory-graph-legend-line" style="border-top-color:var(--red);"></span><span>manual link</span></div>
+              </div>
             </div>
           </div>
           <div class="memory-graph-detail-panel hidden" id="memory-graph-detail">
@@ -163,6 +170,12 @@ function _wireToolbar() {
   }
   const linkBtn = document.getElementById('memory-graph-link-mode-btn');
   if (linkBtn) linkBtn.addEventListener('click', () => _setLinkMode(!_linkMode));
+  const legendToggle = document.getElementById('memory-graph-legend-toggle');
+  if (legendToggle) {
+    legendToggle.addEventListener('click', () => {
+      document.getElementById('memory-graph-legend')?.classList.toggle('collapsed');
+    });
+  }
 }
 
 function _wireResize() {
@@ -345,8 +358,10 @@ function _renderGraph() {
     wheelSensitivity: 0.2,
   });
   _wireCyEvents();
+  _isolateRootId = null;
   _applyFilters();
   _renderDemoBanner();
+  _renderIsolateBanner();
   _selectedId = null;
   _renderDetailPanel();
 }
@@ -383,12 +398,40 @@ function _renderCategoryChips() {
   });
 }
 
+// Pure BFS over a graph's edges (undirected) — the set of node ids reachable
+// from rootId, including rootId itself. Used by the "Isolate" detail-panel
+// action to show only a node's connected component. No DOM/Cytoscape
+// dependency, so this is unit-testable in isolation (see memoryGraph tests).
+function _componentNodeIds(graph, rootId) {
+  const adjacency = new Map();
+  (graph.nodes || []).forEach(n => adjacency.set(n.id, new Set()));
+  (graph.edges || []).forEach(e => {
+    if (!adjacency.has(e.source) || !adjacency.has(e.target)) return;
+    adjacency.get(e.source).add(e.target);
+    adjacency.get(e.target).add(e.source);
+  });
+  const seen = new Set();
+  if (!adjacency.has(rootId)) return seen;
+  const stack = [rootId];
+  while (stack.length) {
+    const id = stack.pop();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const neighbor of adjacency.get(id) || []) {
+      if (!seen.has(neighbor)) stack.push(neighbor);
+    }
+  }
+  return seen;
+}
+
 function _applyFilters() {
   if (!_cy) return;
+  const isolateIds = _isolateRootId ? _componentNodeIds(_graph, _isolateRootId) : null;
   _cy.batch(() => {
     _cy.nodes().forEach(n => {
-      const visible = !_activeCategory || n.data('category') === _activeCategory;
-      n.style('display', visible ? 'element' : 'none');
+      const categoryOk = !_activeCategory || n.data('category') === _activeCategory;
+      const isolateOk = !isolateIds || isolateIds.has(n.id());
+      n.style('display', (categoryOk && isolateOk) ? 'element' : 'none');
     });
     _cy.edges().forEach(e => {
       const src = _cy.getElementById(e.data('source'));
@@ -399,6 +442,22 @@ function _applyFilters() {
     });
   });
   _applySearch();
+}
+
+function _renderIsolateBanner() {
+  const banner = document.getElementById('memory-graph-isolate-banner');
+  if (!banner) return;
+  if (!_isolateRootId) { banner.classList.add('hidden'); return; }
+  const count = _componentNodeIds(_graph, _isolateRootId).size;
+  banner.textContent = `Isolated — showing ${count} connected ${count === 1 ? 'memory' : 'memories'}`;
+  banner.classList.remove('hidden');
+}
+
+function _toggleIsolate(id) {
+  _isolateRootId = (_isolateRootId === id) ? null : id;
+  _applyFilters();
+  _renderIsolateBanner();
+  _renderDetailPanel();
 }
 
 function _applySearch() {
@@ -454,6 +513,11 @@ function _selectNode(id) {
 
 function _clearSelection() {
   _selectedId = null;
+  if (_isolateRootId) {
+    _isolateRootId = null;
+    _applyFilters();
+    _renderIsolateBanner();
+  }
   if (_cy) _cy.elements().removeClass('mg-highlighted mg-dimmed');
   _renderDetailPanel();
 }
@@ -539,6 +603,7 @@ function _renderDetailPanel() {
       <button type="button" data-action="pin">${node.pinned ? 'Unpin' : 'Pin'}</button>
       <button type="button" data-action="edit">Edit</button>
       <button type="button" data-action="link">Start link</button>
+      <button type="button" data-action="isolate">${_isolateRootId === node.id ? 'Show all' : 'Isolate'}</button>
       <button type="button" class="danger" data-action="delete">Delete</button>
     </div>
     <div class="memory-graph-detail-links">
@@ -569,6 +634,7 @@ function _renderDetailPanel() {
     _cy.getElementById(node.id).addClass('mg-link-source');
     uiModule.showToast?.('Click another memory to connect it', 2500);
   });
+  panel.querySelector('[data-action="isolate"]')?.addEventListener('click', () => _toggleIsolate(node.id));
   panel.querySelector('[data-action="delete"]')?.addEventListener('click', () => _actionDelete(node));
   panel.querySelectorAll('.memory-graph-link-row-remove').forEach(el => {
     el.addEventListener('click', (e) => {
@@ -705,6 +771,23 @@ async function _actionRemoveLink(sourceId, targetId) {
   }
 }
 
+// ---- keyboard navigation ----
+function _visibleNodeIds() {
+  if (!_cy) return [];
+  return _cy.nodes().filter(n => n.style('display') !== 'none').map(n => n.id());
+}
+
+function _navigateNodes(delta) {
+  const ids = _visibleNodeIds();
+  if (!ids.length) return;
+  const curIdx = _selectedId ? ids.indexOf(_selectedId) : -1;
+  const nextIdx = curIdx === -1 ? 0 : (curIdx + delta + ids.length) % ids.length;
+  const id = ids[nextIdx];
+  _selectNode(id);
+  const node = _cy.getElementById(id);
+  if (node && node.nonempty()) _cy.animate({ center: { eles: node } }, { duration: 150 });
+}
+
 // ---- open / close ----
 export function isMemoryGraphOpen() {
   if (Modals.isMinimized('memory-graph-modal')) return false;
@@ -740,19 +823,32 @@ export function openMemoryGraph() {
   const btn = document.getElementById('tool-memory-graph-btn');
   if (btn) btn.classList.add('active');
 
-  _escHandler = (e) => {
-    if (e.key !== 'Escape') return;
+  _keyHandler = (e) => {
+    if (Modals.isMinimized('memory-graph-modal')) return;
     const active = document.activeElement;
-    if (active && active.id === 'memory-graph-search' && active.value) {
-      active.value = '';
-      _searchTerm = '';
-      _applySearch();
+    const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+
+    if (e.key === 'Escape') {
+      if (active && active.id === 'memory-graph-search' && active.value) {
+        active.value = '';
+        _searchTerm = '';
+        _applySearch();
+        return;
+      }
+      if (_linkMode) { _setLinkMode(false); return; }
+      closeMemoryGraph();
       return;
     }
-    if (_linkMode) { _setLinkMode(false); return; }
-    closeMemoryGraph();
+    if (typing) return; // don't hijack f/arrows while the user is typing anywhere in the modal
+    if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      document.getElementById('memory-graph-search')?.focus();
+      return;
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); _navigateNodes(1); return; }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); _navigateNodes(-1); return; }
   };
-  document.addEventListener('keydown', _escHandler);
+  document.addEventListener('keydown', _keyHandler);
 
   _wireResize();
   _loadGraph();
@@ -763,7 +859,7 @@ function _doCloseMemoryGraph() {
   _open = false;
   _setLinkMode(false);
   if (_modal) { _modal.style.display = 'none'; _modal.classList.add('hidden'); }
-  if (_escHandler) { document.removeEventListener('keydown', _escHandler); _escHandler = null; }
+  if (_keyHandler) { document.removeEventListener('keydown', _keyHandler); _keyHandler = null; }
   const btn = document.getElementById('tool-memory-graph-btn');
   if (btn) btn.classList.remove('active');
 }

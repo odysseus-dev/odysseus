@@ -106,6 +106,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | Module | Responsibility |
 |---|---|
 | **`memory.js`** | AI memory CRUD, search/filter UI, memory extraction, count badge. |
+| **`memoryGraph.js`** | Memory Graph View (beta): Cytoscape.js-based interactive graph over a user's memories and their derived (similarity/session) and manual relationships. Lazily vendors `static/lib/cytoscape.min.js`, follows `calendar.js`'s self-registering modal pattern. Node click + neighborhood highlight, arrow-key node navigation, `f`-to-focus search, category/similarity filtering, collapsible legend, connected-component isolation, link-mode manual relationship editing, detail panel (pin/edit/delete/link management), demo-data fallback. Backed by `GET /api/memory/graph` + `POST`/`DELETE /api/memory/{id}/links` (`routes/memory/memory_graph_routes.py`). |
 | **`rag.js`** | Personal document RAG: load documents, add directories/files, show included paths. |
 | **`group.js`** | Group-chat UI and model orchestration. |
 

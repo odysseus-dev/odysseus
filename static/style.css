@@ -41358,9 +41358,22 @@ body.theme-frosted .modal {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 9px;
-  pointer-events: none;
   z-index: 4;
 }
+.memory-graph-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.85;
+}
+.memory-graph-legend-caret { font-size: 9px; transition: transform 0.15s; }
+.memory-graph-legend.collapsed .memory-graph-legend-caret { transform: rotate(-90deg); }
+.memory-graph-legend.collapsed .memory-graph-legend-body { display: none; }
+.memory-graph-legend-body { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 .memory-graph-legend-row { display: flex; align-items: center; gap: 5px; }
 .memory-graph-legend-line { width: 14px; height: 0; border-top: 2px solid var(--fg); display: inline-block; }
 .memory-graph-legend-line.dashed { border-top-style: dashed; }
