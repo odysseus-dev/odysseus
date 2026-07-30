@@ -309,6 +309,31 @@ container. Cookbook **Serve** is a separate workflow for serving downloaded
 models through Odysseus/llama.cpp, so Windows users with an existing Ollama
 install usually only need to add the endpoint in Settings.
 
+**Tool calls not firing on a manually-added Ollama `/v1` endpoint.** By
+design, a local Ollama `/v1` endpoint defaults to the conservative
+text-based (fenced-block) tool-calling path rather than native structured
+tool calls, since some locally-served models mishandle native schemas (see
+#1567). This is correct for most local setups, but if you know your specific
+model reliably supports native tool calling (check `ollama show <model>` for
+`tools` under Capabilities), you can opt that endpoint in explicitly. There
+is currently no UI control for this on manually-added endpoints (see #5192);
+the flag can still be set directly against the existing API, from a browser
+console on an authenticated admin session:
+
+```js
+fetch('/api/model-endpoints/<endpoint-id>', {
+  method: 'PATCH',
+  credentials: 'same-origin',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({supports_tools: true})
+}).then(r => r.json()).then(console.log)
+```
+
+Find `<endpoint-id>` by inspecting the `/api/model-endpoints` response (or
+your browser's network tab while Settings loads the endpoint list). Send
+`supports_tools: false` the same way to force text-based tool calls off, or
+`supports_tools: null` to return the endpoint to the Auto heuristic.
+
 **Useful checks.**
 
 ```bash
