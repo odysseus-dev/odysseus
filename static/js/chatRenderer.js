@@ -1587,18 +1587,25 @@ export function createMsgFooter(msgElement) {
   // Filter out unavailable actions (e.g. TTS when not enabled)
   const availableActions = allActions.filter(a => !a.available || a.available());
 
-  // Determine which 3 to show: use recent order, fallback to defaults
+  // "copy" is pinned outside the recency-based rotation below — it's the most
+  // frequently needed action and users complained it kept getting bumped into
+  // the "..." overflow menu whenever 2+ other actions were used more recently.
+  // It's rendered first, unconditionally, and excluded from the dynamic pool.
+  const copyAction = availableActions.find(a => a.id === 'copy');
+  const rotatingActions = availableActions.filter(a => a.id !== 'copy');
+
+  // Determine which of the remaining actions to show: use recent order, fallback to defaults
   const recent = _getRecentActions();
-  const defaults = ['copy', 'delete', 'fork'];
+  const defaults = ['delete', 'fork'];
   const order = recent.length > 0 ? recent : defaults;
-  const sorted = [...availableActions].sort((a, b) => {
+  const sorted = [...rotatingActions].sort((a, b) => {
     const ai = order.indexOf(a.id), bi = order.indexOf(b.id);
     if (ai >= 0 && bi >= 0) return ai - bi;
     if (ai >= 0) return -1;
     if (bi >= 0) return 1;
     return 0;
   });
-  const visible = sorted.slice(0, _MAX_VISIBLE);
+  const visible = copyAction ? [copyAction, ...sorted.slice(0, _MAX_VISIBLE)] : sorted.slice(0, _MAX_VISIBLE);
   const overflow = sorted.slice(_MAX_VISIBLE);
 
   // Render visible buttons
@@ -1783,17 +1790,21 @@ export function createUserMsgFooter(msgElement) {
     }},
   ];
 
+  // Same "copy" pinning as the AI-message footer above — see comment there.
+  const userCopyAction = allActions.find(a => a.id === 'copy');
+  const userRotatingActions = allActions.filter(a => a.id !== 'copy');
+
   const recent = _getUserRecentActions();
-  const defaults = ['edit', 'delete', 'copy'];
+  const defaults = ['edit', 'delete'];
   const order = recent.length > 0 ? recent : defaults;
-  const sorted = [...allActions].sort((a, b) => {
+  const sorted = [...userRotatingActions].sort((a, b) => {
     const ai = order.indexOf(a.id), bi = order.indexOf(b.id);
     if (ai >= 0 && bi >= 0) return ai - bi;
     if (ai >= 0) return -1;
     if (bi >= 0) return 1;
     return 0;
   });
-  const visible = sorted.slice(0, _MAX_VISIBLE);
+  const visible = userCopyAction ? [userCopyAction, ...sorted.slice(0, _MAX_VISIBLE)] : sorted.slice(0, _MAX_VISIBLE);
   const overflow = sorted.slice(_MAX_VISIBLE);
 
   visible.forEach(a => {

@@ -405,6 +405,7 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
         "trash": ("\\Trash",),
         "archive": ("\\Archive", "\\All"),
         "junk": ("\\Junk",),
+        "sent": ("\\Sent",),
     }.get(role, ())
     for f in folders:
         decoded = f.decode() if isinstance(f, bytes) else str(f)
@@ -416,6 +417,7 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
         "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "[Gmail]/Bin", "Deleted Messages", "Deleted Items"),
         "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail", "All Mail"),
         "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
+        "sent": ("Sent", "[Gmail]/Sent Mail", "[Google Mail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent"),
     }.get(role, ())
     lower_map = {n.lower(): n for n in names}
     for candidate in candidates:
@@ -433,6 +435,28 @@ def _folder_role_from_name(name: str) -> str:
         return "junk"
     if "archive" in lower or "all mail" in lower:
         return "archive"
+    if "sent" in lower:
+        return "sent"
+    return ""
+
+
+def _folder_role_from_flags(decoded_list_line: str) -> str:
+    """Locale-independent role detection from an IMAP LIST response line's
+    special-use attributes (RFC 6154 / Gmail extension), e.g. \\Sent, \\Trash.
+    Works even when the mailbox display name is a non-English localized
+    string (e.g. Gmail's Russian UI names its Sent folder in Cyrillic)."""
+    if "\\Sent" in decoded_list_line:
+        return "sent"
+    if "\\Trash" in decoded_list_line:
+        return "trash"
+    if "\\Junk" in decoded_list_line:
+        return "junk"
+    if "\\Archive" in decoded_list_line or "\\All" in decoded_list_line:
+        return "archive"
+    if "\\Drafts" in decoded_list_line:
+        return "drafts"
+    if "\\Flagged" in decoded_list_line:
+        return "starred"
     return ""
 
 
@@ -1798,6 +1822,7 @@ def setup_email_routes():
         try:
             conn, _reused_conn = _pooled_connect(account_id, owner=owner)
             conn_ok = True
+            folder = _resolve_mail_folder(conn, folder, _folder_role_from_name(folder))
             select_status, _ = conn.select(_q(folder), readonly=True)
             if select_status != "OK":
                 return {"emails": [], "total": 0, "folder": folder, "error": f"Folder not found: {folder}"}
@@ -3828,14 +3853,19 @@ def setup_email_routes():
             with _imap(account_id, owner=owner) as conn:
                 status, folders = conn.list()
             result = []
+            roles = {}
             for f in folders or []:
                 decoded = f.decode() if isinstance(f, bytes) else f
                 match = re.search(r'"([^"]*)"$|(\S+)$', decoded)
                 if match:
                     name = match.group(1) or match.group(2)
                     result.append(name)
+                    role = _folder_role_from_flags(decoded) or _folder_role_from_name(name)
+                    if role:
+                        roles[name] = role
             return {
                 "folders": result,
+                "roles": roles,
                 "sync": {
                     "source": "imap",
                     "updated_at": datetime.utcnow().isoformat() + "Z",
