@@ -9,16 +9,16 @@ For the full checklist see `docs/todos.md`. For the session-by-session history s
 - **Branch**: `feature/memory-graph-view`.
 - **Milestone 1 (backend API)**: done, tested, **committed**. One additional bug found and fixed during M2 verification (see below) — `memory_graph_routes.py`'s owner resolution was inconsistent with the rest of the memory routes, which made the graph always empty and links always 404 in single-user/no-auth mode. Committed separately (`fix(memory-graph): align owner resolution with rest of memory routes`).
 - **Milestone 2 (frontend)**: done, **committed**, **visually verified** end-to-end against a real seeded dataset (render, node click + neighborhood highlight, detail panel, inline edit, search, category filters, similarity slider, link-mode create, theme switch — see `docs/progress.md` Session 4 for the full pass). Two frontend bugs found and fixed in the same commit: the detail panel's `hidden` class was never removed on node selection (panel was permanently invisible), and `_applySearch()` left stale `mg-dimmed`/`mg-highlighted` classes from a prior node selection that masked search-match nodes at `opacity:0.08`.
-- **Milestone 3 (polish)**: not started. This is the next work.
+- **Milestone 3 (polish)**: done, committed, visually verified (legend collapse, isolate-component, `f`/arrow-key shortcuts all tested live against real seeded data — see `docs/progress.md` Session 5).
 
 ## Exact next task
 
-Resume the Milestone 3 checklist in `docs/todos.md` (legend refinement, isolate-component affordance, keyboard shortcuts, `MODULE_SUMMARY.md` update, a real automated-test pass for `memoryGraph.js`). Two things need explicit user sign-off before or during M3:
+There is no open milestone left on the original plan. Two loose ends, neither blocking:
 
-1. **The "feature flag enabled (beta)" open question** (see below) — confirm whether a real togglable flag is wanted, or whether the current privilege-gate + static "beta" label is sufficient as shipped.
-2. Whether to also fix the known limitation that graph node colors are only recomputed on next render, not live-reactive to a theme flip while the modal is already open (confirmed still true during verification — switching theme via the Theme modal while Memory Graph was open did not immediately recolor node fills, though all non-canvas chrome — detail panel, chips, buttons — is CSS-variable-driven and did update live).
+1. **Known limitation, not fixed**: graph node colors are only recomputed on next render, not live-reactive to a theme flip while the modal is already open (confirmed still true — switching theme via the Theme modal while Memory Graph was open did not immediately recolor node fills, though all non-canvas chrome — detail panel, chips, buttons, the new legend header — is CSS-variable-driven and updates live). Left as-is; fix if it ever actually bothers a user.
+2. If compact/mobile icon-rail parity is wanted for the Memory Graph nav item (see Implementation notes below), that's a small standalone follow-up, not scoped into any milestone so far.
 
-For a repeatable verification loop in a future session (isolated data dir, seeding via the real API, symmetric Chroma cleanup, PID-verified process kill), the exact steps used are preserved in `docs/progress.md` Session 4 — worth reusing as-is rather than re-deriving.
+For a repeatable verification loop in a future session (isolated data dir, seeding via the real API, symmetric Chroma cleanup, PID-verified process kill), the exact steps used are preserved in `docs/progress.md` Sessions 4 and 5 — worth reusing as-is rather than re-deriving.
 
 ## Open decision needed from the user
 

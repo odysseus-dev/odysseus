@@ -25,19 +25,20 @@ Live checklist. Update as work proceeds. See `docs/handoff.md` for the exact nex
 - [x] Seeded memories cleaned up: all 7 deleted via the real `DELETE /api/memory/{id}` endpoint, confirmed zero orphaned vectors left in the shared Chroma `odysseus_memories_fastembed` collection, demo server process killed (confirmed real PID via `Get-NetTCPConnection`, not the bash job id).
 - [x] Commit M2 work — 4 commits: pre-existing `agent_loop.py` fix (standalone), the M1 owner-scoping fix (standalone), the M2 frontend (module + vendored lib + wiring + CSS), this docs update.
 - [ ] **NOT DONE**: explicit on/off feature-flag setting. Right now the nav item is always visible to anyone with `can_manage_memory` (same gating as the existing Brain button) and the UI carries a static "(beta)" label — there is no separate toggle a user/admin can flip to hide the feature independent of that privilege. The user's instruction said "Feature flag enabled (beta)"; this was interpreted as "ship visible, labeled beta" rather than "build a togglable flag primitive." **Needs confirmation** — see Open Questions in `docs/memory-graph-design.md`.
-- [ ] No automated frontend tests written yet for `memoryGraph.js` (pure-logic pieces like category-color resolution, filter logic, demo-graph shape are candidates for a `.test.mjs` file per the repo's `node --test` convention — see `docs/memory-graph-design.md` §10).
+- [x] Automated frontend tests for `memoryGraph.js` pure logic — see Milestone 3.
 
-## Milestone 3 — Polish (NOT STARTED)
+## Milestone 3 — Polish (DONE, committed)
 
-- [ ] Legend refinement / collapsible legend
-- [ ] "Isolate connected component" affordance beyond the existing tap-to-highlight-neighborhood
-- [ ] Keyboard shortcuts (e.g. `f` to focus search, arrow-key node navigation)
-- [ ] `MODULE_SUMMARY.md` update to document the new `memoryGraph.js` module
-- [ ] Final full regression pass (backend + a real frontend smoke test once Playwright/browser access is available)
-- [ ] Decide whether to keep, adjust, or revert the incidental `src/agent_loop.py` fix (see Risks in `docs/handoff.md`)
+- [x] "Feature flag enabled (beta)" question resolved: user confirmed the current privilege-gate + static "beta" label is sufficient; no separate togglable switch needed.
+- [x] Collapsible legend — click "Legend" header to expand/collapse, caret rotates, state persists for the life of the modal.
+- [x] "Isolate connected component" affordance — new "Isolate"/"Show all" button in the detail panel; runs an undirected BFS (`_componentNodeIds`) over the currently loaded graph and hides everything outside the selected node's component, with a banner showing the count. Clears on background click or graph reload.
+- [x] Keyboard shortcuts: `f` focuses the search box; Arrow keys (Right/Down = next, Left/Up = previous) cycle selection through the currently *visible* nodes (respects active category/similarity/isolate filters) and re-center the camera. Guarded against firing while typing in any input/textarea or while the modal is minimized.
+- [x] `MODULE_SUMMARY.md` updated with a `memoryGraph.js` row (§6, Knowledge/Memory/RAG).
+- [x] Automated frontend tests: `tests/memoryGraph/pureLogic.test.mjs` (10 tests via `node --test`, wrapped by `tests/test_memory_graph_pure_logic_js.py` per the repo's `node:test` + pytest-shim convention) covering category-color resolution, API-response-to-Cytoscape-elements mapping (including dropping edges with dangling endpoints), the fetch query string, demo-graph referential integrity, and the isolate-component BFS.
+- [x] Final regression pass: `node --check` clean on all touched JS; the 27 existing Milestone 1 backend tests + the new JS suite all pass; `pytest --collect-only` across the full suite shows the same 5 pre-existing collection errors as before this session (mcp package version mismatch + one unrelated `UnicodeDecodeError`), zero new failures.
+- [x] `src/agent_loop.py` fix: kept, committed separately (see Session 4) — decided low-risk enough to ship without further debate.
 
-## Known pre-existing issues (not introduced by this feature, do not "fix" without separate sign-off)
+## Known pre-existing issues (not introduced by this feature, out of scope to fix here)
 
-- `src/agent_loop.py` was missing `from typing import Any` — a hard `NameError` at import time that blocks `app.py` (and therefore the whole server) from starting under Python 3.11/3.14 in this sandbox. Confirmed identical on a clean `dev` checkout via `git stash`. **Patched locally** (one-line import fix, uncommitted) purely so the app could be launched for the M2 demo. Flagged for the user's explicit decision in `docs/handoff.md` — do not assume it should ship as part of this feature branch.
 - `mcp_servers/rag_server.py` (and a few tests importing it) hit `AttributeError: 'Server' object has no attribute 'list_tools'` — an `mcp` package version mismatch in this sandbox's venv vs whatever version the repo's real environment pins. Not touched, not in scope.
 - Several JS-logic tests (`node --test`-backed) and shell/path-confinement tests fail in this sandbox because Node.js version/`rg` binary/Windows path handling differ from the repo's real CI environment. Confirmed identical failure set on baseline `dev` — not caused by this feature.

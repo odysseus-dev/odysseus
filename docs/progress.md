@@ -4,6 +4,33 @@ Session-by-session record. Newest entry on top. See `docs/todos.md` for the live
 
 ---
 
+## Session 5 — Milestone 3 (polish), committed and visually verified
+
+**Open question resolved first**: asked the user whether "feature flag enabled (beta)" needed a real togglable switch or whether the shipped privilege-gate + static "beta" label was sufficient — confirmed the latter. No code change from this; just closes the open item from Sessions 3/4.
+
+### What was done
+
+1. **Collapsible legend**: restructured the legend markup into a clickable header (`Legend ▾`) plus a body of the existing three legend rows; a `.collapsed` class (toggled on click, wired once in `_wireToolbar()`) hides the body and rotates the caret. `.memory-graph-legend`'s `pointer-events: none` had to be dropped (it predated the legend having anything interactive in it) — the legend DOM node isn't recreated by `_renderGraph()`, so collapse state naturally persists for the life of the modal without extra JS state.
+2. **Isolate-component affordance**: added a pure `_componentNodeIds(graph, rootId)` (undirected BFS, no DOM/Cytoscape dependency — deliberately factored out this way so it's unit-testable) and wired it into `_applyFilters()` alongside the existing category filter (`categoryOk && isolateOk`). A new "Isolate"/"Show all" toggle button in the detail panel (`_toggleIsolate`) sets/clears `_isolateRootId`; a banner (`#memory-graph-isolate-banner`, reusing the existing `.memory-graph-demo-banner` CSS class since the two can never be visible at once — isolate is unreachable in demo mode, same as every other detail-panel action) reports "Isolated — showing N connected memories". Clears automatically on background click (`_clearSelection`) and on every graph reload (`_renderGraph`), so it never survives a mutation or a stale state across reopens.
+3. **Keyboard shortcuts**: renamed the modal's `_escHandler` to `_keyHandler` (it now does more than Escape) and extended it: `f` (no modifiers) focuses the search box; `ArrowRight`/`ArrowDown` and `ArrowLeft`/`ArrowUp` cycle the selection through `_visibleNodeIds()` (nodes whose Cytoscape `display` style isn't `none` — so navigation automatically respects whatever category/similarity/isolate filters are active) and re-center the camera on the new selection. Both guarded: skipped entirely while typing in any input/textarea (so they don't hijack normal typing in the search box or the edit textarea), and skipped entirely while the modal is minimized (a latent gap the old Escape-only handler already had — Escape would still fire over a hidden modal — fixed as a byproduct of touching this function anyway, not a new regression).
+4. **`MODULE_SUMMARY.md`**: added the `memoryGraph.js` row to §6 (Knowledge, Memory, and RAG), describing the module and its M1/M2/M3 feature set for future readers who haven't touched this feature before.
+5. **Automated frontend tests**: `tests/memoryGraph/graphHarness.mjs` loads `static/js/memoryGraph.js` under Node via the exact `vm.createContext()` + import-string-shim pattern already established by `tests/markdown_codefence_placeholder_regression.mjs` (that script itself turned out to be an orphan — not wired into pytest or CI anywhere, only referenced as a documented pattern in `docs/memory-graph-analysis.md` — a pre-existing gap, not touched). `tests/memoryGraph/pureLogic.test.mjs` (10 `node:test` cases) covers: `_nodeSize` clamping, `_categoryColor` resolving every known category to a distinct color plus its fallback, `_buildQuery`'s exact query string, `_toElements` label truncation and — importantly — dropping edges whose endpoints aren't in the given node set (the same referential-integrity class of bug that would otherwise crash Cytoscape's element construction), `DEMO_GRAPH`'s own referential integrity and category validity, and `_componentNodeIds` (connected component, an isolated node with no edges, and a nonexistent root id). Wrapped by `tests/test_memory_graph_pure_logic_js.py`, mirroring `tests/test_streaming_segmenter_js.py`'s `node --test` subprocess + skip-if-no-node pattern — this is what actually gets picked up by `pytest -q`, unlike the orphaned codefence script.
+6. **Live browser verification**: launched a second isolated instance (port 7011, separate scratch data dir), seeded 5 memories (2 near-duplicate identity nodes for a similarity edge, a manually-linked Lighthouse pair, one fully isolated Python-preference node), and verified: legend collapse/expand, `f` focusing the search box, arrow-key navigation selecting nodes and centering the camera, and the isolate toggle both ways (isolating down to the 2-node Lighthouse component with the correct banner count, then "Show all" correctly restoring the rest of the graph). Cleaned up identically to Session 4: all 5 memories deleted via the real API, confirmed zero orphaned vectors in the shared `odysseus_memories_fastembed` Chroma collection, server killed by verified `Get-NetTCPConnection` PID.
+7. **Regression pass**: `node --check` clean on all touched JS. The 27 M1 backend tests + the new 10-case JS suite (as one pytest test) all pass — 28 total. `pytest --collect-only` across the whole suite shows exactly the same 5 pre-existing collection errors as documented before this session (the `mcp` package version mismatch across 4 files, plus one unrelated `UnicodeDecodeError` in a document-diff test) — zero new failures introduced.
+8. Committed as 3 commits: the M3 feature code (legend + isolate + keyboard shortcuts + `MODULE_SUMMARY.md`), the new pure-logic test suite, and this docs update.
+
+### Files changed this session
+
+| File | Change |
+|---|---|
+| `static/js/memoryGraph.js` | collapsible legend, isolate-component affordance (`_componentNodeIds`, `_toggleIsolate`, `_renderIsolateBanner`), keyboard shortcuts (`_keyHandler` rename + `f`/arrow handling, `_visibleNodeIds`/`_navigateNodes`) |
+| `static/style.css` | legend header/collapse rules, dropped `pointer-events: none` from `.memory-graph-legend` |
+| `static/js/MODULE_SUMMARY.md` | new `memoryGraph.js` row |
+| `tests/memoryGraph/graphHarness.mjs`, `tests/memoryGraph/pureLogic.test.mjs`, `tests/test_memory_graph_pure_logic_js.py` | new — pure-logic test suite |
+| `docs/handoff.md`, `docs/progress.md`, `docs/todos.md` | updated to reflect M3 done/verified/committed |
+
+---
+
 ## Session 4 — Milestone 2 verification, two bugs found and fixed, M2 committed
 
 **Goal**: pick up exactly where Session 3 stopped — get a real, visual confirmation the Memory Graph tab works, then commit M2.
