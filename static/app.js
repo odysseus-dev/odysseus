@@ -185,11 +185,27 @@ function initRailHoverLabels() {
   });
 }
 
-// Redirect to login on 401 from any fetch
+// Redirect to login on 401 from any fetch — but retry once first to avoid
+// spurious redirects on mobile when background tabs resume after cookie staleness.
+// If the user is mid-typing, delay the redirect so their draft isn't wiped.
+let _401Cooldown = false;
 const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
-  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
+  if (res.status !== 401 || String(args[0]).includes('/api/auth/')) return res;
+  if (_401Cooldown) return res;
+  _401Cooldown = true;
+  await new Promise(r => setTimeout(r, 2000));
+  try {
+    const retry = await _origFetch.apply(this, args);
+    if (retry.status !== 401) { _401Cooldown = false; return res; }
+  } catch (_) {}
+  const msgInput = document.getElementById('message');
+  const isTyping = msgInput && msgInput === document.activeElement && msgInput.value.trim().length > 0;
+  if (isTyping) {
+    const _onBlur = () => { msgInput.removeEventListener('blur', _onBlur); window.location.href = '/login'; };
+    msgInput.addEventListener('blur', _onBlur);
+  } else {
     window.location.href = '/login';
   }
   return res;
