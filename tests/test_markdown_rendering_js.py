@@ -214,6 +214,50 @@ def test_inline_code_content_is_html_escaped(node_available):
     assert "<b>" not in html
 
 
+def test_fenced_code_keeps_dollar_ampersand(node_available):
+    # Issue #5663: the block-restore pass used a string replacement, so `$&` in a
+    # restored block was read as "the matched text" and re-inserted the
+    # placeholder. `perl -pe 's/world/$& again/'` rendered as
+    # "s/world/___CODE_BLOCK_0___amp; again/" — the trailing "amp;" is the orphan
+    # left behind after `$&` consumed the `$&` of the escaped `$&amp;`.
+    html = _run_markdown_case(
+        "```sh\necho \"hello world\" | perl -pe 's/world/$& again/'\n```"
+    )
+
+    assert "___CODE_BLOCK_" not in html
+    assert "s/world/$&amp; again/" in html
+    assert "amp; again" not in html.replace("$&amp; again", "")
+
+
+def test_fenced_code_keeps_dollar_backtick_and_quote(node_available):
+    # `` $` `` and `$'` splice the text before/after the placeholder into the
+    # block. Unlike `$&` these leave no placeholder behind — the characters just
+    # vanish — so assert the content survives verbatim.
+    html = _run_markdown_case("```sh\nsed \"s/$`/x/\" && sed \"s/$'/y/\"\n```")
+
+    assert "___CODE_BLOCK_" not in html
+    assert "s/$`/x/" in html
+    assert "s/$&#39;/y/" in html
+
+
+def test_fenced_code_keeps_double_dollar(node_available):
+    # `$$` collapsed to a single `$` in the restored block.
+    html = _run_markdown_case('```sh\necho "$$USD and $$"\n```')
+
+    assert "$$USD and $$" in html
+
+
+def test_mermaid_block_keeps_dollar_ampersand(node_available):
+    # The mermaid restore site had the same hazard: a node label containing `$&`
+    # re-inserted the ___MERMAID_BLOCK_n___ placeholder into the diagram source,
+    # which then fails to parse. The math and allowed-HTML sites are fixed the
+    # same way; they need KaTeX/sanitizer conditions this harness doesn't set up.
+    html = _run_markdown_case('```mermaid\ngraph TD; A["$&"] --> B;\n```')
+
+    assert "___MERMAID_BLOCK_" not in html
+    assert "$&amp;" in html
+
+
 def test_currency_dollar_amounts_are_not_rendered_as_math(node_available):
     # "$5 to $10" used to pair the two dollar signs as inline-math delimiters
     # and render "5 to" through KaTeX. Pandoc-style rules now reject it: the
