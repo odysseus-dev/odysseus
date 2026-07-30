@@ -79,6 +79,7 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
       hideOn('#tool-research-btn, #research-toggle-btn', privs.can_use_research);
       // Memory & skills (rail/tool button only — UI/API entry).
       hideOn('#tool-memory-btn', privs.can_manage_memory);
+      hideOn('#tool-memory-graph-btn', privs.can_manage_memory);
       // Agent mode toggle — force chat mode by hiding the Agent toggle button.
       if (privs.can_use_agent === false) {
         const _agent = document.getElementById('mode-agent-btn');
