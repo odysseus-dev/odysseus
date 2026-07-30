@@ -1689,11 +1689,19 @@ function initializeEventListeners() {
   
   const newMemoryInput = el('new-memory-input');
   if (newMemoryInput) {
-    newMemoryInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
+    // keydown, not the deprecated keypress: keypress is not guaranteed to
+    // fire for Enter everywhere, which left the Add Memory form with no
+    // working submit path (#5828).
+    newMemoryInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
         memoryModule.addNewMemory();
       }
     });
+  }
+  const newMemoryAddBtn = el('new-memory-add-btn');
+  if (newMemoryAddBtn) {
+    newMemoryAddBtn.addEventListener('click', () => memoryModule.addNewMemory());
   }
 
 // Voice recording is handled by the dual-purpose send/mic button (see below)
