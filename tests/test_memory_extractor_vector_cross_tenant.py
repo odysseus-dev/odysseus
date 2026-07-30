@@ -67,6 +67,12 @@ class FakeMemoryManager:
     def load_all(self):
         return list(self.rows)
 
+    def load_all_for_update(self):
+        # Mirrors the real MemoryManager: extraction is a read-modify-write and
+        # goes through the strict loader (#5673). A healthy store behaves the
+        # same as load_all.
+        return list(self.rows)
+
     def load(self, owner=None):
         return [r for r in self.rows if r.get("owner") == owner]
 
