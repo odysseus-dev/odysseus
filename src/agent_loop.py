@@ -12,11 +12,7 @@ import json
 import re
 import time
 import logging
-<<<<<<< HEAD
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
-=======
-from typing import Any, AsyncGenerator, List, Dict, Optional, Set
->>>>>>> upstream/dev
 from urllib.parse import urlparse
 
 from src.llm_core import (
