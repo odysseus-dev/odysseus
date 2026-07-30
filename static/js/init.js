@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
     const KEY = 'odysseus-auth-user';
     const cachedUser = localStorage.getItem(KEY);
     if (cachedUser && cachedUser !== liveUser) {
-      const _keepKeys = new Set(['odysseus-last-user', KEY]);
+      const _keepKeys = new Set(['odysseus-last-user', 'odysseus.locale', KEY]);
       const toRemove = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);

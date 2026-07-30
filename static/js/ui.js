@@ -575,6 +575,10 @@ export function el(id) {
   return document.getElementById(id);
 }
 
+function translateDialogText(value) {
+  return window.odysseusI18n?.translateMessage?.(String(value)) ?? value;
+}
+
 /**
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean|'alternate'>. Existing two-button callers only
@@ -613,11 +617,11 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       okBtn.parentNode.insertBefore(altBtn, okBtn);
     }
 
-    if (titleEl) titleEl.textContent = title || 'Confirm';
-    msgEl.textContent = message;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
-    altBtn.textContent = alternateText || '';
+    if (titleEl) titleEl.textContent = translateDialogText(title || 'Confirm');
+    msgEl.textContent = translateDialogText(message);
+    okBtn.textContent = translateDialogText(confirmText);
+    cancelBtn.textContent = translateDialogText(cancelText);
+    altBtn.textContent = alternateText ? translateDialogText(alternateText) : '';
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
     altBtn.className = 'confirm-btn confirm-btn-secondary';
@@ -713,14 +717,14 @@ export function styledPrompt(message, {
     const okBtn = document.getElementById('styled-prompt-ok');
     const cancelBtn = document.getElementById('styled-prompt-cancel');
 
-    titleEl.textContent = title;
-    msgEl.textContent = message || '';
+    titleEl.textContent = translateDialogText(title);
+    msgEl.textContent = message ? translateDialogText(message) : '';
     msgEl.style.display = message ? '' : 'none';
     input.value = defaultValue || '';
-    input.placeholder = placeholder || '';
+    input.placeholder = placeholder ? translateDialogText(placeholder) : '';
     input.maxLength = maxLength;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    okBtn.textContent = translateDialogText(confirmText);
+    cancelBtn.textContent = translateDialogText(cancelText);
 
     // Remember what had focus so we can restore it when the dialog closes.
     const _prevFocus = document.activeElement;

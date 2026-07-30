@@ -414,39 +414,60 @@ def _imap_connect(account: str | None = None):
     return conn
 
 
+_FOLDER_ROLE_FLAGS = {
+    "\\sent": "sent",
+    "\\trash": "trash",
+    "\\junk": "junk",
+    "\\archive": "archive",
+    "\\all": "all",
+    "\\drafts": "drafts",
+    "\\flagged": "flagged",
+}
+
+_FOLDER_ROLE_CANDIDATES = {
+    "inbox": ("INBOX",),
+    "sent": ("Sent", "[Gmail]/Sent Mail", "[Google Mail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent"),
+    "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "Deleted Messages", "Deleted Items"),
+    "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
+    "archive": ("Archive", "Archives"),
+    "all": ("All Mail", "[Gmail]/All Mail", "[Google Mail]/All Mail"),
+    "drafts": ("Drafts", "Draft", "[Gmail]/Drafts", "[Google Mail]/Drafts"),
+    "flagged": ("Flagged", "Starred", "[Gmail]/Starred", "[Google Mail]/Starred"),
+}
+
+
+def _parse_list_line(line) -> tuple[str | None, frozenset[str]]:
+    decoded = line.decode() if isinstance(line, bytes) else str(line)
+    match = re.match(
+        r'^\s*\((?P<attrs>[^)]*)\)\s+(?:NIL|"(?:\\.|[^"])*")\s+'
+        r'(?P<mailbox>"(?:\\.|[^"])*"|\S+)\s*$',
+        decoded,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None, frozenset()
+    mailbox = match.group("mailbox")
+    if mailbox.startswith('"'):
+        mailbox = re.sub(r'\\(["\\])', r'\1', mailbox[1:-1])
+    attrs = frozenset(attr.casefold() for attr in match.group("attrs").split())
+    return mailbox, attrs
+
+
 def _detect_sent_folder(conn):
     """Find the account's Sent folder name; fall back to 'Sent'."""
-    candidates = ("Sent", "[Gmail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent")
-    try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return "Sent"
-        names = []
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-            if m:
-                names.append(m.group(1) or m.group(2))
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            if r"\Sent" in decoded:
-                m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-                if m:
-                    return m.group(1) or m.group(2)
-        for c in candidates:
-            if c in names:
-                return c
-    except Exception:
-        pass
-    return "Sent"
+    return _resolve_folder(conn, "Sent", "sent")
 
 
 def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not m:
-        return None
-    return m.group(1) or m.group(2)
+    return _parse_list_line(line)[0]
+
+
+def _folder_role_from_flags(line) -> str:
+    _name, attrs = _parse_list_line(line)
+    for flag, role in _FOLDER_ROLE_FLAGS.items():
+        if flag in attrs:
+            return role
+    return ""
 
 
 def _list_folder_lines(conn) -> list:
@@ -459,45 +480,36 @@ def _list_folder_lines(conn) -> list:
         return []
 
 
-def _resolve_folder(conn, preferred: str, role: str) -> str:
+def _resolve_folder(conn, preferred: str, role: str, folders=None) -> str:
     """Resolve provider-specific folder names like Gmail's [Gmail]/Trash."""
-    folders = _list_folder_lines(conn)
+    folders = _list_folder_lines(conn) if folders is None else folders
     names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
     if preferred and preferred in names:
         return preferred
 
-    role_flags = {
-        "trash": ("\\Trash",),
-        "archive": ("\\Archive", "\\All"),
-        "junk": ("\\Junk",),
-    }.get(role, ())
-    for f in folders:
-        decoded = f.decode() if isinstance(f, bytes) else str(f)
-        if any(flag in decoded for flag in role_flags):
-            name = _folder_name_from_list_line(f)
-            if name:
-                return name
+    role_order = (role, "all") if role == "archive" else (role,)
+    for candidate_role in filter(None, role_order):
+        for f in folders:
+            if _folder_role_from_flags(f) == candidate_role:
+                name = _folder_name_from_list_line(f)
+                if name:
+                    return name
 
-    candidates = {
-        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "Deleted Messages", "Deleted Items"),
-        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail"),
-        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
-    }.get(role, ())
     lower_map = {n.lower(): n for n in names}
-    for candidate in candidates:
+    fallback_candidates = _FOLDER_ROLE_CANDIDATES.get(role, ())
+    if role == "archive":
+        fallback_candidates += _FOLDER_ROLE_CANDIDATES["all"]
+    for candidate in fallback_candidates:
         if candidate.lower() in lower_map:
             return lower_map[candidate.lower()]
     return preferred
 
 
 def _folder_role_from_name(name: str) -> str:
-    lower = (name or "").lower()
-    if "trash" in lower or "bin" in lower or "deleted" in lower:
-        return "trash"
-    if "junk" in lower or "spam" in lower:
-        return "junk"
-    if "archive" in lower or "all mail" in lower:
-        return "archive"
+    lower = (name or "").casefold()
+    for role, candidates in _FOLDER_ROLE_CANDIDATES.items():
+        if lower in (candidate.casefold() for candidate in candidates):
+            return role
     return ""
 
 
@@ -979,6 +991,7 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     conn = None
     try:
         conn = _imap_connect(account)
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
         select_status, _ = conn.select(_q(folder), readonly=True)
         if select_status != "OK":
             raise ValueError(f"IMAP folder not found: {folder}")
@@ -1101,14 +1114,21 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     # IMAP SEARCH OR is binary, so we nest it.
     search_cmd = f'(OR OR FROM "{q}" SUBJECT "{q}" TEXT "{q}")'
     if folders is None:
-        folders = ["INBOX", "Sent", "Archive"]
+        folders = ["INBOX", "Sent", "All Mail", "Archive"]
     cache = _get_cached_summaries()
     out = []
     conn = _imap_connect(account)
-    touched = []
+    touched = set()
+    folder_lines = _list_folder_lines(conn)
     try:
         for folder in folders:
             try:
+                folder = _resolve_folder(
+                    conn, folder, _folder_role_from_name(folder), folder_lines,
+                )
+                if not folder or folder in touched:
+                    continue
+                touched.add(folder)
                 status, _ = conn.select(_q(folder), readonly=True)
                 if status != "OK":
                     continue

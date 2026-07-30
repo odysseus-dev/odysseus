@@ -120,6 +120,8 @@ let _emails = [];
 let _currentFolder = 'INBOX';
 let _offset = 0;
 let _total = 0;
+const _EMPTY_FOLDER_ROLES = Object.freeze(Object.create(null));
+let _folderRoles = _EMPTY_FOLDER_ROLES;
 
 // Replying to an email marks the source \Answered server-side and fires
 // `email-answered`. Reflect it live in the inbox list so it shows as done
@@ -441,57 +443,110 @@ async function loadFolders() {
     const data = await res.json();
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
-    _populateFolderSelect(select, data.folders);
+    _folderRoles = data.roles && typeof data.roles === 'object'
+      ? data.roles
+      : _EMPTY_FOLDER_ROLES;
+    _populateFolderSelect(select, data.folders, _folderRoles);
   } catch (e) {
     console.error('Failed to load folders:', e);
   }
 }
 
-export function sortedFolders(folders) {
-  const roleOf = (folder) => {
-    const f = String(folder || '').toLowerCase();
-    if (f === 'inbox') return 'inbox';
-    if (f.includes('sent')) return 'sent';
-    if (f.includes('starred') || f.includes('flagged')) return 'starred';
-    if (f.includes('draft')) return 'drafts';
-    if (f.includes('all mail') || f.includes('archive')) return 'archive';
-    if (f.includes('spam') || f.includes('junk')) return 'junk';
-    if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return 'trash';
-    return '';
-  };
-  const roleOrder = ['inbox', 'sent', 'starred', 'archive', 'junk', 'trash', 'drafts'];
+const _LEGACY_FOLDER_ROLES = new Map([
+  ['inbox', 'inbox'],
+  ['sent', 'sent'],
+  ['sent mail', 'sent'],
+  ['sent items', 'sent'],
+  ['inbox.sent', 'sent'],
+  ['[gmail]/sent mail', 'sent'],
+  ['[google mail]/sent mail', 'sent'],
+  ['starred', 'flagged'],
+  ['flagged', 'flagged'],
+  ['[gmail]/starred', 'flagged'],
+  ['[google mail]/starred', 'flagged'],
+  ['draft', 'drafts'],
+  ['drafts', 'drafts'],
+  ['[gmail]/drafts', 'drafts'],
+  ['[google mail]/drafts', 'drafts'],
+  ['all mail', 'all'],
+  ['[gmail]/all mail', 'all'],
+  ['[google mail]/all mail', 'all'],
+  ['archive', 'archive'],
+  ['archives', 'archive'],
+  ['spam', 'junk'],
+  ['junk', 'junk'],
+  ['[gmail]/spam', 'junk'],
+  ['[google mail]/spam', 'junk'],
+  ['trash', 'trash'],
+  ['bin', 'trash'],
+  ['deleted messages', 'trash'],
+  ['deleted items', 'trash'],
+  ['[gmail]/trash', 'trash'],
+  ['[google mail]/trash', 'trash'],
+]);
+
+export function folderRole(folder, roles = _folderRoles) {
+  const raw = String(folder || '');
+  if (roles && typeof roles === 'object' && Object.hasOwn(roles, raw)) {
+    return String(roles[raw] || '');
+  }
+  return _LEGACY_FOLDER_ROLES.get(raw.toLowerCase()) || '';
+}
+
+export function sortedFolders(folders, roles = _folderRoles) {
+  const roleOrder = ['inbox', 'sent', 'flagged', 'all', 'archive', 'junk', 'trash', 'drafts'];
   const found = new Map();
   const others = [];
   for (const f of folders) {
-    const role = roleOf(f);
+    const role = folderRole(f, roles);
     if (role && !found.has(role)) found.set(role, f);
     else others.push(f);
   }
   return { priority: roleOrder.map(role => found.get(role)).filter(Boolean), others };
 }
 
-export function folderDisplayName(folder) {
-  const raw = String(folder || '');
-  const f = raw.toLowerCase();
-  if (f === 'inbox') return 'INBOX';
-  if (f.includes('all mail')) return 'Archive / All Mail';
-  if (f.includes('archive')) return 'Archive';
-  if (f.includes('spam')) return 'Spam';
-  if (f.includes('junk')) return 'Junk';
-  if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return 'Trash';
-  if (f.includes('sent')) return 'Sent';
-  if (f.includes('draft')) return 'Drafts';
-  return raw;
+function _folderLabel(key, fallback) {
+  const translated = window.odysseusI18n?.t?.(key);
+  return translated && translated !== key ? translated : fallback;
 }
 
-function _populateFolderSelect(select, folders) {
+const _FOLDER_LABELS = Object.freeze({
+  inbox: ['ui.email.folder.inbox', 'INBOX'],
+  sent: ['ui.email.folder.sent', 'Sent'],
+  flagged: ['ui.email.folder.flagged', 'Starred'],
+  all: ['ui.email.folder.all', 'All Mail'],
+  archive: ['ui.email.folder.archive', 'Archive'],
+  junk: ['ui.email.folder.junk', 'Junk'],
+  trash: ['ui.email.folder.trash', 'Trash'],
+  drafts: ['ui.email.folder.drafts', 'Drafts'],
+});
+
+export function folderLabelKey(folder, roles = _folderRoles) {
+  const role = typeof roles === 'string' ? roles : folderRole(folder, roles);
+  return _FOLDER_LABELS[role]?.[0] || '';
+}
+
+export function folderDisplayName(folder, roles = _folderRoles) {
+  const raw = String(folder || '');
+  const role = typeof roles === 'string' ? roles : folderRole(raw, roles);
+  const label = _FOLDER_LABELS[role];
+  return label ? _folderLabel(label[0], label[1]) : raw;
+}
+
+function _setFolderOptionLabel(option, folder, roles) {
+  const key = folderLabelKey(folder, roles);
+  if (key) option.setAttribute('data-i18n', key);
+  option.textContent = folderDisplayName(folder, roles);
+}
+
+function _populateFolderSelect(select, folders, roles = _folderRoles) {
   select.innerHTML = '';
-  const { priority, others } = sortedFolders(folders);
+  const { priority, others } = sortedFolders(folders, roles);
 
   for (const folder of priority) {
     const opt = document.createElement('option');
     opt.value = folder;
-    opt.textContent = folderDisplayName(folder);
+    _setFolderOptionLabel(opt, folder, roles);
     if (folder === _currentFolder) opt.selected = true;
     select.appendChild(opt);
   }
@@ -506,7 +561,7 @@ function _populateFolderSelect(select, folders) {
   for (const folder of others) {
     const opt = document.createElement('option');
     opt.value = folder;
-    opt.textContent = folderDisplayName(folder);
+    _setFolderOptionLabel(opt, folder, roles);
     if (folder === _currentFolder) opt.selected = true;
     select.appendChild(opt);
   }

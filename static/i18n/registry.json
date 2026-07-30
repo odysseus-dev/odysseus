@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "source": "https://partner.steamgames.com/doc/store/localization/languages",
+  "support_level": "full-platform",
+  "default_locale": "en",
+  "locales": {
+    "ar": {
+      "name": "العربية",
+      "dir": "rtl"
+    },
+    "bg": {
+      "name": "български език",
+      "dir": "ltr"
+    },
+    "zh-CN": {
+      "name": "简体中文",
+      "dir": "ltr"
+    },
+    "zh-TW": {
+      "name": "繁體中文",
+      "dir": "ltr"
+    },
+    "cs": {
+      "name": "Čeština",
+      "dir": "ltr"
+    },
+    "da": {
+      "name": "Dansk",
+      "dir": "ltr"
+    },
+    "nl": {
+      "name": "Nederlands",
+      "dir": "ltr"
+    },
+    "en": {
+      "name": "English",
+      "dir": "ltr"
+    },
+    "fi": {
+      "name": "Suomi",
+      "dir": "ltr"
+    },
+    "fr": {
+      "name": "Français",
+      "dir": "ltr"
+    },
+    "de": {
+      "name": "Deutsch",
+      "dir": "ltr"
+    },
+    "el": {
+      "name": "Ελληνικά",
+      "dir": "ltr"
+    },
+    "hu": {
+      "name": "Magyar",
+      "dir": "ltr"
+    },
+    "id": {
+      "name": "Bahasa Indonesia",
+      "dir": "ltr"
+    },
+    "it": {
+      "name": "Italiano",
+      "dir": "ltr"
+    },
+    "ja": {
+      "name": "日本語",
+      "dir": "ltr"
+    },
+    "ko": {
+      "name": "한국어",
+      "dir": "ltr"
+    },
+    "ms": {
+      "name": "Bahasa Melayu",
+      "dir": "ltr"
+    },
+    "no": {
+      "name": "Norsk",
+      "dir": "ltr"
+    },
+    "pl": {
+      "name": "Polski",
+      "dir": "ltr"
+    },
+    "pt": {
+      "name": "Português",
+      "dir": "ltr"
+    },
+    "pt-BR": {
+      "name": "Português-Brasil",
+      "dir": "ltr"
+    },
+    "ro": {
+      "name": "Română",
+      "dir": "ltr"
+    },
+    "ru": {
+      "name": "Русский",
+      "dir": "ltr"
+    },
+    "es": {
+      "name": "Español-España",
+      "dir": "ltr"
+    },
+    "es-419": {
+      "name": "Español-Latinoamérica",
+      "dir": "ltr"
+    },
+    "sv": {
+      "name": "Svenska",
+      "dir": "ltr"
+    },
+    "th": {
+      "name": "ไทย",
+      "dir": "ltr"
+    },
+    "tr": {
+      "name": "Türkçe",
+      "dir": "ltr"
+    },
+    "uk": {
+      "name": "Українська",
+      "dir": "ltr"
+    },
+    "vi": {
+      "name": "Tiếng Việt",
+      "dir": "ltr"
+    }
+  },
+  "aliases": {
+    "zh": "zh-CN",
+    "zh-Hans": "zh-CN",
+    "zh-SG": "zh-CN",
+    "zh-Hant": "zh-TW",
+    "zh-HK": "zh-TW",
+    "zh-MO": "zh-TW",
+    "pt-PT": "pt",
+    "nb": "no",
+    "nn": "no",
+    "nb-NO": "no",
+    "nn-NO": "no",
+    "in": "id",
+    "es-ES": "es",
+    "es-AR": "es-419",
+    "es-BO": "es-419",
+    "es-CL": "es-419",
+    "es-CO": "es-419",
+    "es-CR": "es-419",
+    "es-CU": "es-419",
+    "es-DO": "es-419",
+    "es-EC": "es-419",
+    "es-GT": "es-419",
+    "es-HN": "es-419",
+    "es-MX": "es-419",
+    "es-NI": "es-419",
+    "es-PA": "es-419",
+    "es-PE": "es-419",
+    "es-PR": "es-419",
+    "es-PY": "es-419",
+    "es-SV": "es-419",
+    "es-US": "es-419",
+    "es-UY": "es-419",
+    "es-VE": "es-419"
+  }
+}

@@ -118,6 +118,10 @@ body {
 @font-face { font-family: 'OpenDyslexic'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Regular.woff2') format('woff2'); }
 @font-face { font-family: 'OpenDyslexic'; font-weight: 700; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Bold.woff2') format('woff2'); }
 
+/* Self-hosted Arabic support (SIL OFL 1.1). */
+@font-face { font-family: 'Noto Sans Arabic'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/NotoSansArabic-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Noto Sans Arabic'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/NotoSansArabic-SemiBold.woff2') format('woff2'); }
+
 /* Code block baseline */
 pre, code, .hljs {
   font-size: 0.95em;
@@ -453,7 +457,7 @@ body.bg-pattern-sparkles {
     .sidebar {
       width: 240px;
       background: var(--sidebar-bg, var(--panel));
-      border-right: 1px solid var(--border);
+      border-inline-end: 1px solid var(--border);
       transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
       display: flex;
       flex-direction: column;
@@ -470,7 +474,7 @@ body.bg-pattern-sparkles {
     .sidebar-resize-handle {
       position: absolute;
       top: 0;
-      right: -3px;
+      inset-inline-end: -3px;
       width: 6px;
       height: 100%;
       cursor: col-resize;
@@ -483,8 +487,8 @@ body.bg-pattern-sparkles {
       opacity: 0.6;
     }
     .sidebar.right-side .sidebar-resize-handle {
-      right: auto;
-      left: -3px;
+      inset-inline-end: auto;
+      inset-inline-start: -3px;
     }
     .sidebar.resizing {
       transition: none;
@@ -493,8 +497,8 @@ body.bg-pattern-sparkles {
     .sidebar.right-side {
       order: 2;
       margin: 0;
-      border-right: none;
-      border-left: 1px solid var(--border);
+      border-inline-end: none;
+      border-inline-start: 1px solid var(--border);
     }
     .sidebar.hidden {
       /* !important so it beats the inline width init.js restores from storage —
@@ -596,7 +600,8 @@ body.bg-pattern-sparkles {
       align-items: center;
       justify-content: flex-end; /* right-align when sidebar is on left */
       gap: 8px;
-      padding: 15px 10px 0 40px; /* top padding aligns logo with fixed hamburger */
+      padding-block: 15px 0;
+      padding-inline: 40px 10px; /* start padding aligns logo with fixed hamburger */
       flex-shrink: 0;
       min-height: 40px;
       border: none !important;
@@ -636,7 +641,7 @@ body.bg-pattern-sparkles {
       user-select: none;
       position: relative;
       top: 0;
-      left: -10px;
+      inset-inline-start: -10px;
     }
     .sidebar-sep {
       display: none;
@@ -657,8 +662,7 @@ body.bg-pattern-sparkles {
     }
     .sidebar.right-side .sidebar-header {
       justify-content: flex-start;
-      padding-left: 10px;
-      padding-right: 40px;
+      padding-inline: 10px 40px;
     }
     .sidebar.right-side .sidebar-inner {
       padding: 8px;
@@ -668,14 +672,14 @@ body.bg-pattern-sparkles {
       padding: 2px 30px 4px 4px;
     }
     .sidebar.right-side .sidebar-brand-title {
-      margin-left: 10px;
+      margin-inline-start: 10px;
     }
     /* Fixed hamburger — always visible, toggles sidebar */
     .hamburger-btn {
       position: fixed;
       top: 12px;
-      left: 9px;
-      right: auto;
+      inset-inline-start: 9px;
+      inset-inline-end: auto;
       z-index: 210;
       width: 30px;
       height: 30px;
@@ -693,8 +697,8 @@ body.bg-pattern-sparkles {
       display: flex;
     }
     body.hamburger-right .hamburger-btn {
-      left: auto;
-      right: 9px;
+      inset-inline-start: auto;
+      inset-inline-end: 9px;
     }
     .mobile-new-chat-btn {
       display: none;
@@ -711,7 +715,7 @@ body.bg-pattern-sparkles {
       width: 48px;
       flex-shrink: 0;
       background: var(--panel);
-      border-right: 1px solid var(--border);
+      border-inline-end: 1px solid var(--border);
       display: none;
       flex-direction: column;
       align-items: center;
@@ -744,7 +748,7 @@ body.bg-pattern-sparkles {
     .rail-resize-handle {
       position: absolute;
       top: 0;
-      right: -3px;
+      inset-inline-end: -3px;
       width: 6px;
       height: 100%;
       cursor: col-resize;
@@ -757,14 +761,14 @@ body.bg-pattern-sparkles {
       opacity: 0.6;
     }
     .icon-rail.right-side .rail-resize-handle {
-      right: auto;
-      left: -3px;
+      inset-inline-end: auto;
+      inset-inline-start: -3px;
     }
     .icon-rail.right-side {
       order: 2;
       margin: 0;
-      border-right: none;
-      border-left: 1px solid var(--border);
+      border-inline-end: none;
+      border-inline-start: 1px solid var(--border);
     }
     .icon-rail-divider {
       width: 24px;
@@ -791,7 +795,7 @@ body.bg-pattern-sparkles {
     .rail-notes-badge {
       position: absolute;
       top: 1px;
-      right: 1px;
+      inset-inline-end: 1px;
       min-width: 14px;
       height: 14px;
       padding: 0 3px;
@@ -823,9 +827,9 @@ body.bg-pattern-sparkles {
       background: var(--red);
       /* Match the Deep Research badge: right-aligned (auto) with the same
          4px left nudge, so both sidebar buttons' dots line up identically. */
-      margin-left: auto;
+      margin-inline-start: auto;
       position: relative;
-      left: -4px;
+      inset-inline-start: -4px;
       flex-shrink: 0;
       align-self: center;
       animation: rail-notes-pulse 1.6s ease-in-out infinite;
@@ -4237,7 +4241,7 @@ body.bg-pattern-sparkles {
     }
     /* Slim text-button variant: swap "Copy" → "✓ Copied" via the
        ::before content while still inheriting the green flash + pulse. */
-    pre.pre-compact .copy-code.copied::before { content: '✓ Copied'; }
+    pre.pre-compact .copy-code.copied::before { content: var(--i18n-css-copied, '✓ Copied'); }
 
     /* Edit code button — positioned left of copy button */
     pre .edit-code {
@@ -4305,7 +4309,7 @@ body.bg-pattern-sparkles {
     }
     pre.editing code.editing { outline:none; cursor:text; }
     pre.editing::before {
-      content: 'EDITING';
+      content: var(--i18n-css-editing, 'EDITING');
       position: absolute; top: 0; left: 0;
       padding: 2px 8px;
       font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
@@ -4352,8 +4356,8 @@ body.bg-pattern-sparkles {
       gap: 0;
     }
     pre.pre-compact .copy-code svg { display: none; }
-    pre.pre-compact .copy-code::before { content: 'Copy'; }
-    pre.pre-compact .copy-code.copied::before { content: '✓ Copied'; }
+    pre.pre-compact .copy-code::before { content: var(--i18n-css-copy, 'Copy'); }
+    pre.pre-compact .copy-code.copied::before { content: var(--i18n-css-copied, '✓ Copied'); }
     /* Edit: icon + "Edit" label, swap to "Save" when editing */
     pre.pre-compact .edit-code {
       width: auto;
@@ -4362,8 +4366,8 @@ body.bg-pattern-sparkles {
       right: 64px;
     }
     pre.pre-compact .edit-code svg { width: 12px; height: 12px; }
-    pre.pre-compact .edit-code::after { content: 'Edit'; }
-    pre.pre-compact .edit-code.active::after { content: 'Save'; }
+    pre.pre-compact .edit-code::after { content: var(--i18n-css-edit, 'Edit'); }
+    pre.pre-compact .edit-code.active::after { content: var(--i18n-css-save, 'Save'); }
     /* Run: icon + "Run" label */
     pre.pre-compact .run-code {
       width: auto;
@@ -4372,7 +4376,7 @@ body.bg-pattern-sparkles {
       right: 126px;
     }
     pre.pre-compact .run-code svg { width: 12px; height: 12px; }
-    pre.pre-compact .run-code::after { content: 'Run'; }
+    pre.pre-compact .run-code::after { content: var(--i18n-css-run, 'Run'); }
     /* Bottom-positioned slim buttons (when pre is near the top of the
        viewport, the existing JS toggles .bottom to flip them down). */
     pre.pre-compact .copy-code.bottom,
@@ -4639,7 +4643,7 @@ body.bg-pattern-sparkles {
       /* Sidebar overlays chat on mobile */
       .sidebar {
         position: fixed !important;
-        top: 0; bottom: 0; left: 0;
+        top: 0; bottom: 0; inset-inline-start: 0;
         z-index: 400;
         width: 80% !important;
         max-width: 340px;
@@ -4664,9 +4668,20 @@ body.bg-pattern-sparkles {
         transform: translateX(100%);
       }
       .sidebar.right-side {
-        left: auto; right: 0;
+        inset-inline-start: auto; inset-inline-end: 0;
         box-shadow: -4px 0 20px rgba(0,0,0,0.5);
       }
+      :root[dir="rtl"] .sidebar.hidden,
+      :root[dir="rtl"].ody-sidebar-off .sidebar,
+      :root[dir="rtl"].ody-mobile-startup-sidebar-hidden .sidebar {
+        transform: translateX(100%) !important;
+      }
+      :root[dir="rtl"] .sidebar.right-side.hidden,
+      :root[dir="rtl"].ody-sidebar-off .sidebar.right-side,
+      :root[dir="rtl"].ody-mobile-startup-sidebar-hidden .sidebar.right-side {
+        transform: translateX(-100%) !important;
+      }
+
       html.ody-sidebar-off .sidebar,
       html.ody-mobile-startup-sidebar-hidden .sidebar {
         transform: translateX(-100%) !important;
@@ -5460,6 +5475,73 @@ body.bg-pattern-sparkles {
         padding: 10px 12px;
         margin: -10px -12px;
       }
+    }
+
+    /* ── Full RTL layout support ── */
+    :root[dir="rtl"] body {
+      font-family: 'Noto Sans Arabic', 'Segoe UI', 'Tahoma', 'Geeza Pro', 'Arial', var(--font-family, 'Fira Code', monospace);
+    }
+    /* Settings sidebar: flip border + text alignment */
+    :root[dir="rtl"] .settings-sidebar {
+      border-right: none;
+      border-left: 1px solid var(--border);
+    }
+    :root[dir="rtl"] .settings-nav-item {
+      text-align: right;
+      justify-content: flex-start;
+    }
+    :root[dir="rtl"] .settings-sidebar-label {
+      text-align: right;
+    }
+    /* Main sidebar: flip border + logo alignment */
+    :root[dir="rtl"] .sidebar {
+      border-right: none;
+      border-left: 1px solid var(--border);
+    }
+    :root[dir="rtl"] .sidebar.right-side {
+      border-left: none;
+      border-right: 1px solid var(--border);
+    }
+    :root[dir="rtl"] .sidebar-header {
+      justify-content: flex-start;
+    }
+    /* Chat chrome follows the interface direction; message bodies keep dir=auto. */
+    :root[dir="rtl"] .chat-history {
+      direction: rtl;
+    }
+    :root[dir="rtl"] .chat-input-wrap {
+      direction: rtl;
+    }
+    /* Login page: center is fine, but flip form internals */
+    :root[dir="rtl"] .login-form,
+    :root[dir="rtl"] .login-form input,
+    :root[dir="rtl"] .login-form button {
+      direction: rtl;
+      text-align: right;
+    }
+    :root[dir="rtl"] .sidebar-inner,
+    :root[dir="rtl"] .sidebar-user-bar {
+      direction: rtl;
+    }
+    @media (max-width: 600px) {
+      :root[dir="rtl"] .settings-sidebar {
+        border-right: none;
+        border-left: none;
+        border-bottom: 1px solid var(--border);
+      }
+    }
+    @container settings-modal (max-width: 620px) {
+      :root[dir="rtl"] .settings-sidebar {
+        border-right: none;
+        border-left: none;
+        border-bottom: 1px solid var(--border);
+      }
+    }
+    /* Flip inline margin-left:auto → margin-right:auto in RTL */
+    :root[dir="rtl"] [style*="margin-left:auto"],
+    :root[dir="rtl"] [style*="margin-left: auto"] {
+      margin-left: 0 !important;
+      margin-right: auto !important;
     }
     #mobile-backdrop, #mobile-menu-btn { display:none !important; }
     #sidebar-backdrop { display:none !important; }
@@ -11409,10 +11491,10 @@ textarea.memory-add-input {
   color: color-mix(in srgb, var(--fg) 65%, transparent);
 }
 .admin-card > div:has(.admin-switch input) .admin-toggle-state::before {
-  content: "Disabled";
+  content: var(--i18n-css-disabled, "Disabled");
 }
 .admin-card > div:has(.admin-switch input:checked) .admin-toggle-state::before {
-  content: "Enabled";
+  content: var(--i18n-css-enabled, "Enabled");
 }
 /* Nudge the bulk-bar action buttons up 2px (and Memory's -2px left) to
    align with the row baseline. Covers both the Memory bulk bar
@@ -16702,7 +16784,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   background: color-mix(in srgb, var(--accent, #2563eb) 6%, transparent);
 }
 .doc-editor-pane.email-dragover::after {
-  content: 'Drop to attach';
+  content: var(--i18n-css-drop-to-attach, 'Drop to attach');
   position: absolute;
   top: 50%;
   left: 50%;
@@ -23654,7 +23736,9 @@ body.gallery-selecting .gallery-dl-btn,
 }
 
 .settings-sidebar {
-  width: 160px;
+  width: fit-content;
+  min-width: 160px;
+  max-width: 220px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   padding: 8px;
@@ -23662,6 +23746,7 @@ body.gallery-selecting .gallery-dl-btn,
   flex-direction: column;
   gap: 2px;
   background: color-mix(in srgb, var(--fg) 2%, transparent);
+  overflow: hidden;
 }
 
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
@@ -23689,6 +23774,8 @@ body.gallery-selecting .gallery-dl-btn,
   transition: all 0.1s;
   text-align: left;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-nav-item:hover {
@@ -24546,8 +24633,8 @@ a.chat-link[href^="#research-"] {
   color: color-mix(in srgb, var(--accent, var(--fg)) 80%, transparent);
   opacity: 0.8;
 }
-.task-log-row:not(.expanded) .task-log-row-toggle::before { content: 'Show more'; }
-.task-log-row.expanded .task-log-row-toggle::before { content: 'Show less'; }
+.task-log-row:not(.expanded) .task-log-row-toggle::before { content: var(--i18n-css-show-more, 'Show more'); }
+.task-log-row.expanded .task-log-row-toggle::before { content: var(--i18n-css-show-less, 'Show less'); }
 .task-log-row-toggle:hover::before { opacity: 1; }
 .task-log-prompt {
   margin-top: 6px;
@@ -32747,7 +32834,7 @@ body.doc-find-active mark.doc-find-mark.current {
   word-wrap: break-word;
 }
 .doc-email-richbody:empty::before {
-  content: "Write your email\2026";
+  content: var(--i18n-css-write-email, "Write your email…");
   opacity: 0.4;
   pointer-events: none;
 }
@@ -34346,7 +34433,7 @@ body.notes-drag-mode .note-card-pin svg {
   transition: background 0.28s ease, border-color 0.28s ease;
 }
 .notes-pane-archive .notes-pane-title::after {
-  content: 'Archive';
+  content: var(--i18n-css-archive, 'Archive');
   margin-left: 8px;
   padding: 2px 8px 2px 22px;
   font-size: 9px;
@@ -36099,7 +36186,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   pointer-events: none;
 }
 .note-form-goal-fresh.building::after {
-  content: 'AI is planning your goal…';
+  content: var(--i18n-css-planning-goal, 'AI is planning your goal…');
   display: block;
   text-align: center;
   font-size: 12px;
@@ -36258,7 +36345,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .note-card-title:hover { opacity: 0.7; }
 .note-card-title.empty::before {
-  content: 'No title';
+  content: var(--i18n-css-no-title, 'No title');
   font-weight: 500;
   opacity: 0.3;
   font-style: italic;
@@ -36445,7 +36532,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   max-height: none;
 }
 .note-checklist-preview:empty::before {
-  content: 'No todos';
+  content: var(--i18n-css-no-todos, 'No todos');
   font-size: 10px;
   opacity: 0.3;
   font-style: italic;

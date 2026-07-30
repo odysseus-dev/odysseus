@@ -5,7 +5,12 @@
 
 import spinnerModule from './spinner.js';
 import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
-import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260722emailfastindex1';
+import {
+  folderDisplayName,
+  folderLabelKey,
+  folderRole,
+  sortedFolders,
+} from './emailInbox.js?v=20260722emailfastindex1';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -39,6 +44,12 @@ let _libAccountsLoadedAt = 0;
 const _LIB_ACCOUNTS_TTL_MS = 5 * 60 * 1000;
 let _accountUnreadSeq = 0;
 let _accountUnreadState = new Map(); // account_id -> { unreadCount, maxUid }
+const _libFolderRolesByAccount = new Map();
+const _EMPTY_FOLDER_ROLES = Object.freeze(Object.create(null));
+
+function _activeFolderRoles() {
+  return _libFolderRolesByAccount.get(state._libAccountId || '') || _EMPTY_FOLDER_ROLES;
+}
 
 const _EMAIL_SETTINGS_ICON = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 4.3l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>`;
 const _DEFAULT_AUTO_REPLY_SUBJECT = '(Away) {subject}';
@@ -859,7 +870,7 @@ function _syncEmailReadState(uid, isRead = true) {
     }
 
     if (!titleRow || titleRow.querySelector('.email-card-unread-dot, [data-unread-dot]')) return;
-    const isSentFolder = /sent/i.test(state._libFolder || '');
+    const isSentFolder = folderRole(state._libFolder, _activeFolderRoles()) === 'sent';
     if (isSentFolder) return;
     const senderName = match ? (match.from_name || match.from_address || '') : '';
     const dot = document.createElement('span');
@@ -3262,6 +3273,10 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
     const sel = document.getElementById('email-lib-folder');
     if (!sel || !data.folders) return;
     state._libFolders = data.folders;
+    _libFolderRolesByAccount.set(
+      accountAtStart,
+      data.roles && typeof data.roles === 'object' ? data.roles : _EMPTY_FOLDER_ROLES,
+    );
     if (resetMissing && state._libFolder !== '__scheduled__' && !data.folders.includes(state._libFolder)) {
       state._libFolder = data.folders.includes('INBOX') ? 'INBOX' : (data.folders[0] || 'INBOX');
       state._libFilter = 'all';
@@ -3278,11 +3293,14 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
       _syncReminderClearButton();
     }
     sel.innerHTML = '';
-    const { priority, others } = sortedFolders(data.folders);
+    const roles = _activeFolderRoles();
+    const { priority, others } = sortedFolders(data.folders, roles);
     for (const f of priority) {
       const opt = document.createElement('option');
       opt.value = f;
-      opt.textContent = folderDisplayName(f);
+      const key = folderLabelKey(f, roles);
+      if (key) opt.setAttribute('data-i18n', key);
+      opt.textContent = folderDisplayName(f, roles);
       if (f === state._libFolder) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -3295,7 +3313,9 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
     for (const f of others) {
       const opt = document.createElement('option');
       opt.value = f;
-      opt.textContent = folderDisplayName(f);
+      const key = folderLabelKey(f, roles);
+      if (key) opt.setAttribute('data-i18n', key);
+      opt.textContent = folderDisplayName(f, roles);
       if (f === state._libFolder) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -3306,7 +3326,13 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
     sel.appendChild(sep2);
     const schedOpt = document.createElement('option');
     schedOpt.value = '__scheduled__';
-    schedOpt.textContent = 'Scheduled';
+    schedOpt.setAttribute('data-i18n', 'ui.email.folder.scheduled');
+    const scheduledLabel = window.odysseusI18n?.t?.('ui.email.folder.scheduled');
+    schedOpt.textContent = (
+      scheduledLabel && scheduledLabel !== 'ui.email.folder.scheduled'
+        ? scheduledLabel
+        : 'Scheduled'
+    );
     if (state._libFolder === '__scheduled__') schedOpt.selected = true;
     sel.appendChild(schedOpt);
     sel.value = state._libFolder;
@@ -3315,35 +3341,26 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
 
 function _crossFolderCandidates() {
   const available = Array.isArray(state._libFolders) ? state._libFolders.filter(Boolean) : [];
-  const lower = new Map(available.map(f => [String(f).toLowerCase(), f]));
-  const pick = (patterns, fallback) => {
-    for (const p of patterns) {
-      const direct = lower.get(String(p).toLowerCase());
-      if (direct) return direct;
-    }
-    const match = available.find(f => patterns.some(p => String(f).toLowerCase().includes(String(p).toLowerCase())));
-    return match || fallback;
-  };
+  const roles = _activeFolderRoles();
+  const pick = (role, fallback = '') => available.find(f => folderRole(f, roles) === role) || fallback;
   const candidates = [
-    pick(['INBOX'], 'INBOX'),
-    pick(['[Gmail]/Sent Mail', 'Sent Mail', 'Sent Items', 'INBOX.Sent', 'Sent'], '[Gmail]/Sent Mail'),
-    pick(['Archive', '[Gmail]/All Mail', 'All Mail'], '[Gmail]/All Mail'),
+    pick('inbox', 'INBOX'),
+    pick('sent', 'Sent'),
+    pick('all'),
+    pick('archive'),
   ];
+  if (!candidates[2] && !candidates[3]) candidates.push('All Mail', 'Archive');
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-function _findEmailFolder(patterns, fallback) {
+function _findEmailFolder(role, fallback) {
   const available = Array.isArray(state._libFolders) ? state._libFolders.filter(Boolean) : [];
-  const lower = new Map(available.map(f => [String(f).toLowerCase(), f]));
-  for (const p of patterns) {
-    const direct = lower.get(String(p).toLowerCase());
-    if (direct) return direct;
-  }
-  return available.find(f => patterns.some(p => String(f).toLowerCase().includes(String(p).toLowerCase()))) || fallback;
+  const roles = _activeFolderRoles();
+  return available.find(f => folderRole(f, roles) === role) || fallback;
 }
 
 function _sentFolderName() {
-  return _findEmailFolder(['[Gmail]/Sent Mail', 'Sent Mail', 'Sent Items', 'INBOX.Sent', 'Sent'], 'Sent');
+  return _findEmailFolder('sent', 'Sent');
 }
 
 function _deriveSearchScope(rawQuery) {
@@ -4859,7 +4876,8 @@ function _createCard(em) {
   // real folder while the visible folder selector still says INBOX, so use the
   // email's folder first.
   const cardFolder = em.folder || state._libFolder || 'INBOX';
-  const isSentFolderEarly = /sent/i.test(cardFolder);
+  const roles = _activeFolderRoles();
+  const isSentFolderEarly = folderRole(cardFolder, roles) === 'sent';
   let senderName;
   let senderAddress;
   if (isSentFolderEarly) {
@@ -4938,8 +4956,7 @@ function _createCard(em) {
   }
 
   // Done check + unread dot stay next to the subject on the left.
-  const isSentFolder = /sent/i.test(cardFolder);
-  if (!isSentFolder) {
+  if (!isSentFolderEarly) {
     const doneCheck = document.createElement('span');
     doneCheck.className = 'email-card-done' + (em.is_answered ? ' active' : '');
     doneCheck.title = em.is_answered ? 'Mark not done' : 'Mark done';
@@ -5028,10 +5045,13 @@ function _createCard(em) {
   meta.className = 'memory-item-meta';
   meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
   const showFolderChip = !!(_libSearchHadResults && cardFolder);
-  const prettyFolder = folderDisplayName(cardFolder);
-  const sentChip = isSentFolderEarly ? '<span class="email-sent-chip" title="Sent email">Sent</span>' : '';
+  const prettyFolder = folderDisplayName(cardFolder, roles);
+  const folderKey = folderLabelKey(cardFolder, roles);
+  const sentChip = isSentFolderEarly
+    ? '<span class="email-sent-chip" data-i18n="ui.email.folder.sent" title="Sent email" data-i18n-title="ui.sent.email">Sent</span>'
+    : '';
   const folderChip = showFolderChip && !isSentFolderEarly
-    ? `<span class="email-folder-chip" title="${_esc(cardFolder)}">${_esc(prettyFolder)}</span>`
+    ? `<span class="email-folder-chip"${folderKey ? ` data-i18n="${folderKey}"` : ''} title="${_esc(cardFolder)}">${_esc(prettyFolder)}</span>`
     : '';
   const senderPrefix = isSentFolderEarly ? 'to ' : '';
   meta.innerHTML = `${sentChip}${folderChip}<span class="email-meta-sender" data-email="${_esc(senderAddress || '')}" data-name="${_esc(senderName || '')}"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
@@ -5480,8 +5500,8 @@ function _setBubblesDisabled(v) {
 
 function _renderEmailBody(data) {
   const plain = (typeof data?.body === 'string' && data.body.length) ? data.body : '';
-  const folder = String(data?.folder || '').toLowerCase();
-  const isSentFolder = folder.includes('sent');
+  const folder = String(data?.folder || '');
+  const isSentFolder = folderRole(folder, _activeFolderRoles()) === 'sent';
   const fromAddr = String(data?.from_address || '').toLowerCase().trim();
   const isMine = !!fromAddr && _meEmailAddrs().has(fromAddr);
 
@@ -7681,7 +7701,10 @@ function _showCardMenu(em, anchor) {
   const _checkIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const _cardBellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 
-  const isSentFolder = /sent/i.test(state._libFolder);
+  const isSentFolder = folderRole(
+    em.folder || state._libFolder,
+    _activeFolderRoles(),
+  ) === 'sent';
 
   const _newTabIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const actions = [

@@ -178,31 +178,43 @@
         '/tasks': 'Tasks — Odysseus',
         '/library': 'Library — Odysseus',
       };
-      if (titles[path]) document.title = titles[path];
       // Per-route Android home-screen icon. We swap the <link rel="manifest">
       // to a per-page Blob URL with this route's SVG icon — that way "Add to
       // Home Screen" picks up the route-specific glyph instead of the shared
-      // boat logo. Falls back silently on browsers without Blob URL support.
+      // boat logo. The i18n runtime calls this updater again after each locale
+      // change so the Blob does not strand English metadata.
       try {
         if (inner && typeof Blob !== 'undefined') {
-          var pwa = {
-            name: (titles[path] || 'Odysseus'),
-            short_name: (titles[path] || 'Odysseus').split('—')[0].trim(),
-            start_url: path,
-            scope: '/',
-            display: 'standalone',
-            background_color: '#0e0e10',
-            theme_color: ac,
-            icons: [
-              { src: href, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
-              { src: href, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
-            ],
+          var routeManifestUrl = '';
+          window.__odysseusUpdateRouteManifest = function(locale, translate) {
+            var translateExact = typeof translate === 'function' ? translate : function(value) { return value; };
+            var titleSource = titles[path] || 'Odysseus';
+            var shortSource = titleSource.split('—')[0].trim();
+            var localizedShort = translateExact(shortSource);
+            var pwa = {
+              name: titleSource === shortSource ? localizedShort : localizedShort + ' — Odysseus',
+              short_name: localizedShort,
+              lang: locale || 'en',
+              start_url: path,
+              scope: '/',
+              display: 'standalone',
+              background_color: '#0e0e10',
+              theme_color: ac,
+              icons: [
+                { src: href, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
+                { src: href, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
+              ],
+            };
+            var blob = new Blob([JSON.stringify(pwa)], { type: 'application/manifest+json' });
+            var url = URL.createObjectURL(blob);
+            var ml = document.querySelector("link[rel='manifest']");
+            if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
+            ml.href = url;
+            document.title = pwa.name;
+            if (routeManifestUrl) URL.revokeObjectURL(routeManifestUrl);
+            routeManifestUrl = url;
           };
-          var blob = new Blob([JSON.stringify(pwa)], { type: 'application/manifest+json' });
-          var url = URL.createObjectURL(blob);
-          var ml = document.querySelector("link[rel='manifest']");
-          if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
-          ml.href = url;
+          window.__odysseusUpdateRouteManifest('en');
         }
       } catch(_) {}
     } catch(e){}
@@ -1765,6 +1777,14 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+          <div class="admin-card">
+            <h2>Language</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Choose the language used by Odysseus. Your choice is saved in this browser.</div>
+            <div class="settings-row">
+              <label class="settings-label" for="set-interface-language">Interface language</label>
+              <select id="set-interface-language" class="settings-select" data-language-select style="width:382.5px;max-width:100%;margin-left:auto"></select>
+            </div>
+          </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Sidebar to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
@@ -2500,6 +2520,7 @@
 
 
 <!-- Load modules in this order -->
+<script type="module" src="/static/js/i18n.js"></script>
 <script type="module" src="/static/js/storage.js"></script>
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>

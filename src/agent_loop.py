@@ -3076,6 +3076,56 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+_INTENT_RE = re.compile(
+    r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
+    r"i should|we should|i must|we must|going to|let's)\s+"
+    r"(?:tail|check|investigate|look at|see|read|fetch|inspect|"
+    r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
+    r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
+    r"register|list|search|find|query|hit|ping|test|use|perform|do)\b[^.\n]{0,140}",
+    re.IGNORECASE,
+)
+
+# Runtime intent supervision is deliberately local. These narrow future-action
+# phrases cover the supported locale families without translating text or
+# making a second model request. Unknown language remains terminal/no-nudge.
+_MULTILINGUAL_INTENT_RE = re.compile(
+    "|".join(
+        (
+            r"(?:déjame|voy a|vamos a|necesito|debo)\s+(?:comprobar|revisar|buscar|ejecutar|verificar|investigar|leer|obtener|capturar|usar)",
+            r"(?:deixe-me|vou|vamos|preciso|devo)\s+(?:verificar|revisar|buscar|executar|investigar|ler|obter|capturar|usar)",
+            r"(?:laisse-moi|je vais|nous allons|je dois|je devrais)\s+(?:vérifier|examiner|chercher|exécuter|inspecter|lire|récupérer|utiliser)",
+            r"(?:lass mich|ich werde|wir werden|ich muss)\s+(?:prüfen|untersuchen|suchen|ausführen|lesen|abrufen|verwenden)",
+            r"(?:lasciami|vado a|devo|controllerò)\s+(?:controllare|verificare|cercare|eseguire|leggere|recuperare|usare)",
+            r"(?:laat me|ik ga|ik moet)\s+(?:controleren|onderzoeken|zoeken|uitvoeren|lezen|ophalen|gebruiken)",
+            r"(?:jag ska|låt mig|jag måste)\s+(?:kontrollera|undersöka|söka|köra|läsa|hämta|använda)",
+            r"(?:jeg vil|lad mig|jeg skal|jeg må)\s+(?:kontrollere|undersøge|søge|køre|læse|hente|bruge)",
+            r"(?:jeg skal|la meg|jeg må)\s+(?:sjekke|undersøke|søke|kjøre|lese|hente|bruke)",
+            r"(?:anna minun|aion|täytyy)\s+(?:tarkistaa|tutkia|hakea|lukea|suorittaa|käyttää)",
+            r"(?:pozwól mi|sprawdzę|muszę)\s+(?:sprawdzić|zbadać|wyszukać|odczytać|pobrać|uruchomić|użyć)",
+            r"(?:nechte mě|zkontroluji|musím)\s+(?:zkontrolovat|prozkoumat|vyhledat|přečíst|načíst|spustit|použít)",
+            r"(?:lasă-mă|voi verifica|trebuie să|am să)\s+(?:verific|caut|citi|obțin|rulez|folosesc)",
+            r"(?:engedje meg|ellenőrzöm|meg kell)\s+(?:ellenőrizni|megvizsgálni|keresni|olvasni|lekérni|futtatni|használni)",
+            r"(?:ще|нека)\s+(?:проверя|проверим|потърся|прочета|извлека|стартирам)",
+            r"(?:я проверю|давайте проверим|мне нужно)\s+(?:проверить|исследовать|найти|прочитать|получить|запустить|использовать)",
+            r"(?:я перевірю|давайте перевіримо|мені потрібно)\s+(?:перевірити|дослідити|знайти|прочитати|отримати|запустити|використати)",
+            r"(?:θα|ας)\s+(?:ελέγξω|ελέγξουμε|αναζητήσω|διαβάσω|λάβω|εκτελέσω)",
+            r"(?:kontrol edeceğim|bırakın kontrol edeyim|bakmam lazım)\s+(?:kontrol et|ara|oku|getir|çalıştır|kullan)",
+            r"(?:saya akan|biar saya|saya perlu)\s+(?:periksa|selidiki|cari|baca|ambil|jalankan|gunakan)",
+            r"(?:saya akan|biar saya|saya perlu)\s+(?:semak|siasat|cari|baca|dapatkan|jalankan|gunakan)",
+            r"(?:سأ(?:تحقق|فحص|بحث|قرأ|جلب|شغل)|(?:سوف|دعني|يجب أن)\s+(?:أتحقق|أفحص|أبحث|أقرأ|أجلب|أشغل))",
+            r"(?:これから|私が|調べてみます|確認します|取得します|実行します).{0,12}(?:確認|調べ|検索|取得|実行|読み)",
+            r"(?:확인하겠습니다|확인해 보겠습니다|제가|검색하겠습니다|실행하겠습니다).{0,12}(?:확인|검색|조사|읽|가져오|실행)",
+            r"(?:我来|让我|我将|需要)\s*(?:检查|查看|调查|搜索|读取|获取|运行|使用)",
+            r"(?:ฉันจะ|เดี๋ยวฉัน|ต้อง)\s*(?:ตรวจสอบ|ค้นหา|อ่าน|ดึง|เรียกใช้)",
+            r"(?:tôi sẽ|để tôi|cần)\s+(?:kiểm tra|điều tra|tìm|đọc|lấy|chạy|dùng)",
+        )
+    ),
+    re.IGNORECASE,
+)
+_INTENT_AMBIENT_TOOLS = {"ask_user"}
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -3846,23 +3896,6 @@ async def stream_agent_loop(
     _intent_nudge_count = 0
     _MAX_INTENT_NUDGES = 2
 
-    # "I said I would, then didn't" detector. The pattern that breaks debug
-    # loops on weak models (deepseek-v4-flash mid-2026): the model writes
-    # "Let me tail the output to see the error" and then ends the turn with
-    # no tool_calls. The intent is sincere but the function call gets dropped.
-    # Match the common phrasings + an action verb that maps to an available
-    # tool, so we don't nudge on harmless transitional text like "let me
-    # know what you think".
-    _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
-        r"i should|we should|i must|we must|going to|let's)\s+"
-        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
-        r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
-        r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
-        r"\b[^.\n]{0,140}",
-        re.IGNORECASE,
-    )
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
@@ -4428,17 +4461,33 @@ async def stream_agent_loop(
             _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
-            # and an action-intent phrase was matched. Long answers that
-            # happen to contain "let me know" are not stalls.
-            _looks_like_promise = (
+            # and either the English fast path or the local multilingual phrase
+            # table finds a pending action. Long answers are not stalls.
+            _intent_candidate = (
                 not guide_only
-                and _intent_match is not None
+                and bool(_intent_text)
                 and len(_intent_text) < 400
                 and "```" not in _intent_text
             )
+            if _intent_candidate and _intent_match is None:
+                _selected_action_tools = (
+                    (set(_relevant_tools or ()) | set(_tool_names_sent or ()))
+                    - set(disabled_tools or ())
+                    - _INTENT_AMBIENT_TOOLS
+                )
+                if _selected_action_tools:
+                    _intent_match = _MULTILINGUAL_INTENT_RE.search(_intent_text)
+            _looks_like_promise = (
+                _intent_candidate
+                and _intent_match is not None
+            )
             if _looks_like_promise and _intent_nudge_count < _MAX_INTENT_NUDGES:
                 _intent_nudge_count += 1
-                _matched_phrase = _intent_match.group(0).strip()
+                _matched_phrase = (
+                    _intent_match.group(0).strip()
+                    if _intent_match is not None
+                    else _intent_text
+                )
                 logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
                 _lower_phrase = _matched_phrase.lower()
                 _cookbook_log_hint = ""
@@ -4466,7 +4515,11 @@ async def stream_agent_loop(
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
                 continue
             if _looks_like_promise:
-                _matched_phrase = _intent_match.group(0).strip()
+                _matched_phrase = (
+                    _intent_match.group(0).strip()
+                    if _intent_match is not None
+                    else _intent_text
+                )
                 _guard_message = (
                     "The agent stopped because it repeatedly announced a tool "
                     "action without making the tool call."

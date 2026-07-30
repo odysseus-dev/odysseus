@@ -16,6 +16,9 @@ let _authPolicy = { password_min_length: 8 };
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+function tr(value) {
+  return window.odysseusI18n?.translateMessage?.(String(value)) ?? value;
+}
 function safeRasterDataUrl(raw) {
   const value = String(raw || '').trim();
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
@@ -2138,8 +2141,8 @@ function initAccount() {
       const nameEl = el('settings-account-username');
       const roleEl = el('settings-account-role');
       const avatarEl = el('settings-account-avatar');
-      if (nameEl) nameEl.textContent = d.username || 'Unknown';
-      if (roleEl) roleEl.textContent = d.is_admin ? 'Admin' : 'User';
+      if (nameEl) nameEl.textContent = d.username || tr('Unknown');
+      if (roleEl) roleEl.textContent = tr(d.is_admin ? 'Admin' : 'User');
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
@@ -2153,7 +2156,7 @@ function initAccount() {
       if (!policy) return;
       _authPolicy = policy;
       const pwNew = el('settings-pw-new');
-      if (pwNew) pwNew.placeholder = `New password (min ${policy.password_min_length})`;
+      if (pwNew) pwNew.placeholder = tr(`New password (min ${policy.password_min_length})`);
     }).catch(() => {});
 
   // Change password
@@ -2165,9 +2168,9 @@ function initAccount() {
       const nw = el('settings-pw-new').value;
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
-      if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = `Min ${_authPolicy.password_min_length} characters`; msgEl.style.color = 'var(--red)'; return; }
-      if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
+      if (!cur || !nw) { msgEl.textContent = tr('Fill in all fields'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = tr(`Min ${_authPolicy.password_min_length} characters`); msgEl.style.color = 'var(--red)'; return; }
+      if (nw !== conf) { msgEl.textContent = tr('Passwords don\'t match'); msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
         const res = await fetch('/api/auth/change-password', {
@@ -2177,13 +2180,13 @@ function initAccount() {
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
         msgEl.style.color = 'var(--green)';
-        msgEl.textContent = 'Password updated';
+        msgEl.textContent = tr('Password updated');
         el('settings-pw-current').value = '';
         el('settings-pw-new').value = '';
         el('settings-pw-confirm').value = '';
       } catch (e) {
         msgEl.style.color = 'var(--red)';
-        msgEl.textContent = e.message;
+        msgEl.textContent = tr(e.message);
       } finally {
         saveBtn.disabled = false;
       }
@@ -2201,18 +2204,18 @@ function initAccount() {
           // 2FA is ON — show disable option
           tfaContent.innerHTML = `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; Enabled</span>
-              <span style="font-size:11px;opacity:0.5;">Authenticator app required on login</span>
+              <span data-i18n="ui.enabled.df174a3f" style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">Enabled</span>
+              <span data-i18n="ui.authenticator.app.required.on.login" style="font-size:11px;opacity:0.5;">Authenticator app required on login</span>
             </div>
-            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
+            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" data-i18n-placeholder="ui.enter.password.to.disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">Disable 2FA</button>
+              <button class="admin-btn-add" id="tfa-disable-btn" data-i18n="ui.disable.2fa" style="opacity:0.7;">Disable 2FA</button>
             </div>`;
           el('tfa-disable-btn').addEventListener('click', async () => {
             const pw = el('tfa-disable-pw').value;
             const msg = el('tfa-msg');
-            if (!pw) { msg.textContent = 'Enter your password'; msg.style.color = 'var(--red)'; return; }
+            if (!pw) { msg.textContent = tr('Enter your password'); msg.style.color = 'var(--red)'; return; }
             try {
               const r = await fetch('/api/auth/2fa/disable', {
                 method: 'POST', credentials: 'same-origin',
@@ -2221,15 +2224,15 @@ function initAccount() {
               });
               if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
               render2FA();
-            } catch (e) { msg.textContent = e.message; msg.style.color = 'var(--red)'; }
+            } catch (e) { msg.textContent = tr(e.message); msg.style.color = 'var(--red)'; }
           });
         } else {
           // 2FA is OFF — show setup button
           tfaContent.innerHTML = `
-            <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
+            <div data-i18n="ui.add.an.extra.layer.of.security.with.an.authenticator.app" style="font-size:12px;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-setup-btn">Set Up 2FA</button>
+              <button class="admin-btn-add" id="tfa-setup-btn" data-i18n="ui.set.up.2fa">Set Up 2FA</button>
             </div>`;
           el('tfa-setup-btn').addEventListener('click', async () => {
             const msg = el('tfa-msg');
@@ -2241,24 +2244,24 @@ function initAccount() {
               // Show QR code + manual secret + verify input
               tfaContent.innerHTML = `
                 <div style="text-align:center;margin-bottom:12px;">
-                  ${qrCode ? `<img src="${esc(qrCode)}" alt="QR Code" style="border-radius:8px;max-width:200px;">` : ''}
+                  ${qrCode ? `<img src="${esc(qrCode)}" alt="QR Code" data-i18n-alt="ui.qr.code" style="border-radius:8px;max-width:200px;">` : ''}
                 </div>
-                <div style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
+                <div data-i18n="ui.scan.with.your.authenticator.app.or.enter.manually" style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
                   Scan with your authenticator app, or enter manually:
                 </div>
                 <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${esc(setup.secret)}</div>
-                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
+                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" data-i18n-placeholder="ui.enter.6.digit.code.to.verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">Cancel</button>
-                  <button class="admin-btn-add" id="tfa-verify-btn">Verify & Enable</button>
+                  <button class="admin-btn-add" id="tfa-cancel-btn" data-i18n="ui.cancel" style="opacity:0.5;">Cancel</button>
+                  <button class="admin-btn-add" id="tfa-verify-btn" data-i18n="ui.verify.enable">Verify & Enable</button>
                 </div>`;
               el('tfa-verify-code').focus();
               el('tfa-cancel-btn').addEventListener('click', () => render2FA());
               el('tfa-verify-btn').addEventListener('click', async () => {
                 const code = el('tfa-verify-code').value.trim();
                 const vmsg = el('tfa-msg');
-                if (!code) { vmsg.textContent = 'Enter the code'; vmsg.style.color = 'var(--red)'; return; }
+                if (!code) { vmsg.textContent = tr('Enter the code'); vmsg.style.color = 'var(--red)'; return; }
                 try {
                   const vr = await fetch('/api/auth/2fa/confirm', {
                     method: 'POST', credentials: 'same-origin',
@@ -2270,18 +2273,18 @@ function initAccount() {
                   // Show backup codes
                   const codes = result.backup_codes || [];
                   tfaContent.innerHTML = `
-                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
-                    <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
+                    <div data-i18n="ui.x2713.2fa.enabled" style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
+                    <div data-i18n="ui.save.these.backup.codes.somewhere.safe.each.can.be.used" style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
                     <div style="font-family:monospace;font-size:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
-                    <button class="admin-btn-add" id="tfa-done-btn">Done</button>`;
+                    <button class="admin-btn-add" id="tfa-done-btn" data-i18n="ui.done.e9b450d1">Done</button>`;
                   el('tfa-done-btn').addEventListener('click', () => render2FA());
-                } catch (e) { vmsg.textContent = e.message; vmsg.style.color = 'var(--red)'; }
+                } catch (e) { vmsg.textContent = tr(e.message); vmsg.style.color = 'var(--red)'; }
               });
-            } catch (e) { msg.textContent = e.message; msg.style.color = 'var(--red)'; }
+            } catch (e) { msg.textContent = tr(e.message); msg.style.color = 'var(--red)'; }
           });
         }
       } catch (_) {
-        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">Could not load 2FA status</div>';
+        tfaContent.innerHTML = '<div data-i18n="ui.could.not.load.2fa.status" style="font-size:11px;opacity:0.4;">Could not load 2FA status</div>';
       }
     }
     render2FA();
@@ -2297,12 +2300,10 @@ function initAccount() {
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.
-      // Keep "odysseus-last-user" so the login form remembers the username
-      // (if "Remember me" was on). Without this the chat composer pre-loaded
-      // the previous user's last model into a fresh session, which read as
-      // cross-account leakage.
+      // Keep the remembered username and browser-wide interface language.
+      // Everything account-owned is still removed.
       try {
-        const _keepKeys = new Set(['odysseus-last-user']);
+        const _keepKeys = new Set(['odysseus-last-user', 'odysseus.locale']);
         const _toRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
