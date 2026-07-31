@@ -379,10 +379,21 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
 
 def _folder_name_from_list_line(line) -> str | None:
     decoded = line.decode() if isinstance(line, bytes) else str(line)
-    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not match:
+    decoded = decoded.rstrip()
+    if not decoded:
         return None
-    return match.group(1) or match.group(2)
+    if decoded.endswith('"'):
+        escaped = False
+        for idx in range(len(decoded) - 2, -1, -1):
+            ch = decoded[idx]
+            if ch == '"' and not escaped:
+                value = decoded[idx + 1 : -1]
+                return value.replace(r"\\", "\\").replace(r"\"", '"')
+            escaped = ch == "\\" and not escaped
+            if ch != "\\":
+                escaped = False
+    parts = decoded.split()
+    return parts[-1] if parts else None
 
 
 def _imap_status_ok(status) -> bool:
