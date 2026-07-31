@@ -2214,13 +2214,12 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       for (const msg of msgHistory) {
         let renderMsg = msg;
         if (groupChildInfo && msg.role === 'assistant') {
+          const childMeta = { ...(msg.metadata || {}) };
+          childMeta.character_name = childMeta.character_name || groupChildInfo.name;
+          if (!childMeta.model && groupChildInfo.model) childMeta.model = groupChildInfo.model;
           renderMsg = {
             ...msg,
-            metadata: {
-              ...(msg.metadata || {}),
-              character_name: (msg.metadata && msg.metadata.character_name) || groupChildInfo.name,
-              model: (msg.metadata && msg.metadata.model) || groupChildInfo.model || '',
-            },
+            metadata: childMeta,
           };
         }
         try {

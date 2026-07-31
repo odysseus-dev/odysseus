@@ -362,7 +362,7 @@ def _set_group_participant_folders(db, participant_ids: set[str], folder: str | 
         return
     q = db.query(DbSession).filter(DbSession.id.in_(participant_ids))
     q = owner_filter(q, DbSession, user)
-    now = datetime.utcnow()
+    now = utcnow_naive()
     for participant in q.all():
         participant.folder = folder
         participant.updated_at = now
