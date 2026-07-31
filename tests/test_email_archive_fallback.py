@@ -236,7 +236,7 @@ async def test_list_folders_refresh_bypasses_stale_folder_cache(monkeypatch):
 def test_email_library_handles_archive_folder_setup_flow():
     src = Path("static/js/emailLibrary.js").read_text(encoding="utf-8")
 
-    assert "import { folderDisplayName, isArchiveFolder, sortedFolders } from './emailInbox.js';" in src
+    assert "import { folderDisplayName, isArchiveFolder, sortedFolders } from './emailInbox.js" in src
     assert "_archiveEmailWithFallback" in src
     assert "needs_archive_folder" in src
     assert "No Archive folder was found for this account. Create one named" in src
@@ -245,7 +245,8 @@ def test_email_library_handles_archive_folder_setup_flow():
     assert "const result = await _archiveEmailWithFallback(em.uid)" in src
     assert "actions.findIndex(a => a.label === 'Move to Archive')" in src
     assert "const isArchiveCurrentFolder = isArchiveFolder(state._libFolder)" in src
-    assert "emailApiUrl('/api/email/folders', { refresh: refresh ? 1 : undefined })" in src
+    assert "cached_only: (live || refresh) ? undefined : 1" in src
+    assert "refresh: refresh ? 1 : undefined" in src
     assert "_loadFolders({ refresh: true })" in src
     assert "_loadFolders({ resetMissing: true, refresh: true })" in src
 
