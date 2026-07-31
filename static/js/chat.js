@@ -4917,7 +4917,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       if (replaceFromHere) {
         // Regenerate flows intentionally trim history to this point before
         // resubmitting. The plain "Resend message" action must not do this.
-        const keepCount = msgIndex;
+        const keepCount = msgIndex + 1;
         await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5031,7 +5031,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       variants.push({ raw: oldRaw, html: oldHtml, label: 'original' });
     }
 
-    const keepCount = userIndex;
+    const keepCount = userIndex + 1;
 
     try {
       await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
