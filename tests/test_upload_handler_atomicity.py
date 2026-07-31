@@ -59,6 +59,16 @@ def _db_path(handler: UploadHandler) -> str:
     return os.path.join(handler.upload_dir, "uploads.json")
 
 
+def _truncate_without_newer_mtime(path: str) -> None:
+    """Model a filesystem where a torn write shares the cached timestamp."""
+    before = os.stat(path)
+    with open(path, "rb") as f:
+        full = f.read()
+    with open(path, "wb") as f:
+        f.write(full[: max(1, len(full) // 2)])
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+
 def _seed_entry(owner: str, file_hash: str, file_id: str) -> dict:
     return {
         "id": file_id,
@@ -246,10 +256,7 @@ def test_partial_write_recovery_via_bak(tmp_path):
         "Production _atomic_write_json must create a .bak sibling on subsequent writes."
     )
 
-    full = open(db_path, "rb").read()
-    truncated_len = max(1, len(full) // 2)
-    with open(db_path, "wb") as f:
-        f.write(full[:truncated_len])
+    _truncate_without_newer_mtime(db_path)
 
     recovered = handler._load_upload_index()
     missing = [k for k in original if k not in recovered]
@@ -257,6 +264,40 @@ def test_partial_write_recovery_via_bak(tmp_path):
         f"Partial-write recovery FAILED: {len(missing)} entries were lost. "
         f"Recovered keys: {sorted(recovered)}."
     )
+
+
+def test_partial_write_recovery_via_bak_after_restart(tmp_path):
+    """A fresh handler must recover the previous snapshot from ``.bak``."""
+    handler = _make_handler(tmp_path)
+    db_path = _db_path(handler)
+    original = {
+        f"owner:hash_{i}": _seed_entry("owner", f"hash_{i}", f"id_{i}")
+        for i in range(3)
+    }
+    handler._atomic_write_json(db_path, original)
+    handler._atomic_write_json(db_path, {"latest": True})
+    _truncate_without_newer_mtime(db_path)
+
+    restarted_handler = UploadHandler(
+        base_dir=handler.base_dir,
+        upload_dir=handler.upload_dir,
+    )
+
+    assert restarted_handler._load_upload_index() == original
+
+
+def test_unchanged_upload_index_uses_cache(tmp_path, monkeypatch):
+    """The stronger file signature must preserve the unchanged-index fast path."""
+    handler = _make_handler(tmp_path)
+    original = {"owner:hash": _seed_entry("owner", "hash", "id")}
+    handler._atomic_write_json(_db_path(handler), original)
+
+    def fail_if_parsed(_file):
+        raise AssertionError("unchanged upload index should be served from cache")
+
+    monkeypatch.setattr(json, "load", fail_if_parsed)
+
+    assert handler._load_upload_index() == original
 
 
 # ---------------------------------------------------------------------------
@@ -390,10 +431,8 @@ def test_smoke_info_lookup_after_bak_recovery(tmp_path):
     handler._atomic_write_json(db_path, {"sentinel": True})
     assert os.path.exists(db_path + ".bak")
 
-    # Truncate the live file.
-    full = open(db_path, "rb").read()
-    with open(db_path, "wb") as f:
-        f.write(full[: max(1, len(full) // 2)])
+    # Truncate the live file without assuming the filesystem advances mtime.
+    _truncate_without_newer_mtime(db_path)
 
     info = handler.get_upload_info(first["id"])
     assert info is not None, "Info lookup must succeed after .bak recovery."
