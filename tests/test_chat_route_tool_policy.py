@@ -79,6 +79,29 @@ def test_allow_web_search_reads_from_body_as_fallback():
     )
 
 
+def test_regenerate_reads_from_body_as_fallback():
+    """chat_stream must honor JSON regenerate requests, not just FormData."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    chat_stream_func = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream"
+    )
+
+    found_body_fallback = False
+    for node in ast.walk(chat_stream_func):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "regenerate":
+                    src_segment = ast.get_source_segment(source, node)
+                    if src_segment and "body" in src_segment:
+                        found_body_fallback = True
+    assert found_body_fallback, (
+        "regenerate assignment in chat_stream must fall back to JSON body"
+    )
+
+
 def test_browser_form_followups_include_approval_and_send_phrases():
     """Short approval replies after a form/browser turn must keep browser tools available."""
     source = _CHAT_ROUTES.read_text(encoding="utf-8")

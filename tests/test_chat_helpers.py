@@ -580,3 +580,196 @@ async def test_build_chat_context_keeps_cookie_user_owner_scope(monkeypatch):
         "preface_owner": "bob",
         "compact_owner": "bob",
     }
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_regenerate_reuses_latest_user_without_persisting_duplicate(monkeypatch):
+    async def fake_preprocess(chat_handler, message, att_ids, sess, **kwargs):
+        return PreprocessedMessage(
+            enhanced_message=message,
+            user_content=[{"type": "text", "text": message}],
+            text_for_context=message,
+            youtube_transcripts=[],
+            attachment_meta=[{"id": "file-1", "name": "scan.png"}],
+        )
+
+    monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
+    monkeypatch.setattr(chat_helpers, "extract_preset", lambda *_args, **_kwargs: PresetInfo(0.7, 1024, None, None))
+    monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda _user: {})
+    monkeypatch.setattr(chat_helpers, "effective_user", lambda _request: "alice")
+    monkeypatch.setattr(chat_helpers, "_normalize_model_id_from_cache", lambda _sess: None)
+    monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda *_args, **_kwargs: None)
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
+        return messages, 8192, False
+
+    monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
+    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, _context_length: messages)
+
+    adds = []
+    monkeypatch.setattr(chat_helpers, "add_user_message", lambda *_args, **_kwargs: adds.append(1))
+    replacements = []
+
+    class FakeManager:
+        def replace_messages(self, session_id, messages):
+            replacements.append((session_id, messages))
+            sess.history = list(messages)
+            return True
+
+    monkeypatch.setattr(chat_helpers, "get_session_manager_instance", lambda: FakeManager())
+
+    sess = SimpleNamespace(
+        endpoint_url="http://model.local/v1/chat/completions",
+        model="test-model",
+        headers={},
+        history=[chat_helpers.ChatMessage("user", "stale OCR", metadata={"attachments": [{"id": "old-file"}]})],
+    )
+    sess.get_context_messages = lambda: [m.to_dict() for m in sess.history]
+
+    ctx = await build_chat_context(
+        sess=sess,
+        request=SimpleNamespace(),
+        chat_handler=SimpleNamespace(),
+        chat_processor=SimpleNamespace(build_context_preface=lambda **_kwargs: ([], [], [])),
+        message="original prompt",
+        session_id="session-1",
+        regenerate=True,
+        agent_mode=True,
+    )
+
+    assert adds == []
+    assert replacements[0][0] == "session-1"
+    assert [(m.role, m.content, m.metadata) for m in sess.history] == [(
+        "user",
+        [{"type": "text", "text": "original prompt"}],
+        {"attachments": [{"id": "file-1", "name": "scan.png"}]},
+    )]
+    user_messages = [m for m in ctx.messages if m.get("role") == "user"]
+    assert user_messages == [{
+        "role": "user",
+        "content": [{"type": "text", "text": "original prompt"}],
+        "metadata": {"attachments": [{"id": "file-1", "name": "scan.png"}]},
+    }]
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_regenerate_replaces_persisted_user_row(monkeypatch):
+    import core.database as cdb
+    import core.session_manager as sm
+    from tests.helpers.sqlite_db import make_temp_sqlite
+
+    session_local, _engine, _tmpdb = make_temp_sqlite(cdb.Base.metadata)
+    monkeypatch.setattr(sm, "SessionLocal", session_local)
+
+    manager = sm.SessionManager.__new__(sm.SessionManager)
+    manager.sessions = {}
+    manager.upload_handler = None
+
+    sid = "regen-" + uuid.uuid4().hex[:8]
+    db = session_local()
+    try:
+        db.add(cdb.Session(
+            id=sid,
+            owner="alice",
+            name="chat",
+            model="test-model",
+            endpoint_url="http://model.local/v1/chat/completions",
+            archived=False,
+            message_count=1,
+        ))
+        db.add(cdb.ChatMessage(
+            id="stale-user",
+            session_id=sid,
+            role="user",
+            content="stale OCR",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    sess = manager.get_session(sid)
+
+    async def fake_preprocess(chat_handler, message, att_ids, sess, **kwargs):
+        return PreprocessedMessage(
+            enhanced_message=message,
+            user_content=[{"type": "text", "text": message}],
+            text_for_context=message,
+            youtube_transcripts=[],
+            attachment_meta=[{"id": "file-1", "name": "scan.png"}],
+        )
+
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
+        return messages, 8192, False
+
+    monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
+    monkeypatch.setattr(chat_helpers, "extract_preset", lambda *_args, **_kwargs: PresetInfo(0.7, 1024, None, None))
+    monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda _user: {})
+    monkeypatch.setattr(chat_helpers, "effective_user", lambda _request: "alice")
+    monkeypatch.setattr(chat_helpers, "_normalize_model_id_from_cache", lambda _sess: None)
+    monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
+    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, _context_length: messages)
+    monkeypatch.setattr(chat_helpers, "get_session_manager_instance", lambda: manager)
+
+    ctx = await build_chat_context(
+        sess=sess,
+        request=SimpleNamespace(),
+        chat_handler=SimpleNamespace(),
+        chat_processor=SimpleNamespace(build_context_preface=lambda **_kwargs: ([], [], [])),
+        message="current OCR",
+        session_id=sid,
+        regenerate=True,
+        agent_mode=True,
+    )
+    manager.add_message(sid, chat_helpers.ChatMessage("assistant", "new answer"))
+
+    db = session_local()
+    try:
+        rows = db.query(cdb.ChatMessage).filter(cdb.ChatMessage.session_id == sid).order_by(cdb.ChatMessage.timestamp).all()
+        assert [(row.role, row.content) for row in rows] == [
+            ("user", "current OCR\n[Attachment: scan.png | id=file-1 | mime=application/octet-stream]"),
+            ("assistant", "new answer"),
+        ]
+    finally:
+        db.close()
+
+    manager.sessions.clear()
+    reloaded = manager.get_session(sid)
+    assert [m["content"] for m in reloaded.get_context_messages()] == [
+        "current OCR\n[Attachment: scan.png | id=file-1 | mime=application/octet-stream]",
+        "new answer",
+    ]
+    assert [m for m in ctx.messages if m.get("role") == "user"] == [{
+        "role": "user",
+        "content": [{"type": "text", "text": "current OCR"}],
+        "metadata": {"attachments": [{"id": "file-1", "name": "scan.png"}]},
+    }]
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_regenerate_fails_when_user_row_replacement_fails(monkeypatch):
+    async def fake_preprocess(chat_handler, message, att_ids, sess, **kwargs):
+        return PreprocessedMessage(message, message, message, [], [])
+
+    class FakeManager:
+        def replace_messages(self, session_id, messages):
+            return False
+
+    monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
+    monkeypatch.setattr(chat_helpers, "extract_preset", lambda *_args, **_kwargs: PresetInfo(0.7, 1024, None, None))
+    monkeypatch.setattr(chat_helpers, "get_session_manager_instance", lambda: FakeManager())
+
+    sess = SimpleNamespace(
+        history=[chat_helpers.ChatMessage("user", "stale")],
+        get_context_messages=lambda: [{"role": "user", "content": "stale"}],
+    )
+
+    with pytest.raises(HTTPException):
+        await build_chat_context(
+            sess=sess,
+            request=SimpleNamespace(),
+            chat_handler=SimpleNamespace(),
+            chat_processor=SimpleNamespace(build_context_preface=lambda **_kwargs: ([], [], [])),
+            message="current",
+            session_id="session-1",
+            regenerate=True,
+        )

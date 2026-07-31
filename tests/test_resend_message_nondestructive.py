@@ -41,3 +41,18 @@ def test_only_regenerate_callers_opt_into_replace_from_here():
 
     assert "window.chatModule.resendUserMessage(msgElement);" in renderer
     assert "window.chatModule.resendUserMessage(userMsgEl, { replaceFromHere: true });" in renderer
+
+
+def test_regenerate_replace_paths_keep_user_row_and_mark_resubmit():
+    body = _resend_body()
+    src = _CHAT_JS.read_text(encoding="utf-8")
+    regen = src[src.index("export async function regenerateFrom("):src.index("// Pending variants", src.index("export async function regenerateFrom("))]
+    replace_branch = body[body.index("if (replaceFromHere)"):body.index("_pendingRegenAttachments = _ids;")]
+    normal_resubmit = body[body.index("_pendingRegenAttachments = _ids;"):]
+
+    assert "const keepCount = msgIndex + 1;" in body
+    assert "const keepCount = userIndex + 1;" in regen
+    assert replace_branch.count("_pendingRegenerateSend = true;") == 1
+    assert "_pendingRegenerateSend = true;" not in normal_resubmit
+    assert regen.count("_pendingRegenerateSend = true;") == 1
+    assert "if (regenerateSend) fd.append('regenerate', 'true');" in src
