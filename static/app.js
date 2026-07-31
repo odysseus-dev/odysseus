@@ -2048,10 +2048,10 @@ function initializeEventListeners() {
       return u.includes('11434') || u.includes('ollama');
     };
 
-    const isChatGptSubscriptionEndpoint = url => {
-      const u = String(url || '').toLowerCase();
-      return u.includes('chatgpt.com') || u.includes('chatgpt-subscription');
-    };
+    const isChatGptSubscriptionEndpoint = url => (
+      String(url || '').trim().toLowerCase() === 'chatgpt-subscription'
+      || chatRenderer.isSubscriptionEndpoint(url)
+    );
 
     const isOSeriesReasoningModel = model => {
       const m = String(model || '').toLowerCase();
