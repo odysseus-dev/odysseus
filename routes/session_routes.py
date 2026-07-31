@@ -598,7 +598,7 @@ def setup_session_routes(
                 if db_session:
                     db_session.reasoning_effort = saved_reasoning
                     db_session.verbosity = saved_verbosity
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = utcnow_naive()
                     db.commit()
             finally:
                 db.close()
