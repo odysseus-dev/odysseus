@@ -19,7 +19,7 @@ Major feature areas:
 
 Repository branches:
 
-- `dev` — default branch; latest changes land here.
+- `dev` — default branch; latest changes land here. Open PRs against `dev`.
 - `main` — curated, stable branch; fast-forwarded from `dev` at releases.
 
 License: AGPL-3.0-or-later (see `LICENSE` and `ACKNOWLEDGMENTS.md`).
@@ -28,24 +28,25 @@ License: AGPL-3.0-or-later (see `LICENSE` and `ACKNOWLEDGMENTS.md`).
 
 | Path | Purpose |
 |------|---------|
-| `app.py` | FastAPI entry point and application orchestrator. Registers middleware, auth, static files, exception handlers, and all routers. |
+| `app.py` | FastAPI entry point and application orchestrator (~1280 lines). Registers middleware, auth, static files, exception handlers, and all routers. |
 | `setup.py` | First-time setup script: creates data directories, initializes the SQLite database, creates the initial admin user, and copies `.env.example` to `.env`. Idempotent. |
 | `core/` | Foundational runtime: database (`database.py`, SQLAlchemy models), auth (`auth.py`), session manager, middleware, exceptions, atomic I/O, platform compat. |
-| `src/` | Domain logic and services. Flat package with many modules covering the agent loop, tools, LLM core, model discovery, memory/RAG, research, scheduler, cookbook, MCP manager, etc. |
+| `src/` | Domain logic and services. Flat package with ~100 modules covering the agent loop, tools, LLM core, model discovery, memory/RAG, research, scheduler, cookbook, MCP manager, etc. |
 | `routes/` | HTTP route handlers. Mostly flat; a few features are grouped into sub-packages (`admin_wipe/`, `cleanup/`, `compare/`, `contacts/`, `gallery/`, `history/`, `memory/`, `note/`, `research/`). Each module exposes a `setup_*_routes(...)` factory. |
 | `services/` | Domain service implementations consumed by `src/` and `routes/`: memory, search, research, shell, STT, TTS, YouTube, hardware fitting (`hwfit`), docs, faces. |
 | `mcp_servers/` | Built-in Model Context Protocol server implementations (email, image generation, memory, RAG). |
 | `companion/` | LAN companion bridge (`/api/companion/*`) for pairing a mobile client to a server. |
+| `integrations/` | Integration assets for external agent CLIs (`claude/`, `codex/`) — skills and scripts. |
+| `swift/` | `odysseus-mlx-image-bridge` — a Swift Package for Apple Silicon MLX image generation. |
 | `scripts/` | CLI tooling. `scripts/odysseus` is a git-style dispatcher for `scripts/odysseus-*` subcommands (mail, tasks, skills, notes, etc.). Shared CLI helpers live in `scripts/_lib/`. |
 | `static/` | Frontend assets. `static/index.html` is the SPA shell, `static/app.js` is the top-level JS, `static/js/` contains feature modules, and `static/style.css` is the single app stylesheet. |
-| `tests/` | Pytest suite (~700 files). Flat today with a phased target structure described in `tests/TESTING_STANDARD.md`. Shared helpers in `tests/helpers/`. |
+| `tests/` | Pytest suite (~730 files). Flat today with a phased target structure described in `tests/TESTING_STANDARD.md`. Shared helpers in `tests/helpers/`. |
 | `docker/` | Docker entrypoint and helper scripts (e.g. Real-ESRGAN wheel patching). |
 | `config/searxng/` | Bundled SearXNG configuration template. |
-| `docs/` | User-facing documentation and setup guide. |
+| `docs/` | User-facing documentation and setup guide (`docs/setup.md`). |
+| `specs/` | Architectural snapshot (`specs/architecture-runtime-inventory.md`), including import relationships and a large-module risk map. |
 | `data/` | Runtime data directory (gitignored). Database, auth file, uploads, caches, models, etc. |
 | `logs/` | Runtime logs directory. |
-
-A more detailed architectural snapshot, including import relationships and large-module risk map, is in `specs/architecture-runtime-inventory.md`.
 
 ## Technology stack
 
@@ -54,25 +55,25 @@ A more detailed architectural snapshot, including import relationships and large
 - **Database:** SQLAlchemy ORM. Default database is SQLite (`data/app.db`); `DATABASE_URL` can point to another SQLAlchemy-compatible backend.
 - **Vector store / embeddings:** ChromaDB (external container in Docker; optional manual host) with `fastembed` as a local ONNX embedding fallback.
 - **Frontend:** Plain HTML/CSS/ES modules. No bundler, no React/Vue, no npm build step for the app itself. The root `package.json` only declares the Bombadil dev dependency for JS testing.
-- **Container:** Docker + Docker Compose. Base Compose stack includes Odysseus, ChromaDB, SearXNG, and ntfy.
+- **Container:** Docker + Docker Compose. Base Compose stack (`docker-compose.yml`) includes Odysseus, ChromaDB, SearXNG, and ntfy.
 - **Local model serving:** Cookbook drives `llama.cpp`, `vLLM`, `SGLang`, etc., usually inside `tmux` sessions. Optional GPU overlays are in `docker-compose.gpu-nvidia.yml` and `docker-compose.gpu-amd.yml`.
 
 Core Python dependencies (see `requirements.txt`):
 
-- `fastapi`, `uvicorn`, `python-multipart`, `python-dotenv`, `httpx`, `pydantic>=2.13.4`, `pydantic-settings`
+- `fastapi`, `uvicorn`, `python-multipart`, `python-dotenv`, `httpx`, `httpcore`, `pydantic>=2.13.4`, `pydantic-settings`
 - `SQLAlchemy`, `bcrypt`, `pyotp`, `cryptography`, `qrcode[pil]`
-- `chromadb-client`, `fastembed`
+- `chromadb-client`, `fastembed` (core deps — RAG, semantic memory, and tool selection are core paths)
 - `caldav`, `icalendar`, `python-dateutil`
-- `pypdf`, `beautifulsoup4`, `markdown`, `nh3`
+- `pypdf`, `beautifulsoup4`, `markdown`, `nh3`, `youtube-transcript-api`, `charset-normalizer`, `numpy`
 - `mcp`, `croniter`
-- `pytest`, `pytest-asyncio`, `httpx2`
+- `pytest`, `pytest-asyncio`, `httpx2` (test-client only; runtime code uses `httpx`)
 
-Optional dependencies are listed in `requirements-optional.txt` (faster-whisper, DuckDuckGo search, PyMuPDF, markitdown). The app degrades gracefully when optional packages are missing.
+Optional dependencies are listed in `requirements-optional.txt`: `faster-whisper` (local STT), `ddgs` (DuckDuckGo search provider), `PyMuPDF` (PDF form filling; AGPL — install only via the `INSTALL_OPTIONAL` build arg), `markitdown[docx,pptx,xlsx,xls]` (Office/EPUB extraction). The app degrades gracefully when optional packages are missing.
 
 ## Configuration
 
 - Copy `.env.example` to `.env` and edit values there. The app loads `.env` with UTF-8-sig encoding to tolerate BOMs from Windows editors.
-- All deployment-level overrides live in `.env`: `APP_BIND`, `APP_PORT`, `DATABASE_URL`, `AUTH_ENABLED`, `LOCALHOST_BYPASS`, `SECURE_COOKIES`, LLM/search endpoints, OAuth credentials, upload limits, etc.
+- All deployment-level overrides live in `.env`: `APP_BIND`, `APP_PORT`, `DATABASE_URL`, `AUTH_ENABLED`, `LOCALHOST_BYPASS`, `SECURE_COOKIES`, LLM/search endpoints, OAuth credentials, upload limits, etc. `docker-compose.yml` shows the full set of supported environment variables with their defaults.
 - `ODYSSEUS_DATA_DIR` moves the entire writable tree (`data/`). All persisted paths are defined as constants in `src/constants.py`; `core/constants.py` re-exports them for backward compatibility. Use these constants instead of building paths from `__file__` or hardcoding `data/`.
 - Internal loopback calls use `src.constants.internal_api_base()`, which respects `ODYSSEUS_INTERNAL_BASE` / `APP_PORT`.
 
@@ -80,32 +81,32 @@ Optional dependencies are listed in `requirements-optional.txt` (faster-whisper,
 
 1. `app.py` builds the FastAPI app, installs middleware (CORS, gzip, security headers, request timeout, interactive-activity gating, slow-request logging), and configures auth.
 2. Components are initialized by `src.app_initializer.initialize_managers()` and attached to `app.state`.
-3. Routers from `routes/` are included via their `setup_*_routes(...)` factories.
-4. The lifespan context manager (`_lifespan`) runs startup tasks: default task reconciliation, skill owner backfill, MCP connection, optional warmups, background job monitor, scheduled task runner, nightly skill audit, cookbook serve lifecycle, and a periodic null-owner sweep.
+3. Routers from `routes/` are included via their `setup_*_routes(...)` factories (`app.include_router(...)`).
+4. The lifespan context manager runs startup tasks: default task reconciliation, skill owner backfill, MCP connection, optional warmups, background job monitor, scheduled task runner, nightly skill audit, cookbook serve lifecycle, and a periodic null-owner sweep.
 5. Shutdown cancels upload cleanup, stops the task scheduler, closes webhooks, and disconnects MCP servers.
 
 Auth stack:
 
 - `AUTH_ENABLED=true` by default.
-- `LOCALHOST_BYPASS=true` lets direct loopback requests skip auth; keep it `false` for any network-exposed deployment.
+- `LOCALHOST_BYPASS=true` lets direct loopback requests skip auth; keep it `false` for any network-exposed deployment (this is the Docker default).
 - Session cookie auth for browser users; Bearer `ody_*` API tokens with scopes for external integrations; an internal loopback token for in-process agent tools.
 - Owner scoping is enforced throughout: users see only their own rows or legacy null-owner rows.
 
 ## Module divisions
 
 ### `core/`
-Foundational, widely imported modules. `core/database.py` defines the SQLAlchemy `Base`, engine, `SessionLocal`, and most ORM models. It is the highest-risk file to refactor because over 100 files import it.
+Foundational, widely imported modules. `core/database.py` (~2500 lines) defines the SQLAlchemy `Base`, engine, `SessionLocal`, and most ORM models. It is the highest-risk file to refactor because over 100 files import it.
 
 ### `src/`
 Domain logic. Notable groupings:
 
 - Agent execution: `agent_loop.py`, `builtin_actions.py`, `action_intents.py`, `teacher_escalation.py`, `bg_monitor.py`.
-- Tools: `tool_schemas.py`, `tool_index.py`, `tool_implementations.py`, `tool_security.py`, `tool_policy.py`, `tool_utils.py`, `tool_execution.py`, plus `src/agent_tools/` (document, filesystem, subprocess, web helpers).
+- Tools: `tool_schemas.py`, `tool_index.py`, `tool_implementations.py`, `tool_security.py`, `tool_policy.py`, `tool_utils.py`, `tool_execution.py`, `tool_parsing.py`, plus `src/agent_tools/` (document, filesystem, subprocess, web helpers).
 - LLM: `llm_core.py`, `model_discovery.py`, `model_context.py`, `endpoint_resolver.py`, `chat_handler.py`, `chat_processor.py`.
-- Memory/RAG: `memory.py`, `memory_provider.py`, `memory_vector.py`, `rag_manager.py`, `rag_singleton.py`, `personal_docs.py`, `chroma_client.py`, `embedding_lanes.py`.
+- Memory/RAG: `memory.py`, `memory_provider.py`, `memory_vector.py`, `rag_manager.py`, `rag_singleton.py`, `rag_vector.py`, `personal_docs.py`, `chroma_client.py`, `embedding_lanes.py`, `embeddings.py`.
 - Research: `deep_research.py`, `research_handler.py`, `research_utils.py`, `visual_report.py`.
-- Scheduling/background: `task_scheduler.py`, `task_endpoint.py`, `task_action_policy.py`, `event_bus.py`, `cookbook_serve_lifecycle.py`.
-- Cookbook: `cookbook_serve_lifecycle.py`, plus many route helpers in `routes/cookbook_*.py`.
+- Scheduling/background: `task_scheduler.py`, `task_endpoint.py`, `task_action_policy.py`, `event_bus.py`, `cookbook_serve_lifecycle.py`, `bg_jobs.py`.
+- Cookbook: `cookbook_serve_lifecycle.py`, plus route helpers in `routes/cookbook_*.py`.
 - Settings/config: `config.py`, `settings.py`, `settings_scrub.py`, `constants.py`, `runtime_paths.py`.
 - Security: `url_security.py`, `url_safety.py`, `prompt_security.py`, `rate_limiter.py`, `secret_storage.py`, `upload_limits.py`, `auth_helpers.py`.
 
@@ -113,7 +114,7 @@ Domain logic. Notable groupings:
 HTTP handlers. Most modules export a `setup_*_routes(...)` function returning an `APIRouter`. Some large domains have helper modules (e.g. `email_helpers.py`, `email_pollers.py`, `cookbook_helpers.py`, `chat_helpers.py`). A few route modules are thin shims that import the real implementation from a sub-package (e.g. `routes/memory/memory_routes.py`).
 
 ### `services/`
-Self-contained domain services imported by the rest of the app. Examples: `services.memory`, `services.search`, `services.research`, `services.shell`, `services.stt`, `services.tts`, `services.youtube`, `services.hwfit`.
+Self-contained domain services imported by the rest of the app: `services.memory`, `services.search`, `services.research`, `services.shell`, `services.stt`, `services.tts`, `services.youtube`, `services.hwfit`, `services.docs`, `services.faces`.
 
 ### `mcp_servers/`
 Standalone MCP server scripts used by the MCP manager.
@@ -122,7 +123,7 @@ Standalone MCP server scripts used by the MCP manager.
 LAN client pairing and discovery routes.
 
 ### `scripts/`
-Command-line wrappers. `scripts/odysseus` dispatches to `scripts/odysseus-<name>`. Subcommands include `mail`, `tasks`, `skills`, `notes`, `sessions`, `preset`, `theme`, `cookbook`, `research`, `personal`, `contacts`, `calendar`, `webhook`, `mcp`, `gallery`, `backup`, `docs`, `logs`, and `signature`.
+Command-line wrappers. `scripts/odysseus` discovers and dispatches to `scripts/odysseus-<name>` siblings the way `git` finds `git-foo`. Subcommands include `mail`, `tasks`, `skills`, `notes`, `sessions`, `preset`, `theme`, `cookbook`, `research`, `personal`, `contacts`, `calendar`, `webhook`, `mcp`, `gallery`, `memory`, `backup`, `docs`, `logs`, and `signature`. The directory also contains one-off maintenance/migration scripts (e.g. `claim_ownerless.py`, `migrate_faiss_to_chroma.py`, `update_database.py`).
 
 ## Build / run / deploy
 
@@ -177,11 +178,11 @@ Cookbook needs `tmux` for background downloads/serves.
 ./start-macos.sh
 ```
 
-Runs on `http://127.0.0.1:7860` by default because macOS AirPlay uses port 7000. The script installs Homebrew dependencies, builds `venv/`, and launches the server.
+Runs on `http://127.0.0.1:7860` by default because macOS AirPlay Receiver holds port 7000. The script installs Homebrew dependencies, builds `venv/`, and launches the server.
 
 ### Windows
 
-A portable launcher is built via `build-windows-portable.ps1`/`launcher.py`. Native Windows Python installs are less tested; Docker on Linux/WSL is the safer path.
+A portable launcher is built via `build-windows-portable.ps1`/`launcher.py`. Native Windows Python installs are not actively tested; Docker on Linux/WSL is the safer path.
 
 ### Systemd
 
@@ -206,7 +207,7 @@ A portable launcher is built via `build-windows-portable.ps1`/`launcher.py`. Nat
 ## Testing
 
 - Run the suite with the project interpreter (`./venv/bin/python -m pytest`), not a system Python that may lack pinned dependencies.
-- Pytest config lives in `pyproject.toml`; `tests/conftest.py` ensures the project root is on `sys.path`, defaults `DATABASE_URL` to an in-memory SQLite, and stubs optional heavy deps when absent.
+- Pytest config lives in `pyproject.toml` (pytest options only — it is not a build config); `tests/conftest.py` ensures the project root is on `sys.path`, defaults `DATABASE_URL` to an in-memory SQLite, and stubs optional heavy deps when absent. `asyncio_mode = "auto"` is set.
 - Tests are classified at collection time with `area_*` and `sub_*` markers (see `tests/_taxonomy.py` and `pyproject.toml`).
 - Run focused subsets with `tests/run_focus.py`:
 
@@ -228,7 +229,7 @@ Detailed testing philosophy is in `tests/TESTING_STANDARD.md`; helper usage is i
 
 ## Security considerations
 
-Odysseus is a self-hosted workspace with privileged local tools. Treat it as admin software:
+Odysseus is a self-hosted workspace with privileged local tools. Treat it as admin software (see `SECURITY.md` and `THREAT_MODEL.md`):
 
 - Keep `AUTH_ENABLED=true` for any network access.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
@@ -238,6 +239,7 @@ Odysseus is a self-hosted workspace with privileged local tools. Treat it as adm
 - Protect `.env`, `data/`, `logs/`, uploads, generated media, backups, auth/session files, and API keys. Never commit these.
 - Reserve admin-only access to shell, Python, file read/write, email send/read, MCP, app API, task/skill/memory management, settings, tokens, and model serving.
 - Owner scoping is a core invariant: a user must never see another user's rows. Verify owner scoping when adding routes, tools, or DB queries.
+- Report content rendered from LLM output is allowlist-sanitized (`nh3`); keep sanitization on any new rendering path.
 - The repository runs secret scanning (`gitleaks`), workflow security linting (`actionlint`, `zizmor`), and dependency review in CI.
 
 For vulnerability reports, see `SECURITY.md`.
@@ -259,9 +261,9 @@ node --check static/js/<file>.js
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 
 # Docker
- docker compose up -d --build
- docker compose logs --tail=120 odysseus
- docker compose config
+docker compose up -d --build
+docker compose logs --tail=120 odysseus
+docker compose config
 
 # Setup / first-run
 python setup.py
