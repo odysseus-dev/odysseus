@@ -1424,6 +1424,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       _displayOverride = null;
       const skipBubble = _hideUserBubble;
       _hideUserBubble = false;
+      const regenerateSend = _pendingRegenerateSend;
+      _pendingRegenerateSend = false;
       // Auto-recovery counter: carries across a turn's auto-continues, but resets
       // when the user genuinely sends a new message (so each task gets a fresh cap).
       // A real user turn (visible bubble) ALWAYS resets the budget — even if a
@@ -1627,6 +1629,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      if (regenerateSend) fd.append('regenerate', 'true');
       if (selectedRouteForSend.model) fd.append('selected_model', selectedRouteForSend.model);
       if (selectedRouteForSend.endpoint_url) fd.append('selected_endpoint_url', selectedRouteForSend.endpoint_url);
       if (selectedRouteForSend.endpoint_id) fd.append('selected_endpoint_id', selectedRouteForSend.endpoint_id);
@@ -4934,6 +4937,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           sibling = next;
         }
         _hideUserBubble = true;
+        _pendingRegenerateSend = true;
       }
       _pendingRegenAttachments = _ids;
 
@@ -5053,6 +5057,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       _hideUserBubble = true;
       const messageInput = uiModule.el('message');
       messageInput.value = userText;
+      _pendingRegenerateSend = true;
       const submitBtn = document.querySelector('.send-btn');
       if (submitBtn) submitBtn.click();
 
@@ -5068,6 +5073,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
   // File-ids carried over from the original user message during a regen, so
   // photos / OCR overrides survive into the new send. Consumed once.
   let _pendingRegenAttachments = null;
+  let _pendingRegenerateSend = false;
 
   /**
    * Called after streaming completes to attach variant navigation if this was a regen.

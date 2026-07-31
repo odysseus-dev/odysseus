@@ -43,18 +43,18 @@ def test_only_regenerate_callers_opt_into_replace_from_here():
     assert "window.chatModule.resendUserMessage(userMsgEl, { replaceFromHere: true });" in renderer
 
 
-def test_replace_and_regenerate_keep_the_original_user_message():
-    chat = _CHAT_JS.read_text(encoding="utf-8")
-    resend = chat[
-        chat.index("export async function resendUserMessage("):
-        chat.index("export async function regenerateFrom(")
-    ]
-    regenerate = chat[
-        chat.index("export async function regenerateFrom("):
-        chat.index("// Pending variants from a regeneration", chat.index("export async function regenerateFrom("))
-    ]
+def test_regenerate_replace_paths_keep_user_row_and_mark_resubmit():
+    body = _resend_body()
+    src = _CHAT_JS.read_text(encoding="utf-8")
+    regen = src[src.index("export async function regenerateFrom("):src.index("// Pending variants", src.index("export async function regenerateFrom("))]
+    replace_branch = body[body.index("if (replaceFromHere)"):body.index("_pendingRegenAttachments = _ids;")]
+    normal_resubmit = body[body.index("_pendingRegenAttachments = _ids;"):]
 
-    assert "const keepCount = msgIndex + 1;" in resend
-    assert "const keepCount = userIndex + 1;" in regenerate
-    assert "const keepCount = msgIndex;" not in resend
-    assert "const keepCount = userIndex;" not in regenerate
+    assert "const keepCount = msgIndex + 1;" in body
+    assert "const keepCount = userIndex + 1;" in regen
+    assert replace_branch.count("_pendingRegenerateSend = true;") == 1
+    assert "_pendingRegenerateSend = true;" not in normal_resubmit
+    assert regen.count("_pendingRegenerateSend = true;") == 1
+    assert "if (regenerateSend) fd.append('regenerate', 'true');" in src
+    assert "const keepCount = msgIndex;" not in body
+    assert "const keepCount = userIndex;" not in regen
