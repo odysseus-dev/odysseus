@@ -4086,6 +4086,10 @@ def setup_email_routes():
         """List IMAP folders."""
         if _fixture_email_enabled():
             return {"folders": ["INBOX", "Archive", "Sent"], "sync": {"source": "fixture"}}
+        try:
+            cached_only_enabled = bool(int(cached_only or 0))
+        except (TypeError, ValueError):
+            cached_only_enabled = False
         cached = _folder_cache_get(account_id, owner)
         if cached is not None:
             payload = dict(cached)
@@ -4093,7 +4097,7 @@ def setup_email_routes():
             sync_meta["source"] = "folder_cache"
             payload["sync"] = sync_meta
             return payload
-        if cached_only:
+        if cached_only_enabled:
             stale = _folder_cache_get_stale(account_id, owner)
             if stale:
                 payload = dict(stale)
