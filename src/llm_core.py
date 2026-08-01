@@ -8,9 +8,10 @@ import hashlib
 import threading
 import re
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from fastapi import HTTPException
-from typing import Optional, Dict, List, Tuple
+from typing import Callable, Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
 from urllib.parse import urlparse
 
@@ -19,6 +20,37 @@ logger = logging.getLogger(__name__)
 _LOCAL_MODEL_LOCK = asyncio.Lock()
 _LOCAL_MODEL_WAITING_FOREGROUND = 0
 _LOCAL_MODEL_CURRENT: Dict[str, object] = {}
+_MODEL_USAGE_RECORDER: ContextVar[Optional[Callable[[str], None]]] = ContextVar(
+    "model_usage_recorder",
+    default=None,
+)
+
+
+@contextmanager
+def capture_model_usage(recorder: Callable[[str], None]):
+    """Report successful fallback candidates within the current context.
+
+    Context-local storage keeps concurrent chat and scheduled-task calls from
+    attributing one another's models. Callers can use this without changing
+    the return type of the shared LLM helpers.
+    """
+    token = _MODEL_USAGE_RECORDER.set(recorder)
+    try:
+        yield
+    finally:
+        _MODEL_USAGE_RECORDER.reset(token)
+
+
+def _report_model_usage(model: str) -> None:
+    recorder = _MODEL_USAGE_RECORDER.get()
+    if recorder is None:
+        return
+    try:
+        recorder(model)
+    except Exception:
+        # Usage accounting must never turn a successful model response into a
+        # failed request.
+        logger.debug("Model usage recorder failed", exc_info=True)
 
 
 def _local_model_gate_enabled() -> bool:
@@ -1932,7 +1964,9 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return llm_call(url, model, messages, headers=headers, **kwargs)
+            result = llm_call(url, model, messages, headers=headers, **kwargs)
+            _report_model_usage(model)
+            return result
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -1949,7 +1983,9 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return await llm_call_async(url, model, messages, headers=headers, **kwargs)
+            result = await llm_call_async(url, model, messages, headers=headers, **kwargs)
+            _report_model_usage(model)
+            return result
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
