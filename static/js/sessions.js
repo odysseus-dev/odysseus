@@ -1847,6 +1847,10 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     const _isTransientChat = !!_meta && (_meta.folder === 'Assistant' || _meta.folder === 'Tasks');
     if (!_isTransientChat) {
       Storage.set('lastSessionId', id);
+      // Update URL hash without triggering hashchange handler
+      if (window.location.hash !== '#' + id) {
+        history.replaceState(null, '', '#' + id);
+      }
     }
     // Restore character preset for persistent chats
     try {
@@ -2313,6 +2317,7 @@ export async function materializePendingSession() {
     currentSessionId = payload.id;
     if (!isIncognito) {
       Storage.set('lastSessionId', payload.id);
+      history.replaceState(null, '', '#' + payload.id);
     }
 
     // Reload the sidebar in the background. Awaiting this used to block the first
