@@ -1,0 +1,33 @@
+{
+  "capturedAtUtc": "2026-08-01T11:52:31.8989675Z",
+  "canonicalRepository": "https://github.com/odysseus-dev/odysseus",
+  "cloneUrl": "https://github.com/odysseus-dev/odysseus.git",
+  "upstreamBranch": "dev",
+  "upstreamCommit": "25c9e735ef5ce605f47f8f666ac6689056d2c10c",
+  "upstreamAuthorDate": "2026-07-30T13:57:07Z",
+  "upstreamSubject": "fix(email): open settings after OAuth callback (#5803)",
+  "integrationBranch": "codex/pdv-integration-v1",
+  "fullClone": true,
+  "upstreamCommitCount": 1973,
+  "submodules": [],
+  "tags": [],
+  "releases": [],
+  "license": "AGPL-3.0-or-later",
+  "licenseSha256": "79735a75d0274d2a5dcc240d11a0f81e34cfc3533939b7fce8e84e35a150a238",
+  "dependencyManifests": {
+    "requirements.txt": "6d9e118376ee8da3834896f36b036d5b6b21dc64f9b20f878826fb83623f2047",
+    "requirements-optional.txt": "b572b633270f7c24b3d1e568e7738bca0ac9a0dbfe3139c2f1637d1d7c3a327c",
+    "pyproject.toml": "1f90da0a25470dafb5027c29a29cf198dbb019152646cf6311adccf24c329334",
+    "package.json": "63717150ec227586083dd990877ece21701591abd3a277008909616033391c11",
+    "package-lock.json": "d766341fdc5599f52c31cf015b8ebb212a3722f94f08b069a191a83f48b425ea",
+    "setup.py": "a5763ce4316df2aeda11002200cfe2ed582f2462aeff544282e94a856471c9e3"
+  },
+  "lockfiles": {
+    "npm": {
+      "path": "package-lock.json",
+      "lockfileVersion": 3
+    },
+    "python": null
+  },
+  "attributionSha256": "a0733b4b19ef0820c4b75e4d12348ec9e05c8d977b778ed2445eac1c850b7861"
+}

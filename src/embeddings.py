@@ -115,6 +115,8 @@ class EmbeddingClient:
             raise
 
     def _post_embeddings(self, batch: List[str]) -> List[List[float]]:
+        from src.pdv_provider_guard import authorize_provider_sync
+        authorize_provider_sync(self.url, self.model)
         resp = self._client.post(
             self.url,
             headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},

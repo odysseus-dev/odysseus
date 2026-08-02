@@ -1863,6 +1863,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
     try:
+        from src.pdv_provider_guard import authorize_provider_sync
+        authorize_provider_sync(target_url, model)
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
     except Exception as e:
@@ -2078,6 +2080,8 @@ async def llm_call_async(
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
 
+    from src.pdv_provider_guard import authorize_provider
+    await authorize_provider(target_url, model)
     call_timeout = _call_timeout(timeout)
     attempt = 0
     while attempt < max_retries:
@@ -2146,6 +2150,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                      tool_choice_none: bool = False, workload: str = "foreground"):
     target_url = _stream_target_url(url)
+    from src.pdv_provider_guard import authorize_provider
+    await authorize_provider(target_url, model)
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
             url,

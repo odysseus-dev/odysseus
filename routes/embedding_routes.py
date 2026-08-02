@@ -274,6 +274,8 @@ def setup_embedding_routes():
         # Quick health check
         try:
             import httpx
+            from src.pdv_provider_guard import authorize_provider_sync
+            authorize_provider_sync(url, model or "embedding-endpoint")
             resp = httpx.post(
                 url,
                 json={"input": ["test"], "model": model or "test"},

@@ -733,6 +733,8 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
             payload["tools"] = _test_tools
 
     try:
+        from src.pdv_provider_guard import authorize_provider_sync
+        authorize_provider_sync(target_url, model_id)
         t0 = _time.time()
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout, verify=llm_verify())
         latency = round((_time.time() - t0) * 1000)

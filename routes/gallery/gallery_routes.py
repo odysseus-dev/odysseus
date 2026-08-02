@@ -571,6 +571,8 @@ def setup_gallery_routes() -> APIRouter:
 
         # Use img2img endpoint if available, otherwise upscale via canvas on client
         try:
+            from src.pdv_provider_guard import authorize_provider
+            await authorize_provider(f"{base_url}/images/upscale", getattr(ep, "model", None) or "image-endpoint")
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.post(f"{base_url}/images/upscale", json={
                     "image": b64, "scale": scale,
@@ -614,6 +616,8 @@ def setup_gallery_routes() -> APIRouter:
             base_url += "/v1"
 
         try:
+            from src.pdv_provider_guard import authorize_provider
+            await authorize_provider(f"{base_url}/images/generations", getattr(ep, "model", None) or "image-endpoint")
             async with httpx.AsyncClient(timeout=180) as client:
                 resp = await client.post(f"{base_url}/images/generations", json={
                     "prompt": prompt,
@@ -1357,6 +1361,8 @@ def setup_gallery_routes() -> APIRouter:
             }
             headers = {"Authorization": f"Bearer {api_key}"}
             try:
+                from src.pdv_provider_guard import authorize_provider
+                await authorize_provider(_join_checked_gallery_endpoint(base, "/images/edits"), oa_model)
                 async with httpx.AsyncClient(timeout=120) as client:
                     r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
@@ -1411,6 +1417,8 @@ def setup_gallery_routes() -> APIRouter:
             # supports multiple models per process. Harmless if ignored.
             if chosen_model:
                 body["model"] = chosen_model
+            from src.pdv_provider_guard import authorize_provider
+            await authorize_provider(_join_checked_gallery_endpoint(base, "/images/edits"), chosen_model or body.get("model") or "image-endpoint")
             async with httpx.AsyncClient(timeout=240) as client:
                 try:
                     import base64, io
@@ -1477,7 +1485,9 @@ def setup_gallery_routes() -> APIRouter:
                     logger.exception("inpaint_proxy: failed to prepare self-hosted edit request")
                     raise HTTPException(400, "Failed to prepare inpaint request")
 
-                r = await client.post(_join_checked_gallery_endpoint(base, "/images/inpaint"), json=body)
+                inpaint_target = _join_checked_gallery_endpoint(base, "/images/inpaint")
+                await authorize_provider(inpaint_target, chosen_model or body.get("model") or "image-endpoint")
+                r = await client.post(inpaint_target, json=body)
                 if r.status_code != 200:
                     logger.error("inpaint_proxy diffusion: status %s", r.status_code)
                     raise HTTPException(r.status_code, "Inpaint request failed")
@@ -1649,6 +1659,8 @@ def setup_gallery_routes() -> APIRouter:
                 _effective_base = base_root if path.startswith("/sdapi") else base
                 target = _join_checked_gallery_endpoint(_effective_base, path)
                 try:
+                    from src.pdv_provider_guard import authorize_provider
+                    await authorize_provider(target, model or "image-endpoint")
                     r = await client.post(target, json=payload, headers=headers)
                     if r.status_code == 404:
                         last_err = f"{path}: 404"
@@ -2297,6 +2309,8 @@ def setup_gallery_routes() -> APIRouter:
                 h.update(headers)
 
             async with httpx.AsyncClient(timeout=60) as client:
+                from src.pdv_provider_guard import authorize_provider
+                await authorize_provider(chat_url, model_name)
                 resp = await client.post(chat_url, json=payload, headers=h)
                 if resp.status_code != 200:
                     logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])

@@ -74,6 +74,7 @@ _BUILTIN_SERVERS = {
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "pdv_control": ("mcp_servers/pdv_control_server.py", "PDV: Governed Execution OS"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)
@@ -190,6 +191,12 @@ async def register_builtin_servers(mcp_manager):
             logger.warning(f"Built-in MCP server {name} error: {type(e).__name__}: {e}")
 
     for server_id, (script, name) in _BUILTIN_SERVERS.items():
+        if server_id == "pdv_control" and not (
+            os.environ.get("PDV_EXECUTION_OS_URL", "").strip()
+            and os.environ.get("ODYSSEUS_PDV_ADAPTER_KEY_FILE", "").strip()
+        ):
+            logger.info("PDV MCP bridge not configured; skipping")
+            continue
         script_path = os.path.join(base_dir, script)
         if not os.path.exists(script_path):
             logger.warning(f"Built-in MCP server script not found: {script_path}")

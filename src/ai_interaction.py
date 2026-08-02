@@ -1078,6 +1078,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
 
     try:
+        from src.pdv_provider_guard import authorize_provider
+        await authorize_provider(images_url, model_id)
         # GPT image models can take 30-120s+ depending on quality
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
             resp = await client.post(images_url, json=payload, headers=headers)
@@ -1284,6 +1286,8 @@ async def do_edit_image(
         """
         harmonize_url = base_url + "/images/harmonize"
         try:
+            from src.pdv_provider_guard import authorize_provider
+            await authorize_provider(harmonize_url, model_id)
             image_bytes = path.read_bytes()
             image_b64 = base64.b64encode(image_bytes).decode()
             fallback_payload = {
@@ -1333,6 +1337,8 @@ async def do_edit_image(
             return {"error": f"Image edit fallback error: {fallback_error}"}
 
     try:
+        from src.pdv_provider_guard import authorize_provider
+        await authorize_provider(edits_url, model_id)
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=30.0)) as client:
             progress_task = None
             if progress_callback:
