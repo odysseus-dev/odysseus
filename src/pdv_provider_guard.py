@@ -12,11 +12,27 @@ import httpx
 
 
 _last_authorization: ContextVar[dict | None] = ContextVar("pdv_last_provider_authorization", default=None)
+_last_routing: ContextVar[dict | None] = ContextVar("pdv_last_provider_routing", default=None)
 
 
 def get_last_authorization_receipt() -> dict | None:
     receipt = _last_authorization.get()
     return dict(receipt) if receipt is not None else None
+
+
+def get_last_routing_receipt() -> dict | None:
+    receipt = _last_routing.get()
+    return dict(receipt) if receipt is not None else None
+
+
+def get_ranked_route_policy(endpoint: str, model: str) -> dict | None:
+    receipt = _last_routing.get()
+    if not isinstance(receipt, dict):
+        return None
+    for item in receipt.get("ordered_candidates", []):
+        if isinstance(item, dict) and item.get("endpoint") == endpoint and item.get("model") == model:
+            return dict(item)
+    return None
 
 
 def record_provider_outcome_sync(
@@ -142,6 +158,70 @@ def _validate(response: httpx.Response, endpoint: str, model: str, provider_requ
             or payload.get("provider_request_id") != provider_request_id or not payload.get("authorization_receipt_id")):
         raise RuntimeError("PDV provider authorization correlation mismatch")
     return payload
+
+
+def _validate_ranking(response: httpx.Response, candidates: list, task_class: str) -> tuple[list, dict]:
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise RuntimeError("PDV provider ranking returned malformed JSON") from error
+    ordered = payload.get("ordered_candidates") if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or response.status_code != 200 or payload.get("allowed") is not True
+            or payload.get("task_class") != task_class or not payload.get("routing_receipt_id")
+            or not isinstance(ordered, list) or not ordered or len(ordered) > len(candidates)):
+        reason = payload.get("reason_code") if isinstance(payload, dict) else "UNAVAILABLE"
+        raise RuntimeError(f"PDV provider ranking denied candidates ({reason or 'UNAVAILABLE'})")
+    seen = set()
+    ranked = []
+    for item in ordered:
+        index = item.get("candidate_index") if isinstance(item, dict) else None
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0 or index >= len(candidates) or index in seen:
+            raise RuntimeError("PDV provider ranking correlation mismatch")
+        candidate = candidates[index]
+        if item.get("endpoint") != candidate[0] or item.get("model") != candidate[1]:
+            raise RuntimeError("PDV provider ranking correlation mismatch")
+        timeout_ms = item.get("timeout_ms")
+        retry_limit = item.get("retry_limit")
+        if (not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms < 1
+                or not isinstance(retry_limit, int) or isinstance(retry_limit, bool) or retry_limit < 0):
+            raise RuntimeError("PDV provider ranking policy is invalid")
+        seen.add(index)
+        ranked.append(candidate)
+    if payload.get("selected_endpoint") != ranked[0][0] or payload.get("selected_model") != ranked[0][1]:
+        raise RuntimeError("PDV provider ranking correlation mismatch")
+    return ranked, payload
+
+
+def rank_provider_candidates_sync(candidates: list, task_class: str = "chat") -> list:
+    _last_routing.set(None)
+    if not required():
+        return list(candidates)
+    base, key = _boundary()
+    response = httpx.post(
+        f"{base}/v1/integrations/odysseus/provider/rank",
+        headers={"X-PDV-Odysseus-Key": key},
+        json={"task_class": task_class, "candidates": [{"endpoint": item[0], "model": item[1]} for item in candidates]},
+        timeout=3.0,
+    )
+    ranked, receipt = _validate_ranking(response, candidates, task_class)
+    _last_routing.set(receipt)
+    return ranked
+
+
+async def rank_provider_candidates(candidates: list, task_class: str = "chat") -> list:
+    _last_routing.set(None)
+    if not required():
+        return list(candidates)
+    base, key = _boundary()
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        response = await client.post(
+            f"{base}/v1/integrations/odysseus/provider/rank",
+            headers={"X-PDV-Odysseus-Key": key},
+            json={"task_class": task_class, "candidates": [{"endpoint": item[0], "model": item[1]} for item in candidates]},
+        )
+    ranked, receipt = _validate_ranking(response, candidates, task_class)
+    _last_routing.set(receipt)
+    return ranked
 
 
 def authorize_provider_sync(endpoint: str, model: str) -> dict | None:

@@ -40,6 +40,23 @@ source where available.
 - No paid provider, model-provider credential, GPU fallback, or external model
   endpoint is required by the baseline.
 
+## Provider-routing boundary
+
+When `PDV_PROVIDER_GUARD_REQUIRED=true`, Odysseus fallback chains are ranked by
+the authenticated Execution OS adapter before any model request. The governed
+order is approved local capacity, configured free hosted routes, NVIDIA NIM,
+other explicitly authorized OpenAI-compatible routes, then paid routes only
+when the PDV paid-route policy is already enabled. Ranking fails closed.
+
+Only endpoint and model identifiers cross this boundary. Provider headers and
+keys remain attached to the original Odysseus candidate tuple and are never
+serialized to PDV. The returned candidate indexes, endpoint/model correlation,
+timeout, and retry limits are validated before use. Odysseus applies those
+limits, then obtains a separate per-request authorization receipt. Completion,
+failure, timeout, cancellation, available token usage, and available cost are
+reported against that exact authorization. PDV owns resource health and circuit
+state; Odysseus remains the credential-owning HTTP client.
+
 ## Adapter contract
 
 Use an authenticated admin session or `Authorization: Bearer <ody_...>` token

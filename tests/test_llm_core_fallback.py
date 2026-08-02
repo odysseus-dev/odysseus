@@ -212,6 +212,18 @@ def test_dedupe_candidates_keeps_first_of_each_route():
     assert llm_core._dedupe_candidates(None) == []
 
 
+def test_sync_fallback_consumes_pdv_ranked_order_and_policy(monkeypatch):
+    from src import pdv_provider_guard
+
+    candidates = [("u-paid", "paid", {"Authorization": "secret"}), ("u-local", "local", {})]
+    calls = []
+    monkeypatch.setattr(pdv_provider_guard, "rank_provider_candidates_sync", lambda cands, task: [cands[1], cands[0]])
+    monkeypatch.setattr(pdv_provider_guard, "get_ranked_route_policy", lambda url, _model: {"timeout_ms": 2000, "retry_limit": 0} if url == "u-local" else None)
+    monkeypatch.setattr(llm_core, "llm_call", lambda url, model, messages, **kwargs: calls.append((url, model, kwargs)) or "ok")
+    assert llm_core.llm_call_with_fallback(candidates, [{"role": "user", "content": "hi"}], timeout=30, prompt_type="chat") == "ok"
+    assert calls == [("u-local", "local", {"headers": {}, "timeout": 2, "prompt_type": "chat"})]
+
+
 def test_duplicate_route_is_attempted_only_once(monkeypatch):
     """A fallback that repeats the primary's (url, model) must NOT make the chain
     sail back into the same dead route — each distinct route is tried once."""

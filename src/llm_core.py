@@ -1944,10 +1944,17 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
+    from src.pdv_provider_guard import get_ranked_route_policy, rank_provider_candidates_sync
+    cands = rank_provider_candidates_sync(cands, kwargs.get("prompt_type") or "chat")
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return llm_call(url, model, messages, headers=headers, **kwargs)
+            candidate_kwargs = dict(kwargs)
+            policy = get_ranked_route_policy(url, model)
+            if policy:
+                policy_timeout = max(1, (policy["timeout_ms"] + 999) // 1000)
+                candidate_kwargs["timeout"] = min(candidate_kwargs.get("timeout", policy_timeout), policy_timeout)
+            return llm_call(url, model, messages, headers=headers, **candidate_kwargs)
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -1961,10 +1968,18 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
+    from src.pdv_provider_guard import get_ranked_route_policy, rank_provider_candidates
+    cands = await rank_provider_candidates(cands, kwargs.get("prompt_type") or "chat")
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return await llm_call_async(url, model, messages, headers=headers, **kwargs)
+            candidate_kwargs = dict(kwargs)
+            policy = get_ranked_route_policy(url, model)
+            if policy:
+                policy_timeout = max(1, (policy["timeout_ms"] + 999) // 1000)
+                candidate_kwargs["timeout"] = min(candidate_kwargs.get("timeout", policy_timeout), policy_timeout)
+                candidate_kwargs["max_retries"] = min(candidate_kwargs.get("max_retries", policy["retry_limit"]), policy["retry_limit"])
+            return await llm_call_async(url, model, messages, headers=headers, **candidate_kwargs)
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -2177,6 +2192,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     from src.pdv_provider_guard import authorize_provider, record_provider_outcome
     authorization = await authorize_provider(target_url, model)
     provider_started = time.time()
+    stream_failed = False
     try:
         async with _local_model_slot(target_url, model, workload):
             async for chunk in _stream_llm_inner(
@@ -2192,6 +2208,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 session_id=session_id,
                 tool_choice_none=tool_choice_none,
             ):
+                if chunk.startswith("event: error"):
+                    stream_failed = True
                 yield chunk
     except (asyncio.CancelledError, GeneratorExit):
         await record_provider_outcome(authorization, "cancelled", round((time.time() - provider_started) * 1000))
@@ -2200,7 +2218,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         await record_provider_outcome(authorization, "timed_out" if isinstance(error, httpx.TimeoutException) or "timed out" in str(error).lower() else "failed", round((time.time() - provider_started) * 1000))
         raise
     else:
-        await record_provider_outcome(authorization, "completed", round((time.time() - provider_started) * 1000))
+        await record_provider_outcome(authorization, "failed" if stream_failed else "completed", round((time.time() - provider_started) * 1000))
 
 
 async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
@@ -2862,6 +2880,9 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
         return
 
+    from src.pdv_provider_guard import get_ranked_route_policy, rank_provider_candidates
+    cands = await rank_provider_candidates(cands, kwargs.get("prompt_type") or "chat")
+
     primary_model = cands[0][1]
     last_error = None
     for i, (url, model, headers) in enumerate(cands):
@@ -2869,7 +2890,12 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
         emitted = False
         retried = False
         pending_metadata = []
-        async for chunk in stream_llm(url, model, messages, headers=headers, **kwargs):
+        candidate_kwargs = dict(kwargs)
+        policy = get_ranked_route_policy(url, model)
+        if policy:
+            policy_timeout = max(1, (policy["timeout_ms"] + 999) // 1000)
+            candidate_kwargs["timeout"] = min(candidate_kwargs.get("timeout", policy_timeout), policy_timeout)
+        async for chunk in stream_llm(url, model, messages, headers=headers, **candidate_kwargs):
             if chunk.startswith("event: error"):
                 if not emitted and not is_last:
                     # Pre-content failure with fallbacks left — swallow and

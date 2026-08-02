@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from contextlib import asynccontextmanager
 
 from src import pdv_provider_guard
 
@@ -40,6 +41,76 @@ def test_provider_guard_fails_closed_on_denial_or_mismatch(tmp_path, monkeypatch
         pdv_provider_guard.authorize_provider_sync("http://127.0.0.1:11435/v1/chat/completions", "model-1")
 
 
+def test_provider_ranking_reorders_without_serializing_credentials(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    candidates = [
+        ("https://paid.example/v1/chat/completions", "paid-model", {"Authorization": "Bearer secret"}),
+        ("http://127.0.0.1:11435/v1/chat/completions", "local-model", {"X-Local-Key": "secret"}),
+    ]
+    captured = {}
+
+    def rank(*_args, **kwargs):
+        captured.update(kwargs["json"])
+        return httpx.Response(200, json={
+            "allowed": True,
+            "reason_code": "AUTHORIZED",
+            "routing_receipt_id": "ody_provider_routing_1",
+            "task_class": "chat",
+            "selected_endpoint": candidates[1][0],
+            "selected_model": candidates[1][1],
+            "ordered_candidates": [
+                {"candidate_index": 1, "endpoint": candidates[1][0], "model": candidates[1][1], "timeout_ms": 30000, "retry_limit": 1},
+                {"candidate_index": 0, "endpoint": candidates[0][0], "model": candidates[0][1], "timeout_ms": 60000, "retry_limit": 0},
+            ],
+        })
+
+    monkeypatch.setattr(pdv_provider_guard.httpx, "post", rank)
+    assert pdv_provider_guard.rank_provider_candidates_sync(candidates) == [candidates[1], candidates[0]]
+    assert captured == {"task_class": "chat", "candidates": [{"endpoint": item[0], "model": item[1]} for item in candidates]}
+    assert "secret" not in repr(captured)
+    assert pdv_provider_guard.get_ranked_route_policy(candidates[1][0], candidates[1][1])["retry_limit"] == 1
+
+
+def test_provider_ranking_fails_closed_on_malformed_order(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    candidate = ("http://127.0.0.1:11435/v1/chat/completions", "local-model", {})
+    monkeypatch.setattr(pdv_provider_guard.httpx, "post", lambda *_args, **_kwargs: httpx.Response(200, json={
+        "allowed": True, "routing_receipt_id": "receipt", "task_class": "chat",
+        "selected_endpoint": candidate[0], "selected_model": candidate[1],
+        "ordered_candidates": [{"candidate_index": 7, "endpoint": candidate[0], "model": candidate[1], "timeout_ms": 30000, "retry_limit": 1}],
+    }))
+    with pytest.raises(RuntimeError, match="correlation mismatch"):
+        pdv_provider_guard.rank_provider_candidates_sync([candidate])
+
+
+@pytest.mark.asyncio
+async def test_async_provider_ranking_preserves_opaque_candidate_headers(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    candidate = ("http://127.0.0.1:11435/v1/chat/completions", "local-model", {"Authorization": "secret"})
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, _url, **kwargs):
+            assert kwargs["json"]["candidates"] == [{"endpoint": candidate[0], "model": candidate[1]}]
+            assert "secret" not in repr(kwargs["json"])
+            return httpx.Response(200, json={
+                "allowed": True, "routing_receipt_id": "receipt", "task_class": "chat",
+                "selected_endpoint": candidate[0], "selected_model": candidate[1],
+                "ordered_candidates": [{"candidate_index": 0, "endpoint": candidate[0], "model": candidate[1], "timeout_ms": 30000, "retry_limit": 1}],
+            })
+
+    monkeypatch.setattr(pdv_provider_guard.httpx, "AsyncClient", Client)
+    assert await pdv_provider_guard.rank_provider_candidates([candidate]) == [candidate]
+
+
 def test_provider_outcome_requires_exact_durable_receipt_correlation(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
     authorization = {"authorization_receipt_id": "ody_provider_auth_" + "1" * 36, "provider_request_id": "2" * 36}
@@ -76,6 +147,34 @@ def test_normal_async_and_stream_paths_record_provider_outcomes():
     source = (Path(__file__).parents[1] / "src" / "llm_core.py").read_text(encoding="utf-8")
     assert source.count("record_provider_outcome(") >= 7
     assert "record_provider_outcome_sync(authorization, \"completed\"" in source
+
+
+@pytest.mark.asyncio
+async def test_stream_error_event_records_failed_outcome(monkeypatch):
+    import src.llm_core as llm_core
+
+    outcomes = []
+
+    async def authorize(_endpoint, _model):
+        return {"authorization_receipt_id": "auth", "provider_request_id": "request"}
+
+    async def record(_authorization, outcome, _duration, **_telemetry):
+        outcomes.append(outcome)
+
+    async def inner(*_args, **_kwargs):
+        yield 'event: error\ndata: {"status": 502, "text": "synthetic"}\n\n'
+
+    @asynccontextmanager
+    async def slot(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(pdv_provider_guard, "authorize_provider", authorize)
+    monkeypatch.setattr(pdv_provider_guard, "record_provider_outcome", record)
+    monkeypatch.setattr(llm_core, "_stream_llm_inner", inner)
+    monkeypatch.setattr(llm_core, "_local_model_slot", slot)
+    chunks = [chunk async for chunk in llm_core.stream_llm("https://provider.example/v1", "model", [{"role": "user", "content": "hi"}])]
+    assert chunks[0].startswith("event: error")
+    assert outcomes == ["failed"]
 
 
 def test_every_direct_model_post_path_has_provider_preflight():
