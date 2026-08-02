@@ -58,6 +58,26 @@ def test_provider_outcome_requires_exact_durable_receipt_correlation(tmp_path, m
     assert receipt["provider_request_id"] == authorization["provider_request_id"]
 
 
+def test_normal_sync_llm_call_records_provider_outcome_and_usage(monkeypatch):
+    import src.llm_core as llm_core
+
+    authorization = {"authorization_receipt_id": "auth", "provider_request_id": "request"}
+    outcomes = []
+    monkeypatch.setattr(pdv_provider_guard, "authorize_provider_sync", lambda _endpoint, _model: authorization)
+    monkeypatch.setattr(pdv_provider_guard, "record_provider_outcome_sync", lambda auth, outcome, duration, **telemetry: outcomes.append((auth, outcome, telemetry)))
+    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware", lambda *_args, **_kwargs: httpx.Response(200, json={"choices": [{"message": {"content": "synthetic result"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}))
+    result = llm_core.llm_call("https://provider.example.invalid/v1", "synthetic-model", [{"role": "user", "content": "synthetic"}], max_tokens=4)
+    assert result == "synthetic result"
+    assert outcomes == [(authorization, "completed", {"input_tokens": 3, "output_tokens": 2})]
+
+
+def test_normal_async_and_stream_paths_record_provider_outcomes():
+    from pathlib import Path
+    source = (Path(__file__).parents[1] / "src" / "llm_core.py").read_text(encoding="utf-8")
+    assert source.count("record_provider_outcome(") >= 7
+    assert "record_provider_outcome_sync(authorization, \"completed\"" in source
+
+
 def test_every_direct_model_post_path_has_provider_preflight():
     from pathlib import Path
     root = Path(__file__).parents[1]

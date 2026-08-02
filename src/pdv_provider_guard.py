@@ -60,6 +60,57 @@ def record_provider_outcome_sync(
     return receipt
 
 
+async def record_provider_outcome(
+    authorization: dict,
+    outcome: str,
+    duration_ms: int,
+    *,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cost_microusd: int | None = None,
+) -> dict | None:
+    if not required():
+        return None
+    if not isinstance(authorization, dict):
+        raise RuntimeError("PDV provider outcome requires an authorization receipt")
+    base, key = _boundary()
+    payload = {
+        "authorization_receipt_id": authorization.get("authorization_receipt_id"),
+        "provider_request_id": authorization.get("provider_request_id"),
+        "outcome": outcome,
+        "duration_ms": max(0, int(duration_ms)),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_microusd": cost_microusd,
+    }
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        response = await client.post(
+            f"{base}/v1/integrations/odysseus/provider/outcome",
+            headers={"X-PDV-Odysseus-Key": key},
+            json=payload,
+        )
+    try:
+        receipt = response.json()
+    except ValueError as error:
+        raise RuntimeError("PDV provider outcome returned malformed JSON") from error
+    if (response.status_code != 201 or not isinstance(receipt, dict)
+            or receipt.get("authorization_receipt_id") != payload["authorization_receipt_id"]
+            or receipt.get("provider_request_id") != payload["provider_request_id"]
+            or receipt.get("outcome") != outcome or not receipt.get("outcome_receipt_id")):
+        raise RuntimeError("PDV provider outcome receipt validation failed")
+    return receipt
+
+
+def provider_usage(payload: object) -> tuple[int | None, int | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    input_value = usage.get("prompt_tokens", usage.get("input_tokens", payload.get("prompt_eval_count")))
+    output_value = usage.get("completion_tokens", usage.get("output_tokens", payload.get("eval_count")))
+    safe = lambda value: value if isinstance(value, int) and value >= 0 else None
+    return safe(input_value), safe(output_value)
+
+
 def required() -> bool:
     return os.environ.get("PDV_PROVIDER_GUARD_REQUIRED", "false").lower() == "true"
 

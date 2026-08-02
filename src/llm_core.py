@@ -1862,14 +1862,19 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         _apply_local_generation_stability(payload, target_url, model)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+    authorization = None
+    provider_started = time.time()
     try:
-        from src.pdv_provider_guard import authorize_provider_sync
-        authorize_provider_sync(target_url, model)
+        from src.pdv_provider_guard import authorize_provider_sync, record_provider_outcome_sync
+        authorization = authorize_provider_sync(target_url, model)
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
     except Exception as e:
+        if authorization is not None:
+            record_provider_outcome_sync(authorization, "timed_out" if "timed out" in str(e).lower() else "failed", round((time.time() - provider_started) * 1000))
         raise HTTPException(502, f"POST {target_url} failed: {e}")
     if not r.is_success:
+        record_provider_outcome_sync(authorization, "failed", round((time.time() - provider_started) * 1000))
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
     data = r.json()
     try:
@@ -1889,9 +1894,17 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
                     response = text_part or msg.get("reasoning_content") or ""
             else:
                 response = content or msg.get("reasoning_content") or ""
+        from src.pdv_provider_guard import provider_usage
+        input_tokens, output_tokens = provider_usage(data)
+        record_provider_outcome_sync(authorization, "completed", round((time.time() - provider_started) * 1000), input_tokens=input_tokens, output_tokens=output_tokens)
         _set_cached_response(cache_key, response)
         return response
     except Exception:
+        if authorization is not None:
+            try:
+                record_provider_outcome_sync(authorization, "failed", round((time.time() - provider_started) * 1000))
+            except Exception:
+                pass
         raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
 
 
@@ -2080,8 +2093,9 @@ async def llm_call_async(
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
 
-    from src.pdv_provider_guard import authorize_provider
-    await authorize_provider(target_url, model)
+    from src.pdv_provider_guard import authorize_provider, provider_usage, record_provider_outcome
+    authorization = await authorize_provider(target_url, model)
+    provider_started = time.time()
     call_timeout = _call_timeout(timeout)
     attempt = 0
     while attempt < max_retries:
@@ -2102,6 +2116,7 @@ async def llm_call_async(
                 if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
                     await asyncio.sleep(LLMConfig.RETRY_DELAY)
                     continue
+                await record_provider_outcome(authorization, "failed", round((time.time() - provider_started) * 1000))
                 raise HTTPException(r.status_code, friendly)
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
@@ -2114,9 +2129,16 @@ async def llm_call_async(
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
+                input_tokens, output_tokens = provider_usage(data)
+                await record_provider_outcome(authorization, "completed", round((time.time() - provider_started) * 1000), input_tokens=input_tokens, output_tokens=output_tokens)
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
+                if authorization is not None:
+                    try:
+                        await record_provider_outcome(authorization, "failed", round((time.time() - provider_started) * 1000))
+                    except Exception:
+                        pass
                 raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
@@ -2124,12 +2146,14 @@ async def llm_call_async(
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
             if _cooled or attempt >= max_retries:
+                await record_provider_outcome(authorization, "timed_out" if isinstance(e, httpx.ConnectTimeout) else "failed", round((time.time() - provider_started) * 1000))
                 raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
             if attempt >= max_retries:
+                await record_provider_outcome(authorization, "timed_out" if isinstance(e, httpx.TimeoutException) else "failed", round((time.time() - provider_started) * 1000))
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
@@ -2150,23 +2174,33 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                      tool_choice_none: bool = False, workload: str = "foreground"):
     target_url = _stream_target_url(url)
-    from src.pdv_provider_guard import authorize_provider
-    await authorize_provider(target_url, model)
-    async with _local_model_slot(target_url, model, workload):
-        async for chunk in _stream_llm_inner(
-            url,
-            model,
-            messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            headers=headers,
-            timeout=timeout,
-            prompt_type=prompt_type,
-            tools=tools,
-            session_id=session_id,
-            tool_choice_none=tool_choice_none,
-        ):
-            yield chunk
+    from src.pdv_provider_guard import authorize_provider, record_provider_outcome
+    authorization = await authorize_provider(target_url, model)
+    provider_started = time.time()
+    try:
+        async with _local_model_slot(target_url, model, workload):
+            async for chunk in _stream_llm_inner(
+                url,
+                model,
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                headers=headers,
+                timeout=timeout,
+                prompt_type=prompt_type,
+                tools=tools,
+                session_id=session_id,
+                tool_choice_none=tool_choice_none,
+            ):
+                yield chunk
+    except (asyncio.CancelledError, GeneratorExit):
+        await record_provider_outcome(authorization, "cancelled", round((time.time() - provider_started) * 1000))
+        raise
+    except Exception as error:
+        await record_provider_outcome(authorization, "timed_out" if isinstance(error, httpx.TimeoutException) or "timed out" in str(error).lower() else "failed", round((time.time() - provider_started) * 1000))
+        raise
+    else:
+        await record_provider_outcome(authorization, "completed", round((time.time() - provider_started) * 1000))
 
 
 async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
