@@ -13,6 +13,21 @@ from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_mess
 logger = logging.getLogger(__name__)
 
 
+def _provenance_tag(value) -> Optional[str]:
+    """Normalize a project/org metadata value for the sources bibliography.
+
+    Vector-store metadata is scalar but not necessarily str: a tag ingested as
+    a number or a flag would reach the renderers as-is, and ``esc()`` calls
+    ``.replace`` on it, which throws and hides the whole sources box. Strings
+    and numbers become stripped text; booleans, None and blanks are dropped,
+    since ``True`` is not a provenance label.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _clean_search_query(query: str, max_len: int = 200) -> str:
     """Strip fenced code blocks from a search query while preserving inline
     code text.
@@ -386,17 +401,33 @@ class ChatProcessor:
                     relevant = [r for r in results if r.get("similarity", 0) >= self.RAG_SIMILARITY_THRESHOLD]
                     if relevant:
                         logger.info(f"RAG: {len(relevant)}/{len(results)} results above threshold {self.RAG_SIMILARITY_THRESHOLD}")
-                        rag_sources = [
-                            {
-                                "filename": r["metadata"].get("filename", r["metadata"].get("source", "unknown")),
+                        rag_sources = []
+                        for r in relevant:
+                            meta = r.get("metadata") or {}
+                            src = {
+                                "filename": meta.get("filename", meta.get("source", "unknown")),
                                 "snippet": r["document"][:200],
-                                "similarity": round(r.get("similarity", 0), 3)
+                                "similarity": round(r.get("similarity", 0), 3),
                             }
-                            for r in relevant
-                        ]
-                        rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(
-                            f"[{s['filename']}]\n{r['document']}" for s, r in zip(rag_sources, relevant)
-                        )
+                            # Provenance tags, surfaced as chips in the UI and
+                            # woven into the injected context below so the model
+                            # can attribute snippets. Only present for KBs that
+                            # tag documents; absent keys render exactly as before.
+                            # Normalized to text here so neither renderer ever
+                            # sees a number or a flag (issue #5666 review).
+                            for key in ("project", "org"):
+                                tag = _provenance_tag(meta.get(key))
+                                if tag:
+                                    src[key] = tag
+                            rag_sources.append(src)
+                        rag_parts = []
+                        for s, r in zip(rag_sources, relevant):
+                            prov = ", ".join(
+                                f"{k}: {s[k]}" for k in ("project", "org") if s.get(k)
+                            )
+                            header = f"{s['filename']} ({prov})" if prov else s["filename"]
+                            rag_parts.append(f"[{header}]\n{r['document']}")
+                        rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(rag_parts)
                         if len(rag_content) > 10000:
                             rag_content = rag_content[:10000] + "\n[Truncated]"
                         preface.append(untrusted_context_message(
