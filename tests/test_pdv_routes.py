@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import subprocess
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -72,15 +74,33 @@ def _snapshot(repository_root: Path):
         ),
         encoding="utf-8",
     )
+    (repository_root / "LICENSE").write_text("GNU AFFERO GENERAL PUBLIC LICENSE\n", encoding="utf-8")
+    if not (repository_root / ".git").exists():
+        subprocess.run(["git", "init"], cwd=repository_root, check=True, capture_output=True)
+    subprocess.run(["git", "add", "PDV_UPSTREAM_SNAPSHOT.json", "LICENSE"], cwd=repository_root, check=True, capture_output=True)
     _archive(repository_root)
 
 
 def _archive(repository_root: Path, content: bytes = b"source archive"):
+    from scripts.pdv_build_source_archive import _source_tree_sha256
+
+    (repository_root / "app.py").write_bytes(content)
+    subprocess.run(["git", "add", "app.py"], cwd=repository_root, check=True, capture_output=True)
     archive = repository_root / "data" / "pdv-integration-v1" / "source" / "odysseus-corresponding-source.zip"
     archive.parent.mkdir(parents=True, exist_ok=True)
-    archive.write_bytes(content)
+    files = {
+        name: hashlib.sha256((repository_root / name).read_bytes()).hexdigest()
+        for name in ("LICENSE", "PDV_UPSTREAM_SNAPSHOT.json", "app.py")
+    }
+    source_tree_sha256 = _source_tree_sha256(files)
+    manifest = {"files": files, "sourceTreeSha256": source_tree_sha256}
+    with zipfile.ZipFile(archive, "w") as source_zip:
+        for name in sorted(files):
+            source_zip.write(repository_root / name, name)
+        source_zip.writestr("CORRESPONDING_SOURCE_MANIFEST.json", json.dumps(manifest))
+    archive_bytes = archive.read_bytes()
     archive.with_suffix(".zip.json").write_text(
-        json.dumps({"archiveSha256": hashlib.sha256(content).hexdigest()}), encoding="utf-8"
+        json.dumps({"archiveSha256": hashlib.sha256(archive_bytes).hexdigest(), "explicitIncludes": [], "sourceTreeSha256": source_tree_sha256}), encoding="utf-8"
     )
     return archive
 
@@ -280,8 +300,8 @@ def test_pdv_routes_allow_only_scoped_admin_owned_api_tokens(tmp_path, monkeypat
 
 def test_pdv_source_archive_is_hash_verified_and_never_discloses_path(tmp_path, monkeypatch):
     _snapshot(tmp_path)
-    expected = b"verified archive bytes"
-    archive = _archive(tmp_path, expected)
+    archive = _archive(tmp_path, b"verified source bytes")
+    expected = archive.read_bytes()
     monkeypatch.setenv("AUTH_ENABLED", "true")
     client = _client(tmp_path)
 
@@ -296,3 +316,16 @@ def test_pdv_source_archive_is_hash_verified_and_never_discloses_path(tmp_path, 
     assert client.get(
         "/api/pdv/source/archive", headers={"X-Test-User": "owner"}
     ).status_code == 503
+
+
+def test_source_archive_fails_closed_after_tracked_source_drift_until_rebuilt(tmp_path, monkeypatch):
+    _snapshot(tmp_path)
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client = _client(tmp_path)
+    headers = {"X-Test-User": "owner"}
+    assert client.get("/api/pdv/source/archive", headers=headers).status_code == 200
+    (tmp_path / "app.py").write_text("changed after archive\n", encoding="utf-8")
+    assert client.get("/api/pdv/source/archive", headers=headers).status_code == 503
+    assert client.get("/api/pdv/source", headers=headers).json()["sourceArchiveAvailable"] is False
+    _archive(tmp_path, b"rebuilt source bytes")
+    assert client.get("/api/pdv/source/archive", headers=headers).status_code == 200

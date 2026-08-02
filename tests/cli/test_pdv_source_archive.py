@@ -48,6 +48,7 @@ def test_corresponding_source_archive_is_deterministic_complete_and_secret_safe(
     first_receipt = json.loads(first.stdout)
     assert first_receipt["schemaVersion"] == 2
     assert first_receipt["sourceInventoryMode"] == "tracked-plus-explicit-integration-files"
+    assert len(first_receipt["sourceTreeSha256"]) == 64
     first_bytes = output.read_bytes()
     second = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
     assert second.returncode == 0, second.stderr or second.stdout
@@ -65,6 +66,7 @@ def test_corresponding_source_archive_is_deterministic_complete_and_secret_safe(
       manifest = json.loads(archive.read("CORRESPONDING_SOURCE_MANIFEST.json"))
       assert manifest["schemaVersion"] == 2
       assert manifest["sourceInventoryMode"] == "tracked-plus-explicit-integration-files"
+      assert manifest["sourceTreeSha256"] == first_receipt["sourceTreeSha256"]
       assert manifest["excludedUntrackedCount"] == 6
       assert len(manifest["excludedUntrackedPathsSha256"]) == 64
       assert manifest["integrationBranch"] == "dev"

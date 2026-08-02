@@ -100,6 +100,14 @@ def _is_untracked_source_candidate(root: Path, value: str) -> bool:
     return path.suffix.lower() in SOURCE_SUFFIXES or name in SOURCE_NAMES or (not path.suffix and path.is_file() and path.read_bytes()[:2] == b"#!")
 
 
+def _source_tree_sha256(file_hashes: dict[str, str]) -> str:
+    canonical = b"".join(
+        name.encode("utf-8") + b"\0" + digest.encode("ascii") + b"\n"
+        for name, digest in sorted(file_hashes.items())
+    )
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def build(repository_root: Path, output: Path, includes: list[str]) -> dict[str, object]:
     root = repository_root.resolve()
     output = output.resolve()
@@ -149,6 +157,8 @@ def build(repository_root: Path, output: Path, includes: list[str]) -> dict[str,
         text=True,
     ).stdout.strip()
     license_sha256 = hashlib.sha256(files["LICENSE"]).hexdigest()
+    file_hashes = {name: hashlib.sha256(content).hexdigest() for name, content in sorted(files.items())}
+    source_tree_sha256 = _source_tree_sha256(file_hashes)
     manifest = {
         "schemaVersion": 2,
         "canonicalRepository": "https://github.com/odysseus-dev/odysseus",
@@ -159,7 +169,9 @@ def build(repository_root: Path, output: Path, includes: list[str]) -> dict[str,
         "sourceInventoryMode": "tracked-plus-explicit-integration-files",
         "excludedUntrackedCount": len(excluded_untracked),
         "excludedUntrackedPathsSha256": hashlib.sha256("\n".join(sorted(excluded_untracked)).encode("utf-8")).hexdigest(),
-        "files": {name: hashlib.sha256(content).hexdigest() for name, content in sorted(files.items())},
+        "explicitIncludes": sorted(explicit_includes),
+        "sourceTreeSha256": source_tree_sha256,
+        "files": file_hashes,
     }
     files["CORRESPONDING_SOURCE_MANIFEST.json"] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +193,8 @@ def build(repository_root: Path, output: Path, includes: list[str]) -> dict[str,
         "integrationBranch": branch,
         "licenseSha256": license_sha256,
         "sourceInventoryMode": "tracked-plus-explicit-integration-files",
+        "explicitIncludes": sorted(explicit_includes),
+        "sourceTreeSha256": source_tree_sha256,
         "excludedUntrackedCount": len(excluded_untracked),
         "excludedUntrackedPathsSha256": hashlib.sha256("\n".join(sorted(excluded_untracked)).encode("utf-8")).hexdigest(),
         "sourceEndpoint": "/api/pdv/source/archive",

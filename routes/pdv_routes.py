@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import zipfile
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, Optional
 from urllib.parse import urlparse
@@ -71,8 +72,27 @@ def _source_archive(root: Path) -> tuple[Path, Dict[str, object]]:
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         expected = receipt["archiveSha256"]
-        actual = hashlib.sha256(archive.read_bytes()).hexdigest()
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        archive_bytes = archive.read_bytes()
+        actual = hashlib.sha256(archive_bytes).hexdigest()
+        with zipfile.ZipFile(archive) as source_zip:
+            manifest = json.loads(source_zip.read("CORRESPONDING_SOURCE_MANIFEST.json"))
+        expected_files = manifest["files"]
+        explicit_includes = receipt["explicitIncludes"]
+        expected_tree = receipt["sourceTreeSha256"]
+        if not isinstance(expected_files, dict) or not isinstance(explicit_includes, list) or manifest.get("sourceTreeSha256") != expected_tree:
+            raise ValueError("invalid source inventory receipt")
+        from scripts.pdv_build_source_archive import INTEGRATION_FILES, _git_paths, _safe_relative, _source_tree_sha256
+        candidates = set(_git_paths(root, "--cached"))
+        candidates.update(path for path in (*INTEGRATION_FILES, *explicit_includes) if (root / path).is_file())
+        live_hashes = {}
+        for candidate in sorted(candidates):
+            relative, absolute = _safe_relative(root, candidate)
+            if not absolute.is_file():
+                raise ValueError("source inventory contains a non-file")
+            live_hashes[relative] = hashlib.sha256(absolute.read_bytes()).hexdigest()
+        if live_hashes != expected_files or _source_tree_sha256(live_hashes) != expected_tree:
+            raise ValueError("corresponding source is stale")
+    except (OSError, ValueError, zipfile.BadZipFile, json.JSONDecodeError, KeyError, TypeError):
         raise HTTPException(503, "Corresponding source archive unavailable")
     if not isinstance(expected, str) or expected != actual:
         raise HTTPException(503, "Corresponding source archive verification failed")
