@@ -31,6 +31,25 @@ def is_markitdown_format(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in MARKITDOWN_EXTS
 
 
+def original_filename(filename: str) -> str:
+    """Undo the ``.md`` suffix markitdown adds when converting Office files.
+
+    Office/EPUB documents land in a KB as ``<name>.<ext>.md`` (e.g.
+    ``Deck.pptx.md``) once converted. For a sources bibliography we want to
+    cite the document the user actually ingested, so strip the trailing
+    ``.md`` when the remaining stem still carries a converted extension:
+    ``Deck.pptx.md`` -> ``Deck.pptx``. A hand-authored ``notes.md`` is left
+    untouched — its stem (``notes``) has no converted extension. Non-str
+    input is returned unchanged.
+    """
+    if not isinstance(filename, str) or not filename.lower().endswith(".md"):
+        return filename
+    stem = filename[:-3]
+    if os.path.splitext(stem)[1].lower() in MARKITDOWN_EXTS:
+        return stem
+    return filename
+
+
 def load_markitdown():
     """Return the MarkItDown class, or raise a user-facing setup hint."""
     try:
