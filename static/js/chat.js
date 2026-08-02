@@ -349,6 +349,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
   async function _adoptOpenedSessionBeforeAutoCreate() {
     if (!sessionModule || !sessionModule.getCurrentSessionId || sessionModule.getCurrentSessionId()) return true;
+    // Don't adopt a stale session when the user explicitly started a New Chat
+    // (pending state set) — the send path must materialize the pending session.
+    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) return false;
     const activeRowId = document.querySelector('.list-item.active-session[data-session-id], .session-item.active[data-session-id]')?.dataset?.sessionId || '';
     const hashId = _hashSessionCandidate();
     const lastSelectedId = String(window.__odysseusLastSelectedSessionId || '').trim();
@@ -1403,6 +1406,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     currentAccumulated = '';
     currentHolder = null;
     
+    let abortCtrl = null;
+    let streamingTTS = false;
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
@@ -1716,7 +1721,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       }
 
 
-      const abortCtrl = new AbortController();
+      abortCtrl = new AbortController();
       abortCtrl._reason = '';
       currentAbort = abortCtrl;
 
@@ -1897,7 +1902,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       let isThinking = false;
       let thinkingStartTime = null;
       // Streaming TTS: synthesize sentence-by-sentence during streaming
-      const streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
+      streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
       if (streamingTTS) window.aiTTSManager.streamingStart();
       // Multi-bubble agent tracking
       let roundHolder = holder;       // Current AI text bubble (changes per round)
