@@ -163,7 +163,16 @@ Routes can be grouped into logical feature domains. Current flat structure obscu
 | **Research** | `research_routes.py` | — | LOW |
 | **MCP** | `mcp_routes.py` | — | LOW |
 | **Notes** | `note_routes.py` | — | LOW |
-| **Other** | `prefs_routes.py`, `upload_routes.py`, `vault_routes.py`, `webhook_routes.py`, `workspace_routes.py`, `search_routes.py`, `history_routes.py`, `hwfit_routes.py`, `preset_routes.py`, `signature_routes.py`, `backup_routes.py`, `cleanup_routes.py`, `diagnostics_routes.py`, `embedding_routes.py`, `emoji_routes.py`, `font_routes.py`, `stt_routes.py`, `tts_routes.py`, `compare_routes.py`, `personal_routes.py`, `editor_draft_routes.py`, `admin_wipe_routes.py`, `chatgpt_subscription_routes.py` | 2,000+ | LOW individual, HIGH cumulative |
+| **Media** (new) | `tts_routes.py`, `stt_routes.py` | 144 | LOW — parallel audio I/O with dedicated service packages (`services/tts/`, `services/stt/`) |
+| **System / Admin** (new) | `backup_routes.py`, `diagnostics_routes.py`, `workspace_routes.py` | 407 | LOW — operator-only endpoints (`require_admin`): backup/restore, health probes, filesystem browser |
+| **Other** (residual flat) | `prefs_routes.py`, `upload_routes.py`, `hwfit_routes.py`, `preset_routes.py`, `signature_routes.py`, `embedding_routes.py`, `emoji_routes.py`, `font_routes.py`, `personal_routes.py` | ~2,251 | LOW individual, MEDIUM cumulative — no genuine functional peer; stay flat |
+
+> **Reassignments into existing domains** (no new folder needed):
+> - `editor_draft_routes.py` → **Gallery** (persisted gallery-editor sessions with `GalleryImage` back-reference)
+> - `chatgpt_subscription_routes.py` → **Auth** (OAuth device-flow built on `device_flow.py`)
+>
+> **Files already migrated** to subdirectories (now shims, removed from "Other"):
+> vault, webhook, search, history, cleanup, compare, admin_wipe (slices #5780, #5781, #5779, #5090, #5658, #5660, #5659)
 
 ---
 
