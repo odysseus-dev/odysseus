@@ -24,6 +24,7 @@ end-to-end — clean dev returns 500 there and loses nothing).
 `MemoryStoreUnreadable` rather than reporting an empty store.
 """
 
+import asyncio
 import builtins
 import json
 import os
@@ -157,6 +158,87 @@ def test_claim_ownerless_skips_write_when_unreadable(tmp_path, monkeypatch):
         _break_reads_of(mp, m.memory_file, PermissionError(13, "locked"))
         m.claim_ownerless("alice")
     assert {e["id"] for e in m.load_all()} == {"m1", "m2", "m3"}
+
+
+# ── the add sinks users actually reach ────────────────────────────────────
+#
+# The tests above replay the read-modify-write shape. These drive the real
+# entry points end to end, because those are what #5673 reports: "remember
+# that I prefer X" in ordinary chat (src/ai_interaction.py do_manage_memory,
+# routed from src/tool_execution.py) and the built-in memory MCP server
+# (mcp_servers/memory_server.py, registered in src/builtin_mcp.py).
+#
+# They use a truncated store rather than a read error on purpose: it reads
+# fine, so nothing stops the save, which is the case that silently destroyed
+# stores. The assertion is that the file is left byte-identical — still broken,
+# but still holding the user's memories, so it can be repaired by hand.
+
+
+def _truncated_store(tmp_path):
+    """Seed a store that reads back fine but no longer parses."""
+    m = _seeded(tmp_path)
+    good = json.dumps([dict(e) for e in _SEED], indent=2)
+    with open(m.memory_file, "w", encoding="utf-8") as f:
+        f.write(good[:good.rindex("]")])  # drop the closing bracket only
+    with open(m.memory_file, "rb") as f:
+        return m, f.read()
+
+
+def _on_disk(manager) -> bytes:
+    with open(manager.memory_file, "rb") as f:
+        return f.read()
+
+
+def test_agent_memory_add_does_not_overwrite_unreadable_store(tmp_path, monkeypatch):
+    """src/ai_interaction.py do_manage_memory, action "add"."""
+    from src import ai_interaction
+
+    manager, before = _truncated_store(tmp_path)
+    monkeypatch.setattr(ai_interaction, "_memory_manager", manager)
+    monkeypatch.setattr(ai_interaction, "_memory_vector", None)
+
+    result = asyncio.run(ai_interaction.do_manage_memory("add\nuser prefers tabs"))
+
+    assert _on_disk(manager) == before, "the unreadable store was overwritten"
+    assert b"m3" in _on_disk(manager)
+    assert "error" in result, "the add reported success over an unreadable store"
+
+
+def test_mcp_memory_add_does_not_overwrite_unreadable_store(tmp_path, monkeypatch):
+    """mcp_servers/memory_server.py, action "add"."""
+    import mcp_servers.memory_server as memory_server
+
+    manager, before = _truncated_store(tmp_path)
+    monkeypatch.setattr(memory_server, "_memory_manager", manager)
+    monkeypatch.setattr(memory_server, "_memory_vector", None)
+    monkeypatch.setattr(memory_server, "_initialized", True)
+    for key in memory_server._OWNER_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    result = asyncio.run(memory_server.call_tool(
+        "manage_memory", {"action": "add", "text": "user prefers tabs"}
+    ))
+
+    assert _on_disk(manager) == before, "the unreadable store was overwritten"
+    assert b"m3" in _on_disk(manager)
+    assert result[0].text.startswith("Error:")
+
+
+def test_native_provider_remember_does_not_overwrite_unreadable_store(tmp_path):
+    """src/memory_provider.py NativeMemoryProvider.remember.
+
+    Registered into app state in src/app_initializer.py but not yet consumed
+    outside tests, so this is the pattern held in place before it goes live.
+    """
+    from src.memory_provider import NativeMemoryProvider
+
+    manager, before = _truncated_store(tmp_path)
+    provider = NativeMemoryProvider(manager)
+
+    with pytest.raises(MemoryStoreUnreadable):
+        asyncio.run(provider.remember("user prefers tabs", owner="alice"))
+
+    assert _on_disk(manager) == before
 
 
 # ── the legacy memory.txt migration is preserved ──────────────────────────
