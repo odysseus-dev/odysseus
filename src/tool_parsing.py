@@ -925,6 +925,46 @@ def _parse_xml_direct_tool(name, body) -> Optional[ToolBlock]:
     return function_call_to_tool_block(mapped, json.dumps(params))
 
 
+def _looks_like_json_body(body: str) -> bool:
+    """True when a <tool_call> wrapper body is JSON, not XML markup."""
+    return body.lstrip()[:1] in ("{", "[")
+
+
+def _parse_json_tool_call_body(body: str) -> Optional[ToolBlock]:
+    """Parse a Qwen/Hermes text-mode wrapper body: bare JSON inside <tool_call>.
+
+      <tool_call>
+      {"name": "bash", "arguments": {"command": "mkdir -p agent-test"}}
+      </tool_call>
+
+    Strict by design (issue #5187 / tracker #5333): the body must decode to an
+    object with a string "name", and "arguments" — when present — must itself
+    be an object. Anything else returns None rather than being coerced, so a
+    malformed call is dropped instead of dispatching with mangled arguments.
+    raw_decode tolerates trailing chatter after the JSON object; the trailing
+    text is never scanned for tool markup. Conversion goes through
+    function_call_to_tool_block so aliases and per-tool argument formatting
+    stay identical to the XML invoke path.
+    """
+    stripped = body.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        parsed, _end = json.JSONDecoder().raw_decode(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    name = parsed.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if "arguments" in parsed and not isinstance(parsed["arguments"], dict):
+        return None
+    args = parsed.get("arguments", {})
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(name.strip().lower(), json.dumps(args))
+
+
 def _iter_stepfun_tool_calls(text: str):
     """Yield StepFun native tool-call token bodies without regex backtracking."""
     pos = 0
@@ -1326,10 +1366,21 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         if blocks:
             return blocks
         # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call>
+        # A wrapper body that is JSON (Qwen/Hermes text mode, issue #5187) is
+        # parsed as JSON or dropped — never scanned by the XML iterators, so
+        # XML-like text inside JSON argument values stays data instead of
+        # selecting a different tool.
+        json_body_seen = False
         for _ms, inner_start, inner_end, _me in _iter_delimited(
             text, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE
         ):
             body = text[inner_start:inner_end]
+            if _looks_like_json_body(body):
+                json_body_seen = True
+                block = _parse_json_tool_call_body(body)
+                if block:
+                    blocks.append(block)
+                continue
             for inv_name, inv_body in _iter_xml_invoke(body):
                 block = _parse_xml_invoke(inv_name, inv_body)
                 if block:
@@ -1344,6 +1395,13 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         if not blocks:
             for m in _XML_OPEN_TOOL_CALL_RE.finditer(text):
                 body = m.group(1)
+                if _looks_like_json_body(body):
+                    # Same fail-closed rule as above for an unclosed wrapper.
+                    json_body_seen = True
+                    block = _parse_json_tool_call_body(body)
+                    if block:
+                        blocks.append(block)
+                    break
                 for inv_name, inv_body in _iter_xml_invoke(body):
                     block = _parse_xml_invoke(inv_name, inv_body)
                     if block:
@@ -1354,8 +1412,11 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     block = _parse_xml_direct_tool(d_name, d_body)
                     if block:
                         blocks.append(block)
-        # Try bare <invoke> without wrapper
-        if not blocks:
+        # Try bare <invoke> without wrapper. Skipped when a JSON wrapper body
+        # was seen but produced no block: this rescan covers the full text,
+        # wrapper bodies included, and <invoke> markup inside a (possibly
+        # malformed) JSON payload must stay data rather than dispatch.
+        if not blocks and not json_body_seen:
             for inv_name, inv_body in _iter_xml_invoke(text):
                 block = _parse_xml_invoke(inv_name, inv_body)
                 if block:
