@@ -460,8 +460,17 @@ export function scrollHistory() {
   if (!_scrollBox) {
     _scrollBox = document.getElementById('chat-history');
   }
-  // Throttle: only start a new scroll animation every 500ms
-  if (_scrollThrottleTimer) return;
+  // If the smooth-scroll loop is still running, it picks up new content
+  // height on the next frame — nothing to do.
+  if (_scrollRafId) return;
+  // Throttle restarts to avoid animation jitter, but bypass if new
+  // content appeared since we last looked (e.g. next tool in a chain).
+  if (_scrollThrottleTimer) {
+    const target = _scrollBox.scrollHeight - _scrollBox.clientHeight;
+    if (target <= _lastTargetHeight) return;
+    clearTimeout(_scrollThrottleTimer);
+    _scrollThrottleTimer = null;
+  }
   _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
   _lastTargetHeight = _scrollBox.scrollHeight - _scrollBox.clientHeight;
   if (!_scrollRafId) {
