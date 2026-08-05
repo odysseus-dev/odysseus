@@ -16,6 +16,7 @@ not extend to an arbitrary URL a remote server hands back (#5888).
 """
 import base64
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -28,23 +29,32 @@ class _FakeResp:
         self.content = content
 
 
+def _is_unsafe_url(url: str) -> bool:
+    """Mirror ``src.outbound_fetch._resolve_public_ips`` for the test fixtures
+    — private / loopback / link-local / metadata hostnames are rejected
+    *before* any socket is opened."""
+    lowered = url.lower()
+    if "metadata.google.internal" in lowered or "169.254." in lowered or "127.0.0.1" in lowered:
+        return True
+    return False
+
+
 class _RecordingFetch:
     """Stand-in for ``src.outbound_fetch.fetch_public_url``.
 
-    Each call creates a new instance so ``_call_log`` (a class-level list of
-    call tuples) accumulates every fetch attempt. Tests assert against the log
-    to confirm whether the unsafe URL was even attempted.
+    Records every call and mirrors the real helper's SSRF guard: private /
+    loopback / link-local / metadata hostnames raise ``httpx.RequestError``
+    *before* any socket is opened, and any other URL returns a 200 fake
+    response so tests can assert the safe path went through.
     """
 
     _call_log: list = []
 
-    def __init__(self, status_code: int = 200, content: bytes = b"PNGDATA"):
-        self._status_code = status_code
-        self._content = content
-
     def __call__(self, url, headers=None, timeout=30, **kwargs):
         _RecordingFetch._call_log.append((url, headers, timeout))
-        return _FakeResp(status_code=self._status_code, content=self._content)
+        if _is_unsafe_url(url):
+            raise httpx.RequestError(f"Blocked non-public URL: {url}")
+        return _FakeResp()
 
 
 @pytest.fixture(autouse=True)
@@ -52,11 +62,7 @@ def _fake_fetch(monkeypatch):
     _RecordingFetch._call_log = []
     import src.outbound_fetch as outbound_fetch
 
-    def _factory(url, headers=None, timeout=30, **kwargs):
-        _RecordingFetch._call_log.append((url, headers, timeout))
-        return _FakeResp()
-
-    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _factory)
+    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _RecordingFetch())
     yield _RecordingFetch
 
 

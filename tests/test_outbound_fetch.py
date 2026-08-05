@@ -111,14 +111,15 @@ class TestResolvePublicIps:
 class _FakeStream:
     """Mimics the streaming response context manager returned by
     ``httpx.Client.stream(...)``. Must support ``iter_bytes`` because the
-    shared fetcher reads the body through it, plus an ``encoding`` attribute
-    that the fetcher copies onto the returned ``_CappedFetch``."""
+    shared fetcher reads the body through it, plus ``encoding`` and ``url``
+    attributes that the fetcher copies onto the returned ``_CappedFetch``."""
 
     def __init__(self, status_code, headers, body):
         self.status_code = status_code
         self.headers = headers
         self._body = body
         self.encoding = headers.get("content-encoding") or "utf-8"
+        self.url = "http://example.com/fake"
 
     def __enter__(self):
         return self

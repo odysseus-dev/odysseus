@@ -18,6 +18,7 @@ unconditionally refusing private addresses (#5888). These tests pin the new
 behaviour.
 """
 import pytest
+import httpx
 
 from src import ai_interaction
 
