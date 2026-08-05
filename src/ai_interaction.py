@@ -936,9 +936,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     """
     import base64
     import httpx
-    import os
     from pathlib import Path
-    from src.url_safety import check_outbound_url
+    from src.outbound_fetch import fetch_public_url
 
     lines = content.strip().split("\n")
     prompt = lines[0].strip() if lines else ""
@@ -1125,16 +1124,18 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 image_id = _save_to_gallery(filename)
 
             elif img.get("url"):
-                # Download external URL and save locally (DALL-E returns temp URLs)
+                # Download external URL and save locally (DALL-E returns temp URLs).
+                # The URL came back from the upstream API, so route it through
+                # the shared outbound fetcher to close the DNS-rebinding TOCTOU
+                # and unconditionally refuse private addresses (#5888).
                 result_url = img["url"]
-                ok, reason = check_outbound_url(
-                    result_url,
-                    block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
-                )
-                if not ok:
-                    return {"error": f"Image API returned unsafe image URL: {reason}"}
                 try:
-                    dl_resp = httpx.get(result_url, timeout=60)
+                    dl_resp = await asyncio.to_thread(
+                        fetch_public_url,
+                        result_url,
+                        {"Accept": "*/*"},
+                        60,
+                    )
                     if dl_resp.status_code == 200:
                         img_dir = Path(GENERATED_IMAGES_DIR)
                         img_dir.mkdir(parents=True, exist_ok=True)
@@ -1145,6 +1146,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         image_id = _save_to_gallery(filename)
                     else:
                         image_url = result_url  # fallback to external URL
+                except httpx.HTTPError as _unsafe_e:
+                    return {"error": f"Image API returned unsafe image URL: {_unsafe_e}"}
                 except Exception as _dl_e:
                     logger.warning(f"Failed to download DALL-E image: {_dl_e}")
                     image_url = result_url  # fallback to external URL
@@ -1181,9 +1184,8 @@ async def do_edit_image(
     import base64
     import httpx
     import mimetypes
-    import os
     from pathlib import Path
-    from src.url_safety import check_outbound_url
+    from src.outbound_fetch import fetch_public_url
 
     prompt = (prompt or "").strip()
     if not prompt:
@@ -1399,17 +1401,22 @@ async def do_edit_image(
             if img.get("b64_json"):
                 image_url, image_id = _save_image_bytes(base64.b64decode(img.get("b64_json")))
             elif img.get("url"):
+                # The URL came back from the upstream API, so route it through
+                # the shared outbound fetcher to close the DNS-rebinding TOCTOU
+                # and unconditionally refuse private addresses (#5888).
                 result_url = img["url"]
-                ok, reason = check_outbound_url(
-                    result_url,
-                    block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
-                )
-                if not ok:
-                    return {"error": f"Image edit API returned unsafe image URL: {reason}"}
-                dl_resp = httpx.get(result_url, timeout=60)
-                if dl_resp.status_code != 200:
-                    return {"error": f"Could not download edited image ({dl_resp.status_code})"}
-                image_url, image_id = _save_image_bytes(dl_resp.content)
+                try:
+                    dl_resp = await asyncio.to_thread(
+                        fetch_public_url,
+                        result_url,
+                        {"Accept": "*/*"},
+                        60,
+                    )
+                    if dl_resp.status_code != 200:
+                        return {"error": f"Could not download edited image ({dl_resp.status_code})"}
+                    image_url, image_id = _save_image_bytes(dl_resp.content)
+                except httpx.HTTPError as _unsafe_e:
+                    return {"error": f"Image edit API returned unsafe image URL: {_unsafe_e}"}
             else:
                 return {"error": "Image edit API returned unexpected format (no b64_json or url)"}
 
