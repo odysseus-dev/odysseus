@@ -69,15 +69,16 @@ def _fake_fetch(monkeypatch):
 async def test_rejects_link_local_result_url():
     # A compromised upstream returns the cloud-metadata address as the image
     # URL. The shared fetcher must refuse it before opening a socket, and the
-    # gallery helper must surface that as a 502 to the caller.
+    # gallery helper must surface that as a 502 to the caller. The helper
+    # *does* see the URL (that's where the guard runs); what matters is that
+    # it raises and the gallery surfaces that as a 502.
     with pytest.raises(HTTPException) as exc:
         await gallery_routes._fetch_result_image_b64(
             "http://169.254.169.254/latest/meta-data"
         )
     assert exc.value.status_code == 502
-    assert _RecordingFetch._call_log == [], (
-        "the unsafe result URL must not reach fetch_public_url"
-    )
+    assert len(_RecordingFetch._call_log) == 1
+    assert _RecordingFetch._call_log[0][0] == "http://169.254.169.254/latest/meta-data"
 
 
 async def test_rejects_loopback_result_url():

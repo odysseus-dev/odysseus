@@ -154,7 +154,7 @@ async def test_generate_image_blocks_link_local_result_without_fetch(monkeypatch
 
     result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
 
-    assert "error" in result
+    assert "error" in result, result
     assert "unsafe image URL" in result["error"]
 
 
