@@ -319,13 +319,13 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
     import asyncio
     import base64
 
-    from src.outbound_fetch import fetch_public_url
+    import src.outbound_fetch as outbound_fetch
 
     # ``fetch_public_url`` is sync (manual redirect loop) — keep the event
     # loop responsive by running it off-loop.
     try:
         response = await asyncio.to_thread(
-            fetch_public_url, url, {"Accept": "*/*"}, 60,
+            outbound_fetch.fetch_public_url, url, {"Accept": "*/*"}, 60,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"Upstream returned an unsafe image URL: {exc}")

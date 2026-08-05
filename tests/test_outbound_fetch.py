@@ -111,12 +111,14 @@ class TestResolvePublicIps:
 class _FakeStream:
     """Mimics the streaming response context manager returned by
     ``httpx.Client.stream(...)``. Must support ``iter_bytes`` because the
-    shared fetcher reads the body through it."""
+    shared fetcher reads the body through it, plus an ``encoding`` attribute
+    that the fetcher copies onto the returned ``_CappedFetch``."""
 
     def __init__(self, status_code, headers, body):
         self.status_code = status_code
         self.headers = headers
         self._body = body
+        self.encoding = headers.get("content-encoding") or "utf-8"
 
     def __enter__(self):
         return self
@@ -165,7 +167,7 @@ class _FakeClient:
 def stub_httpx(monkeypatch):
     _FakeClient.instances = []
     monkeypatch.setattr(outbound_fetch.httpx, "Client", _FakeClient)
-    yield _FakeClient
+    return _FakeClient
 
 
 def test_public_url_is_pinned_to_first_resolved_ip(stub_httpx, monkeypatch):
@@ -179,8 +181,11 @@ def test_public_url_is_pinned_to_first_resolved_ip(stub_httpx, monkeypatch):
     )
     fetch_public_url("http://example.com/x.png", headers=None, timeout=10)
 
-    assert stub_httpx.calls == [("GET", "http://example.com/x.png")]
-    assert stub_httpx.pinned_ip == "93.184.216.34"
+    # The fetcher creates a new _FakeClient instance per call.
+    assert len(stub_httpx.instances) == 1
+    instance = stub_httpx.instances[0]
+    assert instance.calls == [("GET", "http://example.com/x.png")]
+    assert instance.pinned_ip == "93.184.216.34"
 
 
 def test_loopback_url_never_opens_a_socket(stub_httpx):
@@ -188,13 +193,13 @@ def test_loopback_url_never_opens_a_socket(stub_httpx):
     # before httpx.Client is constructed at all.
     with pytest.raises(Exception):
         fetch_public_url("http://127.0.0.1/diffusion/result.png", headers=None, timeout=10)
-    assert stub_httpx.calls == [], "loopback URL must not reach httpx.Client"
+    assert stub_httpx.instances == [], "loopback URL must not reach httpx.Client"
 
 
 def test_link_local_url_never_opens_a_socket(stub_httpx):
     with pytest.raises(Exception):
         fetch_public_url("http://169.254.169.254/latest/meta-data", headers=None, timeout=10)
-    assert stub_httpx.calls == []
+    assert stub_httpx.instances == []
 
 
 def test_metadata_hostname_never_opens_a_socket(stub_httpx):
@@ -204,7 +209,7 @@ def test_metadata_hostname_never_opens_a_socket(stub_httpx):
             headers=None,
             timeout=10,
         )
-    assert stub_httpx.calls == []
+    assert stub_httpx.instances == []
 
 
 def test_compressed_body_is_refused(stub_httpx):

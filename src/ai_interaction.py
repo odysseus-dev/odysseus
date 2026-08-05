@@ -937,7 +937,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     import base64
     import httpx
     from pathlib import Path
-    from src.outbound_fetch import fetch_public_url
+    import src.outbound_fetch as outbound_fetch
 
     lines = content.strip().split("\n")
     prompt = lines[0].strip() if lines else ""
@@ -1131,7 +1131,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 result_url = img["url"]
                 try:
                     dl_resp = await asyncio.to_thread(
-                        fetch_public_url,
+                        outbound_fetch.fetch_public_url,
                         result_url,
                         {"Accept": "*/*"},
                         60,
@@ -1185,7 +1185,7 @@ async def do_edit_image(
     import httpx
     import mimetypes
     from pathlib import Path
-    from src.outbound_fetch import fetch_public_url
+    import src.outbound_fetch as outbound_fetch
 
     prompt = (prompt or "").strip()
     if not prompt:
@@ -1407,7 +1407,7 @@ async def do_edit_image(
                 result_url = img["url"]
                 try:
                     dl_resp = await asyncio.to_thread(
-                        fetch_public_url,
+                        outbound_fetch.fetch_public_url,
                         result_url,
                         {"Accept": "*/*"},
                         60,
