@@ -19,6 +19,7 @@ from src.outbound_fetch import (
     BodyTooLargeError,
     _CappedFetch,
     _is_private_address,
+    _PinnedBackend,
     _PinnedTransport,
     _resolve_hostname_ips,
     _resolve_public_ips,

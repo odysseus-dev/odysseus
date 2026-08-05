@@ -11,6 +11,8 @@ These tests pin its public contract independently of any caller:
 * it raises on a Content-Encoding that would defeat the size cap,
 * it raises BodyTooLargeError on a server that declared an oversize body.
 """
+import ipaddress
+
 import pytest
 
 import src.outbound_fetch as outbound_fetch
@@ -43,8 +45,6 @@ class TestIsPrivateAddress:
         ],
     )
     def test_rejects_private_addresses(self, addr):
-        import ipaddress
-
         assert _is_private_address(ipaddress.ip_address(addr)) is True, addr
 
     @pytest.mark.parametrize(
@@ -57,15 +57,11 @@ class TestIsPrivateAddress:
         ],
     )
     def test_allows_public_addresses(self, addr):
-        import ipaddress
-
         assert _is_private_address(ipaddress.ip_address(addr)) is False, addr
 
     def test_ipv4_mapped_ipv6_is_classified_by_v4(self):
         # An IPv4-mapped IPv6 address like ``::ffff:127.0.0.1`` must be
         # classified as loopback, not as public IPv6.
-        import ipaddress
-
         addr = ipaddress.ip_address("::ffff:127.0.0.1")
         assert _is_private_address(addr) is True
 
@@ -102,8 +98,6 @@ class TestResolvePublicIps:
         # An IP literal that is not private resolves to itself.
         ips = _resolve_public_ips("http://93.184.216.34/example.com")
         assert len(ips) == 1
-        import ipaddress
-
         assert ips[0] == ipaddress.ip_address("93.184.216.34")
 
 
@@ -115,6 +109,10 @@ class TestResolvePublicIps:
 
 
 class _FakeStream:
+    """Mimics the streaming response context manager returned by
+    ``httpx.Client.stream(...)``. Must support ``iter_bytes`` because the
+    shared fetcher reads the body through it."""
+
     def __init__(self, status_code, headers, body):
         self.status_code = status_code
         self.headers = headers
@@ -126,44 +124,30 @@ class _FakeStream:
     def __exit__(self, *exc):
         return False
 
-    def iter_bytes(self):
+    def iter_bytes(self, chunk_size=None):
         yield self._body
-
-
-class _FakeResponse:
-    def __init__(self, status_code, headers, body):
-        self.status_code = status_code
-        self.headers = headers
-        self._body = body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def stream(self, method, url):
-        return _FakeStream(self.status_code, self.headers, self._body)
 
 
 class _FakeClient:
     """Records every ``stream("GET", url)`` call so tests can assert the
-    helper refused the URL *before* opening the socket."""
+    helper refused the URL *before* opening the socket.
 
-    instances: list["_FakeClient"] = []
+    The transport is inspected here purely for the pin assertion — the
+    fetcher's ``_PinnedTransport`` exposes its pinned IP via
+    ``transport._pool._network_backend._ip``.
+    """
+
+    instances: list = []
 
     def __init__(self, *args, **kwargs):
-        self.calls: list[tuple] = []
-        # Inspect the transport argument to read which IP the helper pinned.
-        self.pinned_ip = None
+        self.calls: list = []
+        self.pinned_ip: str | None = None
         transport = kwargs.get("transport")
-        if transport is not None and hasattr(transport, "_PinnedBackend__dict"):
-            pass
-        # The transport exposes its pinned backend as ``_pool._network_backend``.
-        pool = getattr(transport, "_pool", None) if transport else None
-        backend = getattr(pool, "_network_backend", None) if pool else None
-        if backend is not None and hasattr(backend, "_ip"):
-            self.pinned_ip = backend._ip
+        if transport is not None:
+            pool = getattr(transport, "_pool", None)
+            backend = getattr(pool, "_network_backend", None) if pool else None
+            if backend is not None and hasattr(backend, "_ip"):
+                self.pinned_ip = backend._ip
         _FakeClient.instances.append(self)
 
     def __enter__(self):
@@ -174,7 +158,7 @@ class _FakeClient:
 
     def stream(self, method, url):
         self.calls.append((method, url))
-        return _FakeResponse(200, {}, b"PNG")
+        return _FakeStream(200, {}, b"PNGDATA")
 
 
 @pytest.fixture
@@ -184,19 +168,16 @@ def stub_httpx(monkeypatch):
     yield _FakeClient
 
 
-def test_public_url_is_pinned_to_first_resolved_ip(stub_httpx):
+def test_public_url_is_pinned_to_first_resolved_ip(stub_httpx, monkeypatch):
     # The helper must call httpx.Client with a ``transport`` whose pinned IP
     # equals the first address returned by the resolver. A monkeypatched
     # resolver returning a single public IP gives us a deterministic target.
-    import ipaddress
-
-    monkeypatch_resolver = lambda url: [ipaddress.ip_address("93.184.216.34")]
-    original_resolve = outbound_fetch._resolve_public_ips
-    outbound_fetch._resolve_public_ips = monkeypatch_resolver  # type: ignore
-    try:
-        fetch_public_url("http://example.com/x.png", headers=None, timeout=10)
-    finally:
-        outbound_fetch._resolve_public_ips = original_resolve
+    monkeypatch.setattr(
+        outbound_fetch,
+        "_resolve_public_ips",
+        lambda url: [ipaddress.ip_address("93.184.216.34")],
+    )
+    fetch_public_url("http://example.com/x.png", headers=None, timeout=10)
 
     assert stub_httpx.calls == [("GET", "http://example.com/x.png")]
     assert stub_httpx.pinned_ip == "93.184.216.34"
@@ -230,46 +211,47 @@ def test_compressed_body_is_refused(stub_httpx):
     # A gzip body would defeat the size cap (a tiny compressed payload can
     # balloon into one decoded chunk far past the cap). The helper must
     # reject it instead of decoding.
-    class _CompressedResponse(_FakeResponse):
-        def stream(self, method, url):
-            return _FakeStream(
+
+    class _CompressedStream(_FakeStream):
+        def __init__(self):
+            super().__init__(
                 200,
                 {"content-encoding": "gzip"},
                 b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03",
             )
 
     class _CompressedClient(_FakeClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
         def stream(self, method, url):
             self.calls.append((method, url))
-            return _CompressedResponse(200, {"content-encoding": "gzip"}, b"")
+            return _CompressedStream()
 
-    stub_httpx.__class__  # quiet linter
-    outbound_fetch.httpx.Client = _CompressedClient  # type: ignore
     _CompressedClient.instances = []
+    outbound_fetch.httpx.Client = _CompressedClient  # type: ignore
 
     with pytest.raises(Exception) as exc:
         fetch_public_url("http://example.com/x", headers=None, timeout=10)
     assert "encoding" in str(exc.value).lower() or "compress" in str(exc.value).lower()
 
 
-def test_oversize_declared_body_raises_body_too_large(stub_httpx):
+def test_oversize_declared_body_raises_body_too_large(stub_httpx, monkeypatch):
     # A server that declares a Content-Length above the hard cap must be
     # refused up-front rather than streamed. We exercise that branch by
     # monkeypatching the cap to a tiny number and feeding in a response
     # whose declared size sits above it.
     class _OversizeClient(_FakeClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
         def stream(self, method, url):
             self.calls.append((method, url))
             return _FakeStream(200, {"content-length": "99999999"}, b"")
 
-    outbound_fetch.httpx.Client = _OversizeClient  # type: ignore
     _OversizeClient.instances = []
-    import src.outbound_fetch as m
+    outbound_fetch.httpx.Client = _OversizeClient  # type: ignore
+    monkeypatch.setattr(outbound_fetch, "WEB_FETCH_HARD_MAX_BYTES", 1000)
 
-    original_hard = m.WEB_FETCH_HARD_MAX_BYTES
-    m.WEB_FETCH_HARD_MAX_BYTES = 1000
-    try:
-        with pytest.raises(BodyTooLargeError):
-            fetch_public_url("http://example.com/x", headers=None, timeout=10)
-    finally:
-        m.WEB_FETCH_HARD_MAX_BYTES = original_hard
+    with pytest.raises(BodyTooLargeError):
+        fetch_public_url("http://example.com/x", headers=None, timeout=10)

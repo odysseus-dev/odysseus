@@ -1416,6 +1416,7 @@ def test_dns_rebinding_redirect_re_resolves_per_hop(monkeypatch):
     first hop was public.
     """
     from src.search import content
+    import src.outbound_fetch as outbound_fetch
 
     seen = []
 
@@ -1425,7 +1426,10 @@ def test_dns_rebinding_redirect_re_resolves_per_hop(monkeypatch):
             raise _httpx.RequestError(f"Blocked non-public URL: {url}")
         return [_ipaddr.ip_address("93.184.216.34")]
 
-    monkeypatch.setattr(content, "_resolve_public_ips", fake_resolve)
+    # The implementation lives in ``src.outbound_fetch`` since #5888;
+    # ``services.search.content._get_public_url`` is now a re-export of
+    # ``fetch_public_url`` so the call below still works.
+    monkeypatch.setattr(outbound_fetch, "_resolve_public_ips", fake_resolve)
 
     class _Resp:
         status_code = 302

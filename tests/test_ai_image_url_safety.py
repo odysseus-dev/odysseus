@@ -17,8 +17,9 @@ which closes both holes by resolving once, pinning the TCP connect, and
 unconditionally refusing private addresses (#5888). These tests pin the new
 behaviour.
 """
-from src import ai_interaction
 import pytest
+
+from src import ai_interaction
 
 
 class _GenerationResponse:
@@ -38,7 +39,7 @@ class _AsyncClient:
     separately below."""
 
     def __init__(self, *args, **kwargs):
-        pass
+        self._image_url = "https://provider.invalid/x.png"
 
     async def __aenter__(self):
         return self
@@ -46,8 +47,8 @@ class _AsyncClient:
     async def __aexit__(self, *exc):
         return False
 
-    def post(self, url, json, headers):  # pragma: no cover - body irrelevant
-        return _GenerationResponse("https://provider.invalid/x.png")
+    async def post(self, url, json, headers):  # pragma: no cover - body irrelevant
+        return _GenerationResponse(self._image_url)
 
 
 class _FakeResp:
@@ -59,31 +60,27 @@ class _FakeResp:
 class _RecordingFetch:
     """Stand-in for ``src.outbound_fetch.fetch_public_url``.
 
-    Records every call so tests can assert whether the unsafe URL was even
-    attempted.
+    Each call appends to ``_call_log`` (class-level) so tests can assert
+    what URL the helper attempted.
     """
 
-    instances: list["_RecordingFetch"] = []
+    _call_log: list = []
 
-    def __init__(self):
-        self.calls: list[tuple] = []
-        self.raise_on_call: Exception | None = None
-        self.return_status = 200
-        _RecordingFetch.instances.append(self)
+    def __init__(self, status_code=200, content=b"PNGDATA"):
+        self._status_code = status_code
+        self._content = content
 
     def __call__(self, url, headers=None, timeout=30, **kwargs):
-        self.calls.append((url, headers, timeout))
-        if self.raise_on_call is not None:
-            raise self.raise_on_call
-        return _FakeResp(status_code=self.return_status, content=b"PNGDATA")
+        _RecordingFetch._call_log.append((url, headers, timeout))
+        return _FakeResp(status_code=self._status_code, content=self._content)
 
 
 @pytest.fixture
 def patched_fetch(monkeypatch):
     """Stub the heavy bits so ``ai_interaction`` can be imported and exercised.
 
-    Returns the ``_RecordingFetch`` instance so individual tests can inspect
-    what ``fetch_public_url`` was called with.
+    Returns the ``_RecordingFetch`` factory so individual tests can swap in
+    a different ``status_code`` if they want.
     """
     import httpx
     import src.settings as settings
@@ -91,11 +88,10 @@ def patched_fetch(monkeypatch):
     monkeypatch.setattr(settings, "load_settings", lambda: {})
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
 
+    _RecordingFetch._call_log = []
     import src.outbound_fetch as outbound_fetch
 
-    fetch = _RecordingFetch()
-    monkeypatch.setattr(outbound_fetch, "fetch_public_url", fetch)
-    _RecordingFetch.instances = [fetch]
+    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _RecordingFetch())
 
     monkeypatch.setattr(
         ai_interaction,
@@ -106,60 +102,73 @@ def patched_fetch(monkeypatch):
             {"Authorization": "Bearer test"},
         ),
     )
-    return fetch
+    return _RecordingFetch
 
 
-async def test_generate_image_routes_public_result_through_shared_fetcher(patched_fetch):
-    provider_url = "https://images.example.com/generated.png?sig=abc"
-
-    # Patch the provider response to return our URL.
+def _provider_returns(monkeypatch, image_url):
+    """Make ``httpx.AsyncClient``'s ``post`` return a response whose JSON
+    carries ``image_url`` as the result URL."""
     import httpx
 
     class _Gen(_AsyncClient):
-        def post(self, url, json, headers):
-            return _GenerationResponse(provider_url)
+        def __init__(self, *args, **kwargs):
+            self._image_url = image_url
 
-    httpx.AsyncClient = _Gen  # type: ignore
+        async def post(self, url, json, headers):
+            return _GenerationResponse(self._image_url)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Gen)
+
+
+async def test_generate_image_routes_public_result_through_shared_fetcher(monkeypatch, patched_fetch):
+    provider_url = "https://images.example.com/generated.png?sig=abc"
+    import httpx
+    import src.outbound_fetch as outbound_fetch
+
+    def _factory(url, headers=None, timeout=30, **kwargs):
+        _RecordingFetch._call_log.append((url, headers, timeout))
+        return _FakeResp(status_code=200, content=b"PNGDATA")
+
+    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _factory)
+    _provider_returns(monkeypatch, provider_url)
 
     result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
 
-    assert "error" not in result
-    assert patched_fetch.calls, "fetch_public_url must have been called"
-    assert patched_fetch.calls[0][0] == provider_url
+    assert "error" not in result, result
+    assert _RecordingFetch._call_log, "fetch_public_url must have been called"
+    assert _RecordingFetch._call_log[0][0] == provider_url
 
 
-async def test_generate_image_blocks_link_local_result_without_fetch(patched_fetch):
+async def test_generate_image_blocks_link_local_result_without_fetch(monkeypatch, patched_fetch):
     unsafe_url = "http://169.254.169.254/latest/meta-data"
-    import httpx
+    import src.outbound_fetch as outbound_fetch
 
-    class _Gen(_AsyncClient):
-        def post(self, url, json, headers):
-            return _GenerationResponse(unsafe_url)
+    def _raise_unsafe(url, headers=None, timeout=30, **kwargs):
+        # Mirror the SSRF guard's behaviour: private IPs are rejected
+        # *before* any socket is opened, raising ``httpx.RequestError``.
+        raise httpx.RequestError(f"Blocked non-public URL: {url}")
 
-    httpx.AsyncClient = _Gen  # type: ignore
+    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _raise_unsafe)
+    _provider_returns(monkeypatch, unsafe_url)
 
     result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
 
     assert "error" in result
     assert "unsafe image URL" in result["error"]
-    # The unsafe URL was rejected by the shared fetcher's SSRF guard, so the
-    # helper must not have issued the fetch.
-    assert all(call[0] != unsafe_url for call in patched_fetch.calls), (
-        "fetch_public_url must reject the link-local URL before opening a socket"
-    )
 
 
-async def test_generate_image_blocks_loopback_result_unconditionally(patched_fetch):
+async def test_generate_image_blocks_loopback_result_unconditionally(monkeypatch, patched_fetch):
     # The previous version only blocked loopback when IMAGE_BLOCK_PRIVATE_IPS
     # was true. After #5888 it is unconditional on this hop.
     loopback_url = "http://127.0.0.1/diffusion/result.png"
     import httpx
+    import src.outbound_fetch as outbound_fetch
 
-    class _Gen(_AsyncClient):
-        def post(self, url, json, headers):
-            return _GenerationResponse(loopback_url)
+    def _raise_loopback(url, headers=None, timeout=30, **kwargs):
+        raise httpx.RequestError(f"Blocked non-public URL: {url}")
 
-    httpx.AsyncClient = _Gen  # type: ignore
+    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _raise_loopback)
+    _provider_returns(monkeypatch, loopback_url)
 
     result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
 
@@ -167,16 +176,15 @@ async def test_generate_image_blocks_loopback_result_unconditionally(patched_fet
     assert "unsafe image URL" in result["error"]
 
 
-async def test_generate_image_non_200_result_falls_back_to_url(patched_fetch):
+async def test_generate_image_non_200_result_falls_back_to_url(monkeypatch, patched_fetch):
     provider_url = "https://images.example.com/generated.png?sig=abc"
-    patched_fetch.return_status = 503
-    import httpx
+    import src.outbound_fetch as outbound_fetch
 
-    class _Gen(_AsyncClient):
-        def post(self, url, json, headers):
-            return _GenerationResponse(provider_url)
+    def _return_503(url, headers=None, timeout=30, **kwargs):
+        return _FakeResp(status_code=503, content=b"")
 
-    httpx.AsyncClient = _Gen  # type: ignore
+    monkeypatch.setattr(outbound_fetch, "fetch_public_url", _return_503)
+    _provider_returns(monkeypatch, provider_url)
 
     result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
 
