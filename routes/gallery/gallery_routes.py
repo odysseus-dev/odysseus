@@ -318,6 +318,7 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
     """
     import asyncio
     import base64
+    import httpx
 
     import src.outbound_fetch as outbound_fetch
 
