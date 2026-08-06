@@ -7,12 +7,26 @@ from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
+from threading import Lock
 
 import httpx
 
 
 _last_authorization: ContextVar[dict | None] = ContextVar("pdv_last_provider_authorization", default=None)
 _last_routing: ContextVar[dict | None] = ContextVar("pdv_last_provider_routing", default=None)
+_last_outcome: ContextVar[dict | None] = ContextVar("pdv_last_provider_outcome", default=None)
+_runtime_lock = Lock()
+_runtime_observation: dict = {}
+
+
+def _observe_runtime(**values) -> None:
+    with _runtime_lock:
+        _runtime_observation.update(values)
+
+
+def get_provider_runtime_observation() -> dict:
+    with _runtime_lock:
+        return dict(_runtime_observation)
 
 
 def get_last_authorization_receipt() -> dict | None:
@@ -23,6 +37,37 @@ def get_last_authorization_receipt() -> dict | None:
 def get_last_routing_receipt() -> dict | None:
     receipt = _last_routing.get()
     return dict(receipt) if receipt is not None else None
+
+
+def get_last_outcome_receipt() -> dict | None:
+    receipt = _last_outcome.get()
+    return dict(receipt) if receipt is not None else None
+
+
+def _dispatch_id() -> str | None:
+    value = os.environ.get("PDV_EXECUTION_OS_DISPATCH_ID", "").strip()
+    return value if value.startswith("ody_dispatch_") and len(value) == 49 else None
+
+
+def _dispatch_transition_sync(base: str, key: str, state: str, authorization: dict, final_receipt_id: str | None = None) -> None:
+    dispatch_id = _dispatch_id()
+    if not dispatch_id:
+        return
+    payload = {"state": state, "provider_request_id": authorization.get("provider_request_id"), "final_receipt_id": final_receipt_id}
+    response = httpx.post(f"{base}/v1/integrations/odysseus/dispatch/{dispatch_id}/events", headers={"X-PDV-Odysseus-Key": key}, json=payload, timeout=3.0)
+    if response.status_code != 200:
+        raise RuntimeError("PDV dispatch correlation transition failed")
+
+
+async def _dispatch_transition(base: str, key: str, state: str, authorization: dict, final_receipt_id: str | None = None) -> None:
+    dispatch_id = _dispatch_id()
+    if not dispatch_id:
+        return
+    payload = {"state": state, "provider_request_id": authorization.get("provider_request_id"), "final_receipt_id": final_receipt_id}
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        response = await client.post(f"{base}/v1/integrations/odysseus/dispatch/{dispatch_id}/events", headers={"X-PDV-Odysseus-Key": key}, json=payload)
+    if response.status_code != 200:
+        raise RuntimeError("PDV dispatch correlation transition failed")
 
 
 def get_ranked_route_policy(endpoint: str, model: str) -> dict | None:
@@ -44,6 +89,7 @@ def record_provider_outcome_sync(
     output_tokens: int | None = None,
     cost_microusd: int | None = None,
 ) -> dict | None:
+    _last_outcome.set(None)
     if not required():
         return None
     if not isinstance(authorization, dict):
@@ -73,6 +119,9 @@ def record_provider_outcome_sync(
             or receipt.get("provider_request_id") != payload["provider_request_id"]
             or receipt.get("outcome") != outcome or not receipt.get("outcome_receipt_id")):
         raise RuntimeError("PDV provider outcome receipt validation failed")
+    _last_outcome.set(receipt)
+    _dispatch_transition_sync(base, key, outcome, authorization, receipt["outcome_receipt_id"])
+    _observe_runtime(currentRunStatus="SUCCEEDED" if outcome == "completed" else "BLOCKED" if outcome == "cancelled" else "FAILED", failureMessage=None if outcome == "completed" else outcome)
     return receipt
 
 
@@ -85,6 +134,7 @@ async def record_provider_outcome(
     output_tokens: int | None = None,
     cost_microusd: int | None = None,
 ) -> dict | None:
+    _last_outcome.set(None)
     if not required():
         return None
     if not isinstance(authorization, dict):
@@ -114,6 +164,9 @@ async def record_provider_outcome(
             or receipt.get("provider_request_id") != payload["provider_request_id"]
             or receipt.get("outcome") != outcome or not receipt.get("outcome_receipt_id")):
         raise RuntimeError("PDV provider outcome receipt validation failed")
+    _last_outcome.set(receipt)
+    await _dispatch_transition(base, key, outcome, authorization, receipt["outcome_receipt_id"])
+    _observe_runtime(currentRunStatus="SUCCEEDED" if outcome == "completed" else "BLOCKED" if outcome == "cancelled" else "FAILED", failureMessage=None if outcome == "completed" else outcome)
     return receipt
 
 
@@ -146,18 +199,35 @@ def _boundary() -> tuple[str, str]:
     return base, key
 
 
-def _validate(response: httpx.Response, endpoint: str, model: str, provider_request_id: str) -> dict:
+def _validate(response: httpx.Response, endpoint: str, model: str, provider_request_id: str, routing_receipt_id: str, candidate_index: int) -> dict:
     try:
         payload = response.json()
     except ValueError as error:
         raise RuntimeError("PDV provider authorization returned malformed JSON") from error
     if response.status_code != 200 or not isinstance(payload, dict) or payload.get("allowed") is not True:
         reason = payload.get("reason_code") if isinstance(payload, dict) else "UNAVAILABLE"
+        _observe_runtime(model=model, currentRunStatus="BLOCKED", taskCorrelationId=provider_request_id, failureMessage=str(reason or "UNAVAILABLE"))
         raise RuntimeError(f"PDV provider authorization denied route ({reason or 'UNAVAILABLE'})")
     if (payload.get("selected_model") != model or payload.get("selected_endpoint") != endpoint
-            or payload.get("provider_request_id") != provider_request_id or not payload.get("authorization_receipt_id")):
+            or payload.get("provider_request_id") != provider_request_id or payload.get("routing_receipt_id") != routing_receipt_id
+            or payload.get("candidate_index") != candidate_index or not payload.get("authorization_receipt_id")):
         raise RuntimeError("PDV provider authorization correlation mismatch")
     return payload
+
+
+def _provider_target(value: str) -> str:
+    parsed = urlparse(value)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1"):
+        path += "/chat/completions"
+    return parsed._replace(path=path).geturl()
+
+
+def _routing_candidate(receipt: dict | None, endpoint: str, model: str) -> dict | None:
+    for item in receipt.get("ordered_candidates", []) if isinstance(receipt, dict) else []:
+        if isinstance(item, dict) and _provider_target(str(item.get("endpoint", ""))) == _provider_target(endpoint) and item.get("model") == model:
+            return item
+    return None
 
 
 def _validate_ranking(response: httpx.Response, candidates: list, task_class: str) -> tuple[list, dict]:
@@ -205,6 +275,7 @@ def rank_provider_candidates_sync(candidates: list, task_class: str = "chat") ->
     )
     ranked, receipt = _validate_ranking(response, candidates, task_class)
     _last_routing.set(receipt)
+    _observe_runtime(provider=receipt.get("selected_provider"), model=receipt.get("selected_model"), currentRunStatus="IDLE", taskCorrelationId=None, failureMessage=None)
     return ranked
 
 
@@ -221,6 +292,7 @@ async def rank_provider_candidates(candidates: list, task_class: str = "chat") -
         )
     ranked, receipt = _validate_ranking(response, candidates, task_class)
     _last_routing.set(receipt)
+    _observe_runtime(provider=receipt.get("selected_provider"), model=receipt.get("selected_model"), currentRunStatus="IDLE", taskCorrelationId=None, failureMessage=None)
     return ranked
 
 
@@ -229,15 +301,25 @@ def authorize_provider_sync(endpoint: str, model: str) -> dict | None:
     if not required():
         return None
     base, key = _boundary()
+    routing = _last_routing.get()
+    candidate = _routing_candidate(routing, endpoint, model)
+    if candidate is None:
+        rank_provider_candidates_sync([(endpoint, model, {})])
+        routing = _last_routing.get()
+        candidate = _routing_candidate(routing, endpoint, model)
+    if candidate is None:
+        raise RuntimeError("PDV provider authorization lacks ranked candidate correlation")
     provider_request_id = str(uuid4())
     response = httpx.post(
         f"{base}/v1/integrations/odysseus/provider/authorize",
         headers={"X-PDV-Odysseus-Key": key},
-        json={"endpoint": endpoint, "model": model, "provider_request_id": provider_request_id},
+        json={"endpoint": endpoint, "model": model, "provider_request_id": provider_request_id, "routing_receipt_id": routing.get("routing_receipt_id"), "candidate_index": candidate.get("candidate_index")},
         timeout=3.0,
     )
-    payload = _validate(response, endpoint, model, provider_request_id)
+    payload = _validate(response, endpoint, model, provider_request_id, routing.get("routing_receipt_id"), candidate.get("candidate_index"))
+    _dispatch_transition_sync(base, key, "running", payload)
     _last_authorization.set(payload)
+    _observe_runtime(provider=payload.get("selected_provider"), model=model, currentRunStatus="RUNNING", taskCorrelationId=provider_request_id, failureMessage=None)
     return payload
 
 
@@ -246,13 +328,23 @@ async def authorize_provider(endpoint: str, model: str) -> dict | None:
     if not required():
         return None
     base, key = _boundary()
+    routing = _last_routing.get()
+    candidate = _routing_candidate(routing, endpoint, model)
+    if candidate is None:
+        await rank_provider_candidates([(endpoint, model, {})])
+        routing = _last_routing.get()
+        candidate = _routing_candidate(routing, endpoint, model)
+    if candidate is None:
+        raise RuntimeError("PDV provider authorization lacks ranked candidate correlation")
     provider_request_id = str(uuid4())
     async with httpx.AsyncClient(timeout=3.0) as client:
         response = await client.post(
             f"{base}/v1/integrations/odysseus/provider/authorize",
             headers={"X-PDV-Odysseus-Key": key},
-            json={"endpoint": endpoint, "model": model, "provider_request_id": provider_request_id},
+            json={"endpoint": endpoint, "model": model, "provider_request_id": provider_request_id, "routing_receipt_id": routing.get("routing_receipt_id"), "candidate_index": candidate.get("candidate_index")},
         )
-    payload = _validate(response, endpoint, model, provider_request_id)
+    payload = _validate(response, endpoint, model, provider_request_id, routing.get("routing_receipt_id"), candidate.get("candidate_index"))
+    await _dispatch_transition(base, key, "running", payload)
     _last_authorization.set(payload)
+    _observe_runtime(provider=payload.get("selected_provider"), model=model, currentRunStatus="RUNNING", taskCorrelationId=provider_request_id, failureMessage=None)
     return payload

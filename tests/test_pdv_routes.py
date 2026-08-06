@@ -150,7 +150,10 @@ def test_pdv_health_reports_readiness_without_disclosing_secret(tmp_path, monkey
     }
     assert payload["sourceArchiveAvailable"] is True
     assert len(payload["sourceArchiveSha256"]) == 64
-    assert payload["capabilities"]["chat"] == "AVAILABLE"
+    assert payload["capabilities"]["chat"] == "DEGRADED"
+    assert payload["capabilities"]["agents"] == "DEGRADED"
+    assert payload["capabilities"]["research"] == "DEGRADED"
+    assert payload["capabilities"]["memory"] == "AVAILABLE"
     assert payload["capabilities"]["calendar"] == "AVAILABLE"
     assert payload["capabilities"]["email"] == "AUTH_REQUIRED"
     assert secret not in response.text

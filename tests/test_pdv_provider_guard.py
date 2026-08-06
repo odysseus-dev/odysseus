@@ -13,6 +13,14 @@ def _configure(tmp_path, monkeypatch):
     monkeypatch.setenv("ODYSSEUS_PDV_ADAPTER_KEY_FILE", str(key))
 
 
+def _set_ranking(endpoint, model):
+    pdv_provider_guard._last_routing.set({
+        "routing_receipt_id": "ody_provider_routing_" + "1" * 36,
+        "task_class": "chat",
+        "ordered_candidates": [{"candidate_index": 0, "endpoint": endpoint, "model": model, "timeout_ms": 30000, "retry_limit": 1}],
+    })
+
+
 def test_provider_guard_is_inert_for_standalone_upstream(monkeypatch):
     monkeypatch.delenv("PDV_PROVIDER_GUARD_REQUIRED", raising=False)
     assert pdv_provider_guard.authorize_provider_sync("https://example.invalid/v1", "model") is None
@@ -21,24 +29,54 @@ def test_provider_guard_is_inert_for_standalone_upstream(monkeypatch):
 def test_provider_guard_accepts_only_correlated_authorization(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
     endpoint = "http://127.0.0.1:11435/v1/chat/completions"
+    _set_ranking(endpoint, "model-1")
     def authorize(*_args, **kwargs):
         request_id = kwargs["json"]["provider_request_id"]
-        return httpx.Response(200, json={"allowed": True, "selected_model": "model-1", "selected_endpoint": endpoint, "provider_request_id": request_id, "authorization_receipt_id": "receipt-1"})
+        return httpx.Response(200, json={"allowed": True, "selected_model": "model-1", "selected_endpoint": endpoint, "provider_request_id": request_id, "routing_receipt_id": kwargs["json"]["routing_receipt_id"], "candidate_index": kwargs["json"]["candidate_index"], "authorization_receipt_id": "receipt-1"})
     monkeypatch.setattr(pdv_provider_guard.httpx, "post", authorize)
     receipt = pdv_provider_guard.authorize_provider_sync(endpoint, "model-1")
     assert receipt["allowed"] is True
     assert pdv_provider_guard.get_last_authorization_receipt() == receipt
 
 
+def test_direct_authorization_first_obtains_a_bound_ranking_receipt(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    pdv_provider_guard._last_routing.set(None)
+    endpoint = "http://127.0.0.1:11435/v1/chat/completions"
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(url)
+        if url.endswith("/provider/rank"):
+            return httpx.Response(200, json={
+                "allowed": True, "routing_receipt_id": "ody_provider_routing_" + "2" * 36, "task_class": "chat",
+                "selected_provider": "llama.cpp", "selected_endpoint": endpoint, "selected_model": "model-1",
+                "ordered_candidates": [{"candidate_index": 0, "endpoint": endpoint, "model": "model-1", "timeout_ms": 30000, "retry_limit": 0}],
+            })
+        payload = kwargs["json"]
+        return httpx.Response(200, json={
+            "allowed": True, "selected_provider": "llama.cpp", "selected_model": "model-1", "selected_endpoint": endpoint,
+            "provider_request_id": payload["provider_request_id"], "routing_receipt_id": payload["routing_receipt_id"],
+            "candidate_index": payload["candidate_index"], "authorization_receipt_id": "receipt-1",
+        })
+
+    monkeypatch.setattr(pdv_provider_guard.httpx, "post", post)
+    receipt = pdv_provider_guard.authorize_provider_sync(endpoint, "model-1")
+    assert calls[0].endswith("/provider/rank") and calls[1].endswith("/provider/authorize")
+    assert receipt["routing_receipt_id"].startswith("ody_provider_routing_")
+
+
 def test_provider_guard_fails_closed_on_denial_or_mismatch(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
+    endpoint = "http://127.0.0.1:11435/v1/chat/completions"
+    _set_ranking(endpoint, "model-1")
     monkeypatch.setattr(pdv_provider_guard.httpx, "post", lambda *_args, **_kwargs: httpx.Response(403, json={"allowed": False, "reason_code": "LOCAL_CAPACITY_NOT_AUTHORIZED"}))
     with pytest.raises(RuntimeError, match="LOCAL_CAPACITY_NOT_AUTHORIZED"):
-        pdv_provider_guard.authorize_provider_sync("http://127.0.0.1:11435/v1/chat/completions", "model-1")
+        pdv_provider_guard.authorize_provider_sync(endpoint, "model-1")
     assert pdv_provider_guard.get_last_authorization_receipt() is None
-    monkeypatch.setattr(pdv_provider_guard.httpx, "post", lambda *_args, **kwargs: httpx.Response(200, json={"allowed": True, "selected_model": "other", "selected_endpoint": "http://127.0.0.1:11435/v1/chat/completions", "provider_request_id": kwargs["json"]["provider_request_id"], "authorization_receipt_id": "receipt-1"}))
+    monkeypatch.setattr(pdv_provider_guard.httpx, "post", lambda *_args, **kwargs: httpx.Response(200, json={"allowed": True, "selected_model": "other", "selected_endpoint": endpoint, "provider_request_id": kwargs["json"]["provider_request_id"], "routing_receipt_id": kwargs["json"]["routing_receipt_id"], "candidate_index": kwargs["json"]["candidate_index"], "authorization_receipt_id": "receipt-1"}))
     with pytest.raises(RuntimeError, match="correlation mismatch"):
-        pdv_provider_guard.authorize_provider_sync("http://127.0.0.1:11435/v1/chat/completions", "model-1")
+        pdv_provider_guard.authorize_provider_sync(endpoint, "model-1")
 
 
 def test_provider_ranking_reorders_without_serializing_credentials(tmp_path, monkeypatch):
@@ -127,6 +165,38 @@ def test_provider_outcome_requires_exact_durable_receipt_correlation(tmp_path, m
     monkeypatch.setattr(pdv_provider_guard.httpx, "post", record)
     receipt = pdv_provider_guard.record_provider_outcome_sync(authorization, "timed_out", 60000, cost_microusd=0)
     assert receipt["provider_request_id"] == authorization["provider_request_id"]
+
+
+def test_bound_dispatch_receives_exact_provider_outcome_correlation(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    endpoint = "http://127.0.0.1:11435/v1/chat/completions"
+    _set_ranking(endpoint, "model-1")
+    monkeypatch.setenv("PDV_EXECUTION_OS_DISPATCH_ID", "ody_dispatch_" + "4" * 36)
+    transitions = []
+
+    def post(url, **kwargs):
+        payload = kwargs["json"]
+        if url.endswith("/provider/authorize"):
+            return httpx.Response(200, json={
+                "allowed": True, "selected_provider": "llama.cpp", "selected_model": "model-1", "selected_endpoint": endpoint,
+                "provider_request_id": payload["provider_request_id"], "routing_receipt_id": payload["routing_receipt_id"],
+                "candidate_index": payload["candidate_index"], "authorization_receipt_id": "ody_provider_auth_" + "5" * 36,
+            })
+        if url.endswith("/provider/outcome"):
+            return httpx.Response(201, json={
+                "outcome_receipt_id": "ody_provider_outcome_" + "6" * 36,
+                "authorization_receipt_id": payload["authorization_receipt_id"], "provider_request_id": payload["provider_request_id"], "outcome": payload["outcome"],
+            })
+        transitions.append(payload)
+        return httpx.Response(200, json={"state": payload["state"]})
+
+    monkeypatch.setattr(pdv_provider_guard.httpx, "post", post)
+    authorization = pdv_provider_guard.authorize_provider_sync(endpoint, "model-1")
+    outcome = pdv_provider_guard.record_provider_outcome_sync(authorization, "failed", 10)
+    assert transitions == [
+        {"state": "running", "provider_request_id": authorization["provider_request_id"], "final_receipt_id": None},
+        {"state": "failed", "provider_request_id": authorization["provider_request_id"], "final_receipt_id": outcome["outcome_receipt_id"]},
+    ]
 
 
 def test_normal_sync_llm_call_records_provider_outcome_and_usage(monkeypatch):

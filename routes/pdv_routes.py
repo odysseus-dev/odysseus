@@ -124,6 +124,13 @@ def _default_runtime_state() -> Dict[str, object]:
     run or correlation ID. Reporting UNKNOWN/null is more truthful than choosing
     an unrelated task run.
     """
+    try:
+        from src.pdv_provider_guard import get_provider_runtime_observation
+        observation = get_provider_runtime_observation()
+        if observation:
+            return observation
+    except Exception:
+        pass
     provider = None
     model = None
     try:
@@ -146,6 +153,13 @@ def _default_runtime_state() -> Dict[str, object]:
 
 def _default_capability_state(request: Request, ready: bool) -> Dict[str, str]:
     core_state = "AVAILABLE" if ready else "DEGRADED"
+    provider_observation = {}
+    try:
+        from src.pdv_provider_guard import get_provider_runtime_observation
+        provider_observation = get_provider_runtime_observation()
+    except Exception:
+        pass
+    provider_state = "AVAILABLE" if ready and provider_observation.get("currentRunStatus") == "SUCCEEDED" else "DEGRADED"
     email_state = "AUTH_REQUIRED"
     try:
         from core.database import EmailAccount, get_db_session
@@ -160,11 +174,11 @@ def _default_capability_state(request: Request, ready: bool) -> Dict[str, str]:
     except Exception:
         pass
     return {
-        "chat": core_state,
-        "agents": core_state,
+        "chat": provider_state,
+        "agents": provider_state,
         "mcp": core_state,
         "memory": core_state,
-        "research": core_state,
+        "research": provider_state,
         "documents": core_state,
         "notes": core_state,
         "tasks": core_state,

@@ -224,6 +224,25 @@ def test_sync_fallback_consumes_pdv_ranked_order_and_policy(monkeypatch):
     assert calls == [("u-local", "local", {"headers": {}, "timeout": 2, "prompt_type": "chat"})]
 
 
+def test_async_retry_limit_zero_still_performs_one_attempt(monkeypatch):
+    from src import pdv_provider_guard
+
+    calls = []
+
+    async def rank(candidates, _task):
+        return candidates
+
+    async def call(url, model, messages, **kwargs):
+        calls.append(kwargs["max_retries"])
+        return "ok"
+
+    monkeypatch.setattr(pdv_provider_guard, "rank_provider_candidates", rank)
+    monkeypatch.setattr(pdv_provider_guard, "get_ranked_route_policy", lambda *_args: {"timeout_ms": 2000, "retry_limit": 0})
+    monkeypatch.setattr(llm_core, "llm_call_async", call)
+    assert asyncio.run(llm_core.llm_call_async_with_fallback([("u", "m", {})], [{"role": "user", "content": "hi"}])) == "ok"
+    assert calls == [1]
+
+
 def test_duplicate_route_is_attempted_only_once(monkeypatch):
     """A fallback that repeats the primary's (url, model) must NOT make the chain
     sail back into the same dead route — each distinct route is tried once."""

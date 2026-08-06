@@ -1978,7 +1978,8 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
             if policy:
                 policy_timeout = max(1, (policy["timeout_ms"] + 999) // 1000)
                 candidate_kwargs["timeout"] = min(candidate_kwargs.get("timeout", policy_timeout), policy_timeout)
-                candidate_kwargs["max_retries"] = min(candidate_kwargs.get("max_retries", policy["retry_limit"]), policy["retry_limit"])
+                policy_attempts = policy["retry_limit"] + 1
+                candidate_kwargs["max_retries"] = min(candidate_kwargs.get("max_retries", policy_attempts), policy_attempts)
             return await llm_call_async(url, model, messages, headers=headers, **candidate_kwargs)
         except Exception as e:
             last_err = e
