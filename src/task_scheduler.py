@@ -2513,14 +2513,15 @@ class TaskScheduler:
             logger.warning(f"Failed to seed assistant for {owner}: {e}")
 
     async def ensure_assistant_defaults(self, owner: str):
-        """Create the personal-assistant CrewMember, its pinned session, and three
-        daily check-in ScheduledTasks for this owner — idempotent on is_default_assistant."""
+        """Create the personal-assistant CrewMember and its pinned session.
+
+        Check-in tasks are user-created and are not seeded here. Creation is
+        idempotent on ``is_default_assistant``.
+        """
         # Hard-reject synthetic owners. Without this, AuthMiddleware-stamped
         # values like 'internal-tool' (loopback agent-tool callbacks) or 'api'
-        # (bearer-token integrations) would get a real assistant + 3 daily
-        # check-ins seeded, which then double-fire alongside the human user's
-        # check-ins. This was the root cause of the duplicate 'Morning check-in'
-        # rows we had to manually clean up.
+        # (bearer-token integrations) would get a real assistant. Older builds
+        # also seeded three daily check-ins for those synthetic owners.
         if not owner or owner in REQUEST_SENTINEL_OWNERS:
             logger.info(f"ensure_assistant_defaults: skip synthetic owner {owner!r}")
             return
