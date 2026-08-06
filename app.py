@@ -664,7 +664,11 @@ app.include_router(setup_session_routes(
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe.admin_wipe_routes import setup_admin_wipe_routes
-app.include_router(setup_admin_wipe_routes(session_manager))
+app.include_router(setup_admin_wipe_routes(
+    session_manager,
+    memory_manager=memory_manager,
+    memory_vector=memory_vector,
+))
 
 # Memory
 from routes.memory.memory_routes import setup_memory_routes
@@ -796,7 +800,12 @@ app.include_router(setup_prefs_routes())
 
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
-app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
+app.include_router(setup_backup_routes(
+    memory_manager,
+    preset_manager,
+    skills_manager,
+    memory_vector=memory_vector,
+))
 
 from routes.font_routes import setup_font_routes
 app.include_router(setup_font_routes())
