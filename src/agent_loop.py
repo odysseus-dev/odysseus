@@ -784,7 +784,7 @@ GENERIC LOOPBACK to allowed Odysseus internal endpoints. Use this whenever the u
 - Themes: `/api/prefs/themes`, `/api/prefs/custom-themes`
 - Settings: `/api/settings`, `/api/prefs/{key}`
 - Research: `/api/research/start`, `/api/research/tasks` (note: `/api/research/report/{id}` renders HTML — to READ a report's text use the `manage_research` tool with `action:read`, not this endpoint)
-- Compare: `/api/compare/sessions`, `/api/compare/start`
+- Compare: history via `GET /api/compare/history`, record a completed comparison via `POST /api/compare/record`, vote via `POST /api/compare/{comp_id}/vote` with body `{"winner":"left|right|tie"}`, and delete via `DELETE /api/compare/{comp_id}`. `/api/compare/start` is a browser multipart/session-creation flow; use the Compare UI rather than calling it through this JSON bridge.
 - Email: use named email tools (`list_email_accounts`, `list_emails`, `read_email`, `scan_email_unsubscribes`, `unsubscribe_email`, `send_email`, `reply_to_email`). Do NOT use `/api/email/accounts`; it is owner-filtered in tool context and may falsely return empty.
 - Endpoints (model providers): `/api/endpoints`, `/api/endpoints/{id}`
 - Shell: do NOT use `app_api` for `/api/shell/*`; use named command tooling instead.

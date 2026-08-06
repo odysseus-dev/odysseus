@@ -235,12 +235,27 @@ def setup_compare_routes(session_manager: SessionManager):
         }
 
     @router.post("/{comp_id}/vote")
-    def vote_comparison(
+    async def vote_comparison(
         request: Request,
         comp_id: str,
-        winner: str = Form(...),  # "left", "right", or "tie"
     ):
         """Record the user's vote and reveal model names if blind."""
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+        if content_type == "application/json":
+            try:
+                vote_payload = await request.json()
+            except Exception as exc:
+                raise HTTPException(400, "Invalid vote JSON") from exc
+            if not isinstance(vote_payload, dict):
+                raise HTTPException(422, "Vote request must be an object")
+            winner = vote_payload.get("winner")
+        else:
+            form = await request.form()
+            winner = form.get("winner")
+        if not isinstance(winner, str) or not winner.strip():
+            raise HTTPException(422, "winner is required")
+        winner = winner.strip()
+
         user = get_current_user(request)
         db = SessionLocal()
         try:
