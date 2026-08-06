@@ -52,10 +52,13 @@ class DocsService:
         results = self.rag.search(query, k=top_k)
         return [
             DocChunk(
-                text=r.get("text", r.get("content", "")),
-                source=r.get("source", r.get("metadata", {}).get("source", "unknown")),
-                score=r.get("score", 0.0),
-                metadata=r.get("metadata"),
+                text=r.get("document", r.get("text", r.get("content", ""))),
+                source=r.get(
+                    "source",
+                    (r.get("metadata") or {}).get("source", "unknown"),
+                ),
+                score=r.get("similarity", r.get("score", 0.0)),
+                metadata=r.get("metadata") or {},
             )
             for r in results
             if isinstance(r, dict)
@@ -73,8 +76,8 @@ class DocsService:
         """
         result = self.rag.index_personal_documents(directory)
         return IndexResult(
-            indexed=result.get("indexed", 0),
-            failed=result.get("failed", 0),
+            indexed=result.get("indexed_count", result.get("indexed", 0)),
+            failed=result.get("failed_count", result.get("failed", 0)),
             errors=result.get("errors", []),
         )
 
