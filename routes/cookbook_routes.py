@@ -985,8 +985,18 @@ def setup_cookbook_routes() -> APIRouter:
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
             pp = shlex.quote(pid_path.as_posix())
+            # Record the serving shell's REAL Windows PID, not bash's MSYS PID.
+            # Git Bash's `$$` is the MSYS/Cygwin pid (e.g. 723), which Win32
+            # tooling (taskkill, Get-CimInstance ParentProcessId, Stop-Process)
+            # cannot match — so the frontend Stop-Tree walk finds nothing and the
+            # llama-server child survives after Stop (the GPU stays pinned). The
+            # `/proc/$$/winpid` map yields the true Win32 pid; if it is somehow
+            # unavailable the write is skipped, leaving the outer proc.pid written
+            # below (line ~1023) — also a valid Windows ancestor of the serve.
             inner.write_text(
-                f"printf '%s\\n' \"$$\" > {pp}\n" + "\n".join(bash_lines) + "\n",
+                f"winpid=\"$(cat /proc/$$/winpid 2>/dev/null)\"; "
+                f"[ -n \"$winpid\" ] && printf '%s\\n' \"$winpid\" > {pp}\n"
+                + "\n".join(bash_lines) + "\n",
                 encoding="utf-8",
             )
             lp = shlex.quote(log_path.as_posix())
