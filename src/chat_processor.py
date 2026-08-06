@@ -361,7 +361,12 @@ class ChatProcessor:
         # RAG: search if enabled and rag_manager available, inject only above threshold
         if use_rag:
             try:
-                rag_manager = getattr(self.personal_docs_manager, 'rag_manager', None)
+                get_rag = getattr(self.personal_docs_manager, "get_rag_manager", None)
+                rag_manager = (
+                    get_rag()
+                    if callable(get_rag)
+                    else getattr(self.personal_docs_manager, "rag_manager", None)
+                )
                 if rag_manager:
                     results = rag_manager.search(message, k=5, owner=owner)
                     # Filter by similarity threshold
