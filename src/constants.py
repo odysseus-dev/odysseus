@@ -177,6 +177,7 @@ AGENT_ISOLATED_TMP_DIRNAME = ".tmp"
 # Auth policy
 PASSWORD_MIN_LENGTH = 8
 USERNAME_MAX_LENGTH = 64
+PASSWORD_MAX_LENGTH = 72
 
 # Upload types the note-scoped media route serves inline. A note only ever
 # shows uploads as images, and anything else served from this origin would
