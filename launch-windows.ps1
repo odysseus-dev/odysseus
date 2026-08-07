@@ -78,7 +78,7 @@ $pyVersion = $null
 
 $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
 if ($pyLauncher) {
-    foreach ($v in @("-3.13", "-3.12", "-3.11")) {
+    foreach ($v in @("-3.14","-3.13", "-3.12", "-3.11")) {
         $ver = Get-PythonVersionText $pyLauncher.Source @($v)
         if ($ver) {
             $pyExe = $pyLauncher.Source
