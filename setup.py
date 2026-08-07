@@ -16,7 +16,7 @@ sys.path.insert(0, BASE_DIR)
 from src.constants import (
     DATA_DIR, AUTH_FILE, UPLOAD_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR,
     TTS_CACHE_DIR, GENERATED_IMAGES_DIR, DEEP_RESEARCH_DIR, CHROMA_DIR,
-    RAG_DIR, MEMORY_VECTORS_DIR, PASSWORD_MIN_LENGTH,
+    RAG_DIR, MEMORY_VECTORS_DIR, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH,
 )
 from core.auth import RESERVED_USERNAMES
 
@@ -77,6 +77,9 @@ def _prompt_admin_credentials():
         if len(password) < PASSWORD_MIN_LENGTH:
             print(f"  Password must be at least {PASSWORD_MIN_LENGTH} characters.")
             continue
+        if len(password.encode("utf-8")) > PASSWORD_MAX_LENGTH:
+            print(f"  Password must be {PASSWORD_MAX_LENGTH} bytes or fewer.")
+            continue
         confirm = getpass.getpass("  Confirm password: ")
         if password != confirm:
             print("  Passwords don't match. Try again.")
@@ -108,6 +111,9 @@ def create_default_admin():
                 return "failed"
             if len(password) < PASSWORD_MIN_LENGTH:
                 print(f"  [error] ODYSSEUS_ADMIN_PASSWORD must be at least {PASSWORD_MIN_LENGTH} characters")
+                return "failed"
+            if len(password.encode("utf-8")) > PASSWORD_MAX_LENGTH:
+                print(f"  [error] ODYSSEUS_ADMIN_PASSWORD must be {PASSWORD_MAX_LENGTH} bytes or fewer")
                 return "failed"
         elif sys.stdin.isatty() and not os.getenv("ODYSSEUS_SKIP_ADMIN_PROMPT"):
             # Interactive terminal — ask the user
