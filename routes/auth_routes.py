@@ -14,8 +14,8 @@ from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL, username_error
-from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
-from src.auth_helpers import _auth_disabled
+from src.auth_helpers import _auth_disabled, validate_password_length
+from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src import tool_capabilities
@@ -153,8 +153,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         if auth_manager.is_configured:
             raise HTTPException(400, "Already configured")
-        if len(body.password) < PASSWORD_MIN_LENGTH:
-            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        validate_password_length(body.password)
         name_error = username_error(body.username)
         if name_error:
             raise HTTPException(400, name_error)
@@ -174,8 +173,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Run setup first")
         if not auth_manager.signup_enabled:
             raise HTTPException(403, "Registration is disabled. Ask an admin for an account.")
-        if len(body.password) < PASSWORD_MIN_LENGTH:
-            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        validate_password_length(body.password)
         name_error = username_error(body.username)
         if name_error:
             raise HTTPException(400, name_error)
@@ -253,8 +251,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
-        if len(body.new_password) < PASSWORD_MIN_LENGTH:
-            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        validate_password_length(body.new_password)
         current_token = request.cookies.get(SESSION_COOKIE)
         ok = await asyncio.to_thread(auth_manager.change_password, user, body.current_password, body.new_password)
         if not ok:
@@ -334,8 +331,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        if len(body.password) < PASSWORD_MIN_LENGTH:
-            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        validate_password_length(body.password)
         name_error = username_error(body.username)
         if name_error:
             raise HTTPException(400, name_error)
@@ -351,10 +347,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        if len(body.new_password) < PASSWORD_MIN_LENGTH:
-            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.new_password.encode("utf-8")) > 72:
-            raise HTTPException(400, "Password must be at most 72 UTF-8 bytes")
+        validate_password_length(body.new_password)
         ok = await asyncio.to_thread(auth_manager.reset_user_password, username, body.new_password, user)
         if not ok:
             raise HTTPException(403, "Password reset is only available for existing non-admin accounts")

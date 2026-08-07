@@ -47,7 +47,7 @@ ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 # backwards for this sentinel.
 ADMIN_PRIVILEGES["block_all_models"] = False
 
-from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH, USERNAME_MAX_LENGTH
+from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH, USERNAME_MAX_LENGTH, PASSWORD_MAX_LENGTH
 from src.owner_identity import RESERVED_AUTH_USERNAMES
 DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
@@ -261,6 +261,7 @@ class AuthManager:
         """Return public auth policy constants for the frontend."""
         return {
             "password_min_length": PASSWORD_MIN_LENGTH,
+            "password_max_length": PASSWORD_MAX_LENGTH,
             "reserved_usernames": sorted(RESERVED_USERNAMES),
             "signup_enabled": self.signup_enabled,
             "session_days": TOKEN_TTL // 86400,
