@@ -23,7 +23,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
-import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
+import { createLiveThinkingThrottle, stripLiveThinkingTags } from './liveThinkingThrottle.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -2112,9 +2112,7 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
       // and slicing would pin the live box to "The" for the rest of the stream.
       function _liveThinkingText(text) {
         const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
-        return _stripThinkingWrappers(
-          normalized.replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
-        );
+        return _stripThinkingWrappers(stripLiveThinkingTags(normalized));
       }
 
       // Once thinking has closed, the reply that follows </think> must not leak
@@ -2144,7 +2142,9 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
 
       function _ensureLiveThinkingThrottle() {
         if (!_liveThinkRenderThrottle) {
-          _liveThinkRenderThrottle = createLiveThinkingThrottle(_commitLiveThinkingText);
+          _liveThinkRenderThrottle = createLiveThinkingThrottle(_commitLiveThinkingText, {
+            prepare: ({ text, prepared }) => prepared ? String(text ?? '') : _liveThinkingText(text),
+          });
         }
         return _liveThinkRenderThrottle;
       }
@@ -2169,14 +2169,13 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
         }, cadence);
       }
 
-      function _queueLiveThinking(text) {
-        _liveThinkLatestText = String(text ?? '');
-        _ensureLiveThinkingThrottle().update(_liveThinkLatestText);
+      function _queueLiveThinking(text, prepared = false) {
+        _ensureLiveThinkingThrottle().update({ text, prepared });
         _startLiveThinkTimer();
       }
 
       _flushLiveThinking = ({ text = null, rich = false } = {}) => {
-        if (text !== null) _queueLiveThinking(text);
+        if (text !== null) _queueLiveThinking(text, true);
         if (_liveThinkRenderThrottle) _liveThinkRenderThrottle.flush();
         if (rich && _liveThinkInner && _liveThinkInner.isConnected) {
           _liveThinkInner.style.whiteSpace = '';
@@ -2643,7 +2642,7 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
                   _liveThinkToggle = thinkContent.querySelector('.live-think-toggle');
                   _liveThinkLatestText = '';
                   _cancelLiveThinkingWork();
-                  _queueLiveThinking(_liveThinkingText(roundText));
+                  _queueLiveThinking(roundText);
                   // Whirlpool spinner
                   if (_liveThinkSpinnerSlot) {
                     var _wp = spinnerModule.createWhirlpool(12);
@@ -2654,7 +2653,7 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
                     _liveThinkSpinnerSlot.appendChild(_wp.element);
                   }
                 } else if (hasUnclosedThink && isThinking) {
-                  _queueLiveThinking(_liveThinkingText(roundText));
+                  _queueLiveThinking(roundText);
                   continue;
                 } else if (!hasUnclosedThink && isThinking) {
                   isThinking = false;

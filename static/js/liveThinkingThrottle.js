@@ -10,7 +10,7 @@
 //
 // Timers are injected so the behaviour is testable without a browser or a clock:
 //
-//     const throttle = createLiveThinkingThrottle(commit, { schedule, cancel });
+//     const throttle = createLiveThinkingThrottle(commit, { prepare, schedule, cancel });
 //
 // Lifecycle contract, which the terminal paths in chat.js depend on:
 //
@@ -22,26 +22,34 @@
 // `cancel()` is what stops a finished (or backgrounded) stream from mutating a
 // view the user has since navigated away to.
 
+export function stripLiveThinkingTags(text) {
+  return String(text ?? '').replace(
+    /<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi,
+    '',
+  );
+}
+
 export function createLiveThinkingThrottle(commit, {
   delay = 100,
+  prepare = (value) => String(value ?? ''),
   schedule = (callback, ms) => setTimeout(callback, ms),
   cancel = (timer) => clearTimeout(timer),
 } = {}) {
   let timer = null;
-  let latest = '';
+  let latest = null;
   let dirty = false;
 
   const commitLatest = () => {
     timer = null;
     if (!dirty) return false;
     dirty = false;
-    commit(latest);
+    commit(prepare(latest));
     return true;
   };
 
   return {
     update(value) {
-      latest = String(value ?? '');
+      latest = value;
       dirty = true;
       if (timer === null) timer = schedule(commitLatest, delay);
     },

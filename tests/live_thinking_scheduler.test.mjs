@@ -10,7 +10,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createLiveThinkingThrottle } from '../static/js/liveThinkingThrottle.js';
+import {
+  createLiveThinkingThrottle,
+  stripLiveThinkingTags,
+} from '../static/js/liveThinkingThrottle.js';
 
 function fakeTimers() {
   let nextId = 1;
@@ -72,6 +75,77 @@ test('commit count stays flat as the stream grows', () => {
   timers.run(timers.pendingIds()[0]);
   assert.equal(commits.length, 1);
   assert.equal(commits[0], text);
+});
+
+test('prepares a 200K cumulative stream only at scheduled commit cadence', () => {
+  const timers = fakeTimers();
+  const commits = [];
+  let prepareCalls = 0;
+  let scannedCharacters = 0;
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), {
+    ...timers,
+    prepare(value) {
+      prepareCalls += 1;
+      scannedCharacters += value.length;
+      return stripLiveThinkingTags(value);
+    },
+  });
+
+  const delta = 'reasoning '.repeat(10); // 100 characters
+  let cumulative = '';
+  for (let i = 0; i < 2000; i++) {
+    cumulative += delta;
+    throttle.update(cumulative);
+  }
+
+  assert.equal(cumulative.length, 200_000);
+  assert.equal(prepareCalls, 0, 'cumulative extraction must not run per delta');
+  assert.equal(timers.pendingIds().length, 1);
+  timers.run(timers.pendingIds()[0]);
+  assert.equal(prepareCalls, 1);
+  assert.equal(scannedCharacters, 200_000);
+  assert.deepEqual(commits, [cumulative]);
+});
+
+test('literal escaped tags survive and malformed live tags retain trailing text', () => {
+  assert.equal(
+    stripLiveThinkingTags('&lt;think&gt;literal&lt;/think&gt;'),
+    '&lt;think&gt;literal&lt;/think&gt;',
+  );
+  assert.equal(
+    stripLiveThinkingTags('<think>first</think> middle <thinking mode="deep">trailing'),
+    'first middle trailing',
+  );
+  assert.equal(stripLiveThinkingTags('answer with 2 < 3 and 5 > 4'), 'answer with 2 < 3 and 5 > 4');
+});
+
+test('terminal flush prepares and commits the complete trailing cumulative text', () => {
+  const timers = fakeTimers();
+  const commits = [];
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), {
+    ...timers,
+    prepare: stripLiveThinkingTags,
+  });
+
+  throttle.update('<think>reasoning without a closing tag');
+  assert.equal(throttle.flush(), true);
+  assert.deepEqual(commits, ['reasoning without a closing tag']);
+  assert.deepEqual(timers.pendingIds(), []);
+});
+
+test('independent throttles cannot commit cancelled text into another session', () => {
+  const timers = fakeTimers();
+  const commits = [];
+  const first = createLiveThinkingThrottle((value) => commits.push(['first', value]), timers);
+  const second = createLiveThinkingThrottle((value) => commits.push(['second', value]), timers);
+
+  first.update('stale first-session text');
+  second.update('current second-session text');
+  first.cancel();
+  assert.equal(second.flush(), true);
+
+  assert.deepEqual(timers.pendingIds(), []);
+  assert.deepEqual(commits, [['second', 'current second-session text']]);
 });
 
 test('flush synchronously preserves trailing text and cancels the pending callback', () => {
