@@ -2082,22 +2082,16 @@ function _isChatInteractionBusy() {
   }
 }
 
-function _loadEmailsWhenChatIdle({ delay = 50, retries = 180, options = {} } = {}) {
-  const run = () => {
-    if (!state._libOpen || !document.getElementById('email-lib-modal')) return;
-    if (_isChatInteractionBusy() && retries > 0) {
-      setTimeout(() => _loadEmailsWhenChatIdle({ delay: 1000, retries: retries - 1, options }), 1000);
-      return;
-    }
-    _loadEmails(options);
-  };
-  setTimeout(run, Math.max(0, Number(delay) || 0));
-}
-
 function _canRunEmailPrewarm() {
   if (state._libOpen || state._libLoading || _libSearchInFlight) return false;
   if (document.visibilityState && document.visibilityState !== 'visible') return false;
   return !_isChatInteractionBusy();
+}
+
+function _isEmailPrewarmTemporarilyBlocked() {
+  if (state._libOpen || state._libLoading || _libSearchInFlight) return false;
+  if (document.visibilityState && document.visibilityState !== 'visible') return false;
+  return _isChatInteractionBusy();
 }
 
 function _isEmailPrewarmCurrent(generation, signal) {
@@ -2144,7 +2138,11 @@ function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
   const generation = ++_libPrewarmGeneration;
   _libPrewarmPromise = new Promise(resolve => { _libPrewarmResolve = resolve; });
   const promise = _libPrewarmPromise;
-  const requestIdle = () => {
+  function scheduleIdleRetry(delay = 500) {
+    if (generation !== _libPrewarmGeneration) return;
+    _libPrewarmDelayTimer = setTimeout(requestIdle, Math.max(50, Number(delay) || 500));
+  }
+  function requestIdle() {
     if (generation !== _libPrewarmGeneration) return;
     _libPrewarmDelayTimer = null;
     try {
@@ -2157,7 +2155,19 @@ function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
           && typeof deadline.timeRemaining === 'function'
           && deadline.timeRemaining() > 0
         );
-        if (!hasIdleBudget || !_canRunEmailPrewarm()) {
+        if (!_canRunEmailPrewarm()) {
+          if (_isEmailPrewarmTemporarilyBlocked()) {
+            scheduleIdleRetry();
+          } else {
+            _settleEmailPrewarm(generation, false);
+          }
+          return;
+        }
+        if (!hasIdleBudget) {
+          scheduleIdleRetry();
+          return;
+        }
+        if (generation !== _libPrewarmGeneration) {
           _settleEmailPrewarm(generation, false);
           return;
         }
@@ -2171,7 +2181,7 @@ function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
     } catch (_) {
       _settleEmailPrewarm(generation, false);
     }
-  };
+  }
 
   const wait = Math.max(0, Number(delay) || 0);
   if (wait > 0) _libPrewarmDelayTimer = setTimeout(requestIdle, wait);
@@ -3013,7 +3023,7 @@ export function openEmailLibrary(opts = {}) {
   }
   const fastAccountAtOpen = state._libAccountId || '';
   if (fastAccountAtOpen) {
-    _loadEmailsWhenChatIdle({ delay: 0 });
+    _loadEmails({ useCache: true });
   }
   // If we already know the previous/default account, paint that inbox first
   // from the durable index and validate accounts in parallel. Cold refreshes
@@ -3023,7 +3033,7 @@ export function openEmailLibrary(opts = {}) {
     _loadFolders();
     _loadEmailReminderBellVisibility();
     if (!fastAccountAtOpen || fastAccountAtOpen !== (state._libAccountId || '')) {
-      _loadEmailsWhenChatIdle();
+      _loadEmails({ useCache: true });
     }
   })();
 }
@@ -3208,6 +3218,7 @@ export async function openEmailLibrarySettings() {
 }
 
 export function closeEmailLibrary() {
+  _cancelEmailPrewarm();
   const modal = document.getElementById('email-lib-modal');
   if (modal) modal.remove();
   if (_libSyncTicker) {
