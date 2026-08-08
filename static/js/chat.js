@@ -1370,6 +1370,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     let _renderStream = () => {};
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
+    let streamingTTS = false;
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
