@@ -1762,11 +1762,17 @@ function _rememberedEmailAccountId() {
 // results and __scheduled__ are deliberately not cached.
 const _libListCache = new Map();
 const _LIB_CACHE_MAX = 24;
+const _LIB_INITIAL_PAGE_SIZE = 100;
 const _LIB_SESSION_CACHE_PREFIX = 'odysseus.email.list.';
 const _LIB_SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
 const _LIB_LAST_ACCOUNT_KEY = 'odysseus.email.lastAccountId';
-let _libPrewarmTimer = null;
+const _LIB_PREWARM_COOLDOWN_MS = 5 * 60 * 1000;
+let _libPrewarmDelayTimer = null;
+let _libPrewarmIdleHandle = null;
 let _libPrewarmPromise = null;
+let _libPrewarmResolve = null;
+let _libPrewarmAbortController = null;
+let _libPrewarmGeneration = 0;
 let _libLastPrewarmAt = 0;
 let _libUnreadPrewarmKey = '';
 let _libUnreadPrewarmAt = 0;
@@ -2088,150 +2094,231 @@ function _loadEmailsWhenChatIdle({ delay = 50, retries = 180, options = {} } = {
   setTimeout(run, Math.max(0, Number(delay) || 0));
 }
 
-export function prewarmEmailLibrary({ delay = 2500 } = {}) {
-  if (_libPrewarmTimer || _libPrewarmPromise) return;
-  const elapsed = Date.now() - _libLastPrewarmAt;
-  if (elapsed >= 0 && elapsed < 5 * 60 * 1000) return;
-  _libPrewarmTimer = setTimeout(() => {
-    _libPrewarmTimer = null;
-    _libPrewarmPromise = _prewarmEmailViews()
-      .catch(() => {})
-      .finally(() => { _libPrewarmPromise = null; });
-  }, Math.max(0, Number(delay) || 0));
+function _canRunEmailPrewarm() {
+  if (state._libOpen || state._libLoading || _libSearchInFlight) return false;
+  if (document.visibilityState && document.visibilityState !== 'visible') return false;
+  return !_isChatInteractionBusy();
 }
 
-async function _ensureEmailAccountsForPrewarm() {
-  const accountsFresh = _libAccountsLoadedAt && (Date.now() - _libAccountsLoadedAt) < _LIB_ACCOUNTS_TTL_MS;
-  if (Array.isArray(state._libAccounts) && state._libAccounts.length && accountsFresh) {
-    if (!state._libAccountId) {
-      const def = state._libAccounts.find(a => a.is_default) || state._libAccounts[0];
-      state._libAccountId = def?.id || null;
-      _publishActiveAccount();
-    }
-    return;
+function _isEmailPrewarmCurrent(generation, signal) {
+  return generation === _libPrewarmGeneration
+    && !signal?.aborted
+    && _canRunEmailPrewarm();
+}
+
+function _settleEmailPrewarm(generation, value = false) {
+  if (generation !== _libPrewarmGeneration) return;
+  const resolve = _libPrewarmResolve;
+  _libPrewarmDelayTimer = null;
+  _libPrewarmIdleHandle = null;
+  _libPrewarmPromise = null;
+  _libPrewarmResolve = null;
+  _libPrewarmAbortController = null;
+  resolve?.(value);
+}
+
+function _cancelEmailPrewarm() {
+  const resolve = _libPrewarmResolve;
+  _libPrewarmGeneration += 1;
+  if (_libPrewarmDelayTimer !== null) {
+    clearTimeout(_libPrewarmDelayTimer);
   }
-  try {
-    const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
-    if (!accountsRes.ok) return;
-    const accountsData = await accountsRes.json().catch(() => ({}));
-    if (Array.isArray(accountsData.accounts)) {
-      state._libAccounts = accountsData.accounts;
-      _libAccountsLoadedAt = Date.now();
-      if (!state._libAccountId && state._libAccounts.length) {
-        const def = state._libAccounts.find(a => a.is_default) || state._libAccounts[0];
-        state._libAccountId = def?.id || null;
-        _publishActiveAccount();
-      }
-    }
-  } catch (_) {}
+  if (_libPrewarmIdleHandle !== null && typeof window.cancelIdleCallback === 'function') {
+    try { window.cancelIdleCallback(_libPrewarmIdleHandle); } catch (_) {}
+  }
+  try { _libPrewarmAbortController?.abort(); } catch (_) {}
+  _libPrewarmDelayTimer = null;
+  _libPrewarmIdleHandle = null;
+  _libPrewarmPromise = null;
+  _libPrewarmResolve = null;
+  _libPrewarmAbortController = null;
+  resolve?.(false);
 }
 
-export async function prewarmUnreadEmails({ limit = 8, maxUid = 0 } = {}) {
-  if (state._libOpen) return;
-  await _ensureEmailAccountsForPrewarm();
-  if (state._libOpen) return;
-  const accountId = state._libAccountId || '';
+function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
+  if (_libPrewarmPromise) return _libPrewarmPromise;
+  // Do not disguise a timer as idle work. Browsers without the genuine idle
+  // callback simply skip this optional optimization and load on demand.
+  if (typeof window.requestIdleCallback !== 'function') return Promise.resolve(false);
+
+  const generation = ++_libPrewarmGeneration;
+  _libPrewarmPromise = new Promise(resolve => { _libPrewarmResolve = resolve; });
+  const promise = _libPrewarmPromise;
+  const requestIdle = () => {
+    if (generation !== _libPrewarmGeneration) return;
+    _libPrewarmDelayTimer = null;
+    try {
+      _libPrewarmIdleHandle = window.requestIdleCallback((deadline) => {
+        if (generation !== _libPrewarmGeneration) return;
+        _libPrewarmIdleHandle = null;
+        const hasIdleBudget = Boolean(
+          deadline
+          && !deadline.didTimeout
+          && typeof deadline.timeRemaining === 'function'
+          && deadline.timeRemaining() > 0
+        );
+        if (!hasIdleBudget || !_canRunEmailPrewarm()) {
+          _settleEmailPrewarm(generation, false);
+          return;
+        }
+        const controller = new AbortController();
+        _libPrewarmAbortController = controller;
+        Promise.resolve()
+          .then(() => task({ signal: controller.signal, generation }))
+          .then(value => _settleEmailPrewarm(generation, Boolean(value)))
+          .catch(() => _settleEmailPrewarm(generation, false));
+      });
+    } catch (_) {
+      _settleEmailPrewarm(generation, false);
+    }
+  };
+
+  const wait = Math.max(0, Number(delay) || 0);
+  if (wait > 0) _libPrewarmDelayTimer = setTimeout(requestIdle, wait);
+  else requestIdle();
+  return promise;
+}
+
+export function prewarmEmailLibrary({ delay = 2500 } = {}) {
+  if (_libPrewarmPromise) return _libPrewarmPromise;
+  const elapsed = Date.now() - _libLastPrewarmAt;
+  if (elapsed >= 0 && elapsed < _LIB_PREWARM_COOLDOWN_MS) return Promise.resolve(false);
+  return _scheduleEmailPrewarm(_prewarmEmailViews, { delay });
+}
+
+function _chooseEmailPrewarmAccountId(accounts) {
+  const enabled = Array.isArray(accounts) ? accounts.filter(a => a && a.enabled !== false) : [];
+  const remembered = _rememberedEmailAccountId();
+  const current = String(state._libAccountId || '').trim();
+  const chosen = enabled.find(a => String(a.id || '') === remembered)
+    || enabled.find(a => String(a.id || '') === current)
+    || enabled.find(a => a.is_default)
+    || enabled[0]
+    || null;
+  return String(chosen?.id || remembered || current || '').trim();
+}
+
+async function _ensureEmailAccountsForPrewarm({ signal, generation } = {}) {
+  if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+  const accountsFresh = _libAccountsLoadedAt && (Date.now() - _libAccountsLoadedAt) < _LIB_ACCOUNTS_TTL_MS;
+  if (!(Array.isArray(state._libAccounts) && state._libAccounts.length && accountsFresh)) {
+    try {
+      const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, {
+        credentials: 'same-origin',
+        signal,
+      });
+      if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+      if (accountsRes.ok) {
+        const accountsData = await accountsRes.json().catch(() => ({}));
+        if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+        if (Array.isArray(accountsData.accounts)) {
+          state._libAccounts = accountsData.accounts;
+          _libAccountsLoadedAt = Date.now();
+        }
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return null;
+    }
+  }
+
+  const accountId = _chooseEmailPrewarmAccountId(state._libAccounts);
+  if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+  if (accountId && state._libAccountId !== accountId) {
+    state._libAccountId = accountId;
+    _publishActiveAccount();
+  }
+  return accountId;
+}
+
+export function prewarmUnreadEmails({ limit = 8, maxUid = 0 } = {}) {
+  return _scheduleEmailPrewarm(
+    context => _prewarmUnreadEmailsNow({ limit, maxUid }, context),
+    { delay: 0 }
+  );
+}
+
+async function _prewarmUnreadEmailsNow({ limit = 8, maxUid = 0 } = {}, { signal, generation } = {}) {
+  if (!_isEmailPrewarmCurrent(generation, signal)) return false;
+  const accountId = await _ensureEmailAccountsForPrewarm({ signal, generation });
+  if (accountId === null || !_isEmailPrewarmCurrent(generation, signal)) return false;
   const n = Math.max(1, Math.min(20, Number(limit) || 8));
   const key = `${accountId}|${maxUid || 0}|${n}`;
-  if (_libUnreadPrewarmKey === key && (Date.now() - _libUnreadPrewarmAt) < 60 * 1000) return;
-  _libUnreadPrewarmKey = key;
-  _libUnreadPrewarmAt = Date.now();
+  if (_libUnreadPrewarmKey === key && (Date.now() - _libUnreadPrewarmAt) < 60 * 1000) return true;
   try {
     const folder = 'INBOX';
-	    const res = await fetch(emailApiUrl('/api/email/list', {
-	      folder,
-	      limit: n,
-	      offset: 0,
-	      filter: 'unread',
-	      account_id: accountId || undefined,
-	    }), { credentials: 'same-origin' });
-	    if (state._libOpen) return;
-	    if (!res.ok) return;
+    const res = await fetch(emailApiUrl('/api/email/list', {
+      folder,
+      limit: n,
+      offset: 0,
+      filter: 'unread',
+      account_id: accountId || undefined,
+    }), {
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!_isEmailPrewarmCurrent(generation, signal) || !res.ok) return false;
     const data = await res.json().catch(() => null);
-    if (!data || data.error || !Array.isArray(data.emails) || !data.emails.length) return;
+    if (!_isEmailPrewarmCurrent(generation, signal)) return false;
+    if (!data || data.error || !Array.isArray(data.emails) || !data.emails.length) return false;
     const sync = data.sync || {};
     _libCachePut(_libCacheKeyFor(accountId, folder, 'unread', false), {
       emails: data.emails,
       total: data.total || data.emails.length,
       sync,
     });
-  } catch (_) {}
+    _libUnreadPrewarmKey = key;
+    _libUnreadPrewarmAt = Date.now();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
-function _sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function _prewarmEmailViews() {
-  if (state._libOpen) return;
-  _libLastPrewarmAt = Date.now();
+async function _prewarmEmailViews({ signal, generation } = {}) {
+  if (!_isEmailPrewarmCurrent(generation, signal)) return false;
   _setEmailSyncStatus({ warming: true });
   const folder = 'INBOX';
   const filter = 'all';
-
-  // The accounts request is cheap and warms the account strip for first open.
-  // Then folder/list requests warm both the client cache and the backend
-  // IMAP/read caches. Failure stays silent: no configured mail should not nag.
   try {
-    const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
-    if (accountsRes.ok) {
-      const accountsData = await accountsRes.json().catch(() => ({}));
-      if (Array.isArray(accountsData.accounts)) {
-        state._libAccounts = accountsData.accounts;
-        _libAccountsLoadedAt = Date.now();
-      }
+    const accountId = await _ensureEmailAccountsForPrewarm({ signal, generation });
+    if (accountId === null || !_isEmailPrewarmCurrent(generation, signal)) return false;
+    const ck = _libCacheKeyFor(accountId, folder, filter, false);
+    if (_libCacheGet(ck)) {
+      _libLastPrewarmAt = Date.now();
+      return true;
     }
-  } catch (_) {}
 
-  const accounts = Array.isArray(state._libAccounts) ? state._libAccounts.filter(a => a && a.enabled !== false) : [];
-  const preferred = state._libAccountId
-    || (accounts.find(a => a.is_default)?.id)
-    || (accounts[0]?.id)
-    || '';
-  if (!state._libAccountId && preferred) {
-    state._libAccountId = preferred;
-    _publishActiveAccount();
-  }
-  const orderedAccountIds = [
-    preferred,
-    ...accounts.map(a => a.id).filter(id => id && id !== preferred),
-  ].filter((id, idx, arr) => arr.indexOf(id) === idx);
-  if (!orderedAccountIds.length) orderedAccountIds.push('');
-
-  try {
-    for (const accountId of orderedAccountIds.slice(0, 4)) {
-      if (state._libOpen) return;
-      const ck = _libCacheKeyFor(accountId, folder, filter, false);
-      if (_libCacheGet(ck)) continue;
-      await fetch(emailApiUrl('/api/email/folders', { account_id: accountId || undefined }), { credentials: 'same-origin' }).catch(() => null);
-      await fetch(emailApiUrl('/api/email/unread-state', { folder, account_id: accountId || undefined }), { credentials: 'same-origin' }).catch(() => null);
-      const res = await fetch(emailApiUrl('/api/email/list', {
-        folder,
-        limit: 100,
-        offset: 0,
-        filter,
-        account_id: accountId || undefined,
-      }), {
-        credentials: 'same-origin',
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && !data.error) {
-          const sync = data.sync || {};
-          _libCachePut(ck, {
-            emails: data.emails || [],
-            total: data.total || 0,
-            sync,
-          });
-          _setEmailSyncStatus({
-            updatedAt: sync.updated_at || new Date().toISOString(),
-            source: sync.source || '',
-            warming: true,
-          });
-        }
-      }
-      await _sleep(900);
-    }
+    // One optional first-page request only. Folder metadata, unread state, and
+    // other accounts remain demand-driven so startup cannot fan out into IMAP.
+    const res = await fetch(emailApiUrl('/api/email/list', {
+      folder,
+      limit: _LIB_INITIAL_PAGE_SIZE,
+      offset: 0,
+      filter,
+      account_id: accountId || undefined,
+    }), {
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!_isEmailPrewarmCurrent(generation, signal) || !res.ok) return false;
+    const data = await res.json().catch(() => null);
+    if (!_isEmailPrewarmCurrent(generation, signal)) return false;
+    if (!data || data.error || !Array.isArray(data.emails)) return false;
+    const sync = data.sync || {};
+    _libCachePut(ck, {
+      emails: data.emails,
+      total: data.total || 0,
+      sync,
+    });
+    _libLastPrewarmAt = Date.now();
+    _setEmailSyncStatus({
+      updatedAt: sync.updated_at || new Date().toISOString(),
+      source: sync.source || '',
+      warming: true,
+    });
+    return true;
+  } catch (_) {
+    return false;
   } finally {
     _setEmailSyncStatus({ warming: false });
   }
@@ -2292,10 +2379,10 @@ export function initEmailLibrary(config) {
 export function isOpen() { return state._libOpen; }
 
 export function openEmailLibrary(opts = {}) {
-  if (_libPrewarmTimer) {
-    clearTimeout(_libPrewarmTimer);
-    _libPrewarmTimer = null;
-  }
+  // Foreground email always wins: cancel a delayed/idle callback and abort the
+  // one optional request if it has already started. Generation checks make a
+  // non-abortable response harmless if it races this transition.
+  _cancelEmailPrewarm();
   // Force-clean any stale state from previous attempts
   const existing = document.getElementById('email-lib-modal');
   if (existing) existing.remove();
@@ -4554,7 +4641,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 450);
         try {
-          const fastRes = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}&cached_only=1`, {
+          const fastRes = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=${_LIB_INITIAL_PAGE_SIZE}&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}&cached_only=1`, {
             signal: ctrl.signal,
           });
           const fastData = await fastRes.json().catch(() => null);
@@ -4581,7 +4668,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       // opens omit it so rapid close/reopen returns instantly; the
       // Refresh button passes `force: true` to add it back.
       const buster = force ? `&_=${Date.now()}` : '';
-      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
+      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=${_LIB_INITIAL_PAGE_SIZE}&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
       const data = await res.json();
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
       if (data.error) throw new Error(data.error);
