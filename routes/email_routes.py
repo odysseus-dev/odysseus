@@ -2876,7 +2876,12 @@ def setup_email_routes():
         _t_fetch = 0.0
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                # A foreground open owns both the body fetch and the \Seen
+                # transition. Keep them on one read-write IMAP selection so the
+                # route never schedules a second connection that can race the
+                # response. Prefetch/read-only callers retain BODY.PEEK and a
+                # read-only mailbox selection.
+                conn.select(_q(folder), readonly=not mark_seen)
                 _t_select = _t.monotonic() - _t0
                 fetch_query = "(BODY.PEEK[])" if full else f"(BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.{preview_bytes}>)"
                 status, msg_data = _imap_uid_fetch(conn, uid, fetch_query)
@@ -2902,22 +2907,36 @@ def setup_email_routes():
                         header_part = msg_data[0][1] or b""
                     raw = header_part + b"\r\n" + text_part
 
-            msg = email_mod.message_from_bytes(raw)
+                # Parse the fetched payload before mutating provider state. If
+                # the message is malformed enough that the reader cannot build
+                # a response, the caller gets an error while the message stays
+                # unread instead of receiving a false optimistic rollback.
+                msg = email_mod.message_from_bytes(raw)
 
-            subject = _decode_header(msg.get("Subject", "(no subject)"))
-            sender = _decode_header(msg.get("From", "unknown"))
-            to = _decode_header(msg.get("To", ""))
-            cc = _decode_header(msg.get("Cc", ""))
-            date_str = msg.get("Date", "")
-            message_id = msg.get("Message-ID", "")
-            in_reply_to = msg.get("In-Reply-To", "")
-            references = msg.get("References", "")
-            body = _extract_text(msg)
-            body_html = _extract_html(msg)
+                subject = _decode_header(msg.get("Subject", "(no subject)"))
+                sender = _decode_header(msg.get("From", "unknown"))
+                to = _decode_header(msg.get("To", ""))
+                cc = _decode_header(msg.get("Cc", ""))
+                date_str = msg.get("Date", "")
+                message_id = msg.get("Message-ID", "")
+                in_reply_to = msg.get("In-Reply-To", "")
+                references = msg.get("References", "")
+                body = _extract_text(msg)
+                body_html = _extract_html(msg)
 
-            sender_name, sender_addr = email.utils.parseaddr(sender)
-            parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
-            attachments = _list_attachments_from_msg(msg) if full else (_email_attachment_meta_cache_get(owner, account_id, folder, uid) or [])
+                sender_name, sender_addr = email.utils.parseaddr(sender)
+                parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
+                attachments = _list_attachments_from_msg(msg) if full else (_email_attachment_meta_cache_get(owner, account_id, folder, uid) or [])
+
+                if mark_seen:
+                    seen_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                    if seen_status != "OK":
+                        raise RuntimeError(f"IMAP STORE \\Seen failed for UID {uid}")
+
+            if mark_seen:
+                _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
+                _update_list_cache_seen(account_id, folder, uid, True)
+
             related_attachments = []
             if full and not _has_visible_attachments(msg):
                 related_attachments = _related_thread_attachments_sync(
@@ -3044,14 +3063,19 @@ def setup_email_routes():
             return {"error": "Mail operation failed"}
 
     def _mark_email_seen_sync(uid, folder, account_id, owner):
+        """Synchronously mark a cached email seen and report success."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                conn.select(_q(folder), readonly=False)
+                status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                if status != "OK":
+                    return False
             _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
             _update_list_cache_seen(account_id, folder, uid, True)
+            return True
         except Exception as e:
-            logger.debug(f"mark-seen after cached read failed uid={uid}: {e}")
+            logger.warning(f"mark-seen after cached read failed uid={uid}: {e}")
+            return False
 
     @router.get("/read/{uid}")
     async def read_email_by_uid(
@@ -3077,32 +3101,25 @@ def setup_email_routes():
             if cached.get("attachment_version") != EMAIL_READ_ATTACHMENT_VERSION:
                 cached = None
         if cached is not None:
-            if mark_seen:
-                try:
-                    _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
-                except RuntimeError:
-                    pass
+            if mark_seen and not await _asyncio.to_thread(
+                _mark_email_seen_sync, uid, folder, account_id, owner
+            ):
+                return {"error": "Failed to mark email read"}
             return cached
         if not full:
             persisted = _email_preview_cache_get(owner, account_id, folder, uid)
             if persisted and persisted.get("attachment_version") == EMAIL_READ_ATTACHMENT_VERSION:
                 _read_cache_put(ck, persisted)
-                if mark_seen:
-                    try:
-                        _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
-                    except RuntimeError:
-                        pass
+                if mark_seen and not await _asyncio.to_thread(
+                    _mark_email_seen_sync, uid, folder, account_id, owner
+                ):
+                    return {"error": "Failed to mark email read"}
                 return persisted
         result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, mark_seen, full)
         if result and not result.get("error"):
             _read_cache_put(ck, result)
             if not full:
                 _email_preview_cache_put(owner, account_id, folder, uid, result)
-            if mark_seen:
-                try:
-                    _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
-                except RuntimeError:
-                    pass
         return result
 
     def _schedule_recent_email_warm(emails: list, folder: str, account_id: str | None, owner: str):
