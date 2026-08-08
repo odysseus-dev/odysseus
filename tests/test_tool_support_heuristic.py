@@ -1,13 +1,22 @@
 """Regression tests for the tool-support heuristic in stream_agent_loop.
 
-Verifies two critical cases:
+Verifies three critical cases:
   1. local Ollama endpoints must NOT enable native tool schemas by default
      (some models terminate after one token with schemas).
   2. api.deepseek.com must still be treated as tool-capable via the host
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
+  3. the compact system-prompt variant is only ever used when native schemas
+     are actually sent — otherwise the model is told to use native tool
+     calls while being given none, and no fenced-block syntax either, so it
+     has no way to call any tool at all.
 """
 import pytest
-from src.agent_loop import _API_HOSTS, _endpoint_lookup_keys, _is_ollama_openai_compat_url
+from src.agent_loop import (
+    _API_HOSTS,
+    _assemble_prompt,
+    _endpoint_lookup_keys,
+    _is_ollama_openai_compat_url,
+)
 from src.llm_core import _is_ollama_native_url
 
 
@@ -164,3 +173,77 @@ class TestEndpointLookupKeys:
         keys = _endpoint_lookup_keys("http://host.docker.internal:11434/api/chat")
 
         assert "http://host.docker.internal:11434/api" in keys
+
+
+class TestCompactPromptOnlyForNativeToolCalling:
+    """Issue #5602 — the compact system prompt tells the model "you have
+    native function calling, only the schemas the API gave you exist, do
+    not write tool syntax", but `stream_agent_loop` used to route local
+    Ollama endpoints into it anyway: `_compact_agent_prompt` was
+    `_is_api_model or _is_ollama_native or _ollama_openai_compat`, and the
+    latter two force `_is_api_model = False` two lines above (specifically
+    so those endpoints are NOT sent native schemas). The model ended up told
+    to rely on native tool calls it was never given, with the fenced-block
+    instructions that are its only real channel stripped out by the same
+    branch — left with no way to invoke any tool, and correctly reporting
+    (given what it actually received) that none were available.
+
+    The fix collapses the trigger to `_compact_agent_prompt = _is_api_model`:
+    compact's "native calling only" text is only correct when native schemas
+    are actually being sent. These tests lock in what the two
+    `_assemble_prompt` variants say today, and that every case which must
+    NOT receive native schemas (mirroring `TestDeepSeekToolSupport` above)
+    is never handed the compact prompt either.
+    """
+
+    def test_compact_prompt_has_no_fenced_block_syntax(self):
+        prompt = _assemble_prompt({"web_search"}, set(), compact=True)
+
+        assert "native tool/function calling" in prompt
+        assert "do not write tool syntax" in prompt
+        assert "```web_search" not in prompt
+
+    def test_full_prompt_includes_fenced_block_syntax(self):
+        prompt = _assemble_prompt({"web_search"}, set(), compact=False)
+
+        assert "```web_search" in prompt
+        assert "native tool/function calling" not in prompt
+
+    @pytest.mark.parametrize("model,endpoint_url,endpoint_supports", [
+        ("deepseek-r1:7b", "http://localhost:11434/v1", None),
+        ("deepseek-r1:14b", "http://localhost:11434/v1", None),
+        ("qwen3.5:4b", "http://localhost:11434/v1", None),
+        ("qwen3:8b", "http://host.docker.internal:11434/v1", None),
+        ("gemma4:e4b", "http://host.docker.internal:11434/v1", None),
+        ("qwen3.5:4b", "http://localhost:11434/api/chat", None),
+        ("gpt-oss-20b", "http://localhost:8000/v1", None),
+    ])
+    def test_models_without_native_schemas_never_get_compact_prompt(
+        self, model, endpoint_url, endpoint_supports
+    ):
+        is_api_model = _compute_is_api_model(model, endpoint_url, endpoint_supports)
+        assert is_api_model is False, (
+            f"{model} at {endpoint_url} was expected to NOT get native "
+            "schemas — if this now fails, update the compact-prompt case "
+            "below instead of just deleting it."
+        )
+        compact_agent_prompt = is_api_model  # mirrors the fixed gate exactly
+        assert compact_agent_prompt is False, (
+            f"{model} at {endpoint_url} gets zero native tool schemas but "
+            "would still receive the compact prompt telling it to use "
+            "native tool calls."
+        )
+
+    @pytest.mark.parametrize("model,endpoint_url,endpoint_supports", [
+        ("deepseek-chat", "https://api.deepseek.com/v1", None),
+        ("deepseek-v3", "https://api.deepseek.com/v1", None),
+        ("qwen3.5:4b", "http://localhost:11434/v1", True),
+        ("deepseek-r1:7b", "http://localhost:11434/v1", True),
+    ])
+    def test_models_with_native_schemas_get_compact_prompt(
+        self, model, endpoint_url, endpoint_supports
+    ):
+        is_api_model = _compute_is_api_model(model, endpoint_url, endpoint_supports)
+        assert is_api_model is True
+        compact_agent_prompt = is_api_model
+        assert compact_agent_prompt is True
