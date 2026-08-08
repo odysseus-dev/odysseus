@@ -5,10 +5,8 @@ Verifies three critical cases:
      (some models terminate after one token with schemas).
   2. api.deepseek.com must still be treated as tool-capable via the host
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
-  3. the compact system-prompt variant is only ever used when native schemas
-     are actually sent — otherwise the model is told to use native tool
-     calls while being given none, and no fenced-block syntax either, so it
-     has no way to call any tool at all.
+  3. the compact ("native tool calling only") system prompt is only used
+     when native schemas are actually sent.
 """
 import pytest
 from src.agent_loop import (
@@ -176,24 +174,10 @@ class TestEndpointLookupKeys:
 
 
 class TestCompactPromptOnlyForNativeToolCalling:
-    """Issue #5602 — the compact system prompt tells the model "you have
-    native function calling, only the schemas the API gave you exist, do
-    not write tool syntax", but `stream_agent_loop` used to route local
-    Ollama endpoints into it anyway: `_compact_agent_prompt` was
-    `_is_api_model or _is_ollama_native or _ollama_openai_compat`, and the
-    latter two force `_is_api_model = False` two lines above (specifically
-    so those endpoints are NOT sent native schemas). The model ended up told
-    to rely on native tool calls it was never given, with the fenced-block
-    instructions that are its only real channel stripped out by the same
-    branch — left with no way to invoke any tool, and correctly reporting
-    (given what it actually received) that none were available.
-
-    The fix collapses the trigger to `_compact_agent_prompt = _is_api_model`:
-    compact's "native calling only" text is only correct when native schemas
-    are actually being sent. These tests lock in what the two
-    `_assemble_prompt` variants say today, and that every case which must
-    NOT receive native schemas (mirroring `TestDeepSeekToolSupport` above)
-    is never handed the compact prompt either.
+    """Issue #5602 — local Ollama endpoints (`_is_api_model = False`, so no
+    native schemas are sent) used to still get routed into the compact
+    "use native tool calls" prompt, leaving them no way to call anything.
+    Fix: `_compact_agent_prompt = _is_api_model`.
     """
 
     def test_compact_prompt_has_no_fenced_block_syntax(self):
@@ -222,17 +206,9 @@ class TestCompactPromptOnlyForNativeToolCalling:
         self, model, endpoint_url, endpoint_supports
     ):
         is_api_model = _compute_is_api_model(model, endpoint_url, endpoint_supports)
-        assert is_api_model is False, (
-            f"{model} at {endpoint_url} was expected to NOT get native "
-            "schemas — if this now fails, update the compact-prompt case "
-            "below instead of just deleting it."
-        )
-        compact_agent_prompt = is_api_model  # mirrors the fixed gate exactly
-        assert compact_agent_prompt is False, (
-            f"{model} at {endpoint_url} gets zero native tool schemas but "
-            "would still receive the compact prompt telling it to use "
-            "native tool calls."
-        )
+        assert is_api_model is False
+        compact_agent_prompt = is_api_model  # mirrors the fixed gate
+        assert compact_agent_prompt is False, f"{model} at {endpoint_url} got the compact prompt with no schemas"
 
     @pytest.mark.parametrize("model,endpoint_url,endpoint_supports", [
         ("deepseek-chat", "https://api.deepseek.com/v1", None),
