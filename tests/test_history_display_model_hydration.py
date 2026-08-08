@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 from sqlalchemy import create_engine, event
@@ -16,6 +16,7 @@ from core.models import ChatMessage, Session
 from core.session_manager import SessionManager
 from routes import chat_routes
 from routes.history import history_routes
+from routes import session_routes
 from src.request_models import ChatRequest
 
 
@@ -133,6 +134,43 @@ def test_paginated_history_reads_only_count_and_requested_page(monkeypatch):
     chat_selects = _chat_message_selects(statements)
     assert len(chat_selects) == 2, chat_selects
     assert sum("count(" in statement for statement in chat_selects) == 1
+
+
+def test_production_router_order_reaches_bounded_canonical_history(monkeypatch):
+    """The assembled app must not shadow canonical history with session routes."""
+    engine, db_factory = _database()
+    _seed_session(db_factory, message_count=1200)
+
+    class DisplayOnlyManager:
+        def get_session(self, _session_id):
+            raise AssertionError("bounded initial history must not hydrate all messages")
+
+    manager = DisplayOnlyManager()
+    monkeypatch.setattr(
+        session_routes,
+        "router",
+        APIRouter(prefix="/api", tags=["sessions"]),
+    )
+    monkeypatch.setattr(history_routes, "SessionLocal", db_factory)
+    monkeypatch.setattr(history_routes, "_verify_session_owner", lambda *_args: None)
+
+    app = FastAPI()
+    app.include_router(session_routes.setup_session_routes(manager, {}))
+    app.include_router(history_routes.setup_history_routes(manager))
+
+    try:
+        response = TestClient(app).get("/api/history/session-1?limit=24")
+    finally:
+        engine.dispose()
+
+    assert response.status_code == 200
+    assert response.request.url.params["limit"] == "24"
+    payload = response.json()
+    displayed = len(payload["history"])
+    assert 0 < displayed <= payload["limit"] <= 100
+    assert payload["total"] >= 1200
+    assert payload["has_more_before"] is True
+    assert displayed < payload["total"]
 
 
 def test_incomplete_cached_history_hydrates_once_for_model_context(monkeypatch):
