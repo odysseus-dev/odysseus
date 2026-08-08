@@ -23,49 +23,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
-
-/* LIVE_THINKING_THROTTLE_START */
-function _createLiveThinkingThrottle(commit, {
-  delay = 100,
-  schedule = (callback, ms) => setTimeout(callback, ms),
-  cancel = (timer) => clearTimeout(timer),
-} = {}) {
-  let timer = null;
-  let latest = '';
-  let dirty = false;
-
-  const commitLatest = () => {
-    timer = null;
-    if (!dirty) return false;
-    dirty = false;
-    commit(latest);
-    return true;
-  };
-
-  return {
-    update(value) {
-      latest = String(value ?? '');
-      dirty = true;
-      if (timer === null) timer = schedule(commitLatest, delay);
-    },
-    flush() {
-      if (timer !== null) {
-        cancel(timer);
-        timer = null;
-      }
-      return commitLatest();
-    },
-    cancel() {
-      if (timer !== null) cancel(timer);
-      timer = null;
-      dirty = false;
-    },
-    latest() {
-      return latest;
-    },
-  };
-}
-/* LIVE_THINKING_THROTTLE_END */
+import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -2132,24 +2090,36 @@ function _createLiveThinkingThrottle(commit, {
         return time && tokens ? time + ' · ' + tokens : (time || tokens);
       }
 
-      function _extractLiveThinkingText(text, preferComplete = false) {
-        const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
-        if (preferComplete && markdownModule.extractThinkingBlocks) {
-          const extracted = markdownModule.extractThinkingBlocks(normalized);
-          if (extracted?.thinkingBlocks?.length) {
-            return extracted.thinkingBlocks[extracted.thinkingBlocks.length - 1];
-          }
-        }
-        let raw = normalized;
-        const open = /<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/i.exec(raw);
-        if (open) raw = raw.slice(open.index + open[0].length);
-        const closeAt = raw.search(/<\/(?:think(?:ing)?|thought)>/i);
-        if (closeAt >= 0) raw = raw.slice(0, closeAt);
-        return raw
+      function _stripThinkingWrappers(text) {
+        return text
           .replace(/<\|channel>thought\s*\n?/gi, '')
           .replace(/<\|channel>response\s*\n?/gi, '')
           .replace(/<channel\|>/gi, '')
           .replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+      }
+
+      // While thinking is still open, every think tag in the round is noise, so
+      // strip them all. Do NOT slice from the first <think> to the first </think>:
+      // the false-close detection below deliberately keeps us in the thinking
+      // state for `<think>The</think>` followed by real thinking left untagged,
+      // and slicing would pin the live box to "The" for the rest of the stream.
+      function _liveThinkingText(text) {
+        const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
+        return _stripThinkingWrappers(
+          normalized.replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
+        );
+      }
+
+      // Once thinking has closed, the reply that follows </think> must not leak
+      // into the thinking box, so go through extractThinkingBlocks — it already
+      // collapses the false-close pattern and merges every block into one.
+      function _closedThinkingText(text) {
+        const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
+        const blocks = markdownModule.extractThinkingBlocks
+          ? markdownModule.extractThinkingBlocks(normalized)?.thinkingBlocks
+          : null;
+        if (blocks?.length) return _stripThinkingWrappers(blocks.join('\n\n'));
+        return _liveThinkingText(text);
       }
 
       function _commitLiveThinkingText(text) {
@@ -2167,7 +2137,7 @@ function _createLiveThinkingThrottle(commit, {
 
       function _ensureLiveThinkingThrottle() {
         if (!_liveThinkRenderThrottle) {
-          _liveThinkRenderThrottle = _createLiveThinkingThrottle(_commitLiveThinkingText, { delay: 100 });
+          _liveThinkRenderThrottle = createLiveThinkingThrottle(_commitLiveThinkingText);
         }
         return _liveThinkRenderThrottle;
       }
@@ -2220,12 +2190,29 @@ function _createLiveThinkingThrottle(commit, {
         return finalText;
       }
 
-      function _closeOpenThinkingMarkup() {
+      // Close the synthetic <think> we opened around vLLM reasoning deltas, so a
+      // stream that ends mid-thinking doesn't persist an unclosed tag.
+      // `currentAccumulated` is the FOREGROUND stop-state text — mirror the guard
+      // the delta path uses (`if (!_isBg) currentAccumulated = accumulated`), or a
+      // backgrounded stream overwrites the visible session's stop-state and
+      // abortCurrentRequest/detachCurrentStream write it into the wrong bubble.
+      function _closeOpenThinkingMarkup(isBackground) {
         if (!_thinkOpen) return;
         accumulated += '</think>';
         roundText += '</think>';
-        currentAccumulated = accumulated;
+        if (!isBackground) currentAccumulated = accumulated;
         _thinkOpen = false;
+      }
+
+      // Shared teardown for the terminal paths that end thinking without the
+      // normal </think> transition (tool_start, agent_step, [DONE], errors).
+      function _endLiveThinkingSection() {
+        isThinking = false;
+        _finalizeLiveThinking(_closedThinkingText(roundText), true);
+        const elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
+        if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
+        if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = elapsed ? _formatThinkStats(elapsed, _liveThinkTokenCount) : '';
+        if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
       }
 
       function _replyAfterClosedThinking(text) {
@@ -2369,7 +2356,9 @@ function _createLiveThinkingThrottle(commit, {
 
             // On first transition to background, store state in map
             if (_isBg && !_backgroundStreams.has(streamSessionId)) {
-              _flushLiveThinking({ rich: false });
+              // Leave the block in its finished shape (rich, no pre-wrap) rather
+              // than frozen as plain text — the user may navigate back to it.
+              _flushLiveThinking({ rich: true });
               _cancelLiveThinkingWork();
               _backgroundStreams.set(streamSessionId, {
                 status: 'running',
@@ -2387,7 +2376,7 @@ function _createLiveThinkingThrottle(commit, {
 
             if (data === '[DONE]') {
               _streamSawDone = true;
-              _closeOpenThinkingMarkup();
+              _closeOpenThinkingMarkup(_isBg);
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone && !_isBg) {
@@ -2418,7 +2407,7 @@ function _createLiveThinkingThrottle(commit, {
               // Force-close thinking if still open (model never output boundary)
               if (isThinking) {
                 isThinking = false;
-                _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
+                _finalizeLiveThinking(_closedThinkingText(roundText), true);
                 var _elapsedDone = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                 if (_elapsedDone) {
                   accumulated = accumulated.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
@@ -2636,7 +2625,7 @@ function _createLiveThinkingThrottle(commit, {
                   _liveThinkToggle = thinkContent.querySelector('.live-think-toggle');
                   _liveThinkLatestText = '';
                   _cancelLiveThinkingWork();
-                  _queueLiveThinking(_extractLiveThinkingText(roundText));
+                  _queueLiveThinking(_liveThinkingText(roundText));
                   // Whirlpool spinner
                   if (_liveThinkSpinnerSlot) {
                     var _wp = spinnerModule.createWhirlpool(12);
@@ -2647,11 +2636,11 @@ function _createLiveThinkingThrottle(commit, {
                     _liveThinkSpinnerSlot.appendChild(_wp.element);
                   }
                 } else if (hasUnclosedThink && isThinking) {
-                  _queueLiveThinking(_extractLiveThinkingText(roundText));
+                  _queueLiveThinking(_liveThinkingText(roundText));
                   continue;
                 } else if (!hasUnclosedThink && isThinking) {
                   isThinking = false;
-                  const _closedThinkText = _extractLiveThinkingText(roundText, true);
+                  const _closedThinkText = _closedThinkingText(roundText);
                   var _thinkTextLen = _closedThinkText.trim().length;
                   _finalizeLiveThinking(_closedThinkText, _thinkTextLen >= 20);
 
@@ -3092,18 +3081,13 @@ function _createLiveThinkingThrottle(commit, {
                 if (holder && json.id) holder.dataset.dbId = json.id;
 
               } else if (json.type === 'tool_start') {
-                _closeOpenThinkingMarkup();
+                _closeOpenThinkingMarkup(_isBg);
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
                 if (isThinking) {
-                  isThinking = false;
-                  _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
-                  var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
-                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
-                  if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+                  _endLiveThinkingSection();
                   // Assign stable IDs
                   var _thinkId2 = 'think-' + Date.now();
                   var _liveHdr2 = _liveThinkSection && _liveThinkSection.querySelector('.thinking-header');
@@ -3444,17 +3428,12 @@ function _createLiveThinkingThrottle(commit, {
                 if (_pu) _setStoredPlan(_pu);
 
               } else if (json.type === 'agent_step') {
-                _closeOpenThinkingMarkup();
+                _closeOpenThinkingMarkup(_isBg);
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 if (isThinking) {
-                  isThinking = false;
-                  _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
-                  var _elapsedStep = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
-                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsedStep ? _formatThinkStats(_elapsedStep, _liveThinkTokenCount) : '';
-                  if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+                  _endLiveThinkingSection();
                 } else {
                   _cancelLiveThinkingWork();
                 }
@@ -3870,10 +3849,14 @@ function _createLiveThinkingThrottle(commit, {
       } // end if (!_isBgFinal)
 
     } catch (err) {
-      _closeOpenThinkingMarkup();
+      // Check if this stream was running in background — needed before any
+      // stop-state write, so an errored background stream can't clobber the
+      // foreground session's text.
+      const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
+      _closeOpenThinkingMarkup(_isBgCatch);
       if (isThinking) {
         isThinking = false;
-        _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
+        _finalizeLiveThinking(_closedThinkingText(roundText), true);
       } else {
         _cancelLiveThinkingWork();
       }
@@ -3883,8 +3866,6 @@ function _createLiveThinkingThrottle(commit, {
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
-      // Check if this stream was running in background
-      const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
 
       if (_isBgCatch) {
         // Error happened while backgrounded — update map, don't touch DOM

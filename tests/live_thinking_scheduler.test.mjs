@@ -1,16 +1,16 @@
+// Tests for the live-thinking throttle that bounds DOM work during long
+// reasoning streams (see static/js/liveThinkingThrottle.js).
+//
+// The throttle's contract is what the terminal paths in chat.js lean on:
+// a burst of deltas becomes ONE commit carrying the latest text; flush()
+// lands trailing text synchronously and cannot double-commit; cancel()
+// guarantees nothing lands after a stream is finished or backgrounded.
+//
+// Timers are injected, so this runs with no DOM and no real clock.
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import test from 'node:test';
-import vm from 'node:vm';
 
-const source = fs.readFileSync(new URL('../static/js/chat.js', import.meta.url), 'utf8');
-const start = source.indexOf('/* LIVE_THINKING_THROTTLE_START */');
-const end = source.indexOf('/* LIVE_THINKING_THROTTLE_END */');
-assert.ok(start >= 0 && end > start, 'live-thinking throttle markers must exist');
-const helperSource = source.slice(start, end) + '\nglobalThis.createThrottle = _createLiveThinkingThrottle;';
-const sandbox = {};
-vm.runInNewContext(helperSource, sandbox);
-const createThrottle = sandbox.createThrottle;
+import { createLiveThinkingThrottle } from '../static/js/liveThinkingThrottle.js';
 
 function fakeTimers() {
   let nextId = 1;
@@ -42,23 +42,42 @@ function fakeTimers() {
 test('coalesces a burst and commits only the latest text after 100 ms', () => {
   const timers = fakeTimers();
   const commits = [];
-  const throttle = createThrottle((value) => commits.push(value), timers);
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), timers);
 
   throttle.update('a');
   throttle.update('ab');
   throttle.update('abc');
 
   assert.deepEqual(commits, []);
-  assert.deepEqual(timers.delays, [100]);
+  assert.deepEqual(timers.delays, [100], 'a burst must schedule exactly one commit');
   const [timer] = timers.pendingIds();
   timers.run(timer);
   assert.deepEqual(commits, ['abc']);
 });
 
+test('commit count stays flat as the stream grows', () => {
+  const timers = fakeTimers();
+  const commits = [];
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), timers);
+
+  // 500 deltas arriving inside one window is the regression this guards:
+  // the old code committed once per delta, so work grew with stream length.
+  let text = '';
+  for (let i = 0; i < 500; i++) {
+    text += 'token ';
+    throttle.update(text);
+  }
+  assert.deepEqual(commits, []);
+  assert.equal(timers.pendingIds().length, 1);
+  timers.run(timers.pendingIds()[0]);
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0], text);
+});
+
 test('flush synchronously preserves trailing text and cancels the pending callback', () => {
   const timers = fakeTimers();
   const commits = [];
-  const throttle = createThrottle((value) => commits.push(value), timers);
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), timers);
 
   throttle.update('trailing text');
   assert.equal(throttle.flush(), true);
@@ -70,10 +89,32 @@ test('flush synchronously preserves trailing text and cancels the pending callba
 test('cancel discards pending work without a late DOM commit', () => {
   const timers = fakeTimers();
   const commits = [];
-  const throttle = createThrottle((value) => commits.push(value), timers);
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), timers);
 
   throttle.update('stale session text');
   throttle.cancel();
   assert.deepEqual(timers.pendingIds(), []);
   assert.deepEqual(commits, []);
+});
+
+test('a cancelled throttle accepts new work again', () => {
+  const timers = fakeTimers();
+  const commits = [];
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), timers);
+
+  throttle.update('discarded');
+  throttle.cancel();
+  throttle.update('fresh');
+  assert.equal(throttle.flush(), true);
+  assert.deepEqual(commits, ['fresh']);
+});
+
+test('coerces nullish updates instead of committing undefined', () => {
+  const timers = fakeTimers();
+  const commits = [];
+  const throttle = createLiveThinkingThrottle((value) => commits.push(value), timers);
+
+  throttle.update(null);
+  throttle.flush();
+  assert.deepEqual(commits, ['']);
 });
