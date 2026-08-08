@@ -1373,6 +1373,13 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
     let _removeThinkingSpinner = () => {};
     let _flushLiveThinking = () => '';
     let _cancelLiveThinkingWork = () => {};
+    // Declared out here, not inside the try: in an ES module a function declared
+    // in the try block is scoped to that block, so `catch` (a sibling scope)
+    // cannot see it. Calling one from catch throws ReferenceError and kills the
+    // rest of the error path — the stream never finalizes and the partial
+    // message is lost. Assigned below, alongside the two helpers above.
+    let _closeOpenThinkingMarkup = () => {};
+    let _endThinkingOnTerminalPath = () => {};
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
@@ -2196,13 +2203,24 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
       // the delta path uses (`if (!_isBg) currentAccumulated = accumulated`), or a
       // backgrounded stream overwrites the visible session's stop-state and
       // abortCurrentRequest/detachCurrentStream write it into the wrong bubble.
-      function _closeOpenThinkingMarkup(isBackground) {
+      _closeOpenThinkingMarkup = (isBackground) => {
         if (!_thinkOpen) return;
         accumulated += '</think>';
         roundText += '</think>';
         if (!isBackground) currentAccumulated = accumulated;
         _thinkOpen = false;
-      }
+      };
+
+      // Terminal finalize used by the catch path, which cannot see the
+      // block-scoped helpers below.
+      _endThinkingOnTerminalPath = () => {
+        if (isThinking) {
+          isThinking = false;
+          _finalizeLiveThinking(_closedThinkingText(roundText), true);
+        } else {
+          _cancelLiveThinkingWork();
+        }
+      };
 
       // Shared teardown for the terminal paths that end thinking without the
       // normal </think> transition (tool_start, agent_step, [DONE], errors).
@@ -3854,12 +3872,7 @@ import { createLiveThinkingThrottle } from './liveThinkingThrottle.js';
       // foreground session's text.
       const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       _closeOpenThinkingMarkup(_isBgCatch);
-      if (isThinking) {
-        isThinking = false;
-        _finalizeLiveThinking(_closedThinkingText(roundText), true);
-      } else {
-        _cancelLiveThinkingWork();
-      }
+      _endThinkingOnTerminalPath();
       _renderStream();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
