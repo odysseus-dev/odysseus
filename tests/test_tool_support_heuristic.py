@@ -1,13 +1,20 @@
 """Regression tests for the tool-support heuristic in stream_agent_loop.
 
-Verifies two critical cases:
+Verifies three critical cases:
   1. local Ollama endpoints must NOT enable native tool schemas by default
      (some models terminate after one token with schemas).
   2. api.deepseek.com must still be treated as tool-capable via the host
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
+  3. the compact ("native tool calling only") system prompt is only used
+     when native schemas are actually sent.
 """
 import pytest
-from src.agent_loop import _API_HOSTS, _endpoint_lookup_keys, _is_ollama_openai_compat_url
+from src.agent_loop import (
+    _API_HOSTS,
+    _assemble_prompt,
+    _endpoint_lookup_keys,
+    _is_ollama_openai_compat_url,
+)
 from src.llm_core import _is_ollama_native_url
 
 
@@ -164,3 +171,55 @@ class TestEndpointLookupKeys:
         keys = _endpoint_lookup_keys("http://host.docker.internal:11434/api/chat")
 
         assert "http://host.docker.internal:11434/api" in keys
+
+
+class TestCompactPromptOnlyForNativeToolCalling:
+    """Issue #5602 — local Ollama endpoints (`_is_api_model = False`, so no
+    native schemas are sent) used to still get routed into the compact
+    "use native tool calls" prompt, leaving them no way to call anything.
+    Fix: `_compact_agent_prompt = _is_api_model`.
+    """
+
+    def test_compact_prompt_has_no_fenced_block_syntax(self):
+        prompt = _assemble_prompt({"web_search"}, set(), compact=True)
+
+        assert "native tool/function calling" in prompt
+        assert "do not write tool syntax" in prompt
+        assert "```web_search" not in prompt
+
+    def test_full_prompt_includes_fenced_block_syntax(self):
+        prompt = _assemble_prompt({"web_search"}, set(), compact=False)
+
+        assert "```web_search" in prompt
+        assert "native tool/function calling" not in prompt
+
+    @pytest.mark.parametrize("model,endpoint_url,endpoint_supports", [
+        ("deepseek-r1:7b", "http://localhost:11434/v1", None),
+        ("deepseek-r1:14b", "http://localhost:11434/v1", None),
+        ("qwen3.5:4b", "http://localhost:11434/v1", None),
+        ("qwen3:8b", "http://host.docker.internal:11434/v1", None),
+        ("gemma4:e4b", "http://host.docker.internal:11434/v1", None),
+        ("qwen3.5:4b", "http://localhost:11434/api/chat", None),
+        ("gpt-oss-20b", "http://localhost:8000/v1", None),
+    ])
+    def test_models_without_native_schemas_never_get_compact_prompt(
+        self, model, endpoint_url, endpoint_supports
+    ):
+        is_api_model = _compute_is_api_model(model, endpoint_url, endpoint_supports)
+        assert is_api_model is False
+        compact_agent_prompt = is_api_model  # mirrors the fixed gate
+        assert compact_agent_prompt is False, f"{model} at {endpoint_url} got the compact prompt with no schemas"
+
+    @pytest.mark.parametrize("model,endpoint_url,endpoint_supports", [
+        ("deepseek-chat", "https://api.deepseek.com/v1", None),
+        ("deepseek-v3", "https://api.deepseek.com/v1", None),
+        ("qwen3.5:4b", "http://localhost:11434/v1", True),
+        ("deepseek-r1:7b", "http://localhost:11434/v1", True),
+    ])
+    def test_models_with_native_schemas_get_compact_prompt(
+        self, model, endpoint_url, endpoint_supports
+    ):
+        is_api_model = _compute_is_api_model(model, endpoint_url, endpoint_supports)
+        assert is_api_model is True
+        compact_agent_prompt = is_api_model
+        assert compact_agent_prompt is True

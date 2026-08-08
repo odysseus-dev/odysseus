@@ -3670,7 +3670,11 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
+    # Only compact when native schemas are actually sent — OR'ing in the
+    # ollama flags here used to send the "use native tools" prompt to models
+    # that were just denied native tools above, leaving them no way to call
+    # anything (#5602).
+    _compact_agent_prompt = _is_api_model
     messages, mcp_schemas = _build_system_prompt(
         messages, model, _prompt_active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
