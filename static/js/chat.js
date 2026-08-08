@@ -24,6 +24,49 @@ import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
 
+/* LIVE_THINKING_THROTTLE_START */
+function _createLiveThinkingThrottle(commit, {
+  delay = 100,
+  schedule = (callback, ms) => setTimeout(callback, ms),
+  cancel = (timer) => clearTimeout(timer),
+} = {}) {
+  let timer = null;
+  let latest = '';
+  let dirty = false;
+
+  const commitLatest = () => {
+    timer = null;
+    if (!dirty) return false;
+    dirty = false;
+    commit(latest);
+    return true;
+  };
+
+  return {
+    update(value) {
+      latest = String(value ?? '');
+      dirty = true;
+      if (timer === null) timer = schedule(commitLatest, delay);
+    },
+    flush() {
+      if (timer !== null) {
+        cancel(timer);
+        timer = null;
+      }
+      return commitLatest();
+    },
+    cancel() {
+      if (timer !== null) cancel(timer);
+      timer = null;
+      dirty = false;
+    },
+    latest() {
+      return latest;
+    },
+  };
+}
+/* LIVE_THINKING_THROTTLE_END */
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -1370,6 +1413,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     let _renderStream = () => {};
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
+    let _flushLiveThinking = () => '';
+    let _cancelLiveThinkingWork = () => {};
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
@@ -2070,6 +2115,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       let _liveThinkTokenCount = 0;
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
+      let _liveThinkRenderThrottle = null;
+      let _liveThinkLatestText = '';
+      let _liveThinkTimerId = null;
+      let _liveThinkReducedMotion = false;
 
       function _estimateThinkingTokens(text) {
         const clean = (text || '').trim();
@@ -2081,6 +2130,102 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         const time = seconds ? seconds + 's' : '';
         const tokens = tokenCount ? tokenCount + ' tok' : '';
         return time && tokens ? time + ' · ' + tokens : (time || tokens);
+      }
+
+      function _extractLiveThinkingText(text, preferComplete = false) {
+        const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
+        if (preferComplete && markdownModule.extractThinkingBlocks) {
+          const extracted = markdownModule.extractThinkingBlocks(normalized);
+          if (extracted?.thinkingBlocks?.length) {
+            return extracted.thinkingBlocks[extracted.thinkingBlocks.length - 1];
+          }
+        }
+        let raw = normalized;
+        const open = /<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/i.exec(raw);
+        if (open) raw = raw.slice(open.index + open[0].length);
+        const closeAt = raw.search(/<\/(?:think(?:ing)?|thought)>/i);
+        if (closeAt >= 0) raw = raw.slice(0, closeAt);
+        return raw
+          .replace(/<\|channel>thought\s*\n?/gi, '')
+          .replace(/<\|channel>response\s*\n?/gi, '')
+          .replace(/<channel\|>/gi, '')
+          .replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+      }
+
+      function _commitLiveThinkingText(text) {
+        _liveThinkLatestText = String(text ?? '');
+        _liveThinkTokenCount = _estimateThinkingTokens(_liveThinkLatestText);
+        const target = _liveThinkInner;
+        if (!target || !target.isConnected) return;
+        const thinkBox = target.closest('.thinking-content');
+        const nearBottom = !thinkBox || thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
+        target.style.whiteSpace = 'pre-wrap';
+        target.textContent = _liveThinkLatestText;
+        if (thinkBox && nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
+        if (nearBottom) uiModule.scrollHistory();
+      }
+
+      function _ensureLiveThinkingThrottle() {
+        if (!_liveThinkRenderThrottle) {
+          _liveThinkRenderThrottle = _createLiveThinkingThrottle(_commitLiveThinkingText, { delay: 100 });
+        }
+        return _liveThinkRenderThrottle;
+      }
+
+      function _stopLiveThinkTimer() {
+        if (_liveThinkTimerId !== null) clearInterval(_liveThinkTimerId);
+        _liveThinkTimerId = null;
+      }
+
+      function _startLiveThinkTimer() {
+        if (_liveThinkTimerId !== null || !_liveThinkTimerEl) return;
+        _liveThinkReducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        const cadence = _liveThinkReducedMotion ? 1000 : 250;
+        _liveThinkTimerId = setInterval(() => {
+          if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) {
+            _stopLiveThinkTimer();
+            return;
+          }
+          const elapsed = (Date.now() - thinkingStartTime) / 1000;
+          const seconds = elapsed.toFixed(_liveThinkReducedMotion ? 0 : 1);
+          _liveThinkTimerEl.textContent = _formatThinkStats(seconds, _liveThinkTokenCount);
+        }, cadence);
+      }
+
+      function _queueLiveThinking(text) {
+        _liveThinkLatestText = String(text ?? '');
+        _ensureLiveThinkingThrottle().update(_liveThinkLatestText);
+        _startLiveThinkTimer();
+      }
+
+      _flushLiveThinking = ({ text = null, rich = false } = {}) => {
+        if (text !== null) _queueLiveThinking(text);
+        if (_liveThinkRenderThrottle) _liveThinkRenderThrottle.flush();
+        if (rich && _liveThinkInner && _liveThinkInner.isConnected) {
+          _liveThinkInner.style.whiteSpace = '';
+          _liveThinkInner.innerHTML = markdownModule.mdToHtml(_liveThinkLatestText);
+        }
+        return _liveThinkLatestText;
+      };
+
+      _cancelLiveThinkingWork = () => {
+        if (_liveThinkRenderThrottle) _liveThinkRenderThrottle.cancel();
+        _liveThinkRenderThrottle = null;
+        _stopLiveThinkTimer();
+      };
+
+      function _finalizeLiveThinking(text, rich = true) {
+        const finalText = _flushLiveThinking({ text, rich });
+        _cancelLiveThinkingWork();
+        return finalText;
+      }
+
+      function _closeOpenThinkingMarkup() {
+        if (!_thinkOpen) return;
+        accumulated += '</think>';
+        roundText += '</think>';
+        currentAccumulated = accumulated;
+        _thinkOpen = false;
       }
 
       function _replyAfterClosedThinking(text) {
@@ -2224,6 +2369,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
             // On first transition to background, store state in map
             if (_isBg && !_backgroundStreams.has(streamSessionId)) {
+              _flushLiveThinking({ rich: false });
+              _cancelLiveThinkingWork();
               _backgroundStreams.set(streamSessionId, {
                 status: 'running',
                 accumulated: accumulated,
@@ -2240,6 +2387,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
             if (data === '[DONE]') {
               _streamSawDone = true;
+              _closeOpenThinkingMarkup();
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone && !_isBg) {
@@ -2270,7 +2418,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
               // Force-close thinking if still open (model never output boundary)
               if (isThinking) {
                 isThinking = false;
-                cancelAnimationFrame(_thinkTimerRAF);
+                _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
                 var _elapsedDone = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                 if (_elapsedDone) {
                   accumulated = accumulated.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
@@ -2486,16 +2634,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                   _liveThinkSpinnerSlot = thinkContent.querySelector('.live-think-spinner-slot');
                   _liveThinkTimerEl = thinkContent.querySelector('.live-think-timer');
                   _liveThinkToggle = thinkContent.querySelector('.live-think-toggle');
-                  // Live timer
-                  var _thinkTimerStart = Date.now();
-                  var _thinkTimerRAF = 0;
-                  function _tickThinkTimer() {
-                    if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) return;
-                    var s = ((Date.now() - _thinkTimerStart) / 1000).toFixed(1);
-                    _liveThinkTimerEl.textContent = _formatThinkStats(s, _liveThinkTokenCount);
-                    _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
-                  }
-                  _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
+                  _liveThinkLatestText = '';
+                  _cancelLiveThinkingWork();
+                  _queueLiveThinking(_extractLiveThinkingText(roundText));
                   // Whirlpool spinner
                   if (_liveThinkSpinnerSlot) {
                     var _wp = spinnerModule.createWhirlpool(12);
@@ -2506,34 +2647,13 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                     _liveThinkSpinnerSlot.appendChild(_wp.element);
                   }
                 } else if (hasUnclosedThink && isThinking) {
-                  if (_liveThinkInner) {
-                    // Extract raw thinking text (strip known thinking wrappers and prefixes)
-                    var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText))
-                      .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
-                      .replace(/<\|channel>thought\s*\n?/gi, '')
-                      .replace(/<\|channel>response\s*\n?/gi, '')
-                      .replace(/<channel\|>/gi, '');
-                    thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                    _liveThinkTokenCount = _estimateThinkingTokens(thinkText);
-                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    if (_liveThinkTimerEl) {
-                      var _elapsedLive = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : '';
-                      _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedLive, _liveThinkTokenCount);
-                    }
-                    // Keep thinking box scrolled to bottom, but let user scroll up
-                    var _followThinking = true;
-                    var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) {
-                      var nearBottom = thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
-                      if (nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
-                      _followThinking = nearBottom;
-                    }
-                  }
-                  if (_followThinking) uiModule.scrollHistory();
+                  _queueLiveThinking(_extractLiveThinkingText(roundText));
                   continue;
                 } else if (!hasUnclosedThink && isThinking) {
                   isThinking = false;
-                  var _thinkTextLen = _liveThinkInner ? _liveThinkInner.textContent.trim().length : 0;
+                  const _closedThinkText = _extractLiveThinkingText(roundText, true);
+                  var _thinkTextLen = _closedThinkText.trim().length;
+                  _finalizeLiveThinking(_closedThinkText, _thinkTextLen >= 20);
 
                   // If thinking was trivially short (< 20 chars), remove the section entirely
                   // Models sometimes emit <think>The</think> or similar noise
@@ -2557,7 +2677,6 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
                   // Thinking ended — smooth transition: update header, pause, then collapse
                   // Stop live timer and spinner
-                  cancelAnimationFrame(_thinkTimerRAF);
                   var elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   // Embed thinking time in the <think> tag for persistence on reload
                   if (elapsed) {
@@ -2973,13 +3092,14 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 if (holder && json.id) holder.dataset.dbId = json.id;
 
               } else if (json.type === 'tool_start') {
+                _closeOpenThinkingMarkup();
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
                 if (isThinking) {
                   isThinking = false;
-                  cancelAnimationFrame(_thinkTimerRAF);
+                  _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
                   var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
                   if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
@@ -3324,9 +3444,20 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 if (_pu) _setStoredPlan(_pu);
 
               } else if (json.type === 'agent_step') {
+                _closeOpenThinkingMarkup();
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
+                if (isThinking) {
+                  isThinking = false;
+                  _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
+                  var _elapsedStep = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
+                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
+                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsedStep ? _formatThinkStats(_elapsedStep, _liveThinkTokenCount) : '';
+                  if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+                } else {
+                  _cancelLiveThinkingWork();
+                }
                 _renderStream();
                 // Mark thread as connected to bubble below
                 const _activeThread = document.querySelector('.agent-thread.streaming');
@@ -3739,6 +3870,13 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       } // end if (!_isBgFinal)
 
     } catch (err) {
+      _closeOpenThinkingMarkup();
+      if (isThinking) {
+        isThinking = false;
+        _finalizeLiveThinking(_extractLiveThinkingText(roundText, true), true);
+      } else {
+        _cancelLiveThinkingWork();
+      }
       _renderStream();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
@@ -3926,6 +4064,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         }
       }
     } finally {
+      _cancelLiveThinkingWork();
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
