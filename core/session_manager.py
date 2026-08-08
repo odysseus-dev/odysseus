@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
+from sqlalchemy import func
+
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
 from src.attachment_refs import persistable_message_content
@@ -92,14 +94,28 @@ class SessionManager:
         try:
             db_sessions = db.query(DbSession).filter(
                 DbSession.archived == False,
-                DbSession.message_count > 0,
+                DbSession.messages.any(),
             ).order_by(DbSession.last_accessed.desc()).limit(100).all()
+
+            # message_count is derived metadata and can drift after interrupted
+            # or legacy writes. Count only the bounded discovery set so startup
+            # remains metadata-only while lazy hydration sees an authoritative
+            # positive count for every discovered non-empty session.
+            message_counts = {}
+            if db_sessions:
+                message_counts = dict(
+                    db.query(DbChatMessage.session_id, func.count(DbChatMessage.id))
+                    .filter(DbChatMessage.session_id.in_([row.id for row in db_sessions]))
+                    .group_by(DbChatMessage.session_id)
+                    .all()
+                )
 
             loaded_count = 0
             for db_session in db_sessions:
                 try:
                     session = self._db_to_session_meta(db_session)
                     if session is not None:
+                        session.message_count = message_counts[db_session.id]
                         self.sessions[db_session.id] = session
                         loaded_count += 1
                 except Exception as e:
