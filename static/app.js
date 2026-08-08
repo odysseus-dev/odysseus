@@ -15,6 +15,12 @@ import compareModule from './js/compare/index.js?v=20260723compareicon2';
 import documentModule from './js/document.js?v=20260722emailfastindex1';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
+import {
+  revealApplicationShellAfterPaint,
+  runDeferredRouteOpener,
+  deferRouteOpener,
+  settleSessionHydration
+} from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js?v=20260722emailfastindex1';
 import sessionModule from './js/sessions.js';
@@ -1217,12 +1223,13 @@ function initializeEventListeners() {
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
   const _opener = _routeOpen[urlPath];
-  // Defer the opener — at this point in init, the modules whose handlers
-  // we trigger (#rail-new-session click handler, the email-section header
-  // click handler in emailInbox, sessionModule's loaded session list) are
-  // still being wired up further down in this same function. Stash the
-  // opener so it runs from sessionModule.loadSessions().finally() below.
-  if (_opener) window._odysseusRouteOpener = _opener;
+  // Defer the opener — at this point in init, the modules whose handlers we
+  // trigger (#rail-new-session click handler, the email-section header click
+  // handler in emailInbox, sessionModule) are still being wired up further
+  // down in this same function. startupShell decides when it can run: as soon
+  // as wiring completes, or — for the routes that read the session list —
+  // once /api/sessions has settled.
+  deferRouteOpener(urlPath, _opener);
 
   // Archive browser tool button
   const toolLibraryBtn = el('tool-library-btn');
@@ -3692,43 +3699,6 @@ function initializeEventListeners() {
 // ============================================
 // INITIALIZATION ON PAGE LOAD
 // ============================================
-function _makeApplicationLoaderInert(loader) {
-  if (!loader) return;
-  loader.dataset.shellRevealed = 'true';
-  loader.setAttribute('aria-hidden', 'true');
-  loader.style.pointerEvents = 'none';
-  loader.style.opacity = '0';
-}
-
-function revealApplicationShellAfterPaint() {
-  const loader = document.getElementById('app-loader');
-  if (!loader || loader.dataset.shellRevealScheduled === 'true' || loader.dataset.shellRevealed === 'true') return;
-  loader.dataset.shellRevealScheduled = 'true';
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => _makeApplicationLoaderInert(loader));
-  });
-}
-
-function removeApplicationLoader() {
-  const loader = document.getElementById('app-loader');
-  if (!loader) return;
-  _makeApplicationLoaderInert(loader);
-  setTimeout(() => loader.remove(), 300);
-}
-
-function settleInitialSessionListLoadingState() {
-  // renderSessionList() commits on requestAnimationFrame. Wait behind that
-  // render before treating the still-present bootstrap row as a load failure.
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const row = document.getElementById('session-list-loading');
-      if (!row) return;
-      const status = row.querySelector('[data-session-list-status]') || row;
-      status.textContent = 'Chats unavailable';
-    });
-  });
-}
-
 function startOdysseusApp() {
   tasksModule?.startNotificationPolling?.();
   if (window.__odysseusAppStarted) return;
@@ -4352,8 +4322,8 @@ function startOdysseusApp() {
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
 
-  // Core wiring is complete for this turn. Reveal the shell independently of
-  // the session-list request; the double animation frame keeps first paint calm.
+  // Core wiring is complete for this turn — reveal the shell independently of
+  // the session-list request.
   revealApplicationShellAfterPaint();
 
   if (sessionModule) {
@@ -4367,26 +4337,19 @@ function startOdysseusApp() {
       scrollHistory: uiModule.scrollHistoryInstant
     });
 
-    // The shell is ready after this initialization turn; session hydration is
-    // sidebar-local and must not keep the full application behind the overlay.
-    // Keep the inert loader node until hydration settles because sessions.js
-    // uses its presence to protect composer text typed during startup.
-    sessionModule.loadSessions()
-      .catch(e => console.warn('loadSessions error:', e))
-      .finally(() => {
-        settleInitialSessionListLoadingState();
-        removeApplicationLoader();
-        // Fire any URL route opener now that sessions + module wiring are
-        // ready. Deferred from up top of init for exactly this reason.
-        if (window._odysseusRouteOpener) {
-          try { window._odysseusRouteOpener(); } catch (_) {}
-          window._odysseusRouteOpener = null;
-        }
-      });
+    // sessionModule is now wired, so every route opener has the modules it
+    // drives. The ones that read no session data open here rather than
+    // queueing behind /api/sessions.
+    runDeferredRouteOpener();
+
+    // The shell is already usable at this point; session hydration is
+    // sidebar-local and settles on its own schedule.
+    settleSessionHydration(() => sessionModule.loadSessions());
   } else {
     console.error('Session module not loaded!');
-    settleInitialSessionListLoadingState();
-    removeApplicationLoader();
+    // Nothing will hydrate, so settle immediately rather than leaving the
+    // sidebar on "Loading chats…" and dropping the user's route on the floor.
+    settleSessionHydration(null);
   }
 
   const runNonCriticalStartup = (fn, delay = 4000) => {
