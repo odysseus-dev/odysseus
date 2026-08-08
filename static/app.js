@@ -3692,6 +3692,43 @@ function initializeEventListeners() {
 // ============================================
 // INITIALIZATION ON PAGE LOAD
 // ============================================
+function _makeApplicationLoaderInert(loader) {
+  if (!loader) return;
+  loader.dataset.shellRevealed = 'true';
+  loader.setAttribute('aria-hidden', 'true');
+  loader.style.pointerEvents = 'none';
+  loader.style.opacity = '0';
+}
+
+function revealApplicationShellAfterPaint() {
+  const loader = document.getElementById('app-loader');
+  if (!loader || loader.dataset.shellRevealScheduled === 'true' || loader.dataset.shellRevealed === 'true') return;
+  loader.dataset.shellRevealScheduled = 'true';
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => _makeApplicationLoaderInert(loader));
+  });
+}
+
+function removeApplicationLoader() {
+  const loader = document.getElementById('app-loader');
+  if (!loader) return;
+  _makeApplicationLoaderInert(loader);
+  setTimeout(() => loader.remove(), 300);
+}
+
+function settleInitialSessionListLoadingState() {
+  // renderSessionList() commits on requestAnimationFrame. Wait behind that
+  // render before treating the still-present bootstrap row as a load failure.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const row = document.getElementById('session-list-loading');
+      if (!row) return;
+      const status = row.querySelector('[data-session-list-status]') || row;
+      status.textContent = 'Chats unavailable';
+    });
+  });
+}
+
 function startOdysseusApp() {
   tasksModule?.startNotificationPolling?.();
   if (window.__odysseusAppStarted) return;
@@ -4315,6 +4352,10 @@ function startOdysseusApp() {
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
 
+  // Core wiring is complete for this turn. Reveal the shell independently of
+  // the session-list request; the double animation frame keeps first paint calm.
+  revealApplicationShellAfterPaint();
+
   if (sessionModule) {
     sessionModule.initDependencies({
       API_BASE: API_BASE,
@@ -4326,12 +4367,15 @@ function startOdysseusApp() {
       scrollHistory: uiModule.scrollHistoryInstant
     });
 
-    // Load sessions first (critical path) — remove loader when done
+    // The shell is ready after this initialization turn; session hydration is
+    // sidebar-local and must not keep the full application behind the overlay.
+    // Keep the inert loader node until hydration settles because sessions.js
+    // uses its presence to protect composer text typed during startup.
     sessionModule.loadSessions()
       .catch(e => console.warn('loadSessions error:', e))
       .finally(() => {
-        const loader = document.getElementById('app-loader');
-        if (loader) { loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
+        settleInitialSessionListLoadingState();
+        removeApplicationLoader();
         // Fire any URL route opener now that sessions + module wiring are
         // ready. Deferred from up top of init for exactly this reason.
         if (window._odysseusRouteOpener) {
@@ -4341,6 +4385,8 @@ function startOdysseusApp() {
       });
   } else {
     console.error('Session module not loaded!');
+    settleInitialSessionListLoadingState();
+    removeApplicationLoader();
   }
 
   const runNonCriticalStartup = (fn, delay = 4000) => {

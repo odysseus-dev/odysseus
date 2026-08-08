@@ -249,7 +249,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css?v=20260723tasksbulkfeedback1">
-  <link rel="modulepreload" href="/static/app.js?v=20260723tasksbulkfeedback1">
+  <link rel="modulepreload" href="/static/app.js?v=20260807startupshell1">
   <link rel="modulepreload" href="/static/js/chat.js?v=20260801fix1">
   <link rel="modulepreload" href="/static/js/ui.js">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -257,8 +257,9 @@
 </head>
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
-  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
-    <div id="loader-wave" style="color:color-mix(in srgb, #9cdef2 62%, var(--brand-color,var(--red,#e06c75)));font-family:monospace;font-size:11px;opacity:.5;position:relative;padding-top:10px;line-height:1;white-space:pre">▁▂▃</div>
+  <div id="app-loader" role="status" aria-live="polite" aria-label="Loading Odysseus" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
+    <span class="a11y-visually-hidden">Loading Odysseus</span>
+    <div id="loader-wave" aria-hidden="true" style="color:color-mix(in srgb, #9cdef2 62%, var(--brand-color,var(--red,#e06c75)));font-family:monospace;font-size:11px;opacity:.5;position:relative;padding-top:10px;line-height:1;white-space:pre">▁▂▃</div>
   </div>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -286,7 +287,7 @@
       if(!document.getElementById('app-loader')){clearInterval(iv);return}
       render();
     },150);
-    setTimeout(function(){var l=document.getElementById('app-loader');if(l){l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
+    setTimeout(function(){var l=document.getElementById('app-loader');if(l){clearInterval(iv);l.dataset.shellRevealed='true';l.setAttribute('aria-hidden','true');l.style.pointerEvents='none';l.style.opacity='0'}},5000);
   })();
   </script>
   <!-- Memory Management Modal -->
@@ -813,7 +814,11 @@
             <button class="session-bulk-btn" id="session-bulk-cancel" title="Cancel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
         </div>
-        <div id="session-list" role="listbox"></div>
+        <div id="session-list" role="listbox" aria-label="Chats">
+          <div id="session-list-loading" class="list-item" role="option" aria-disabled="true" aria-live="polite" aria-atomic="true" style="cursor:default;pointer-events:none;">
+            <span class="grow muted" data-session-list-status>Loading chats…</span>
+          </div>
+        </div>
       </div>
       <!-- Hidden dropdown for session actions -->
       <div id="session-actions-dropdown" class="dropdown hidden">
@@ -2531,7 +2536,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260723compareicon1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js?v=20260723tasksbulkfeedback1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20260807startupshell1"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
