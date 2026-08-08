@@ -3430,6 +3430,7 @@ async function _createFolderFromLibrary() {
 async function _deleteFolderRequest(folder, confirmNonempty = false) {
   const res = await fetch(_emailFolderApiUrl('', {
     folder,
+    confirm_delete: 'true',
     confirm_nonempty: confirmNonempty ? 'true' : 'false',
   }), {
     method: 'DELETE',
@@ -3517,8 +3518,9 @@ async function _deleteFolderFromLibrary() {
     const rawCount = statusData.message_count;
     const count = rawCount === null || rawCount === undefined ? null : Number(rawCount);
     const countKnown = Number.isFinite(count);
+    const deliveryRisk = 'New mail can arrive before deletion. Any messages present when the provider deletes this folder may also be permanently deleted.';
     const message = countKnown && count === 0
-      ? `Permanently delete empty folder "${display}"?`
+      ? `PERMANENTLY DELETE empty folder "${display}"?\n\n${deliveryRisk}`
       : `PERMANENTLY DELETE folder "${display}"?\n\n${countKnown ? `It contains ${count} email${count === 1 ? '' : 's'}.` : 'Odysseus could not confirm whether it is empty.'} Deleting this folder can permanently delete every message inside it.`;
     const ok = await styledConfirm(message, {
       confirmText: 'Delete Folder',

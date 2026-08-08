@@ -37,6 +37,9 @@ class FakeCreateFolderConn:
         delete_status="OK",
         delete_data=None,
         message_counts=None,
+        message_count_sequences=None,
+        utf8_enabled=False,
+        capabilities=(),
     ):
         self.folders = list(folders or ['(\\HasNoChildren) "/" "INBOX"'])
         self.create_status = create_status
@@ -46,6 +49,12 @@ class FakeCreateFolderConn:
         self.delete_status = delete_status
         self.delete_data = delete_data if delete_data is not None else [b"DELETE completed"]
         self.message_counts = {str(k).casefold(): int(v) for k, v in (message_counts or {}).items()}
+        self.message_count_sequences = {
+            str(k).casefold(): [int(value) for value in values]
+            for k, values in (message_count_sequences or {}).items()
+        }
+        self.utf8_enabled = utf8_enabled
+        self.capabilities = capabilities
         self.calls = []
 
     def list(self):
@@ -76,7 +85,11 @@ class FakeCreateFolderConn:
     def status(self, mailbox, items):
         self.calls.append(("status", mailbox, items))
         folder = _fake_mailbox_name(mailbox)
-        count = self.message_counts.get(folder.casefold(), 0)
+        sequence = self.message_count_sequences.get(folder.casefold())
+        if sequence:
+            count = sequence.pop(0) if len(sequence) > 1 else sequence[0]
+        else:
+            count = self.message_counts.get(folder.casefold(), 0)
         return "OK", [f"{mailbox} (MESSAGES {count})".encode()]
 
     def select(self, mailbox, readonly=False):
@@ -100,6 +113,22 @@ class FakeCreateFolderConn:
         return self.delete_status, self.delete_data
 
 
+@pytest.mark.parametrize(
+    ("name", "wire_name"),
+    [
+        ("Résumé", "R&AOk-sum&AOk-"),
+        ("台北", "&U,BTFw-"),
+        ("R&D", "R&-D"),
+        ("Plain ASCII", "Plain ASCII"),
+    ],
+)
+def test_modified_utf7_known_mailbox_names_round_trip(name, wire_name):
+    import routes.email_helpers as email_helpers
+
+    assert email_helpers._imap_modified_utf7_encode(name) == wire_name
+    assert email_helpers._imap_modified_utf7_decode(wire_name) == name
+
+
 def test_create_imap_folder_quotes_and_subscribes():
     import routes.email_routes as email_routes
 
@@ -111,6 +140,33 @@ def test_create_imap_folder_quotes_and_subscribes():
     assert folder == "Project Mail"
     assert ("create", '"Project Mail"') in conn.calls
     assert ("subscribe", '"Project Mail"') in conn.calls
+
+
+def test_create_imap_folder_encodes_unicode_with_modified_utf7():
+    import routes.email_routes as email_routes
+
+    conn = FakeCreateFolderConn(capabilities=("IMAP4REV1", "UTF8=ACCEPT"))
+
+    ok, folder = email_routes._create_imap_folder(conn, "Résumé")
+
+    assert ok is True
+    assert folder == "Résumé"
+    assert ("create", '"R&AOk-sum&AOk-"') in conn.calls
+    assert ("subscribe", '"R&AOk-sum&AOk-"') in conn.calls
+    assert email_routes._list_imap_folders(conn)[1] == ["INBOX", "Résumé"]
+
+
+def test_create_imap_folder_uses_unicode_only_after_utf8_accept_is_negotiated():
+    import routes.email_routes as email_routes
+
+    conn = FakeCreateFolderConn(utf8_enabled=True, capabilities=("IMAP4REV1", "UTF8=ACCEPT"))
+
+    ok, folder = email_routes._create_imap_folder(conn, "Résumé")
+
+    assert ok is True
+    assert folder == "Résumé"
+    assert ("create", '"Résumé"') in conn.calls
+    assert ("subscribe", '"Résumé"') in conn.calls
 
 
 def test_create_imap_folder_rejects_duplicate_without_create_call():
@@ -160,6 +216,25 @@ def test_rename_imap_folder_quotes_and_subscribes_new_folder():
     assert ("rename", '"Project Mail"', '"Client Mail"') in conn.calls
     assert ("subscribe", '"Client Mail"') in conn.calls
     assert "Client Mail" in [email_routes._folder_name_from_list_line(f) for f in conn.folders]
+
+
+def test_rename_imap_folder_encodes_unicode_with_modified_utf7():
+    import routes.email_routes as email_routes
+
+    conn = FakeCreateFolderConn(
+        folders=[
+            '(\\HasNoChildren) "/" "INBOX"',
+            '(\\HasNoChildren) "/" "R&AOk-sum&AOk-"',
+        ]
+    )
+
+    ok, result = email_routes._rename_imap_folder(conn, "Résumé", "台北")
+
+    assert ok is True
+    assert result == {"old_folder": "Résumé", "folder": "台北"}
+    assert ("rename", '"R&AOk-sum&AOk-"', '"&U,BTFw-"') in conn.calls
+    assert ("subscribe", '"&U,BTFw-"') in conn.calls
+    assert email_routes._list_imap_folders(conn)[1] == ["INBOX", "台北"]
 
 
 def test_rename_imap_folder_rejects_duplicate_without_rename_call():
@@ -215,13 +290,71 @@ def test_delete_imap_folder_deletes_empty_custom_folder():
         message_counts={"Project Mail": 0},
     )
 
-    ok, result = email_routes._delete_imap_folder(conn, "project mail")
+    ok, result = email_routes._delete_imap_folder(conn, "project mail", confirm_delete=True)
 
     assert ok is True
     assert result["folder"] == "Project Mail"
     assert result["message_count"] == 0
     assert ("delete", '"Project Mail"') in conn.calls
     assert "Project Mail" not in [email_routes._folder_name_from_list_line(f) for f in conn.folders]
+
+
+def test_delete_imap_folder_requires_explicit_destructive_confirmation():
+    import routes.email_routes as email_routes
+
+    conn = FakeCreateFolderConn(
+        folders=[
+            '(\\HasNoChildren) "/" "INBOX"',
+            '(\\HasNoChildren) "/" "Clients"',
+        ],
+        message_counts={"Clients": 0},
+    )
+
+    ok, result = email_routes._delete_imap_folder(conn, "Clients")
+
+    assert ok is False
+    assert result["needs_confirmation"] is True
+    assert result["confirmation_kind"] == "delete"
+    assert not any(call[0] == "delete" for call in conn.calls)
+
+
+def test_delete_imap_folder_fails_closed_when_delivery_arrives_between_checks():
+    import routes.email_routes as email_routes
+
+    conn = FakeCreateFolderConn(
+        folders=[
+            '(\\HasNoChildren) "/" "INBOX"',
+            '(\\HasNoChildren) "/" "Clients"',
+        ],
+        message_count_sequences={"Clients": [0, 1]},
+    )
+
+    ok, result = email_routes._delete_imap_folder(conn, "Clients", confirm_delete=True)
+
+    assert ok is False
+    assert result["needs_confirmation"] is True
+    assert result["confirmation_kind"] == "nonempty"
+    assert result["message_count"] == 1
+    assert len([call for call in conn.calls if call[0] == "status"]) == 2
+    assert not any(call[0] == "delete" for call in conn.calls)
+
+
+def test_delete_imap_folder_encodes_unicode_with_modified_utf7():
+    import routes.email_routes as email_routes
+
+    conn = FakeCreateFolderConn(
+        folders=[
+            '(\\HasNoChildren) "/" "INBOX"',
+            '(\\HasNoChildren) "/" "&U,BTFw-"',
+        ],
+        message_counts={"&U,BTFw-": 0},
+    )
+
+    ok, result = email_routes._delete_imap_folder(conn, "台北", confirm_delete=True)
+
+    assert ok is True
+    assert result == {"folder": "台北", "message_count": 0}
+    assert ("delete", '"&U,BTFw-"') in conn.calls
 
 
 def test_delete_imap_folder_requires_confirmation_for_nonempty_folder():
@@ -235,14 +368,19 @@ def test_delete_imap_folder_requires_confirmation_for_nonempty_folder():
         message_counts={"Clients": 2},
     )
 
-    ok, result = email_routes._delete_imap_folder(conn, "Clients")
+    ok, result = email_routes._delete_imap_folder(conn, "Clients", confirm_delete=True)
 
     assert ok is False
     assert result["needs_confirmation"] is True
     assert result["message_count"] == 2
     assert not any(call[0] == "delete" for call in conn.calls)
 
-    ok, result = email_routes._delete_imap_folder(conn, "Clients", confirm_nonempty=True)
+    ok, result = email_routes._delete_imap_folder(
+        conn,
+        "Clients",
+        confirm_delete=True,
+        confirm_nonempty=True,
+    )
 
     assert ok is True
     assert result["folder"] == "Clients"
@@ -265,7 +403,12 @@ def test_delete_imap_folder_rejects_protected_folders(name, line):
 
     conn = FakeCreateFolderConn(folders=[line])
 
-    ok, result = email_routes._delete_imap_folder(conn, name, confirm_nonempty=True)
+    ok, result = email_routes._delete_imap_folder(
+        conn,
+        name,
+        confirm_delete=True,
+        confirm_nonempty=True,
+    )
 
     assert ok is False
     assert result["error"]
@@ -402,7 +545,13 @@ async def test_delete_folder_route_deletes_and_returns_updated_list(monkeypatch)
     router = email_routes.setup_email_routes()
     delete_folder = _route_endpoint(router, "/api/email/folders", "DELETE")
 
-    result = await delete_folder(folder="Clients", confirm_nonempty=False, account_id="acct-alice", owner="alice")
+    result = await delete_folder(
+        folder="Clients",
+        confirm_delete=True,
+        confirm_nonempty=False,
+        account_id="acct-alice",
+        owner="alice",
+    )
 
     assert result["success"] is True
     assert result["folder"] == "Clients"
@@ -431,7 +580,13 @@ async def test_delete_folder_route_requires_nonempty_confirmation(monkeypatch):
     router = email_routes.setup_email_routes()
     delete_folder = _route_endpoint(router, "/api/email/folders", "DELETE")
 
-    result = await delete_folder(folder="Clients", confirm_nonempty=False, account_id="acct-alice", owner="alice")
+    result = await delete_folder(
+        folder="Clients",
+        confirm_delete=True,
+        confirm_nonempty=False,
+        account_id="acct-alice",
+        owner="alice",
+    )
 
     assert result["success"] is False
     assert result["needs_confirmation"] is True
@@ -455,7 +610,9 @@ def test_email_library_exposes_folder_creation_control():
     assert "_emailFolderApiUrl('/status'" in src
     assert "method: 'PATCH'" in src
     assert "method: 'DELETE'" in src
+    assert "confirm_delete: 'true'" in src
     assert "PERMANENTLY DELETE folder" in src
+    assert "New mail can arrive before deletion" in src
     assert "permanently delete every message inside it" in src
     assert src.index("schedOpt.value = '__scheduled__'") < src.index("for (const f of others)")
     assert ".email-folder-create-btn" in css
