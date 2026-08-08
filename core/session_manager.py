@@ -398,22 +398,27 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     def get_session(self, session_id: str) -> Session:
-        """Get a session by ID, loading from DB if needed.
+        """Get a session by ID, loading complete DB history when needed.
 
-        Sessions seeded by `load_sessions` start with empty history. The
-        first read here hydrates them with the message rows.
+        Sessions seeded by ``load_sessions`` start with empty history, and a
+        cached session can also become partially stale. Refresh metadata first,
+        then hydrate whenever the cached row count is below the authoritative
+        ``message_count``. Model-send routes enter through this method before
+        building context, while paginated display history reads SQLite directly.
         """
         if session_id not in self.sessions:
             self._load_session_from_db(session_id)
-        else:
-            cached = self.sessions[session_id]
-            # Lazy hydrate: metadata-only entries get their messages on first read.
-            if not cached.history and getattr(cached, "message_count", 0) > 0:
-                self._load_session_from_db(session_id)
 
         # Keep model/endpoint metadata fresh. Endpoint deletion can clear the
-        # DB row while a session object is still cached in RAM.
+        # DB row while a session object is still cached in RAM. Refreshing first
+        # also exposes a newer message_count before completeness is checked.
         self.sync_session_metadata(session_id)
+
+        cached = self.sessions[session_id]
+        cached_count = len(cached.history or [])
+        stored_count = int(getattr(cached, "message_count", 0) or 0)
+        if cached_count < stored_count:
+            self._load_session_from_db(session_id)
 
         # Update last_accessed
         self._touch_session(session_id)

@@ -168,13 +168,6 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         ]
         session.message_count = len(session.history)
 
-    def _session_needs_db_history_hydration(session_id: str, total: int) -> bool:
-        try:
-            session = session_manager.get_session(session_id)
-        except KeyError:
-            return False
-        return len(session.history or []) < int(total or 0)
-
     @router.get("/api/history/{session_id}")
     async def get_session_history(
         request: Request,
@@ -198,6 +191,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 )
                 page_offset = int(offset) if offset is not None else max(total - page_limit, 0)
                 page_offset = max(0, min(page_offset, total))
+                # Keep display pagination page-scoped. ``get_session`` is the
+                # full model-context hydration seam and must not be entered here.
                 rows = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id)
@@ -206,14 +201,6 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     .limit(page_limit)
                     .all()
                 )
-                if _session_needs_db_history_hydration(session_id, total):
-                    full_rows = (
-                        db.query(DbChatMessage)
-                        .filter(DbChatMessage.session_id == session_id)
-                        .order_by(DbChatMessage.timestamp)
-                        .all()
-                    )
-                    _hydrate_session_history_from_db(session_id, full_rows)
                 history_dict = [
                     entry for entry in (_db_history_entry(m) for m in rows)
                     if not (entry.get("metadata") or {}).get("hidden")
