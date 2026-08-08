@@ -1,19 +1,26 @@
 """Real-SQLite regressions for session discovery with stale derived counts."""
 
-import importlib
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+
+import core.database as database
+import core.session_manager as session_manager
 
 
 def _make_manager(db_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
-
-    import core.database as database
-
-    importlib.reload(database)
-    database.Base.metadata.create_all(bind=database.engine)
-
-    import core.session_manager as session_manager
-
-    importlib.reload(session_manager)
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    database.Base.metadata.create_all(bind=engine)
+    session_local = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+    monkeypatch.setattr(session_manager, "SessionLocal", session_local)
     return session_manager.SessionManager(), database, session_manager
 
 
