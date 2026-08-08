@@ -867,6 +867,66 @@ def email_urgency_slug_for_score(owner: str = "", score: int = 0) -> str:
     return active[idx]["slug"]
 
 
+def _upsert_email_urgency_assignment_row(
+    conn,
+    *,
+    owner: str = "",
+    account_id: str | None = None,
+    message_id: str = "",
+    uid: str = "",
+    folder: str = "INBOX",
+    urgency_slug: str = "",
+    reason: str = "",
+    confidence: float | None = None,
+    source: str = "manual",
+    subject: str = "",
+    sender: str = "",
+    now: str | None = None,
+) -> str:
+    """Write one assignment without letting classifier output replace a manual choice."""
+    owner = (owner or "").strip()
+    account_id = (account_id or "").strip()
+    folder = (folder or "INBOX").strip() or "INBOX"
+    urgency_slug = normalize_email_urgency_slug(urgency_slug)
+    message_key = email_urgency_message_key(message_id, folder, uid)
+    if not message_key:
+        return ""
+    try:
+        confidence_value = float(confidence) if confidence is not None else 1.0
+    except Exception:
+        confidence_value = 1.0
+    confidence_value = max(0.0, min(1.0, confidence_value))
+    source_value = str(source or "manual").strip().lower()[:40] or "manual"
+    timestamp = now or datetime.utcnow().isoformat()
+    conn.execute(
+        """
+        INSERT INTO email_urgency_assignments
+        (owner, account_id, message_key, message_id, uid, folder, urgency_slug, confidence,
+         reason, source, subject, sender, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(owner, account_id, message_key) DO UPDATE SET
+          message_id=excluded.message_id,
+          uid=excluded.uid,
+          folder=excluded.folder,
+          urgency_slug=excluded.urgency_slug,
+          confidence=excluded.confidence,
+          reason=excluded.reason,
+          source=excluded.source,
+          subject=excluded.subject,
+          sender=excluded.sender,
+          updated_at=excluded.updated_at
+        WHERE LOWER(COALESCE(email_urgency_assignments.source, '')) != 'manual'
+           OR excluded.source != 'classifier'
+        """,
+        (
+            owner, account_id, message_key, str(message_id or "").strip(), str(uid or "").strip(), folder,
+            urgency_slug, confidence_value, str(reason or "")[:500], source_value,
+            str(subject or "")[:300], str(sender or "")[:300], timestamp, timestamp,
+        ),
+    )
+    return message_key
+
+
 def upsert_email_urgency_assignment(
     *,
     owner: str = "",
@@ -893,47 +953,40 @@ def upsert_email_urgency_assignment(
     levels = {level["slug"]: level for level in list_email_urgency_levels(owner)}
     if urgency_slug not in levels:
         raise HTTPException(404, "Urgency level not found")
-    try:
-        confidence_value = float(confidence) if confidence is not None else 1.0
-    except Exception:
-        confidence_value = 1.0
-    confidence_value = max(0.0, min(1.0, confidence_value))
-    now = datetime.utcnow().isoformat()
     conn = sqlite3.connect(SCHEDULED_DB)
     try:
-        conn.execute(
-            """
-            INSERT INTO email_urgency_assignments
-            (owner, account_id, message_key, message_id, uid, folder, urgency_slug, confidence,
-             reason, source, subject, sender, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(owner, account_id, message_key) DO UPDATE SET
-              message_id=excluded.message_id,
-              uid=excluded.uid,
-              folder=excluded.folder,
-              urgency_slug=excluded.urgency_slug,
-              confidence=excluded.confidence,
-              reason=excluded.reason,
-              source=excluded.source,
-              subject=excluded.subject,
-              sender=excluded.sender,
-              updated_at=excluded.updated_at
-            """,
-            (
-                owner, account_id, message_key, str(message_id or "").strip(), str(uid or "").strip(), folder,
-                urgency_slug, confidence_value, str(reason or "")[:500], str(source or "manual")[:40],
-                str(subject or "")[:300], str(sender or "")[:300], now, now,
-            ),
+        _upsert_email_urgency_assignment_row(
+            conn,
+            owner=owner,
+            account_id=account_id,
+            message_id=message_id,
+            uid=uid,
+            folder=folder,
+            urgency_slug=urgency_slug,
+            reason=reason,
+            confidence=confidence,
+            source=source,
+            subject=subject,
+            sender=sender,
         )
+        row = conn.execute(
+            """
+            SELECT urgency_slug, confidence, reason, source
+            FROM email_urgency_assignments
+            WHERE owner=? AND account_id=? AND message_key=?
+            """,
+            (owner, account_id, message_key),
+        ).fetchone()
         conn.commit()
     finally:
         conn.close()
-    level = dict(levels[urgency_slug])
+    actual_slug = row[0] if row and row[0] in levels else urgency_slug
+    level = dict(levels[actual_slug])
     return {
         **level,
-        "reason": str(reason or "")[:500],
-        "confidence": confidence_value,
-        "source": str(source or "manual")[:40],
+        "reason": str((row[2] if row else reason) or "")[:500],
+        "confidence": float((row[1] if row else confidence) or 0),
+        "source": str((row[3] if row else source) or "manual")[:40],
         "message_key": message_key,
     }
 

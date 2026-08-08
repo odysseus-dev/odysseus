@@ -33793,6 +33793,7 @@ body.doc-find-active mark.doc-find-mark.current {
     align-items: flex-start;
     flex-direction: column;
   }
+}
 /* On mobile, the "New" (compose) button deserves a touch-friendly size
    so it stands out from the smaller toolbar buttons next to it. Lift
    it slightly visually with a bigger SVG, padding, and font. */

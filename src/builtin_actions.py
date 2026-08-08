@@ -2282,7 +2282,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             import sqlite3 as _sql3
             from routes.email_helpers import (
                 SCHEDULED_DB, _init_scheduled_db,
-                email_urgency_slug_for_score, email_urgency_message_key,
+                email_urgency_slug_for_score, _upsert_email_urgency_assignment_row,
             )
             from datetime import datetime as _dt2
             _init_scheduled_db()
@@ -2312,33 +2312,22 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     _owner_key = owner or ""
                     try:
                         _urgency_slug = email_urgency_slug_for_score(_owner_key, _score)
-                        _message_key = email_urgency_message_key(_msg_id, "INBOX", _uid_only)
-                        if _urgency_slug and _message_key:
+                        if _urgency_slug:
                             _now_assign = _dt2.utcnow().isoformat()
-                            _conn.execute(
-                                """
-                                INSERT INTO email_urgency_assignments
-                                (owner, account_id, message_key, message_id, uid, folder, urgency_slug,
-                                 confidence, reason, source, subject, sender, created_at, updated_at)
-                                VALUES (?, ?, ?, ?, ?, 'INBOX', ?, ?, ?, 'classifier', ?, ?, ?, ?)
-                                ON CONFLICT(owner, account_id, message_key) DO UPDATE SET
-                                  message_id=excluded.message_id,
-                                  uid=excluded.uid,
-                                  folder=excluded.folder,
-                                  urgency_slug=excluded.urgency_slug,
-                                  confidence=excluded.confidence,
-                                  reason=excluded.reason,
-                                  source=excluded.source,
-                                  subject=excluded.subject,
-                                  sender=excluded.sender,
-                                  updated_at=excluded.updated_at
-                                """,
-                                (
-                                    _owner_key, _acc_id, _message_key, _msg_id, _uid_only, _urgency_slug,
-                                    min(1.0, max(0.0, float(_score or 0) / 3.0)),
-                                    _v.get("reason", ""), _v.get("subject", ""), _v.get("from", ""),
-                                    _now_assign, _now_assign,
-                                ),
+                            _upsert_email_urgency_assignment_row(
+                                _conn,
+                                owner=_owner_key,
+                                account_id=_acc_id,
+                                message_id=_msg_id,
+                                uid=_uid_only,
+                                folder="INBOX",
+                                urgency_slug=_urgency_slug,
+                                confidence=min(1.0, max(0.0, float(_score or 0) / 3.0)),
+                                reason=_v.get("reason", ""),
+                                source="classifier",
+                                subject=_v.get("subject", ""),
+                                sender=_v.get("from", ""),
+                                now=_now_assign,
                             )
                     except Exception as _ue:
                         logger.debug(f"urgency: assignment write skipped for {_key}: {_ue}")

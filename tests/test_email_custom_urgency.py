@@ -119,6 +119,70 @@ def test_email_urgency_assignments_are_owner_and_account_scoped(tmp_path, monkey
     )
 
 
+def test_classifier_scan_does_not_replace_a_manual_urgency_assignment(tmp_path, monkeypatch):
+    db_path, email_helpers, _email_routes = _patch_scheduled_db(monkeypatch, tmp_path)
+
+    manual = email_helpers.upsert_email_urgency_assignment(
+        owner="alice",
+        account_id="acct-1",
+        message_id="<manual-wins@example.com>",
+        uid="301",
+        folder="INBOX",
+        urgency_slug="urgent",
+        reason="user chose this level",
+        confidence=1.0,
+        source="manual",
+        subject="Manual choice",
+        sender="sender@example.com",
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        email_helpers._upsert_email_urgency_assignment_row(
+            conn,
+            owner="alice",
+            account_id="acct-1",
+            message_id="<manual-wins@example.com>",
+            uid="301",
+            folder="INBOX",
+            urgency_slug="ignore",
+            reason="scanner recommendation",
+            confidence=0.2,
+            source="classifier",
+            subject="Manual choice",
+            sender="sender@example.com",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assignments = email_helpers.load_email_urgency_assignments(
+        owner="alice",
+        account_id="acct-1",
+        folder="INBOX",
+        emails=[{"message_id": "<manual-wins@example.com>", "uid": "301", "folder": "INBOX"}],
+    )
+    classifier = list(assignments.values())[0]
+
+    assert manual["slug"] == "urgent"
+    assert classifier["slug"] == "urgent"
+    assert classifier["source"] == "manual"
+    assert classifier["reason"] == "user chose this level"
+
+    reassigned = email_helpers.upsert_email_urgency_assignment(
+        owner="alice",
+        account_id="acct-1",
+        message_id="<manual-wins@example.com>",
+        uid="301",
+        folder="INBOX",
+        urgency_slug="reply-soon",
+        reason="user changed their choice",
+        source="manual",
+    )
+    assert reassigned["slug"] == "reply-soon"
+    assert reassigned["source"] == "manual"
+    assert reassigned["reason"] == "user changed their choice"
+
+
 @pytest.mark.asyncio
 async def test_email_urgency_routes_manage_levels_and_assignments(tmp_path, monkeypatch):
     db_path, _email_helpers, email_routes = _patch_scheduled_db(monkeypatch, tmp_path)
