@@ -5162,6 +5162,17 @@ async function _toggleCardPreview(card, em) {
   // currently-selected folder for normal inbox cards.
   const folderAtStart = (em && em.folder) || libraryFolderAtStart;
   const uidAtStart = String(em?.uid || card?.dataset?.uid || '');
+  const wasReadAtStart = !!em?.is_read;
+  const isCurrentOpen = () => (
+    accountAtStart === (state._libAccountId || '') &&
+    libraryFolderAtStart === (state._libFolder || 'INBOX') &&
+    uidAtStart === String(card?.dataset?.uid || '') &&
+    card.isConnected &&
+    card.classList.contains('email-card-expanded')
+  );
+  const restoreUnreadState = () => {
+    if (!wasReadAtStart) _syncEmailReadState(uidAtStart, false);
+  };
   const grid = card.closest('.doclib-grid');
   const gridRect = grid?.getBoundingClientRect?.();
   const modal = document.getElementById('email-lib-modal');
@@ -5207,10 +5218,10 @@ async function _toggleCardPreview(card, em) {
   requestAnimationFrame(() => {
     try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
   });
-  if (!em.is_read) {
-    _syncEmailReadState(em.uid, true);
-    fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`, { method: 'POST' })
-      .catch(err => console.error('Failed to mark email read:', err));
+  if (!wasReadAtStart) {
+    // Keep the current optimistic visual update, but let the read request below
+    // own the provider-side \Seen transition. A failure restores unread state.
+    _syncEmailReadState(uidAtStart, true);
   }
   // Class hook on the modal so the header-hide / padding rules work on
   // browsers without :has() support (Firefox mobile) — the :has() versions
@@ -5240,22 +5251,15 @@ async function _toggleCardPreview(card, em) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`);
+    const res = await fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uidAtStart)}?folder=${encodeURIComponent(folderAtStart)}${_acct()}&mark_seen=true`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (
-      accountAtStart !== (state._libAccountId || '') ||
-      libraryFolderAtStart !== (state._libFolder || 'INBOX') ||
-      uidAtStart !== String(card?.dataset?.uid || '') ||
-      !card.isConnected ||
-      !card.classList.contains('email-card-expanded')
-    ) {
-      return;
-    }
     if (data.error) {
-      showFailedReader(`Failed to load email: ${data.error}`);
+      restoreUnreadState();
+      if (isCurrentOpen()) showFailedReader(`Failed to load email: ${data.error}`);
       return;
     }
+    if (!isCurrentOpen()) return;
     // Mark as read locally
     _syncEmailReadState(em.uid, true);
     _stampReaderContext(reader, { ...em, ...data }, state._libFolder, state._libAccountId);
@@ -5439,7 +5443,10 @@ async function _toggleCardPreview(card, em) {
     // Always stop bubbling so the card's click doesn't fire while reading.
     reader.addEventListener('click', (ev) => { ev.stopPropagation(); });
   } catch (e) {
-    showFailedReader(e?.message ? `Failed to load email: ${e.message}` : 'Failed to load email');
+    restoreUnreadState();
+    if (isCurrentOpen()) {
+      showFailedReader(e?.message ? `Failed to load email: ${e.message}` : 'Failed to load email');
+    }
   }
 }
 
