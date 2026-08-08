@@ -43,6 +43,11 @@ class FakeImap:
                 (b"1 (UID 42 BODY[TEXT]<0>)", body),
             ]
         if command == "STORE":
+            # RFC 3501 STORE takes a parenthesized flag-list. GreenMail rejects
+            # the formerly emitted bare ``\Seen`` atom with BAD, so keep the
+            # fake strict enough to catch that provider-compatibility failure.
+            if args != ("+FLAGS", "(\\Seen)"):
+                return "BAD", [b"Expected:'(' found:'\\'"]
             return self.store_status, []
         raise AssertionError(f"unexpected IMAP command: {command}")
 
@@ -104,7 +109,7 @@ async def test_read_email_seen_contract_uses_one_imap_connection(monkeypatch, tm
     )
     assert "BODY.PEEK[HEADER]" in conn.commands[0][2]
     if mark_seen:
-        assert conn.commands[1][2:] == ("+FLAGS", "\\Seen")
+        assert conn.commands[1][2:] == ("+FLAGS", "(\\Seen)")
         assert indexed_updates == [("alice", "acct-a", "INBOX", "42", "\\Seen", True)]
     else:
         assert indexed_updates == []
@@ -134,6 +139,7 @@ async def test_cached_read_awaits_one_seen_store_without_refetch(monkeypatch, tm
     assert len(connections) == 2
     assert [command[0] for command in connections[0].commands] == ["FETCH"]
     assert [command[0] for command in connections[1].commands] == ["STORE"]
+    assert connections[1].commands[0][2:] == ("+FLAGS", "(\\Seen)")
     assert connections[1].selects[0][1] is False
     assert indexed_updates == [("alice", "acct-a", "INBOX", "42", "\\Seen", True)]
 

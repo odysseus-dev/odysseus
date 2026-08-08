@@ -2929,7 +2929,7 @@ def setup_email_routes():
                 attachments = _list_attachments_from_msg(msg) if full else (_email_attachment_meta_cache_get(owner, account_id, folder, uid) or [])
 
                 if mark_seen:
-                    seen_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                    seen_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
                     if seen_status != "OK":
                         raise RuntimeError(f"IMAP STORE \\Seen failed for UID {uid}")
 
@@ -3067,7 +3067,7 @@ def setup_email_routes():
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=False)
-                status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
                 if status != "OK":
                     return False
             _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
