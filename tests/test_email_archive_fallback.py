@@ -235,10 +235,12 @@ async def test_list_folders_refresh_bypasses_stale_folder_cache(monkeypatch):
 
 def test_email_library_handles_archive_folder_setup_flow():
     src = Path("static/js/emailLibrary.js").read_text(encoding="utf-8")
+    helper = Path("static/js/emailArchiveFallback.js").read_text(encoding="utf-8")
 
     assert "import { folderDisplayName, isArchiveFolder, sortedFolders } from './emailInbox.js" in src
+    assert "import { captureArchiveAction, runArchiveFallback } from './emailArchiveFallback.js'" in src
     assert "_archiveEmailWithFallback" in src
-    assert "needs_archive_folder" in src
+    assert "needs_archive_folder" in helper
     assert "No Archive folder was found for this account. Create one named" in src
     assert "/api/email/archive-folder" in src
     assert "successfulArchiveUids" in src
@@ -249,18 +251,22 @@ def test_email_library_handles_archive_folder_setup_flow():
     assert "refresh: refresh ? 1 : undefined" in src
     assert "_loadFolders({ refresh: true })" in src
     assert "_loadFolders({ resetMissing: true, refresh: true })" in src
+    assert "account_id: captured.accountId || undefined" in src
+    assert "_loadFolders({ accountId: captured.accountId, refresh: true })" in src
 
 
 def test_sidebar_inbox_archive_uses_fallback_before_local_removal():
     src = Path("static/js/emailInbox.js").read_text(encoding="utf-8")
+    helper = Path("static/js/emailArchiveFallback.js").read_text(encoding="utf-8")
 
     assert "export function isArchiveFolder(folder)" in src
     assert "_archiveEmailWithFallback" in src
-    assert "_ensureArchiveFolderForSidebar" in src
-    assert "needs_archive_folder" in src
+    assert "import { captureArchiveAction, runArchiveFallback } from './emailArchiveFallback.js'" in src
+    assert "needs_archive_folder" in helper
     assert "/api/email/archive-folder" in src
     assert "if (!isArchiveFolder(_currentFolder))" in src
     assert "'ontouchstart' in window && !isArchiveFolder(_currentFolder)" in src
     assert "if (!result.success)" in src
     assert "_restoreArchiveSwipeItem(itemEl)" in src
+    assert "loadFolders({ accountId: captured.accountId, refresh: true })" in src
     assert "await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });\n    _emails = _emails.filter" not in src

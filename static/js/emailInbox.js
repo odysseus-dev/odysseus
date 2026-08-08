@@ -9,12 +9,12 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
+import { captureArchiveAction, runArchiveFallback } from './emailArchiveFallback.js';
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => emailAccountQuery('&');
-const _acctStart = () => emailAccountQuery('?');
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
@@ -435,11 +435,18 @@ export async function loadEmails(append = false) {
   }
 }
 
-async function loadFolders() {
+async function loadFolders({
+  accountId = window.__odysseusActiveEmailAccount || '',
+  refresh = false,
+} = {}) {
+  const accountAtStart = String(accountId || '');
   try {
-    const accountQS = _acct().replace(/^&/, '');
-    const res = await fetch(`${API_BASE}/api/email/folders${accountQS ? `?${accountQS}` : ''}`);
+    const res = await fetch(emailApiUrl('/api/email/folders', {
+      account_id: accountAtStart || undefined,
+      refresh: refresh ? 1 : undefined,
+    }));
     const data = await res.json();
+    if (accountAtStart !== String(window.__odysseusActiveEmailAccount || '')) return;
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
     _populateFolderSelect(select, data.folders);
@@ -1218,71 +1225,55 @@ async function _createReplyReminder(em, dueDate) {
   }
 }
 
-let _archiveSetupPromptPromise = null;
-
-async function _ensureArchiveFolderForSidebar(suggestedFolder = 'Archive') {
-  if (_archiveSetupPromptPromise) return _archiveSetupPromptPromise;
-  _archiveSetupPromptPromise = (async () => {
-    const { styledConfirm, showToast } = await import('./ui.js');
-    const folderName = String(suggestedFolder || 'Archive').trim() || 'Archive';
-    const ok = await styledConfirm(
-      `No Archive folder was found for this account. Create one named ${folderName}?`,
-      { confirmText: 'Create Archive', cancelText: 'Cancel' },
-    );
-    if (!ok) return false;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/email/archive-folder${_acctStart()}`, {
+async function _archiveEmailWithFallback(em, capturedScope = null) {
+  const action = captureArchiveAction(
+    em.uid,
+    capturedScope?.accountId ?? window.__odysseusActiveEmailAccount ?? '',
+    capturedScope?.sourceFolder ?? _currentFolder,
+  );
+  const result = await runArchiveFallback(action, {
+    getActiveAccountId: () => window.__odysseusActiveEmailAccount || '',
+    archiveOnce: async (captured) => {
+      const res = await fetch(emailApiUrl(`/api/email/archive/${encodeURIComponent(captured.uid)}`, {
+        folder: captured.sourceFolder,
+        account_id: captured.accountId || undefined,
+      }), { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      return { ...data, success: res.ok && data.success !== false };
+    },
+    confirmCreate: async (folderName) => {
+      const { styledConfirm } = await import('./ui.js');
+      return styledConfirm(
+        `No Archive folder was found for this account. Create one named ${folderName}?`,
+        { confirmText: 'Create Archive', cancelText: 'Cancel' },
+      );
+    },
+    createFolder: async (folderName, captured) => {
+      const res = await fetch(emailApiUrl('/api/email/archive-folder', {
+        account_id: captured.accountId || undefined,
+      }), {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: folderName }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.success === false) {
-        showToast(data.error || 'Failed to create Archive folder');
-        return false;
-      }
-      await _loadFolders();
-      showToast(data.created ? 'Created Archive folder' : 'Archive folder is ready');
-      return true;
-    } catch (err) {
-      console.error('Create Archive folder failed:', err);
-      showToast('Failed to create Archive folder');
-      return false;
-    }
-  })();
-  try {
-    return await _archiveSetupPromptPromise;
-  } finally {
-    _archiveSetupPromptPromise = null;
-  }
-}
+      return { ...data, success: res.ok && data.success !== false };
+    },
+    refreshFolders: async (captured) => {
+      await loadFolders({ accountId: captured.accountId, refresh: true });
+    },
+    onFolderReady: async (data) => {
+      const { showToast } = await import('./ui.js');
+      showToast(data?.created ? 'Created Archive folder' : 'Archive folder is ready');
+    },
+  });
 
-async function _archiveEmailWithFallback(em) {
-  const archiveOnce = async () => {
-    const res = await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) return { success: false, ...data };
-    return { success: true, ...data };
-  };
-
-  const first = await archiveOnce();
-  if (first.success) return first;
-
-  if (first.needs_archive_folder) {
-    const ready = await _ensureArchiveFolderForSidebar(first.suggested_folder || 'Archive');
-    if (!ready) return { success: false, canceled: true };
-    const retry = await archiveOnce();
-    if (retry.success) return retry;
+  if (!result.success && !result.canceled && !result.stale) {
     const { showToast } = await import('./ui.js');
-    showToast(retry.error || 'Failed to archive email');
-    return retry;
+    showToast(result.error || 'Failed to archive email');
   }
-
-  const { showToast } = await import('./ui.js');
-  showToast(first.error || 'Failed to archive email');
-  return first;
+  return { ...result, archiveContext: action };
 }
 
 function _restoreArchiveSwipeItem(itemEl) {
@@ -1300,6 +1291,12 @@ async function _archiveEmail(em, itemEl = null) {
     if (!result.success) {
       _restoreArchiveSwipeItem(itemEl);
       return false;
+    }
+    if (
+      result.archiveContext.accountId !== String(window.__odysseusActiveEmailAccount || '')
+      || result.archiveContext.sourceFolder !== String(_currentFolder || 'INBOX')
+    ) {
+      return true;
     }
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();

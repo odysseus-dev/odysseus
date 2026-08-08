@@ -6,6 +6,7 @@
 import spinnerModule from './spinner.js';
 import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
 import { folderDisplayName, isArchiveFolder, sortedFolders } from './emailInbox.js?v=20260722emailfastindex1';
+import { captureArchiveAction, runArchiveFallback } from './emailArchiveFallback.js';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -1752,10 +1753,6 @@ function _rememberedEmailAccountId() {
   }
 }
 
-function _acctStart() {
-  return state._libAccountId ? `?account_id=${encodeURIComponent(state._libAccountId)}` : '';
-}
-
 // Per-(account, folder, filter, attachments) cache of the most recent
 // first-page list response. Lets reopen-after-close paint the previous
 // list instantly while the network refresh runs behind it — the modal
@@ -3254,9 +3251,14 @@ function _snapEmailModalToLeftSidebar(modal) {
   return true;
 }
 
-async function _loadFolders({ resetMissing = false, live = false, refresh = false } = {}) {
+async function _loadFolders({
+  resetMissing = false,
+  live = false,
+  refresh = false,
+  accountId = state._libAccountId || '',
+} = {}) {
   const seq = ++_libFolderSeq;
-  const accountAtStart = state._libAccountId || '';
+  const accountAtStart = String(accountId || '');
   try {
     const res = await fetch(emailApiUrl('/api/email/folders', {
       account_id: accountAtStart || undefined,
@@ -3319,69 +3321,56 @@ async function _loadFolders({ resetMissing = false, live = false, refresh = fals
   } catch (e) {}
 }
 
-let _archiveSetupPromptPromise = null;
-
-async function _ensureArchiveFolderForAccount(suggestedFolder = 'Archive') {
-  if (_archiveSetupPromptPromise) return _archiveSetupPromptPromise;
-  _archiveSetupPromptPromise = (async () => {
-    const folderName = String(suggestedFolder || 'Archive').trim() || 'Archive';
-    const ok = await styledConfirm(
+async function _archiveEmailWithFallback(uid, capturedScope = null) {
+  const action = captureArchiveAction(
+    uid,
+    capturedScope?.accountId ?? state._libAccountId ?? '',
+    capturedScope?.sourceFolder ?? state._libFolder,
+  );
+  const result = await runArchiveFallback(action, {
+    getActiveAccountId: () => state._libAccountId || '',
+    archiveOnce: async (captured) => {
+      const res = await fetch(emailApiUrl(`/api/email/archive/${encodeURIComponent(captured.uid)}`, {
+        folder: captured.sourceFolder,
+        account_id: captured.accountId || undefined,
+      }), { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      return { ...data, success: res.ok && data.success !== false };
+    },
+    confirmCreate: (folderName) => styledConfirm(
       `No Archive folder was found for this account. Create one named ${folderName}?`,
       { confirmText: 'Create Archive', cancelText: 'Cancel' },
-    );
-    if (!ok) return false;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/email/archive-folder${_acctStart()}`, {
+    ),
+    createFolder: async (folderName, captured) => {
+      const res = await fetch(emailApiUrl('/api/email/archive-folder', {
+        account_id: captured.accountId || undefined,
+      }), {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: folderName }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.success === false) {
-        showToast(data.error || 'Failed to create Archive folder');
-        return false;
-      }
-      if (Array.isArray(data.folders)) state._libFolders = data.folders;
-      await _loadFolders();
-      showToast(data.created ? 'Created Archive folder' : 'Archive folder is ready');
-      return true;
-    } catch (err) {
-      console.error('Create Archive folder failed:', err);
-      showToast('Failed to create Archive folder');
-      return false;
-    }
-  })();
-  try {
-    return await _archiveSetupPromptPromise;
-  } finally {
-    _archiveSetupPromptPromise = null;
+      return { ...data, success: res.ok && data.success !== false };
+    },
+    refreshFolders: async (captured, data) => {
+      if (Array.isArray(data?.folders)) state._libFolders = data.folders;
+      await _loadFolders({ accountId: captured.accountId, refresh: true });
+    },
+    onFolderReady: (data) => {
+      showToast(data?.created ? 'Created Archive folder' : 'Archive folder is ready');
+    },
+  });
+
+  if (!result.success && !result.canceled && !result.stale) {
+    showToast(result.error || 'Failed to archive email');
   }
+  return { ...result, archiveContext: action };
 }
 
-async function _archiveEmailWithFallback(uid, folder = state._libFolder) {
-  const archiveOnce = async () => {
-    const res = await fetch(`${API_BASE}/api/email/archive/${uid}?folder=${encodeURIComponent(folder)}${_acct()}`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) return { success: false, ...data };
-    return { success: true, ...data };
-  };
-
-  const first = await archiveOnce();
-  if (first.success) return first;
-
-  if (first.needs_archive_folder) {
-    const ready = await _ensureArchiveFolderForAccount(first.suggested_folder || 'Archive');
-    if (!ready) return { success: false, canceled: true };
-    const retry = await archiveOnce();
-    if (retry.success) return retry;
-    showToast(retry.error || 'Failed to archive email');
-    return retry;
-  }
-
-  showToast(first.error || 'Failed to archive email');
-  return first;
+function _archiveResultMatchesCurrentView(result) {
+  return result?.archiveContext?.accountId === String(state._libAccountId || '')
+    && result?.archiveContext?.sourceFolder === String(state._libFolder || 'INBOX');
 }
 
 function _crossFolderCandidates() {
@@ -7600,7 +7589,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       action: async () => {
         try {
           const result = await _archiveEmailWithFallback(em.uid);
-          if (result.success) await closeAndRemove();
+          if (result.success && _archiveResultMatchesCurrentView(result)) await closeAndRemove();
         } catch (e) { console.error(e); }
       },
     },
@@ -7837,8 +7826,9 @@ function _showCardMenu(em, anchor) {
         icon: _archIcon,
         action: async () => {
           const result = await _archiveEmailWithFallback(em.uid);
-          if (!result.success) return;
+          if (!result.success || !_archiveResultMatchesCurrentView(result)) return;
           await _animateEmailCardRemoval([em.uid]);
+          if (!_archiveResultMatchesCurrentView(result)) return;
           state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
           _renderGrid();
           _libCacheWriteBack();
@@ -7868,8 +7858,9 @@ function _showCardMenu(em, anchor) {
         icon: _archIcon,
         action: async () => {
           const result = await _archiveEmailWithFallback(em.uid);
-          if (!result.success) return;
+          if (!result.success || !_archiveResultMatchesCurrentView(result)) return;
           await _animateEmailCardRemoval([em.uid]);
+          if (!_archiveResultMatchesCurrentView(result)) return;
           state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
           _renderGrid();
           _libCacheWriteBack();
@@ -8022,6 +8013,12 @@ function _updateBulkBar() {
 async function _bulkAction(action) {
   const uids = Array.from(state._selectedUids);
   if (uids.length === 0) return;
+  const archiveScope = action === 'archive'
+    ? Object.freeze({
+        accountId: String(state._libAccountId || ''),
+        sourceFolder: String(state._libFolder || 'INBOX'),
+      })
+    : null;
   let failedReadSync = 0;
   let archiveCanceled = false;
   const successfulArchiveUids = new Set();
@@ -8086,10 +8083,10 @@ async function _bulkAction(action) {
     try {
       if (action === 'archive') {
         if (archiveCanceled) return;
-        const result = await _archiveEmailWithFallback(uid);
+        const result = await _archiveEmailWithFallback(uid, archiveScope);
         if (result.success) {
           successfulArchiveUids.add(String(uid));
-        } else if (result.canceled) {
+        } else if (result.canceled || result.stale) {
           archiveCanceled = true;
         } else {
           throw new Error(result.error || 'Archive failed');
@@ -8154,10 +8151,15 @@ async function _bulkAction(action) {
     });
 
     if (action === 'archive') {
-      const archived = uids.filter(uid => successfulArchiveUids.has(String(uid)));
-      if (archived.length > 0) await _animateEmailCardRemoval(archived);
-      const removed = new Set(archived.map(uid => String(uid)));
-      state._libEmails = state._libEmails.filter(e => !removed.has(String(e.uid)));
+      if (
+        archiveScope.accountId === String(state._libAccountId || '')
+        && archiveScope.sourceFolder === String(state._libFolder || 'INBOX')
+      ) {
+        const archived = uids.filter(uid => successfulArchiveUids.has(String(uid)));
+        if (archived.length > 0) await _animateEmailCardRemoval(archived);
+        const removed = new Set(archived.map(uid => String(uid)));
+        state._libEmails = state._libEmails.filter(e => !removed.has(String(e.uid)));
+      }
     } else if (action === 'delete') {
       deleteOverlays.forEach(busy => busy.remove?.());
       await _animateEmailCardRemoval(uids);
