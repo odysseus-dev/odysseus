@@ -1,3 +1,6 @@
+import asyncio
+import json
+import logging
 import os
 import sqlite3
 import sys
@@ -58,8 +61,135 @@ async def test_generate_email_summary_uses_shared_llm_adapter(monkeypatch):
     assert calls["kwargs"]["temperature"] == 0.3
     assert calls["kwargs"]["max_tokens"] == 1234
     assert calls["kwargs"]["timeout"] == 45
+    assert calls["kwargs"]["workload"] == "foreground"
     assert calls["messages"][0]["role"] == "system"
     assert calls["messages"][1]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_scheduled_email_summary_uses_background_fallback_chain(monkeypatch):
+    import routes.email_helpers as email_helpers
+    import src.llm_core as llm_core
+    import src.task_endpoint as task_endpoint
+
+    candidates = [
+        ("http://primary.invalid/v1", "primary-model", {"X-Candidate": "primary"}),
+        ("http://fallback.invalid/v1", "fallback-model", {"X-Candidate": "fallback"}),
+    ]
+    resolve_calls = []
+    wait_calls = []
+    llm_calls = []
+
+    def fake_resolve_task_candidates(**kwargs):
+        resolve_calls.append(kwargs)
+        return candidates
+
+    async def fake_wait_for_interactive_quiet(label):
+        wait_calls.append(label)
+        return False
+
+    async def fake_llm_call_async(url, model, messages, **kwargs):
+        llm_calls.append((url, model, messages, kwargs))
+        if model == "primary-model":
+            raise RuntimeError("primary unavailable")
+        return "<<<SUMMARY>>>\n- Used the fallback model.\n<<<END>>>"
+
+    monkeypatch.setattr(task_endpoint, "resolve_task_candidates", fake_resolve_task_candidates)
+    monkeypatch.setattr(task_endpoint, "wait_for_interactive_quiet", fake_wait_for_interactive_quiet)
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+
+    summary = await email_helpers._generate_scheduled_email_summary(
+        url="http://caller-fallback.invalid/v1",
+        model="caller-fallback-model",
+        sender="Sender <sender@example.com>",
+        subject="Scheduled subject",
+        body_for_llm="Please summarize this scheduled email.",
+        headers={"Authorization": "Bearer test"},
+        owner="alice",
+        max_tokens=321,
+        timeout=54,
+    )
+
+    assert summary == "- Used the fallback model."
+    assert resolve_calls == [{
+        "fallback_url": "http://caller-fallback.invalid/v1",
+        "fallback_model": "caller-fallback-model",
+        "fallback_headers": {"Authorization": "Bearer test"},
+        "owner": "alice",
+    }]
+    assert wait_calls == ["background task LLM"]
+    assert [call[1] for call in llm_calls] == ["primary-model", "fallback-model"]
+    assert all(call[3]["workload"] == "background" for call in llm_calls)
+    assert all(call[3]["max_tokens"] == 321 for call in llm_calls)
+    assert all(call[3]["timeout"] == 54 for call in llm_calls)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_local_summary_is_preempted_by_foreground_call(monkeypatch):
+    import routes.email_helpers as email_helpers
+    import src.llm_core as llm_core
+    import src.task_endpoint as task_endpoint
+
+    local_url = "http://127.0.0.1:11434/v1/chat/completions"
+    background_started = asyncio.Event()
+    never_release = asyncio.Event()
+    observed_workloads = []
+
+    monkeypatch.setenv("ODYSSEUS_LOCAL_MODEL_GATE", "true")
+    monkeypatch.setenv("BACKGROUND_TASK_FOREGROUND_GATE", "false")
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_LOCK", asyncio.Lock())
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_CURRENT", {})
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_WAITING_FOREGROUND", 0)
+    monkeypatch.setattr(
+        task_endpoint,
+        "resolve_task_candidates",
+        lambda **_kwargs: [(local_url, "scheduled-model", {})],
+    )
+
+    async def fake_wait_for_interactive_quiet(_label):
+        return False
+
+    async def gated_llm_call(url, model, messages, **kwargs):
+        assert messages
+        workload = kwargs.get("workload")
+        observed_workloads.append(workload)
+        async with llm_core._local_model_slot(url, model, workload=workload):
+            background_started.set()
+            await never_release.wait()
+        return "unreachable"
+
+    monkeypatch.setattr(task_endpoint, "wait_for_interactive_quiet", fake_wait_for_interactive_quiet)
+    monkeypatch.setattr(llm_core, "llm_call_async", gated_llm_call)
+
+    background_task = asyncio.create_task(email_helpers._generate_scheduled_email_summary(
+        url=local_url,
+        model="scheduled-model",
+        sender="Sender",
+        subject="Scheduled",
+        body_for_llm="Scheduled body",
+        owner="alice",
+    ))
+    foreground_task = None
+    try:
+        await asyncio.wait_for(background_started.wait(), timeout=1)
+
+        async def run_foreground():
+            async with llm_core._local_model_slot(
+                local_url,
+                "interactive-model",
+                workload="foreground",
+            ):
+                return True
+
+        foreground_task = asyncio.create_task(run_foreground())
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(background_task, timeout=1)
+        assert await asyncio.wait_for(foreground_task, timeout=1) is True
+        assert observed_workloads == ["background"]
+    finally:
+        for task in (background_task, foreground_task):
+            if task is not None and not task.done():
+                task.cancel()
 
 
 @pytest.mark.asyncio
@@ -131,6 +261,69 @@ async def test_manual_email_summary_uses_shared_helper_and_caches(tmp_path, monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exception_kind", ["http", "runtime"])
+async def test_manual_email_summary_never_exposes_provider_exception(
+    monkeypatch,
+    caplog,
+    exception_kind,
+):
+    from fastapi import HTTPException
+    import routes.email_routes as email_routes
+    import src.endpoint_resolver as endpoint_resolver
+
+    secret_detail = (
+        "endpoint=https://private.example.internal/v1 provider=ollama "
+        "model=private-model response_body=private-response "
+        "Authorization: Bearer token-secret-value"
+    )
+
+    def fake_resolve_endpoint(kind, owner=None):
+        assert kind == "utility"
+        assert owner == "alice"
+        return (
+            "https://private.example.internal/v1",
+            "private-model",
+            {"Authorization": "Bearer token-secret-value"},
+        )
+
+    async def fail_summary(**_kwargs):
+        if exception_kind == "http":
+            raise HTTPException(status_code=502, detail=secret_detail)
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve_endpoint)
+    monkeypatch.setattr(email_routes, "_generate_email_summary", fail_summary)
+    caplog.set_level(logging.WARNING, logger=email_routes.__name__)
+
+    router = email_routes.setup_email_routes()
+    summarize = _route_endpoint(router, "/api/email/summarize", "POST")
+    result = await summarize(
+        {
+            "body": "This email body is long enough to summarize.",
+            "subject": "Sensitive provider failure",
+            "from": "Sender <sender@example.com>",
+        },
+        owner="alice",
+    )
+
+    assert result == {
+        "success": False,
+        "error": "Failed to summarize",
+        "error_code": "email_summary_unavailable",
+    }
+    exposed = json.dumps(result) + caplog.text
+    for marker in (
+        "private.example.internal",
+        "ollama",
+        "private-model",
+        "private-response",
+        "token-secret-value",
+    ):
+        assert marker not in exposed
+    assert f"type={'HTTPException' if exception_kind == 'http' else 'RuntimeError'}" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_scheduled_email_summary_uses_shared_helper_and_caches(tmp_path, monkeypatch):
     import routes.email_helpers as email_helpers
     import routes.email_pollers as email_pollers
@@ -189,7 +382,7 @@ async def test_scheduled_email_summary_uses_shared_helper_and_caches(tmp_path, m
     monkeypatch.setattr(email_pollers, "_imap_connect", lambda account_id=None, owner="": fake_conn)
     monkeypatch.setattr(email_pollers, "_get_email_config", lambda account_id=None, owner="": {"from_address": "alice@example.com"})
     monkeypatch.setattr(email_pollers, "resolve_task_candidates", fake_resolve_task_candidates)
-    monkeypatch.setattr(email_pollers, "_generate_email_summary", fake_generate_email_summary)
+    monkeypatch.setattr(email_pollers, "_generate_scheduled_email_summary", fake_generate_email_summary)
 
     result = await email_pollers._auto_summarize_pass_single(account_id="acct-alice")
 
@@ -199,6 +392,7 @@ async def test_scheduled_email_summary_uses_shared_helper_and_caches(tmp_path, m
     assert helper_calls["model"] == "gpt-5.5"
     assert helper_calls["headers"]["Authorization"] == "Bearer test"
     assert helper_calls["headers"]["Content-Type"] == "application/json"
+    assert helper_calls["owner"] == "alice"
     assert fake_conn.logout_calls == 1
 
     conn = sqlite3.connect(db_path)

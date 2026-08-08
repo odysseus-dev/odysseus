@@ -40,7 +40,7 @@ from routes.email_helpers import (
     _pre_retrieve_context,
     _attach_compose_uploads, _cleanup_compose_uploads, _q,
     SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _email_cache_owner_clause,
-    _generate_email_summary,
+    _generate_scheduled_email_summary, _email_summary_failure_log_detail,
 )
 
 logger = logging.getLogger(__name__)
@@ -787,13 +787,14 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
 
                 if need_sum:
                     try:
-                        summary = await _generate_email_summary(
+                        summary = await _generate_scheduled_email_summary(
                             url=url,
                             model=model,
                             sender=sender,
                             subject=subject,
                             body_for_llm=body_for_llm,
                             headers=req_headers,
+                            owner=account_owner or None,
                             max_tokens=16384,
                             timeout=240,
                         )
@@ -817,9 +818,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     except Exception as e:
                         _summary_failed += 1
                         _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
-                        _err = getattr(e, "detail", None) or str(e)
-                        _detail_lines.append(f"summary failed · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}: {_err}")
-                        logger.warning(f"Auto-summary {uid} failed: {e}")
+                        _detail_lines.append(f"summary failed · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
+                        logger.warning(
+                            "Auto-summary uid=%s failed %s",
+                            _uid_text,
+                            _email_summary_failure_log_detail(e),
+                        )
 
                 if need_reply:
                     await _emit_progress(progress_cb, f"Drafting reply {processed + 1}/{_max_process} · checked {examined}/{len(uid_list)}")

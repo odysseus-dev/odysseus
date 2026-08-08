@@ -319,7 +319,7 @@ async def _generate_email_summary(
     max_tokens: int = 8192,
     timeout: int = 180,
 ) -> str:
-    """Generate a cacheable email summary through the shared LLM adapter."""
+    """Generate an interactive email summary through the shared LLM adapter."""
     from src.llm_core import llm_call_async
 
     raw = await llm_call_async(
@@ -330,7 +330,41 @@ async def _generate_email_summary(
         max_tokens=max_tokens,
         headers=headers,
         timeout=timeout,
+        workload="foreground",
     )
+    return _normalize_email_summary(raw)
+
+
+async def _generate_scheduled_email_summary(
+    url: str,
+    model: str,
+    sender: str,
+    subject: str,
+    body_for_llm: str,
+    *,
+    headers: dict | None = None,
+    owner: str | None = None,
+    max_tokens: int = 8192,
+    timeout: int = 180,
+) -> str:
+    """Generate a scheduled summary through the background task candidate chain."""
+    from src.task_endpoint import task_llm_call_async
+
+    raw = await task_llm_call_async(
+        messages=_build_email_summary_messages(sender, subject, body_for_llm),
+        fallback_url=url,
+        fallback_model=model,
+        fallback_headers=headers,
+        owner=owner,
+        temperature=0.3,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    return _normalize_email_summary(raw)
+
+
+def _normalize_email_summary(raw) -> str:
+    """Extract a stable cache/UI summary from provider output."""
     raw_text = raw or ""
     if _REPLY_OPEN_RE.search(raw_text):
         summary = _extract_reply(raw_text)
@@ -346,6 +380,21 @@ async def _generate_email_summary(
     if bullets:
         return "\n".join(bullets)
     return cleaned.strip()
+
+
+EMAIL_SUMMARY_ERROR_CODE = "email_summary_unavailable"
+EMAIL_SUMMARY_ERROR_MESSAGE = "Failed to summarize"
+
+
+def _email_summary_failure_log_detail(exc: BaseException) -> str:
+    """Return useful provider-failure metadata without echoing exception text."""
+    detail = f"type={type(exc).__name__}"
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        detail += f" status={status}"
+    return detail
 
 
 def _apply_email_style_mechanics(text: str) -> str:

@@ -57,8 +57,8 @@ from routes.email_helpers import (
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
-    _friendly_email_auth_error,
-    _generate_email_summary,
+    _friendly_email_auth_error, _email_summary_failure_log_detail,
+    _generate_email_summary, EMAIL_SUMMARY_ERROR_CODE, EMAIL_SUMMARY_ERROR_MESSAGE,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause, email_translation_body_hash,
@@ -4777,7 +4777,11 @@ def setup_email_routes():
             if account_id:
                 _assert_owns_account(account_id, owner)
             if not body:
-                return {"success": False, "error": "No body provided"}
+                return {
+                    "success": False,
+                    "error": "No body provided",
+                    "error_code": "email_summary_missing_body",
+                }
 
             # If we know which UID this is, fetch the raw message and pull
             # attachment text so the summary can reference invoice totals,
@@ -4806,7 +4810,11 @@ def setup_email_routes():
             if not url:
                 url, model, headers = resolve_endpoint("default", owner=owner)
             if not url or not model:
-                return {"success": False, "error": "No LLM endpoint configured"}
+                return {
+                    "success": False,
+                    "error": "No model configured for email summaries",
+                    "error_code": "email_summary_not_configured",
+                }
 
             req_headers = {"Content-Type": "application/json"}
             if headers:
@@ -4822,15 +4830,23 @@ def setup_email_routes():
                     max_tokens=8192,
                     timeout=180,
                 )
-            except HTTPException as e:
-                logger.warning(f"Email summary LLM call failed: {e.detail}")
-                return {"success": False, "error": f"LLM call failed: {e.detail}"}
             except Exception as e:
-                logger.warning(f"Email summary LLM call failed: {e}")
-                return {"success": False, "error": f"LLM call failed: {e}"}
+                logger.warning(
+                    "Email summary LLM call failed %s",
+                    _email_summary_failure_log_detail(e),
+                )
+                return {
+                    "success": False,
+                    "error": EMAIL_SUMMARY_ERROR_MESSAGE,
+                    "error_code": EMAIL_SUMMARY_ERROR_CODE,
+                }
 
             if not content:
-                return {"success": False, "error": "Empty response from model"}
+                return {
+                    "success": False,
+                    "error": "The model returned an empty summary",
+                    "error_code": "email_summary_empty",
+                }
 
             # Cache the summary if we have a message_id
             mid = data.get("message_id", "")
@@ -4853,8 +4869,15 @@ def setup_email_routes():
 
             return {"success": True, "summary": content, "model_used": model}
         except Exception as e:
-            logger.error(f"Failed to summarize: {e}")
-            return {"success": False, "error": "Mail operation failed"}
+            logger.error(
+                "Email summary route failed %s",
+                _email_summary_failure_log_detail(e),
+            )
+            return {
+                "success": False,
+                "error": EMAIL_SUMMARY_ERROR_MESSAGE,
+                "error_code": EMAIL_SUMMARY_ERROR_CODE,
+            }
 
     @router.post("/translate")
     async def translate_email(data: dict, owner: str = Depends(require_owner)):
