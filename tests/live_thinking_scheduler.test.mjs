@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createIncrementalDisplayProjector,
   createLiveThinkingThrottle,
+  createThinkingAnalysisGate,
   stripLiveThinkingTags,
 } from '../static/js/liveThinkingThrottle.js';
 
@@ -105,6 +107,87 @@ test('prepares a 200K cumulative stream only at scheduled commit cadence', () =>
   assert.equal(prepareCalls, 1);
   assert.equal(scannedCharacters, 200_000);
   assert.deepEqual(commits, [cumulative]);
+});
+
+test('ordinary answers and reasoning deltas do not request cumulative analysis', () => {
+  const startsReasoning = (text) => /^\s*thinking(?:\s+process)?\s*:/i.test(text);
+  const ordinaryGate = createThinkingAnalysisGate({ startsWithReasoningPrefix: startsReasoning });
+  let ordinary = '';
+  let ordinaryAnalyses = 0;
+  for (let i = 0; i < 2000; i++) {
+    ordinary += i === 0 ? 'Here is the answer. ' : 'answer '.repeat(10);
+    if (ordinaryGate.shouldAnalyze(ordinary)) ordinaryAnalyses += 1;
+  }
+  assert.equal(ordinaryAnalyses, 0);
+
+  const thinkingGate = createThinkingAnalysisGate({ startsWithReasoningPrefix: startsReasoning });
+  let thinking = 'Thin';
+  assert.equal(thinkingGate.shouldAnalyze(thinking), false);
+  thinking += 'king: inspect the problem';
+  assert.equal(thinkingGate.shouldAnalyze(thinking), true);
+  for (let i = 0; i < 2000; i++) {
+    thinking += ' reasoning'.repeat(10);
+    assert.equal(thinkingGate.shouldAnalyze(thinking, { isThinking: true, nonTagThinking: true }), false);
+  }
+  thinking += '\n\nHere is the answer';
+  assert.equal(thinkingGate.shouldAnalyze(thinking, { isThinking: true, nonTagThinking: true }), true);
+
+  const whitespaceGate = createThinkingAnalysisGate({ startsWithReasoningPrefix: startsReasoning });
+  let whitespaceThinking = ' '.repeat(250);
+  assert.equal(whitespaceGate.shouldAnalyze(whitespaceThinking), false);
+  whitespaceThinking += 'Thinking: bounded probe';
+  assert.equal(whitespaceGate.shouldAnalyze(whitespaceThinking), true);
+});
+
+test('split namespaced closes and false-close deadlines request analysis', () => {
+  let clock = 100;
+  const gate = createThinkingAnalysisGate({ now: () => clock });
+  let text = '<mm:think>x</mm:';
+  assert.equal(gate.shouldAnalyze(text, { isThinking: true }), true, 'fresh opening tag is analyzed');
+  text += 'think>answer';
+  assert.equal(gate.shouldAnalyze(text, { isThinking: true }), true, 'split namespaced close is analyzed');
+
+  text += ' still waiting';
+  assert.equal(gate.shouldAnalyze(text, { isThinking: true, recheckAt: 500 }), false);
+  clock = 500;
+  text += ' next delta';
+  assert.equal(gate.shouldAnalyze(text, { isThinking: true, recheckAt: 500 }), true);
+
+  const attributedGate = createThinkingAnalysisGate();
+  let attributed = `<think data-provider="${'x'.repeat(400)}"`;
+  assert.equal(attributedGate.shouldAnalyze(attributed), false);
+  attributed += '>reasoning';
+  assert.equal(attributedGate.shouldAnalyze(attributed), true, 'bounded carry preserves split tag attributes');
+});
+
+test('display projection is append-only and filters a structured tail once', () => {
+  let filterCalls = 0;
+  let filteredCharacters = 0;
+  const projector = createIncrementalDisplayProjector((text) => {
+    filterCalls += 1;
+    filteredCharacters += text.length;
+    return text.replace(/\[TOOL_CALL\][\s\S]*$/i, '');
+  });
+
+  let text = '';
+  for (let i = 0; i < 2000; i++) {
+    const delta = i === 0 ? 'Here is the answer. ' : 'ordinary text ';
+    text += delta;
+    assert.equal(projector.append(delta, text), text);
+  }
+  assert.equal(filterCalls, 0, 'ordinary deltas never run the cumulative filter');
+
+  text += '[TOOL_';
+  projector.append('[TOOL_', text);
+  text += 'CALL]{"name":"read"}';
+  const beforeToolPayload = projector.append('CALL]{"name":"read"}', text);
+  for (let i = 0; i < 2000; i++) {
+    const delta = 'payload ';
+    text += delta;
+    assert.equal(projector.append(delta, text), beforeToolPayload);
+  }
+  assert.equal(filterCalls, 1, 'structured payload filtering happens only at its boundary');
+  assert.ok(filteredCharacters < text.length, 'filter work is bounded by the first structured boundary');
 });
 
 test('literal escaped tags survive and malformed live tags retain trailing text', () => {
