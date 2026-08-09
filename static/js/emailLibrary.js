@@ -1772,6 +1772,7 @@ let _libPrewarmIdleHandle = null;
 let _libPrewarmPromise = null;
 let _libPrewarmResolve = null;
 let _libPrewarmAbortController = null;
+let _libPrewarmDetachPriorityListeners = null;
 let _libPrewarmGeneration = 0;
 let _libLastPrewarmAt = 0;
 let _libUnreadPrewarmKey = '';
@@ -2103,16 +2104,20 @@ function _isEmailPrewarmCurrent(generation, signal) {
 function _settleEmailPrewarm(generation, value = false) {
   if (generation !== _libPrewarmGeneration) return;
   const resolve = _libPrewarmResolve;
+  const detachPriorityListeners = _libPrewarmDetachPriorityListeners;
   _libPrewarmDelayTimer = null;
   _libPrewarmIdleHandle = null;
   _libPrewarmPromise = null;
   _libPrewarmResolve = null;
   _libPrewarmAbortController = null;
+  _libPrewarmDetachPriorityListeners = null;
+  detachPriorityListeners?.();
   resolve?.(value);
 }
 
 function _cancelEmailPrewarm() {
   const resolve = _libPrewarmResolve;
+  const detachPriorityListeners = _libPrewarmDetachPriorityListeners;
   _libPrewarmGeneration += 1;
   if (_libPrewarmDelayTimer !== null) {
     clearTimeout(_libPrewarmDelayTimer);
@@ -2126,6 +2131,8 @@ function _cancelEmailPrewarm() {
   _libPrewarmPromise = null;
   _libPrewarmResolve = null;
   _libPrewarmAbortController = null;
+  _libPrewarmDetachPriorityListeners = null;
+  detachPriorityListeners?.();
   resolve?.(false);
 }
 
@@ -2138,10 +2145,56 @@ function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
   const generation = ++_libPrewarmGeneration;
   _libPrewarmPromise = new Promise(resolve => { _libPrewarmResolve = resolve; });
   const promise = _libPrewarmPromise;
+  let attemptPending = false;
+  let retryRequested = false;
+
+  function clearScheduledAttempt() {
+    if (_libPrewarmDelayTimer !== null) clearTimeout(_libPrewarmDelayTimer);
+    if (_libPrewarmIdleHandle !== null && typeof window.cancelIdleCallback === 'function') {
+      try { window.cancelIdleCallback(_libPrewarmIdleHandle); } catch (_) {}
+    }
+    _libPrewarmDelayTimer = null;
+    _libPrewarmIdleHandle = null;
+  }
+
   function scheduleIdleRetry(delay = 500) {
     if (generation !== _libPrewarmGeneration) return;
+    retryRequested = true;
+    if (attemptPending || _libPrewarmDelayTimer !== null || _libPrewarmIdleHandle !== null) return;
+    if (document.visibilityState && document.visibilityState !== 'visible') return;
     _libPrewarmDelayTimer = setTimeout(requestIdle, Math.max(50, Number(delay) || 500));
   }
+
+  function handlePriorityChange() {
+    if (generation !== _libPrewarmGeneration) return;
+    if (_canRunEmailPrewarm()) {
+      scheduleIdleRetry(50);
+      return;
+    }
+
+    const priorityBlocked = _isChatInteractionBusy()
+      || (document.visibilityState && document.visibilityState !== 'visible');
+    if (!priorityBlocked) return;
+
+    retryRequested = true;
+    clearScheduledAttempt();
+    const controller = _libPrewarmAbortController;
+    _libPrewarmAbortController = null;
+    try { controller?.abort(); } catch (_) {}
+    // A hidden page waits for visibilitychange. Chat priority also retains the
+    // timer fallback for busy-until windows whose final transition has no event.
+    if (!document.visibilityState || document.visibilityState === 'visible') {
+      scheduleIdleRetry();
+    }
+  }
+
+  window.addEventListener('odysseus:chat-busy-change', handlePriorityChange);
+  document.addEventListener('visibilitychange', handlePriorityChange);
+  _libPrewarmDetachPriorityListeners = () => {
+    window.removeEventListener('odysseus:chat-busy-change', handlePriorityChange);
+    document.removeEventListener('visibilitychange', handlePriorityChange);
+  };
+
   function requestIdle() {
     if (generation !== _libPrewarmGeneration) return;
     _libPrewarmDelayTimer = null;
@@ -2173,10 +2226,23 @@ function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
         }
         const controller = new AbortController();
         _libPrewarmAbortController = controller;
+        attemptPending = true;
+        retryRequested = false;
         Promise.resolve()
           .then(() => task({ signal: controller.signal, generation }))
-          .then(value => _settleEmailPrewarm(generation, Boolean(value)))
-          .catch(() => _settleEmailPrewarm(generation, false));
+          .then(value => {
+            if (controller !== _libPrewarmAbortController || controller.signal.aborted) return;
+            _settleEmailPrewarm(generation, Boolean(value));
+          })
+          .catch(() => {
+            if (controller !== _libPrewarmAbortController || controller.signal.aborted) return;
+            _settleEmailPrewarm(generation, false);
+          })
+          .finally(() => {
+            attemptPending = false;
+            if (generation !== _libPrewarmGeneration) return;
+            if (retryRequested) scheduleIdleRetry();
+          });
       });
     } catch (_) {
       _settleEmailPrewarm(generation, false);
@@ -2205,7 +2271,7 @@ function _chooseEmailPrewarmAccountId(accounts) {
     || enabled.find(a => a.is_default)
     || enabled[0]
     || null;
-  return String(chosen?.id || remembered || current || '').trim();
+  return String(chosen?.id || '').trim();
 }
 
 async function _ensureEmailAccountsForPrewarm({ signal, generation } = {}) {
@@ -2233,6 +2299,7 @@ async function _ensureEmailAccountsForPrewarm({ signal, generation } = {}) {
 
   const accountId = _chooseEmailPrewarmAccountId(state._libAccounts);
   if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+  if (!accountId) return null;
   if (accountId && state._libAccountId !== accountId) {
     state._libAccountId = accountId;
     _publishActiveAccount();

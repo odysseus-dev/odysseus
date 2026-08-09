@@ -101,12 +101,26 @@ def _run_scheduler_scenario(scenario: str):
       let _libPrewarmPromise = null;
       let _libPrewarmResolve = null;
       let _libPrewarmAbortController = null;
+      let _libPrewarmDetachPriorityListeners = null;
       let _libPrewarmGeneration = 0;
       let nextHandle = 1;
       const timers = new Map();
       const idleCallbacks = new Map();
       let idleRequestCount = 0;
-      const document = {{ visibilityState: 'visible' }};
+      function eventTarget(target) {{
+        const listeners = new Map();
+        target.addEventListener = (type, callback) => {{
+          if (!listeners.has(type)) listeners.set(type, new Set());
+          listeners.get(type).add(callback);
+        }};
+        target.removeEventListener = (type, callback) => listeners.get(type)?.delete(callback);
+        target.dispatchEvent = (event) => {{
+          for (const callback of [...(listeners.get(event.type) || [])]) callback(event);
+        }};
+        target.listenerCount = (type) => listeners.get(type)?.size || 0;
+        return target;
+      }}
+      const document = eventTarget({{ visibilityState: 'visible' }});
       const window = {{
         __odysseusChatBusy: false,
         __odysseusChatBusyUntil: 0,
@@ -118,6 +132,7 @@ def _run_scheduler_scenario(scenario: str):
         }},
         cancelIdleCallback(handle) {{ idleCallbacks.delete(handle); }},
       }};
+      eventTarget(window);
       function setTimeout(callback, delay) {{
         const handle = nextHandle++;
         timers.set(handle, {{ callback, at: now + Number(delay || 0) }});
@@ -235,6 +250,62 @@ def test_cancelled_prewarm_cannot_issue_a_delayed_duplicate():
     }
 
 
+@pytest.mark.parametrize("transition", ["busy", "hidden"])
+def test_active_prewarm_is_aborted_and_retried_once_after_priority_transition(transition):
+    block = (
+        "window.__odysseusChatBusy = true; "
+        "window.dispatchEvent({ type: 'odysseus:chat-busy-change' });"
+        if transition == "busy"
+        else "document.visibilityState = 'hidden'; document.dispatchEvent({ type: 'visibilitychange' });"
+    )
+    unblock = (
+        "window.__odysseusChatBusy = false; window.__odysseusChatBusyUntil = now; "
+        "window.dispatchEvent({ type: 'odysseus:chat-busy-change' });"
+        if transition == "busy"
+        else "document.visibilityState = 'visible'; document.dispatchEvent({ type: 'visibilitychange' });"
+    )
+    out = _run_scheduler_scenario(f"""
+      let taskCalls = 0;
+      let firstSignal = null;
+      let finishFirst;
+      const firstAttempt = new Promise(resolve => {{ finishFirst = resolve; }});
+      const pending = _scheduleEmailPrewarm(async ({{ signal }}) => {{
+        taskCalls += 1;
+        if (taskCalls === 1) {{ firstSignal = signal; return firstAttempt; }}
+        return true;
+      }});
+      await fireNextIdle(7);
+      {block}
+      const aborted = firstSignal.aborted;
+      {unblock}
+      const callsBeforeLateResult = taskCalls;
+      finishFirst(true);
+      await flushMicrotasks();
+      const stillPendingAfterLateResult = _libPrewarmPromise === pending;
+      await advanceTo(now + 500);
+      await fireNextIdle(7);
+      const result = await pending;
+      console.log(JSON.stringify({{
+        result, aborted, callsBeforeLateResult, taskCalls,
+        stillPendingAfterLateResult,
+        timers: timers.size, idleCallbacks: idleCallbacks.size,
+        chatListeners: window.listenerCount('odysseus:chat-busy-change'),
+        visibilityListeners: document.listenerCount('visibilitychange'),
+      }}));
+    """)
+    assert out == {
+        "result": True,
+        "aborted": True,
+        "callsBeforeLateResult": 1,
+        "taskCalls": 2,
+        "stillPendingAfterLateResult": True,
+        "timers": 0,
+        "idleCallbacks": 0,
+        "chatListeners": 0,
+        "visibilityListeners": 0,
+    }
+
+
 def test_prewarm_skips_hidden_and_foreground_work():
     guard = _function_source("_canRunEmailPrewarm")
 
@@ -260,6 +331,46 @@ def test_prewarm_selects_only_last_used_or_default_account():
     assert "/api/email/folders" not in prewarm
     assert "/api/email/unread-state" not in prewarm
     assert prewarm.count("/api/email/list") == 1
+
+
+def test_prewarm_account_chooser_rejects_disabled_or_empty_authoritative_inventory():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    chooser = _function_source("_chooseEmailPrewarmAccountId")
+    script = f"""
+      const state = {{ _libAccountId: 'disabled-current' }};
+      function _rememberedEmailAccountId() {{ return 'disabled-remembered'; }}
+      {chooser}
+      const onlyDisabled = _chooseEmailPrewarmAccountId([
+        {{ id: 'disabled-remembered', enabled: false, is_default: true }},
+        {{ id: 'disabled-current', enabled: false }},
+      ]);
+      const empty = _chooseEmailPrewarmAccountId([]);
+      const mixed = _chooseEmailPrewarmAccountId([
+        {{ id: 'disabled-remembered', enabled: false, is_default: true }},
+        {{ id: 'enabled-default', enabled: true, is_default: true }},
+      ]);
+      console.log(JSON.stringify({{ onlyDisabled, empty, mixed }}));
+    """
+    proc = subprocess.run(
+        [node, "--input-type=module"],
+        input=script,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == {
+        "onlyDisabled": "",
+        "empty": "",
+        "mixed": "enabled-default",
+    }
+
+    ensure_accounts = _function_source("_ensureEmailAccountsForPrewarm")
+    assert "if (!accountId) return null;" in ensure_accounts
+    assert ensure_accounts.index("if (!accountId) return null;") < ensure_accounts.index("_publishActiveAccount();")
 
 
 def test_prewarm_is_bounded_to_the_interactive_initial_page_size():
