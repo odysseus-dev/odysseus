@@ -657,7 +657,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
         _CHOICE_VALUES = {
-            "default_reasoning_effort": {"", "auto", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh"},
+            "default_reasoning_effort": {"", "auto", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh", "max"},
             "default_verbosity": {"", "auto", "low", "medium", "high"},
         }
         for key in DEFAULT_SETTINGS:

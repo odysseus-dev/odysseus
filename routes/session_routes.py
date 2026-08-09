@@ -40,7 +40,7 @@ def _public_model(name: str, model: str) -> str:
     return model
 
 
-_SESSION_REASONING_VALUES = {"auto", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh"}
+_SESSION_REASONING_VALUES = {"auto", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 _SESSION_VERBOSITY_VALUES = {"auto", "low", "medium", "high"}
 
 

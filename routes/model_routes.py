@@ -2467,7 +2467,7 @@ def setup_model_routes(model_discovery):
                 return ""
             if cleaned == "none":
                 return "off"
-            return cleaned if cleaned in {"off", "on", "minimal", "low", "medium", "high", "xhigh"} else ""
+            return cleaned if cleaned in {"off", "on", "minimal", "low", "medium", "high", "xhigh", "max"} else ""
 
         def _clean_default_verbosity(value: str) -> str:
             cleaned = (value or "").strip().lower()

@@ -119,8 +119,16 @@ def _stream_timeout(read_timeout) -> httpx.Timeout:
 
 
 # Cache for LLM responses
-def _get_cache_key(url: str, model: str, messages: List[Dict], 
-                   temperature: float, max_tokens: int) -> str:
+def _get_cache_key(
+    url: str,
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    *,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
+) -> str:
     """Generate cache key for LLM requests."""
     hashable_messages = []
     for msg in messages:
@@ -132,7 +140,9 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
         'model': model, 
         'messages': hashable_messages,
         'temp': temperature,
-        'max_tokens': max_tokens
+        'max_tokens': max_tokens,
+        'reasoning_effort': _normalize_reasoning_effort(reasoning_effort),
+        'verbosity': _normalize_verbosity(verbosity),
     }, sort_keys=True)
     return hashlib.sha256(content.encode()).hexdigest()
 
@@ -1279,9 +1289,9 @@ _MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
-    "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
+    "qwen3", "qwq", "deepseek-r1", "deepseek-v3.1", "deepseek-reasoner", "minimax",
     "m2-reap", "gemma", "stepfun", "step-3", "step3",
-    "magistral", "mistral-small", "mistral-medium",
+    "magistral", "mistral-small", "mistral-medium", "gpt-oss",
 )
 
 def _supports_thinking(model: str) -> bool:
@@ -1327,7 +1337,6 @@ _REASONING_AUTO = {"", "auto", "default"}
 _REASONING_OFF = {"off", "false", "disabled", "disable", "no"}
 _REASONING_NONE = {"none"}
 _REASONING_ON = {"on", "true", "enabled", "enable", "yes"}
-_OPENAI_REASONING_EFFORTS = {"low", "medium", "high"}
 _VERBOSITY_VALUES = {"low", "medium", "high"}
 
 
@@ -1360,66 +1369,89 @@ def _normalize_verbosity(value: Optional[str]) -> Optional[str]:
     return None
 
 
-def _supports_openai_reasoning_effort(model: str) -> bool:
-    return _restricts_temperature(model)
-
-
-def _supports_openai_minimal_reasoning(model: str) -> bool:
-    if not model:
-        return False
-    m = model.lower()
-    return m.startswith("gpt-5") or "/gpt-5" in m
+def _openai_model_id(model: str) -> str:
+    """Return a normalized final model-id component for capability checks."""
+    return str(model or "").strip().lower().rsplit("/", 1)[-1]
 
 
 def _gpt5_minor_version(model: str) -> Optional[int]:
-    if not model:
-        return None
-    match = re.search(r"(?:^|[/\s_-])gpt[\s_-]*5(?:[._-](\d+))?", model.lower())
+    """Return the GPT-5 minor version without treating snapshot dates as versions."""
+    match = re.match(r"^gpt[-_]?5(?:\.(\d+))?(?=$|[-_:])", _openai_model_id(model))
     if not match:
         return None
-    if match.group(1) is None:
-        return 0
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
+    return int(match.group(1) or 0)
 
 
-def _supports_openai_none_reasoning(model: str) -> bool:
-    minor = _gpt5_minor_version(model)
-    return minor is not None and minor >= 1
+def _openai_reasoning_efforts_for_model(model: str) -> set[str]:
+    """Return only reasoning values documented for the selected OpenAI model."""
+    model_id = _openai_model_id(model)
+    version = _gpt5_minor_version(model)
+    if version is not None:
+        if re.match(r"^gpt[-_]?5(?:\.\d+)?-pro(?=$|[-_:])", model_id):
+            return {"high"} if version == 0 else {"medium", "high", "xhigh"}
+        if re.match(r"^gpt[-_]?5(?:\.\d+)?-codex(?=$|[-_:])", model_id):
+            efforts = {"low", "medium", "high"}
+            if version >= 2 or "-codex-max" in model_id:
+                efforts.add("xhigh")
+            return efforts
+        if version == 0:
+            return {"minimal", "low", "medium", "high"}
+        if version == 1:
+            return {"none", "low", "medium", "high"}
+        efforts = {"none", "low", "medium", "high", "xhigh"}
+        if version >= 6:
+            efforts.add("max")
+        return efforts
+    if re.match(r"^(?:o1|o3|o4)(?=$|[-_:])", model_id):
+        return {"low", "medium", "high"}
+    return set()
 
 
 def _openai_reasoning_effort_value(model: str, reasoning_effort: Optional[str]) -> Optional[str]:
-    if not _supports_openai_reasoning_effort(model):
-        return None
     effort = _normalize_reasoning_effort(reasoning_effort)
-    if effort in _OPENAI_REASONING_EFFORTS:
-        return effort
-    if effort == "minimal" and _supports_openai_minimal_reasoning(model):
-        return effort
-    if effort in {"off", "none"} and _supports_openai_none_reasoning(model):
-        return "none"
-    return None
+    if effort == "off":
+        effort = "none"
+    allowed = _openai_reasoning_efforts_for_model(model)
+    return effort if effort in allowed else None
 
 
 def _supports_openai_text_verbosity(model: str) -> bool:
-    if not model:
-        return False
-    m = model.lower()
-    return m.startswith("gpt-5") or "/gpt-5" in m
+    return _gpt5_minor_version(model) is not None
 
 
-def _ollama_think_value(model: str, reasoning_effort: Optional[str]) -> Optional[bool]:
-    """Map the shared reasoning control to Ollama's binary think flag."""
+def _uses_ollama_thinking_levels(model: str) -> bool:
+    return "gpt-oss" in str(model or "").lower()
+
+
+def _ollama_think_value(model: str, reasoning_effort: Optional[str]):
+    """Map the shared reasoning control to Ollama's model-specific think value."""
     if not _supports_thinking(model):
         return None
     effort = _normalize_reasoning_effort(reasoning_effort)
     if effort is None:
         return None
+    if _uses_ollama_thinking_levels(model):
+        return effort if effort in {"low", "medium", "high"} else None
     if effort in {"off", "none"}:
         return False
     return True
+
+
+def _apply_ollama_openai_compat_think(
+    payload: Dict,
+    url: str,
+    model: str,
+    reasoning_effort: Optional[str],
+) -> None:
+    """Apply Ollama's `think` field only to recognized Ollama /v1 endpoints."""
+    if not _is_ollama_openai_compat_url(url) or not _supports_thinking(model):
+        return
+    think_value = _ollama_think_value(model, reasoning_effort)
+    if think_value is not None:
+        payload["think"] = think_value
+    elif not _uses_ollama_thinking_levels(model):
+        # Preserve the existing tool-safe default for boolean-thinking models.
+        payload["think"] = False
 
 
 def _convert_openai_content_to_anthropic(content):
@@ -1940,7 +1972,15 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = non_sys
 
     provider = _detect_provider(url)
-    cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
+    cache_key = _get_cache_key(
+        url,
+        model,
+        messages_copy,
+        temperature,
+        max_tokens,
+        reasoning_effort=reasoning_effort,
+        verbosity=verbosity,
+    )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
@@ -1972,6 +2012,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        _apply_ollama_openai_compat_think(payload, url, model, reasoning_effort)
         _apply_local_generation_stability(payload, target_url, model)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
@@ -2103,7 +2144,15 @@ async def llm_call_async(
     else:
         messages_copy = non_sys
 
-    cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
+    cache_key = _get_cache_key(
+        url,
+        model,
+        messages_copy,
+        temperature,
+        max_tokens,
+        reasoning_effort=reasoning_effort,
+        verbosity=verbosity,
+    )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
@@ -2185,9 +2234,8 @@ async def llm_call_async(
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
-        # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
-            payload["think"] = False
+        # Ollama /v1 accepts boolean thinking controls and GPT-OSS effort levels.
+        _apply_ollama_openai_compat_think(payload, url, model, reasoning_effort)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_local_cache_affinity(payload, url, session_id)
@@ -2361,11 +2409,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         # (high / medium / low / none); default "high".
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
-        # Ollama /v1 accepts the same binary think flag as native /api/chat.
-        # Keep the current safe default for tools, but honor explicit user controls.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
-            think_value = _ollama_think_value(model, reasoning_effort)
-            payload["think"] = False if think_value is None else think_value
+        # Keep the existing tool-safe default for boolean-thinking Ollama models,
+        # while preserving GPT-OSS's required level-based behavior.
+        _apply_ollama_openai_compat_think(payload, url, model, reasoning_effort)
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)

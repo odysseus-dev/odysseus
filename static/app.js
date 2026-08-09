@@ -17,7 +17,7 @@ import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js?v=20260722emailfastindex1';
-import sessionModule from './js/sessions.js?v=20260722ctxheader4';
+import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
@@ -45,6 +45,7 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { modelControlCapabilities } from './js/modelControls.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -1982,6 +1983,8 @@ function initializeEventListeners() {
           low: 'Low',
           medium: 'Med',
           high: 'High',
+          xhigh: 'XHigh',
+          max: 'Max',
         },
       },
       {
@@ -2037,45 +2040,6 @@ function initializeEventListeners() {
       return { ...modelControlDefaults };
     }
 
-    const isThinkingModel = model => {
-      const m = String(model || '').toLowerCase();
-      return ['qwen3', 'qwq', 'deepseek-r1', 'deepseek-reasoner', 'minimax', 'm2-reap', 'gemma']
-        .some(part => m.includes(part));
-    };
-
-    const isOllamaEndpoint = url => {
-      const u = String(url || '').toLowerCase();
-      return u.includes('11434') || u.includes('ollama');
-    };
-
-    const isChatGptSubscriptionEndpoint = url => (
-      String(url || '').trim().toLowerCase() === 'chatgpt-subscription'
-      || chatRenderer.isSubscriptionEndpoint(url)
-    );
-
-    const isOSeriesReasoningModel = model => {
-      const m = String(model || '').toLowerCase();
-      return /(^|[/\s_-])o\d/.test(m);
-    };
-
-    const isGpt5Family = model => {
-      const m = String(model || '').toLowerCase();
-      return /(^|[/\s_-])gpt[\s_-]*5/.test(m);
-    };
-
-    const gpt5MinorVersion = model => {
-      const match = String(model || '').toLowerCase().match(/(?:^|[/\s_-])gpt[\s_-]*5(?:[._-](\d+))?/);
-      if (!match) return null;
-      if (match[1] == null) return 0;
-      const parsed = Number.parseInt(match[1], 10);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-
-    const supportsOpenAiNoneReasoning = model => {
-      const minor = gpt5MinorVersion(model);
-      return minor != null && minor >= 1;
-    };
-
     function currentModelContext(override = null) {
       const sid = sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
       const sessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
@@ -2091,38 +2055,17 @@ function initializeEventListeners() {
 
     function capabilitiesFor(key, override = null) {
       const ctx = currentModelContext(override);
-      const model = ctx.model || '';
-      const endpointUrl = ctx.endpointUrl || '';
-      if (!model) {
-        return { supported: false, allowed: new Set(['auto']), reason: 'Select a model first' };
-      }
-      const chatgptSubscription = isChatGptSubscriptionEndpoint(endpointUrl);
-      if (key === 'reasoning_effort') {
-        if (chatgptSubscription && (isGpt5Family(model) || isOSeriesReasoningModel(model))) {
-          const allowed = new Set(['auto', 'low', 'medium', 'high']);
-          if (isGpt5Family(model)) allowed.add('minimal');
-          if (supportsOpenAiNoneReasoning(model)) allowed.add('off');
-          return { supported: true, allowed, reason: '' };
-        }
-        if (isOllamaEndpoint(endpointUrl) && isThinkingModel(model)) {
-          return { supported: true, allowed: new Set(['auto', 'off', 'on']), reason: '' };
-        }
-        return { supported: false, allowed: new Set(['auto']), reason: 'Reasoning controls are unavailable for this model endpoint' };
-      }
-      if (key === 'verbosity') {
-        if (chatgptSubscription && isGpt5Family(model)) {
-          return { supported: true, allowed: new Set(['auto', 'low', 'medium', 'high']), reason: '' };
-        }
-        return { supported: false, allowed: new Set(['auto']), reason: 'Verbosity controls are unavailable for this model endpoint' };
-      }
-      return { supported: false, allowed: new Set(['auto']), reason: '' };
+      const capability = modelControlCapabilities(key, ctx);
+      return { ...capability, allowed: new Set(capability.allowed) };
     }
 
-    async function persistSessionControl(key, value, sessionId = null) {
+    async function persistSessionControls(values, sessionId = null) {
       const sid = sessionId || (sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null);
       if (!sid) return;
       const fd = new FormData();
-      fd.append(key, value || 'auto');
+      Object.entries(values || {}).forEach(([key, value]) => {
+        if (value !== undefined) fd.append(key, value || 'auto');
+      });
       try {
         const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'PATCH', body: fd });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2185,19 +2128,22 @@ function initializeEventListeners() {
       const resolved = resolveDefaultsForContext(contextOverride);
       if (registry.reasoning_effort) {
         registry.reasoning_effort.setValue(resolved.reasoning_effort, {
-          persist: options.persist !== false,
+          persist: false,
           contextOverride,
           sessionId: options.sessionId || null,
         });
       }
       if (registry.verbosity) {
         registry.verbosity.setValue(resolved.verbosity, {
-          persist: options.persist !== false,
+          persist: false,
           contextOverride,
           sessionId: options.sessionId || null,
         });
       }
       refreshCapabilities(contextOverride);
+      if (options.persist !== false) {
+        await persistSessionControls(resolved, options.sessionId || null);
+      }
       return resolved;
     }
 
@@ -2228,7 +2174,7 @@ function initializeEventListeners() {
           opt.classList.toggle('active', opt.dataset.value === normalized);
         });
         if (optionsArg.persist !== false) {
-          persistSessionControl(config.key, normalized, optionsArg.sessionId || null);
+          persistSessionControls({ [config.key]: normalized }, optionsArg.sessionId || null);
         }
       }
 

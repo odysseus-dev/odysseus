@@ -2196,7 +2196,7 @@ function _normalizePendingReasoning(value) {
   let v = String(value || '').trim().toLowerCase().replace(/-/g, '_');
   if (v === 'x_high') v = 'xhigh';
   if (v === 'none') v = 'off';
-  return ['off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) ? v : '';
+  return ['off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v) ? v : '';
 }
 
 function _normalizePendingVerbosity(value) {

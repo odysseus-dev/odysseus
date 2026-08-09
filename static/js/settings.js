@@ -477,7 +477,7 @@ async function initDefaultChat() {
   function normalizeReasoningDefault(value) {
     var v = String(value || 'auto').toLowerCase().replace(/-/g, '_');
     if (v === 'none') v = 'off';
-    return ['auto', 'off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) ? v : 'auto';
+    return ['auto', 'off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v) ? v : 'auto';
   }
   function normalizeVerbosityDefault(value) {
     var v = String(value || 'auto').toLowerCase();
