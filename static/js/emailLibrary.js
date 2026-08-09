@@ -30,6 +30,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
 let _libLoadSeq = 0;
+let _emailMailboxGeneration = 0;
+let _emailCardOpenSeq = 0;
+let _emailReadMutationSeq = 0;
+const _emailReadMutations = new Map();
 let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
@@ -837,14 +841,41 @@ document.addEventListener('keydown', (e) => {
   e.stopImmediatePropagation?.();
 }, true);
 
-function _syncEmailReadState(uid, isRead = true) {
+function _emailReadContextKey(context) {
+  return [context.accountId, context.folder, context.uid].map(value => String(value || '')).join('\u0000');
+}
+
+function _emailReadContextIsCurrent(context) {
+  if (!context) return true;
+  return (
+    String(state._libAccountId || '') === context.accountId &&
+    String(state._libFolder || 'INBOX') === context.libraryFolder &&
+    _emailMailboxGeneration === context.mailboxGeneration
+  );
+}
+
+function _emailMatchesReadContext(email, context) {
+  if (String(email?.uid || '') !== context.uid) return false;
+  const accountId = String(email?.account_id || context.accountId);
+  const folder = String(email?.folder || context.folder);
+  return accountId === context.accountId && folder === context.folder;
+}
+
+function _syncEmailReadState(uid, isRead = true, context = null) {
   if (uid == null) return;
   const uidStr = String(uid);
   const read = !!isRead;
-  const match = (state._libEmails || []).find(x => String(x.uid) === uidStr);
+  if (context && (!_emailReadContextIsCurrent(context) || uidStr !== context.uid)) return;
+  const match = (state._libEmails || []).find(x => (
+    context ? _emailMatchesReadContext(x, context) : String(x.uid) === uidStr
+  ));
   if (match) match.is_read = read;
 
   document.querySelectorAll('.doclib-card[data-uid="' + CSS.escape(uidStr) + '"]').forEach(card => {
+    if (context && (
+      String(card.dataset.emailAccount || '') !== context.accountId ||
+      String(card.dataset.emailFolder || '') !== context.folder
+    )) return;
     card.classList.toggle('email-card-unread', !read);
     const titleRow = card.querySelector('.email-card-titlerow');
     if (read) {
@@ -1908,6 +1939,7 @@ function _resetEmailListForFreshLoad({ useCache = true } = {}) {
   _exitEmailReaderModeForList();
   _resetBulkSelectionForContextChange();
   state._libOffset = 0;
+  _emailMailboxGeneration += 1;
   _libLoadSeq += 1;
   const ck = _libCacheKey();
   const cached = useCache ? _libCacheGet(ck) : null;
@@ -2286,7 +2318,25 @@ function _publishActiveAccount() {
 
 export function initEmailLibrary(config) {
   state._docModule = config.documentModule;
-  state._onEmailClick = config.onEmailClick;
+  const onEmailClick = config.onEmailClick;
+  state._onEmailClick = typeof onEmailClick === 'function' ? (options = {}) => {
+    const accountId = String(state._libAccountId || '');
+    const libraryFolder = String(state._libFolder || 'INBOX');
+    const messageFolder = String(options.email?.folder || libraryFolder);
+    const mailboxGeneration = _emailMailboxGeneration;
+    const mailboxContext = Object.freeze({
+      accountId,
+      libraryFolder,
+      messageFolder,
+      mailboxGeneration,
+      isCurrent: () => (
+        String(state._libAccountId || '') === accountId &&
+        String(state._libFolder || 'INBOX') === libraryFolder &&
+        _emailMailboxGeneration === mailboxGeneration
+      ),
+    });
+    return onEmailClick({ ...options, mailboxContext });
+  } : null;
 }
 
 export function isOpen() { return state._libOpen; }
@@ -2303,6 +2353,7 @@ export function openEmailLibrary(opts = {}) {
     document.removeEventListener('keydown', state._libEscHandler, true);
     state._libEscHandler = null;
   }
+  _emailMailboxGeneration += 1;
   state._libOpen = true;
   // On mobile the sidebar overlays content — close it so the email view isn't
   // opened behind it (same pattern as session-switch/delete).
@@ -4836,6 +4887,8 @@ function _createCard(em) {
   else if (!em.is_read) cls += ' email-card-unread';
   card.className = cls;
   card.dataset.uid = String(em.uid);
+  card.dataset.emailAccount = String(em.account_id || state._libAccountId || '');
+  card.dataset.emailFolder = String(em.folder || state._libFolder || 'INBOX');
   if (state._selectMode && state._selectedUids.has(em.uid)) card.classList.add('selected');
 
   // Checkbox in select mode
@@ -5163,16 +5216,24 @@ async function _toggleCardPreview(card, em) {
   const folderAtStart = (em && em.folder) || libraryFolderAtStart;
   const uidAtStart = String(em?.uid || card?.dataset?.uid || '');
   const wasReadAtStart = !!em?.is_read;
+  const openGeneration = ++_emailCardOpenSeq;
+  const readContext = Object.freeze({
+    accountId: String(accountAtStart),
+    libraryFolder: String(libraryFolderAtStart),
+    folder: String(folderAtStart),
+    uid: uidAtStart,
+    mailboxGeneration: _emailMailboxGeneration,
+  });
+  const readContextKey = _emailReadContextKey(readContext);
   const isCurrentOpen = () => (
+    openGeneration === _emailCardOpenSeq &&
+    _emailReadContextIsCurrent(readContext) &&
     accountAtStart === (state._libAccountId || '') &&
     libraryFolderAtStart === (state._libFolder || 'INBOX') &&
     uidAtStart === String(card?.dataset?.uid || '') &&
     card.isConnected &&
     card.classList.contains('email-card-expanded')
   );
-  const restoreUnreadState = () => {
-    if (!wasReadAtStart) _syncEmailReadState(uidAtStart, false);
-  };
   const grid = card.closest('.doclib-grid');
   const gridRect = grid?.getBoundingClientRect?.();
   const modal = document.getElementById('email-lib-modal');
@@ -5196,6 +5257,30 @@ async function _toggleCardPreview(card, em) {
     if (reader) reader.remove();
     return;
   }
+
+  // Every authoritative open supersedes any older optimistic mutation for the
+  // same immutable mailbox identity. Carry the original unread state forward
+  // so a close/reopen followed by failure still rolls back exactly once, while
+  // a late failure from the superseded request cannot undo a newer success.
+  const previousMutation = _emailReadMutations.get(readContextKey);
+  const readMutation = {
+    generation: ++_emailReadMutationSeq,
+    rollbackUnread: !wasReadAtStart || !!previousMutation?.rollbackUnread,
+  };
+  _emailReadMutations.set(readContextKey, readMutation);
+  const restoreUnreadState = () => {
+    if (_emailReadMutations.get(readContextKey)?.generation !== readMutation.generation) return;
+    _emailReadMutations.delete(readContextKey);
+    if (readMutation.rollbackUnread) _syncEmailReadState(uidAtStart, false, readContext);
+  };
+  const commitReadState = () => {
+    // A successful STORE/mark_seen is authoritative for this immutable
+    // mailbox identity even when a newer open is still pending. Retire that
+    // newer rollback token too, otherwise its later failure could restore an
+    // unread state that no longer exists at the provider.
+    _emailReadMutations.delete(readContextKey);
+    _syncEmailReadState(uidAtStart, true, readContext);
+  };
 
   // Collapse any other expanded card
   if (grid) {
@@ -5221,7 +5306,7 @@ async function _toggleCardPreview(card, em) {
   if (!wasReadAtStart) {
     // Keep the current optimistic visual update, but let the read request below
     // own the provider-side \Seen transition. A failure restores unread state.
-    _syncEmailReadState(uidAtStart, true);
+    _syncEmailReadState(uidAtStart, true, readContext);
   }
   // Class hook on the modal so the header-hide / padding rules work on
   // browsers without :has() support (Firefox mobile) — the :has() versions
@@ -5250,8 +5335,10 @@ async function _toggleCardPreview(card, em) {
     } catch (_) {}
   };
 
+  let authoritativeReadSucceeded = false;
   try {
-    const res = await fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uidAtStart)}?folder=${encodeURIComponent(folderAtStart)}${_acct()}&mark_seen=true`);
+    const accountQueryAtStart = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
+    const res = await fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uidAtStart)}?folder=${encodeURIComponent(folderAtStart)}${accountQueryAtStart}&mark_seen=true`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) {
@@ -5259,9 +5346,9 @@ async function _toggleCardPreview(card, em) {
       if (isCurrentOpen()) showFailedReader(`Failed to load email: ${data.error}`);
       return;
     }
+    authoritativeReadSucceeded = true;
+    commitReadState();
     if (!isCurrentOpen()) return;
-    // Mark as read locally
-    _syncEmailReadState(em.uid, true);
     _stampReaderContext(reader, { ...em, ...data }, state._libFolder, state._libAccountId);
 
     // Build the attachments wrap using the shared helper so the signature-
@@ -5443,7 +5530,7 @@ async function _toggleCardPreview(card, em) {
     // Always stop bubbling so the card's click doesn't fire while reading.
     reader.addEventListener('click', (ev) => { ev.stopPropagation(); });
   } catch (e) {
-    restoreUnreadState();
+    if (!authoritativeReadSucceeded) restoreUnreadState();
     if (isCurrentOpen()) {
       showFailedReader(e?.message ? `Failed to load email: ${e.message}` : 'Failed to load email');
     }

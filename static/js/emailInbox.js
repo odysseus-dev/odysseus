@@ -188,7 +188,7 @@ export function init(documentModule) {
       } catch (_) {}
       if (opts.compose) { _composeNew(); return; }
       if (opts.email) {
-        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '');
+        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '', '', opts.mailboxContext || null);
       }
     },
   });
@@ -752,12 +752,21 @@ function _createEmailItem(em) {
   return item;
 }
 
-async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', noteHint = '', prefilledBody = '') {
+async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', noteHint = '', prefilledBody = '', mailboxContext = null) {
   const openRequestSeq = ++_openEmailRequestSeq;
-  const folderAtStart = _currentFolder;
-  const accountAtStart = window.__odysseusActiveEmailAccount || '';
-  const accountQueryAtStart = _acct();
-  const isCurrentOpen = () => openRequestSeq === _openEmailRequestSeq;
+  const folderAtStart = mailboxContext?.messageFolder || _currentFolder;
+  const accountAtStart = mailboxContext?.accountId ?? (window.__odysseusActiveEmailAccount || '');
+  const accountQueryAtStart = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
+  const mailboxContextIsCurrent = typeof mailboxContext?.isCurrent === 'function'
+    ? mailboxContext.isCurrent
+    : () => (
+        folderAtStart === _currentFolder &&
+        accountAtStart === (window.__odysseusActiveEmailAccount || '')
+      );
+  const isCurrentOpen = () => (
+    openRequestSeq === _openEmailRequestSeq &&
+    mailboxContextIsCurrent()
+  );
   const aiReplyMode = mode === 'ai-reply-fast' ? 'fast' : '';
   const wantsAiReply = mode === 'ai-reply' || !!aiReplyMode;
   // Body pre-fill from the agent's open_email_reply tool call takes the
@@ -1008,6 +1017,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
         }
         _bringEmailReplyDraftToFrontOnMobile();
       } else {
+        if (!isCurrentOpen()) return;
         let activeSid = await _createEmailChat(data, { forceNew: true });
         if (!isCurrentOpen()) return;
         if (!activeSid) {
@@ -1030,6 +1040,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
         if (!isCurrentOpen()) return;
         if (docRes.status === 404) {
           console.warn('[reply-debug] draft session rejected; retrying in a fresh email chat', activeSid);
+          if (!isCurrentOpen()) return;
           activeSid = await _createEmailChat(data, { forceNew: true });
           if (!isCurrentOpen()) return;
           if (activeSid) {
