@@ -18,6 +18,10 @@ def _between(start: str, end: str) -> str:
 
 
 def test_in_thinking_delta_short_circuits_before_cumulative_normalization():
+    delta_handler = _between(
+        "let _delta = json.delta;",
+        "} else if (json.type === 'research_progress')",
+    )
     delta_path = _between(
         "// Detect thinking-in-progress:",
         "} else if (json.type === 'research_progress')",
@@ -28,7 +32,9 @@ def test_in_thinking_delta_short_circuits_before_cumulative_normalization():
     assert delta_path.index(guard) < delta_path.index(normalize)
     assert "_queueLiveThinking(roundText);" in delta_path
     assert "createThinkingAnalysisGate" in _CHAT
-    assert "_roundDisplayProjector.append(_delta, roundText);" in delta_path
+    projector_append = "_roundDisplayProjector.append(_delta, roundText);"
+    assert projector_append in delta_handler
+    assert delta_handler.index(projector_append) < delta_handler.index(guard)
     assert "_renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });" in delta_path
     assert "_replyDisplayProjector.append(_delta, roundReplyText)" in delta_path
 
