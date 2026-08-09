@@ -534,6 +534,7 @@ async function loadEndpoints() {
               ${hasModels ? `<span style="font-size:10px;opacity:0.4;${category === 'api' ? 'flex-basis:100%;' : ''}">Click to manage models</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
+              <button class="admin-btn-sm" data-adm-ep-timeout="${ep.id}" data-adm-ep-timeout-val="${ep.stream_timeout_seconds || ''}" title="LLM response timeout for this endpoint">Timeout${ep.stream_timeout_seconds ? ` (${ep.stream_timeout_seconds}s)` : ''}</button>
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -580,6 +581,37 @@ async function loadEndpoints() {
         await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' });
         await _refreshAfterEndpointChange();
         loadEndpoints();
+      });
+    });
+    queryAll('[data-adm-ep-timeout]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = btn.dataset.admEpTimeout;
+        const current = btn.dataset.admEpTimeoutVal || '';
+        const next = await uiModule.styledPrompt('LLM response timeout (seconds)', {
+          defaultValue: current,
+          placeholder: '30-3600, blank = account default',
+          confirmText: 'Save',
+        });
+        if (next === null || next === undefined) return;
+        const trimmed = String(next).trim();
+        const value = trimmed === '' ? null : parseInt(trimmed, 10);
+        if (value !== null && (!Number.isFinite(value) || value < 30 || value > 3600)) {
+          uiModule.showError('Timeout must be between 30 and 3600 seconds (or blank for default)');
+          return;
+        }
+        try {
+          const res = await fetch(`/api/model-endpoints/${epId}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stream_timeout_seconds: value }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          loadEndpoints();
+        } catch (_) {
+          uiModule.showError('Failed to update timeout');
+        }
       });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
