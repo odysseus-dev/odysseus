@@ -526,6 +526,42 @@ def _parse_misfenced_read_file_lookup(content: str, *, allow_shell_style: bool =
     return ToolBlock("read_file", path)
 
 
+def _parse_misfenced_literal_tool_call(content: str) -> Optional[ToolBlock]:
+    """Recover one literal-only Odysseus tool call from a Python fence.
+
+    Text-only local models can emit ``create_document(title="...", ...)`` in
+    a ``python`` fence. Executing it as Python fails because Odysseus tool
+    names are not sandbox symbols. This accepts only one direct known-tool
+    call with literal keyword arguments, then uses the canonical native-call
+    converter. Dynamic expressions remain ordinary Python and are not
+    evaluated by this recovery path.
+    """
+    try:
+        module = ast.parse(content.strip(), mode="exec")
+    except SyntaxError:
+        return None
+    if len(module.body) != 1 or not isinstance(module.body[0], ast.Expr):
+        return None
+    call = module.body[0].value
+    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+        return None
+    tool_name = call.func.id.lower()
+    if tool_name not in TOOL_TAGS or tool_name in _CODE_FENCE_TAGS or call.args:
+        return None
+
+    args = {}
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            return None
+        try:
+            args[keyword.arg] = ast.literal_eval(keyword.value)
+        except (ValueError, SyntaxError, TypeError):
+            return None
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(tool_name, json.dumps(args))
+
+
 def _coerce_raw_web_query(value) -> Optional[str]:
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -1303,6 +1339,11 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 if block:
                     blocks.append(block)
                     continue
+                if tag == "python":
+                    block = _parse_misfenced_literal_tool_call(content)
+                    if block:
+                        blocks.append(block)
+                        continue
             blocks.append(ToolBlock(tag, content))
 
     # Pattern 2: [TOOL_CALL] blocks (only if no fenced blocks found)

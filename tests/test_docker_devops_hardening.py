@@ -110,6 +110,16 @@ def test_docker_entrypoint_ownership_repair_stays_inside_expected_mounts():
     assert "Skipping recursive ownership repair" in script
 
 
+def test_dockerfile_locks_browser_mcp_and_chrome_prerequisites():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "ARG GOOGLE_CHROME_VERSION=151.0.7922.108-1" in dockerfile
+    assert "google-chrome-stable=${GOOGLE_CHROME_VERSION}" in dockerfile
+    assert "npm_config_cache=/app/.npm" in dockerfile
+    assert "npx -y @playwright/mcp@0.0.78 --version" in dockerfile
+    assert "gosu odysseus env HOME=/app" in dockerfile
+
+
 def test_dockerignore_excludes_secrets_editor_backups():
     patterns = set((ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines())
     assert {

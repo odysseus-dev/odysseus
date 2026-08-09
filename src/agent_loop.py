@@ -12,7 +12,7 @@ import json
 import re
 import time
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from typing import Any, AsyncGenerator, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
 from src.llm_core import (
@@ -895,6 +895,26 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "ask_teacher", "list_models", "search_chats",
 ])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
+
+
+def _is_mcp_server_inventory_request(text: str) -> bool:
+    """Return True for read-only requests to list Odysseus MCP servers.
+
+    These requests belong to the native ``manage_mcp`` inventory tool.  They
+    must not expose a local text-model to an unrelated browser MCP schema: that
+    failure mode made the model navigate to a fabricated example.com host
+    instead of asking the MCP manager for its actual registered servers.
+    """
+    normalized = str(text or "").lower()
+    if not re.search(r"\bmcps?\b", normalized):
+        return False
+    if re.search(r"\b(?:tool|tools)\b", normalized):
+        return False
+    return bool(re.search(
+        r"\b(?:server|servers)\b.*\b(?:installed|available|connected|configured|list|show|what|which)\b"
+        r"|\b(?:what|which|list|show)\b.*\b(?:mcp|mcps)\b.*\b(?:server|servers)\b",
+        normalized,
+    ))
 
 
 def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
@@ -3474,6 +3494,13 @@ async def stream_agent_loop(
 
     if not guide_only and _relevant_tools is not None:
         _relevant_tools = _expand_browser_mcp_tools(_relevant_tools, mcp_mgr)
+    # A direct MCP-server inventory question has one authoritative source:
+    # manage_mcp(action="list").  Do not let semantic retrieval leak an
+    # unrelated browser-MCP tool into this local text-model turn, because local
+    # models receive only the MCP schemas and may then fabricate a browser URL.
+    if not guide_only and _is_mcp_server_inventory_request(_last_user):
+        _relevant_tools = {"manage_mcp", "ask_user", "update_plan"}
+        logger.info("[agent-intent] MCP server inventory tool clamp=%s", sorted(_relevant_tools))
 
     # The skill index injected by _build_system_prompt tells the model to
     # call `manage_skills action=view`, and Jaccard-matched skills are pasted
@@ -3938,10 +3965,18 @@ async def stream_agent_loop(
                     and t.get("name") not in disabled_tools
                 ]
         else:
-            # Local: only MCP schemas when message suggests MCP tool usage
+            # Local text-only models use the fenced-tool prompt for native
+            # tools.  MCP schemas are optional and must be restricted to MCP
+            # tools selected for THIS request; sending every browser schema on
+            # a simple MCP inventory question crowds out manage_mcp and causes
+            # fabricated navigation attempts.
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
-            all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            _selected_mcp_tools = set(_relevant_tools or set())
+            all_tool_schemas = [
+                schema for schema in mcp_schemas
+                if schema.get("function", {}).get("name") in _selected_mcp_tools
+            ] if (_wants_mcp and mcp_schemas) else []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]

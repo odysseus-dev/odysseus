@@ -16,6 +16,9 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # LSP semantic acceptance fixture. It is the only code workspace exposed
+      # to the optional LSP MCP process and is intentionally read-only.
+      - ./tests/fixtures/lsp_docker:/workspace/lsp_fixture:ro,z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.

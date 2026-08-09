@@ -1,0 +1,13 @@
+{
+  "name": "odysseus-lsp-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned offline runtime for Odysseus LSP MCP",
+  "type": "module",
+  "dependencies": {
+    "@treedy/lsp-mcp": "0.2.8",
+    "@treedy/pyright-mcp": "1.1.8",
+    "@treedy/typescript-lsp-mcp": "0.1.7",
+    "pyright": "1.1.411"
+  }
+}

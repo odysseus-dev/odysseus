@@ -50,6 +50,56 @@ function _clearComposerUnlessStartupTyped(msgInput) {
   msgInput.value = '';
 }
 
+function _getRuntimeContextIndicator(create = false) {
+  const existing = document.getElementById('runtime-context-indicator');
+  if (existing || !create) return existing;
+  const anchor = document.getElementById('session-cost-display');
+  if (!anchor || !anchor.parentElement) return null;
+  const indicator = document.createElement('span');
+  indicator.id = 'runtime-context-indicator';
+  indicator.className = 'runtime-context-indicator';
+  indicator.setAttribute('role', 'status');
+  indicator.hidden = true;
+  anchor.insertAdjacentElement('afterend', indicator);
+  return indicator;
+}
+
+function _clearRuntimeContextIndicator() {
+  const indicator = _getRuntimeContextIndicator();
+  if (!indicator) return;
+  indicator.hidden = true;
+  indicator.textContent = '';
+  indicator.removeAttribute('title');
+  indicator.removeAttribute('aria-label');
+}
+
+async function _refreshRuntimeContextIndicator(sessionId, navToken = _sessionNavToken) {
+  _clearRuntimeContextIndicator();
+  if (!sessionId || currentSessionId !== sessionId) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/session/${encodeURIComponent(sessionId)}/context_info`);
+    if (!response.ok) return;
+    const info = await response.json();
+    if (currentSessionId !== sessionId || navToken !== _sessionNavToken) return;
+    const contextLength = Number(info.context_length || 0);
+    const budgetContext = Number(info.budget_context || 0);
+    const source = typeof info.context_source === 'string' ? info.context_source : '';
+    if (contextLength <= 0 || budgetContext <= 0 || !source) return;
+    const indicator = _getRuntimeContextIndicator(true);
+    if (!indicator) return;
+    const contextText = contextLength.toLocaleString();
+    const budgetText = budgetContext.toLocaleString();
+    indicator.textContent = `ctx ${contextText} · budget ${budgetText}`;
+    indicator.title = `Runtime context ${contextText}; prompt budget ${budgetText}; source ${source}`;
+    indicator.setAttribute('aria-label', indicator.title);
+    indicator.hidden = false;
+  } catch (_) {
+    if (currentSessionId === sessionId && navToken === _sessionNavToken) {
+      _clearRuntimeContextIndicator();
+    }
+  }
+}
+
 function _paintSessionLoading(chatHistory, label = 'Loading chat') {
   if (!chatHistory) return;
   if (chatRenderer.hideWelcomeScreen) chatRenderer.hideWelcomeScreen();
@@ -1916,6 +1966,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     if (currentMetaEl) {
       currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
     }
+    void _refreshRuntimeContextIndicator(id, navToken);
     // Update model picker visibility
     updateModelPicker();
     if (window.refreshChatContextHeader) window.refreshChatContextHeader('select-session');
@@ -2203,6 +2254,7 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   _suppressNextSessionLoading = true;
   currentSessionId = null;
   try { window.__odysseusLastSelectedSessionId = ''; } catch (_) {}
+  _clearRuntimeContextIndicator();
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
   document.querySelectorAll('.list-item.active-session, .session-item.active').forEach(el => {
@@ -2311,6 +2363,7 @@ export async function materializePendingSession() {
     }
     _pendingChat = null;
     currentSessionId = payload.id;
+    void _refreshRuntimeContextIndicator(payload.id);
     if (!isIncognito) {
       Storage.set('lastSessionId', payload.id);
     }
@@ -2383,6 +2436,7 @@ export function setCurrentSessionId(id) {
   currentSessionId = id;
   try { window.__odysseusLastSelectedSessionId = id || ''; } catch (_) {}
   if (!id) {
+    _clearRuntimeContextIndicator();
     _suppressNextSessionLoading = true;
     Storage.remove('lastSessionId');
     history.replaceState(null, '', window.location.pathname);

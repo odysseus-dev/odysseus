@@ -111,6 +111,46 @@ def _set_enabled(server_id: str, enabled: bool, args):
         db.close()
 
 
+def _parse_update_json(raw, field_name, expected_type):
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {field_name}: {exc}") from exc
+    if not isinstance(value, expected_type):
+        expected_name = "array" if expected_type is list else "object"
+        raise ValueError(f"invalid {field_name}: expected JSON {expected_name}")
+    return value
+
+
+def cmd_update(args):
+    """Update only the explicit mutable MCP fields for one existing server."""
+    updates = {}
+    try:
+        if args.args is not None:
+            updates["args"] = json.dumps(_parse_update_json(args.args, "args", list))
+        if args.env is not None:
+            updates["env"] = json.dumps(_parse_update_json(args.env, "env", dict))
+    except ValueError as exc:
+        fail(str(exc))
+
+    if args.is_enabled is not None:
+        updates["is_enabled"] = args.is_enabled == "true"
+    if not updates:
+        fail("update requires --args, --env, or --is-enabled")
+
+    db = SessionLocal()
+    try:
+        server = db.get(McpServer, args.id)
+        if not server:
+            fail(f"no MCP server with id {args.id!r}")
+        for field_name, value in updates.items():
+            setattr(server, field_name, value)
+        db.commit()
+        emit(_serialize(server), args)
+    finally:
+        db.close()
+
+
 def cmd_add(args):
     if args.transport == "stdio" and not args.command:
         fail("--command is required for stdio transport")
@@ -184,6 +224,13 @@ def _build_parser():
     pdis = sub.add_parser("disable", parents=[common])
     pdis.add_argument("id")
     pdis.set_defaults(func=cmd_disable)
+
+    pu = sub.add_parser("update", parents=[common])
+    pu.add_argument("id")
+    pu.add_argument("--args", help="replace stdio args with a JSON array")
+    pu.add_argument("--env", help="replace environment with a JSON object")
+    pu.add_argument("--is-enabled", choices=("true", "false"))
+    pu.set_defaults(func=cmd_update)
 
     pa = sub.add_parser("add", parents=[common])
     pa.add_argument("--name", required=True)

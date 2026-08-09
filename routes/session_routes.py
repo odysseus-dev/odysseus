@@ -1338,18 +1338,42 @@ def setup_session_routes(
 
     @router.get("/session/{session_id}/context_info")
     async def get_context_info(request: Request, session_id: str):
-        """Get the real context length for a session's model from the endpoint."""
+        """Return the session's proven runtime context and effective budget."""
         _verify_session_owner(request, session_id)
         session = session_manager.get_session(session_id)
         if not session:
             raise HTTPException(404, "Session not found")
         if not session.endpoint_url or not session.model:
-            return {"context_length": None}
+            return {
+                "context_length": None,
+                "model": getattr(session, "model", None),
+                "budget_context": 0,
+                "context_source": None,
+            }
         try:
-            from src.model_context import get_context_length
-            ctx = get_context_length(session.endpoint_url, session.model)
-            return {"context_length": ctx, "model": session.model}
+            from src.model_context import get_context_length_known, _local_ollama_ps_url
+
+            ctx, known = get_context_length_known(session.endpoint_url, session.model)
+            if not known or not isinstance(ctx, int) or ctx <= 0:
+                return {
+                    "context_length": None,
+                    "model": session.model,
+                    "budget_context": 0,
+                    "context_source": None,
+                }
+            source = "ollama_api_ps" if _local_ollama_ps_url(session.endpoint_url) else "endpoint_metadata"
+            return {
+                "context_length": ctx,
+                "model": session.model,
+                "budget_context": ctx,
+                "context_source": source,
+            }
         except Exception:
-            return {"context_length": None}
+            return {
+                "context_length": None,
+                "model": session.model,
+                "budget_context": 0,
+                "context_source": None,
+            }
 
     return router

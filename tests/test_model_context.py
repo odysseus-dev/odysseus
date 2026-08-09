@@ -205,6 +205,65 @@ class TestGetContextLength:
         model_context._context_cache.clear()
         model_context._catalog_ctx_cache.clear()
 
+    @pytest.mark.parametrize("model_field", ["name", "model"])
+    def test_local_ollama_v1_uses_exact_loaded_runner_context(self, monkeypatch, model_field):
+        calls = []
+
+        def fake_get(url, *args, **kwargs):
+            calls.append(url)
+            if url == "http://host.docker.internal:11434/api/ps":
+                return _FakeResp({"models": [{
+                    model_field: "qwen3-coder:30b",
+                    "context_length": 4096,
+                }]})
+            raise AssertionError(f"Unexpected context probe: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        assert model_context._query_context_length(
+            "http://host.docker.internal:11434/v1", "qwen3-coder:30b"
+        ) == (4096, True)
+        assert calls == ["http://host.docker.internal:11434/api/ps"]
+
+    def test_local_ollama_v1_without_loaded_runner_context_stays_unknown(self, monkeypatch):
+        calls = []
+
+        def fake_get(url, *args, **kwargs):
+            calls.append(url)
+            if url == "http://host.docker.internal:11434/api/ps":
+                return _FakeResp({"models": []})
+            raise AssertionError(f"Unexpected context probe: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        assert model_context._query_context_length(
+            "http://host.docker.internal:11434/v1", "qwen3-coder:30b"
+        ) == (model_context.DEFAULT_CONTEXT, False)
+        assert calls == ["http://host.docker.internal:11434/api/ps"]
+        assert model_context.budget_context_for_model(
+            "http://host.docker.internal:11434/v1", "qwen3-coder:30b"
+        ) == 0
+        assert calls == [
+            "http://host.docker.internal:11434/api/ps",
+            "http://host.docker.internal:11434/api/ps",
+        ]
+
+    def test_generic_local_v1_endpoint_keeps_slots_resolution_without_ollama_ps_probe(self, monkeypatch):
+        calls = []
+
+        def fake_get(url, *args, **kwargs):
+            calls.append(url)
+            if url == "http://localhost:8080/slots":
+                return _FakeResp([{"n_ctx": 8192}])
+            raise AssertionError(f"Unexpected context probe: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        assert model_context._query_context_length(
+            "http://localhost:8080/v1", "qwen3-coder:30b"
+        ) == (8192, True)
+        assert calls == ["http://localhost:8080/slots"]
+
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
         calls = []
 

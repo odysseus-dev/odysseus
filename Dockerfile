@@ -16,18 +16,21 @@ FROM python:3.14-slim
 # downloads, and serves from Docker installs.
 # git/cmake are required when Cookbook builds llama.cpp on first llama.cpp
 # launch inside Docker.
-# nodejs/npm provide npx for the built-in Browser MCP server.
-# chromium provides the actual browser binary used by that MCP server.
+# nodejs/npm provide npx for the optional built-in Browser MCP server.
+# Google Chrome is its required browser channel; the MCP's headless mode still
+# launches this installed browser binary as the non-root app user.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     cmake \
     curl \
     git \
+    gnupg \
     nodejs \
     npm \
-    chromium \
+    ripgrep \
     tmux \
     openssh-client \
     gosu \
@@ -35,6 +38,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     libxcb1 \
     libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the Google Chrome channel that @playwright/mcp uses by default. Keep
+# the repository key isolated in /etc/apt/keyrings and install before the app
+# source so browser provisioning remains a reusable image layer. This is a
+# known-good Debian package lock, not the moving google-chrome-stable head.
+ARG GOOGLE_CHROME_VERSION=151.0.7922.108-1
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+        | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+        > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-chrome-stable=${GOOGLE_CHROME_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
@@ -92,7 +109,27 @@ COPY --from=realesrgan-wheels /wheels/ /tmp/odysseus-wheels/
 RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
     && rm -rf /tmp/odysseus-wheels
 
-# Copy app code
+# Prewarm Browser MCP before copying application sources. This preserves the
+# existing pinned browser layer when application or LSP runtime code changes,
+# so an LSP-only rebuild does not fetch an unrelated package.
+RUN groupadd --gid 1000 odysseus \
+    && useradd --uid 1000 --gid 1000 --home-dir /app --no-create-home --shell /bin/sh odysseus \
+    && mkdir -p /app/.npm /app/.cache/ms-playwright /app/.cache/ms-playwright-mcp \
+    && chown -R odysseus:odysseus /app/.npm /app/.cache \
+    && gosu odysseus env HOME=/app npm_config_cache=/app/.npm \
+        npx -y @playwright/mcp@0.0.78 --version
+
+# Pinned offline-only runtime for the optional LSP MCP server.  The unified
+# upstream server names its backends as @latest, so its process PATH is later
+# pointed at the strict local dispatcher below rather than allowing npx to
+# resolve packages at runtime.
+COPY docker/lsp-runtime/package.json docker/lsp-runtime/package-lock.json /opt/odysseus-lsp/
+RUN npm --prefix /opt/odysseus-lsp ci --ignore-scripts --no-audit --no-fund
+COPY docker/lsp-runtime/npx /opt/odysseus-lsp/bin/npx
+RUN chmod 0755 /opt/odysseus-lsp/bin/npx
+COPY docker/lsp-runtime/verify_lsp_runtime.py /opt/odysseus-lsp/verify_lsp_runtime.py
+
+# Copy app code after the pinned runtime layers.
 COPY . .
 
 # Create data directory (mount a volume here for persistence)

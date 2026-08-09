@@ -96,6 +96,14 @@ def test_browser_mcp_args_can_keep_sandbox(monkeypatch):
     assert "--no-sandbox" not in args
 
 
+def test_builtin_browser_mcp_uses_the_pinned_playwright_package(monkeypatch):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+
+    assert builtin_mcp._BUILTIN_NPX_SERVERS["builtin_browser"]["args"] == [
+        "-y", "@playwright/mcp@0.0.78", "--headless", "--caps", "vision"
+    ]
+
+
 def test_npx_cache_check_detects_scoped_package_in_npx_cache(monkeypatch, tmp_path):
     builtin_mcp = _load_builtin_mcp(monkeypatch)
     package_json = (
@@ -144,6 +152,7 @@ def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeyp
     monkeypatch.setattr(builtin_mcp.subprocess, "run", fake_run)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("npm_config_cache", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
 
     assert asyncio.run(
         builtin_mcp._is_npx_package_cached(
@@ -175,6 +184,7 @@ def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch, tmp_
     monkeypatch.setattr(builtin_mcp.subprocess, "run", fake_run)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("npm_config_cache", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
 
     assert asyncio.run(
         builtin_mcp._is_npx_package_cached(

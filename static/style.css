@@ -3189,6 +3189,15 @@ body.bg-pattern-sparkles {
     .chat-context-compact-btn:hover {
       background: color-mix(in srgb, var(--accent) 18%, transparent);
     }
+    .runtime-context-indicator {
+      font-size: inherit;
+      font-weight: 400;
+      color: color-mix(in srgb, var(--fg) 48%, transparent);
+      white-space: nowrap;
+      user-select: none;
+      margin-left: 6px;
+    }
+    .runtime-context-indicator[hidden] { display: none; }
     /* Model picker — input bar drop-up */
     .model-picker-wrap {
       position: relative;

@@ -96,7 +96,11 @@ repair_bind_mount_ownership() {
 # Repair image-owned writable paths without walking into bind-mounted host
 # trees, then repair the app-owned mount roots separately.
 repair_app_tree_ownership
-for dir in /app/data /app/logs /app/.ssh /app/.cache/huggingface /app/.local; do
+# Playwright and its MCP server store browser binaries/profile data under these
+# cache paths. They must be writable by the non-root app user before Browser
+# MCP navigation can run.
+mkdir -p /app/.cache/ms-playwright /app/.cache/ms-playwright-mcp
+for dir in /app/data /app/logs /app/.ssh /app/.cache/huggingface /app/.cache/ms-playwright /app/.cache/ms-playwright-mcp /app/.local; do
     repair_bind_mount_ownership "$dir"
 done
 

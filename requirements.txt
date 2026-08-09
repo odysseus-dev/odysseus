@@ -38,7 +38,9 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+# Built-in MCP servers use Server.list_tools()/Server.call_tool() decorators,
+# which were removed in mcp 2. Pin the verified compatible API contract.
+mcp==1.28.1
 pyotp
 qrcode[pil]
 croniter

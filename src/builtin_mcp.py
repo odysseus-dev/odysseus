@@ -81,7 +81,7 @@ _BUILTIN_NPX_SERVERS = {
     "builtin_browser": {
         "name": "Built-in: Browser",
         "command": "npx",
-        "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
+        "args": ["-y", "@playwright/mcp@0.0.78", "--headless", "--caps", "vision"],
     }
 }
 

@@ -1,0 +1,5 @@
+{
+  "name": "odysseus-lsp-docker-fixture",
+  "private": true,
+  "type": "module"
+}

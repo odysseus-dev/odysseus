@@ -100,6 +100,53 @@ def is_local_endpoint(url: str) -> bool:
     except Exception:
         return False
 
+
+def _local_ollama_ps_url(endpoint_url: str) -> Optional[str]:
+    """Return the native Ollama /api/ps URL for a local OpenAI-compatible route.
+
+    Ollama's OpenAI-compatible catalog does not report the runner's effective
+    context window. Restrict this bridge to the standard local Ollama port and
+    an explicit /v1 path so generic local OpenAI-compatible servers keep their
+    existing /slots and /models resolution behavior.
+    """
+    try:
+        parsed = urlparse(endpoint_url)
+        path = (parsed.path or "").rstrip("/")
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            or parsed.port != 11434
+            or not (path == "/v1" or path.startswith("/v1/"))
+            or not is_local_endpoint(endpoint_url)
+        ):
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}/api/ps"
+    except (TypeError, ValueError):
+        return None
+
+
+def _local_ollama_runner_context(endpoint_url: str, model: str) -> Optional[int]:
+    """Read an exactly matched loaded Ollama runner's effective context window."""
+    ps_url = _local_ollama_ps_url(endpoint_url)
+    if not ps_url:
+        return None
+    try:
+        response = httpx.get(ps_url, timeout=REQUEST_TIMEOUT)
+        if not response.is_success:
+            return None
+        models = response.json().get("models") or []
+        if not isinstance(models, list):
+            return None
+        for entry in models:
+            if not isinstance(entry, dict):
+                continue
+            if model not in (entry.get("name"), entry.get("model")):
+                continue
+            return _model_ctx_from_entry(entry)
+    except Exception as e:
+        logger.debug(f"Failed to query Ollama runner context for {model}: {e}")
+    return None
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -399,6 +446,19 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
+
+    # Ollama's /v1/models catalog reports model identity, not the loaded
+    # runner's effective context. A family-level static map is architecture
+    # capacity, not evidence of the current runner setting. For this route,
+    # only an exact loaded-model match from the native /api/ps endpoint proves
+    # a budget context; no match remains intentionally unknown.
+    if _local_ollama_ps_url(endpoint_url):
+        runtime_ctx = _local_ollama_runner_context(endpoint_url, model)
+        if runtime_ctx:
+            logger.info(f"Ollama /api/ps reports context_length={runtime_ctx} for {model}")
+            return runtime_ctx, True
+        logger.info(f"Ollama /api/ps has no loaded context proof for {model}")
+        return DEFAULT_CONTEXT, False
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context

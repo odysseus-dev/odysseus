@@ -1,0 +1,27 @@
+#!/bin/sh
+# Offline-only dispatcher for the backends hard-coded as @latest by lsp-mcp.
+# It deliberately accepts only the pinned backend requests and npx --version.
+set -eu
+
+if [ "${1:-}" = "--version" ]; then
+    exec /usr/bin/npx --version
+fi
+
+if [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ]; then
+    shift
+fi
+
+case "${1:-}" in
+    "@treedy/pyright-mcp@latest"|"@treedy/pyright-mcp@1.1.8")
+        shift
+        exec node /opt/odysseus-lsp/node_modules/@treedy/pyright-mcp/dist/index.js "$@"
+        ;;
+    "@treedy/typescript-lsp-mcp@latest"|"@treedy/typescript-lsp-mcp@0.1.7")
+        shift
+        exec node /opt/odysseus-lsp/node_modules/@treedy/typescript-lsp-mcp/dist/index.js "$@"
+        ;;
+    *)
+        printf '%s\n' "odysseus-lsp-npx: refused undeclared runtime package: ${1:-<none>}" >&2
+        exit 64
+        ;;
+esac
