@@ -27,11 +27,17 @@ window.addEventListener('gallery-refresh', (e) => {
 let _items = [];
 let _total = 0;
 let _totalTagged = 0;
+let _totalDescribed = 0;
 
 // Update the "X/Y tagged" badge in the AI-tagging settings header.
 function _updateTagCount() {
   const el = document.getElementById('gallery-tag-count');
   if (el) el.textContent = _total ? `${_totalTagged}/${_total} tagged` : '';
+}
+// Update the "X/Y described" badge in the AI-descriptions settings header.
+function _updateOcrCount() {
+  const el = document.getElementById('gallery-ocr-count');
+  if (el) el.textContent = _total ? `${_totalDescribed}/${_total} described` : '';
 }
 let _search = '';
 // Stack of active tag filters. Multiple tags AND together — the user
@@ -119,7 +125,9 @@ async function _fetchLibrary(append) {
     } catch (_) {}
     _total = data.total || 0;
     if (typeof data.total_tagged === 'number') _totalTagged = data.total_tagged;
+    if (typeof data.total_described === 'number') _totalDescribed = data.total_described;
     _updateTagCount();
+    _updateOcrCount();
     _renderGrid();
     _renderTags(data.tags || []);
     _renderModels(data.models || []);
@@ -2107,7 +2115,7 @@ export function openGallery() {
               </button>
             </div>
             <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;">
-              <div style="font-size:12px;font-weight:600;margin-bottom:2px;">AI Descriptions</div>
+              <h2>AI Descriptions <span id="gallery-ocr-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;"></span></h2>
               <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
                 Describe and transcribe photo contents with a vision model. Skips photos that already have a description.
               </div>
@@ -2125,7 +2133,8 @@ export function openGallery() {
                   <button id="gallery-ocr-cancel" class="gallery-select-btn" style="font-size:10px;padding:1px 6px;">Cancel</button>
                 </div>
               </div>
-              <div class="memory-toolbar" style="display:flex;flex-direction:row;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;">
+              <div class="memory-toolbar" style="display:flex;flex-direction:row;gap:6px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:12px;">
+                <button class="memory-toolbar-btn" id="gallery-clear-captions-btn" title="Remove all AI-generated descriptions from every photo">Clear AI descriptions</button>
                 <button class="memory-toolbar-btn" id="gallery-ocr-all-btn" title="Generate AI descriptions for photos that don't have one (in the current album, if any)">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:5px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                   Start AI OCR
@@ -2619,6 +2628,31 @@ export function openGallery() {
     });
   }
 
+  const clearCaptionsBtn = document.getElementById('gallery-clear-captions-btn');
+  if (clearCaptionsBtn) {
+    clearCaptionsBtn.addEventListener('click', async () => {
+      if (clearCaptionsBtn.disabled) return;
+      if (moreMenu) { moreMenu.hidden = true; moreMenu.style.display = 'none'; }
+      if (!await uiModule.styledConfirm(
+        'Remove all AI-generated descriptions from every photo? Regenerating them requires running the vision model again on each photo.',
+        { confirmText: 'Clear Descriptions', danger: true }
+      )) return;
+      clearCaptionsBtn.disabled = true;
+      try {
+        const r = await fetch(`${API_BASE}/api/gallery/clear-captions`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Clear failed');
+        uiModule.showToast(`Cleared descriptions on ${d.cleared} photo${d.cleared === 1 ? '' : 's'}`);
+        await _fetchLibrary(false);
+      } catch (e) {
+        uiModule.showError(`Failed to clear descriptions: ${e.message || e}`);
+      } finally {
+        clearCaptionsBtn.disabled = false;
+      }
+    });
+  }
 
   // ── Select mode + bulk delete ──
   let _selectMode = false;

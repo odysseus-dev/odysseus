@@ -742,6 +742,10 @@ def setup_gallery_routes() -> APIRouter:
             total_tagged = q.filter(
                 GalleryImage.ai_tags.isnot(None), GalleryImage.ai_tags != ""
             ).count()
+            # Same for AI descriptions — "X/Y described" in the OCR section.
+            total_described = q.filter(
+                GalleryImage.caption.isnot(None), GalleryImage.caption != ""
+            ).count()
 
             # Sorting
             if sort == "shuffle":
@@ -782,6 +786,7 @@ def setup_gallery_routes() -> APIRouter:
                 "items": items,
                 "total": total,
                 "total_tagged": total_tagged,
+                "total_described": total_described,
                 "tags": sorted(all_tags),
                 "models": all_models,
             }
@@ -1074,6 +1079,28 @@ def setup_gallery_routes() -> APIRouter:
             db.rollback()
             logger.exception("clear_gallery_ai_tags: failed")
             raise HTTPException(500, "Tag update failed")
+        finally:
+            db.close()
+    @router.post("/api/gallery/clear-captions")
+    async def clear_gallery_captions(request: Request, image_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(GalleryImage.is_active == True)
+            q = _owner_filter(q, user)
+            if image_id:
+                q = q.filter(GalleryImage.id == image_id)
+            cleared = 0
+            for img in q.all():
+                if img.caption:
+                    img.caption = ''
+                    cleared += 1
+            db.commit()
+            return {"ok": True, "cleared": cleared}
+        except Exception:
+            db.rollback()
+            logger.exception("clear_gallery_captions: failed")
+            raise HTTPException(500, "Caption update failed")
         finally:
             db.close()
 
