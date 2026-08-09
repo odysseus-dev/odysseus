@@ -957,6 +957,38 @@ def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
         pass
     return keys
 
+
+def _resolve_endpoint_stream_timeout(endpoint_url: str) -> Optional[int]:
+    """Per-endpoint LLM stream timeout override (ModelEndpoint.stream_timeout_seconds),
+    or None if unset/unresolvable — caller falls back to the global setting."""
+    try:
+        from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+        db = _SL()
+        try:
+            for key in _endpoint_lookup_keys(endpoint_url):
+                ep = db.query(_ME).filter(_ME.base_url == key).first()
+                if ep is not None:
+                    return getattr(ep, "stream_timeout_seconds", None)
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def resolve_stream_timeout(endpoint_url: str) -> int:
+    """Single source of truth for the LLM stream read-timeout: the target
+    ModelEndpoint's stream_timeout_seconds if set, else the global
+    agent_stream_timeout_seconds setting. Every caller of
+    stream_llm(_with_fallback) for a model completion should route through
+    this instead of reading get_setting("agent_stream_timeout_seconds", ...)
+    directly, so a new per-endpoint override applies everywhere without
+    touching each call site."""
+    endpoint_override = _resolve_endpoint_stream_timeout(endpoint_url)
+    if endpoint_override:
+        return int(endpoint_override)
+    return int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+
 # Admin tool keywords — if the last user message contains any of these, include admin tools
 _ADMIN_KEYWORDS = [
     "session", "sessions", "chat", "chats", "conversation", "conversations",
@@ -3237,7 +3269,7 @@ async def stream_agent_loop(
                 max_tokens=min(max_tokens or 128, 128),
                 prompt_type=None,
                 tools=None,
-                timeout=int(get_setting("agent_stream_timeout_seconds", 300) or 300),
+                timeout=resolve_stream_timeout(endpoint_url),
                 session_id=session_id,
                 workload=workload,
             ):
@@ -3942,7 +3974,7 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
-        agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+        agent_stream_timeout = resolve_stream_timeout(endpoint_url)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
         logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
