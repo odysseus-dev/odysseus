@@ -4347,8 +4347,8 @@ function startOdysseusApp() {
     settleSessionHydration(() => sessionModule.loadSessions());
   } else {
     console.error('Session module not loaded!');
-    // Nothing will hydrate, so settle immediately rather than leaving the
-    // sidebar on "Loading chats…" and dropping the user's route on the floor.
+    // Nothing will hydrate. Settle immediately so the sidebar exposes the
+    // failure; session-dependent routes must remain unopened without data.
     settleSessionHydration(null);
   }
 

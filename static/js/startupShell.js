@@ -63,14 +63,9 @@ export function removeApplicationLoader() {
 }
 
 /**
- * Turn the sidebar's bootstrap row into a failure row — but only if the row
- * outlived the session render.
- *
- * loadSessions() swallows its own errors, so there is no rejection to react
- * to. Its success path always ends in renderSessionList(), which replaces the
- * entire list — bootstrap row included — on its own animation frame, even for
- * zero sessions. A row still standing one paint after the call settles
- * therefore means the fetch failed.
+ * Turn the sidebar's bootstrap row into a failure row. The write is delayed
+ * until the session renderer's frame has committed so a late success cannot
+ * leave stale failure text behind.
  */
 export function markSessionListUnavailableIfStillBootstrapping() {
   afterNextPaint(() => {
@@ -100,8 +95,9 @@ export function deferRouteOpener(path, opener) {
 
 /**
  * Fire the deferred route opener if its data is ready. Called once when
- * wiring completes and again when session hydration settles; a route that
- * needs no session data takes the first call, one that does takes the second.
+ * wiring completes and again after authoritative session hydration; a route
+ * that needs no session data takes the first call, one that does takes the
+ * second.
  *
  * @returns {boolean} whether an opener ran.
  */
@@ -119,19 +115,25 @@ export function runDeferredRouteOpener({ sessionsSettled = false } = {}) {
  * Drive session hydration and everything that hangs off it settling: the
  * sidebar's failure row, the loader node, and any session-dependent route.
  *
- * @param {(() => Promise<any>)|null} loadSessions — null when the session
- *   module failed to load, in which case hydration settles immediately so the
- *   shell does not silently swallow the user's route.
+ * @param {(() => Promise<boolean>)|null} loadSessions — resolves true only
+ *   after the session list was authoritatively loaded and applied. Null means
+ *   the session module failed to load.
  */
 export function settleSessionHydration(loadSessions) {
-  const settle = () => {
-    markSessionListUnavailableIfStillBootstrapping();
+  const settle = (succeeded) => {
+    if (!succeeded) {
+      markSessionListUnavailableIfStillBootstrapping();
+      // A later unrelated caller must not be able to release a stale startup
+      // opener against unknown session state.
+      _routeOpener = null;
+      _routeOpenerNeedsSessions = false;
+    }
     removeApplicationLoader();
-    runDeferredRouteOpener({ sessionsSettled: true });
+    if (succeeded) runDeferredRouteOpener({ sessionsSettled: true });
+    return succeeded;
   };
   if (!loadSessions) {
-    settle();
-    return Promise.resolve();
+    return Promise.resolve(settle(false));
   }
   // Kick the request off synchronously — a microtask hop here would delay the
   // fetch this whole change exists to get off the critical path.
@@ -140,10 +142,12 @@ export function settleSessionHydration(loadSessions) {
     pending = loadSessions();
   } catch (e) {
     console.warn('loadSessions error:', e);
-    settle();
-    return Promise.resolve();
+    return Promise.resolve(settle(false));
   }
   return Promise.resolve(pending)
-    .catch(e => console.warn('loadSessions error:', e))
-    .finally(settle);
+    .then(result => settle(result === true))
+    .catch(e => {
+      console.warn('loadSessions error:', e);
+      return settle(false);
+    });
 }

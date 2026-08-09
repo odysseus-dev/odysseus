@@ -8,9 +8,8 @@ Locks in the behaviour #5926 asks for: the shell is revealed one paint after
 wiring and does not wait on /api/sessions; the loader node survives hydration
 as a startup sentinel but is always retired once hydration settles; the sidebar
 owns its own loading/failure row and a successful zero-session render never
-shows a false failure; a URL route opens as soon as the data it actually needs
-is there; and a missing session module still settles instead of dropping the
-route on the floor.
+shows a false failure; and a URL route opens only after the data it actually
+needs is authoritatively available.
 """
 import json
 import shutil
@@ -150,14 +149,13 @@ cases.failed_hydration_marks_sidebar_row = async () => {
   };
 };
 
-// A successful load with zero sessions: renderSessionList() drops the whole
-// list on its own frame, ahead of the failure write. No false "unavailable".
+// A successful load with zero sessions must not schedule a failure write.
 cases.zero_session_success_shows_no_failure = async () => {
   const w = makeWorld();
   w.addElement('app-loader');
   const row = w.addElement('session-list-loading', { statusText: 'Loading chats…' });
   const shell = await loadModule();
-  await shell.settleSessionHydration(() => Promise.resolve());
+  await shell.settleSessionHydration(() => Promise.resolve(true));
   w.paint(1);
   row.remove();            // renderSessionList() clearing #session-list
   w.paint(1);
@@ -170,7 +168,7 @@ cases.hydration_starts_synchronously = async () => {
   w.addElement('app-loader');
   const shell = await loadModule();
   let started = false;
-  const done = shell.settleSessionHydration(() => { started = true; return Promise.resolve(); });
+  const done = shell.settleSessionHydration(() => { started = true; return Promise.resolve(true); });
   const startedBeforeAwait = started;
   await done;
   return { startedBeforeAwait };
@@ -184,16 +182,19 @@ cases.synchronous_load_failure_still_settles = async () => {
   let opened = 0;
   shell.deferRouteOpener('/email', () => { opened += 1; });
   let threw = false;
+  let succeeded = true;
   try {
-    await shell.settleSessionHydration(() => { throw new Error('module blew up'); });
+    succeeded = await shell.settleSessionHydration(() => { throw new Error('module blew up'); });
   } catch (_) { threw = true; }
   w.paint(2);
   w.runTimers();
   return {
     threw,
+    succeeded,
     opened,
     statusText: row.status.textContent,
     loaderRemoved: !w.byId.has('app-loader'),
+    ranAfterFailure: shell.runDeferredRouteOpener({ sessionsSettled: true }),
   };
 };
 
@@ -217,29 +218,32 @@ cases.route_with_session_data_waits_for_hydration = async () => {
   shell.deferRouteOpener('/email', () => { opened += 1; });
   const ranEarly = shell.runDeferredRouteOpener();
   const openedAfterEarly = opened;
-  await shell.settleSessionHydration(() => Promise.resolve());
+  const succeeded = await shell.settleSessionHydration(() => Promise.resolve(true));
   return {
     ranEarly,
     openedAfterEarly,
     openedAfterHydration: opened,
+    succeeded,
     needsSessions: [shell.routeNeedsSessionData('/email'), shell.routeNeedsSessionData('/notes')],
   };
 };
 
-cases.missing_session_module_still_opens_route = async () => {
+cases.missing_session_module_keeps_route_deferred = async () => {
   const w = makeWorld();
   w.addElement('app-loader');
   const row = w.addElement('session-list-loading', { statusText: 'Loading chats…' });
   const shell = await loadModule();
   let opened = 0;
   shell.deferRouteOpener('/email', () => { opened += 1; });
-  await shell.settleSessionHydration(null);
+  const succeeded = await shell.settleSessionHydration(null);
   w.paint(2);
   w.runTimers();
   return {
     opened,
+    succeeded,
     statusText: row.status.textContent,
     loaderRemoved: !w.byId.has('app-loader'),
+    ranAfterFailure: shell.runDeferredRouteOpener({ sessionsSettled: true }),
   };
 };
 
@@ -333,7 +337,9 @@ def test_hydration_request_starts_synchronously(results):
 def test_synchronous_load_failure_still_settles(results):
     r = results["synchronous_load_failure_still_settles"]
     assert r["threw"] is False, "a throwing loadSessions must not escape"
-    assert r["opened"] == 1
+    assert r["succeeded"] is False
+    assert r["opened"] == 0, "session-dependent route opened without session data"
+    assert r["ranAfterFailure"] is False, "failed startup left a stale route opener"
     assert r["statusText"] == "Chats unavailable"
     assert r["loaderRemoved"] is True
 
@@ -351,12 +357,15 @@ def test_route_needing_session_data_waits_for_hydration(results):
     assert r["ranEarly"] is False, "/email opened before the session list was there"
     assert r["openedAfterEarly"] == 0
     assert r["openedAfterHydration"] == 1
+    assert r["succeeded"] is True
     assert r["needsSessions"] == [True, False]
 
 
-def test_missing_session_module_still_settles(results):
-    r = results["missing_session_module_still_opens_route"]
-    assert r["opened"] == 1, "route silently discarded when the session module is absent"
+def test_missing_session_module_still_settles_without_opening_data_route(results):
+    r = results["missing_session_module_keeps_route_deferred"]
+    assert r["succeeded"] is False
+    assert r["opened"] == 0, "route opened without the session module it depends on"
+    assert r["ranAfterFailure"] is False, "missing module left a stale route opener"
     assert r["statusText"] == "Chats unavailable"
     assert r["loaderRemoved"] is True
 
