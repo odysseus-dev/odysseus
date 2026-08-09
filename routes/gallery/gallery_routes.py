@@ -20,7 +20,7 @@ from src.upload_limits import (
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
-from src.constants import GENERATED_IMAGES_DIR
+from src.constants import GENERATED_IMAGES_DIR, VISION_MAX_TOKENS
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery.gallery_helpers import (
@@ -2311,9 +2311,10 @@ def setup_gallery_routes() -> APIRouter:
             provider = _detect_provider(chat_url)
 
             ocr_prompt = (
-                "Describe this image in under 40 words. Report only what is clearly visible. "
-                "Transcribe any legible text exactly, but do not enumerate every detail or break the description into sections. If text is unreadable, "
-                "say so rather than guessing."
+                "Describe this image in two parts, separated by a blank line.\n\n"
+                "First: a single summary under 40 words.\n\n"
+                "Then: a fuller description including any legible text transcribed exactly. "
+                "Report only what is clearly visible; if text is unreadable, say so rather than guessing."
             )
 
             if provider == "anthropic":

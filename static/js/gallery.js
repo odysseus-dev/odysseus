@@ -39,6 +39,23 @@ function _updateOcrCount() {
   const el = document.getElementById('gallery-ocr-count');
   if (el) el.textContent = _total ? `${_totalDescribed}/${_total} described` : '';
 }
+// Long OCR captions get collapsed to a ~40-word preview in the detail
+// panel. Full text stays in the DOM so copy and in-page search still
+// see it; the Vision text editor is unaffected and shows it in full.
+function _captionBlock(caption, esc) {
+  const full = String(caption || '').trim();
+  const i = full.search(/\n\s*\n/);
+  if (i < 0) return `<div class="gallery-detail-prompt">${esc(full)}</div>`;
+  const summary = full.slice(0, i).trim();
+  const rest = full.slice(i).trim();
+  return `<div class="gallery-detail-prompt">`
+    + `<span id="gallery-caption-short">${esc(summary)} `
+    + `<button type="button" id="gallery-caption-toggle" style="background:none;border:0;padding:0;color:var(--red);font:inherit;cursor:pointer;text-decoration:underline;">show more</button>`
+    + `</span>`
+    + `<span id="gallery-caption-full" hidden>${esc(summary)}<br><br>${esc(rest)} `
+    + `<button type="button" id="gallery-caption-collapse" style="background:none;border:0;padding:0;color:var(--red);font:inherit;cursor:pointer;text-decoration:underline;">show less</button>`
+    + `</span></div>`;
+}
 let _search = '';
 // Stack of active tag filters. Multiple tags AND together — the user
 // builds this up by clicking tag chips or by hitting Enter in the
@@ -1441,7 +1458,7 @@ function _openDetail(img) {
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
-        ${img.caption ? `<div class="gallery-detail-section"><label>OCR Caption</label><div class="gallery-detail-prompt">${_esc(img.caption)}</div></div>` : ''}
+        ${img.caption ? `<div class="gallery-detail-section"><label>OCR Caption</label>${_captionBlock(img.caption, _esc)}</div>` : ''}
         ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section"><label>Prompt</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div></div>` : ''}
         <div class="gallery-detail-section gallery-detail-section-date">
           <label>Date</label>
@@ -1683,6 +1700,18 @@ function _openDetail(img) {
       cleanup();
       uiModule.showError('AI description failed');
     }
+  });
+  // Caption preview toggle. Both buttons only exist when the caption was
+  // long enough to collapse, so guard with optional chaining.
+  const _capShort = document.getElementById('gallery-caption-short');
+  const _capFull = document.getElementById('gallery-caption-full');
+  document.getElementById('gallery-caption-toggle')?.addEventListener('click', () => {
+    if (_capShort) _capShort.hidden = true;
+    if (_capFull) _capFull.hidden = false;
+  });
+  document.getElementById('gallery-caption-collapse')?.addEventListener('click', () => {
+    if (_capFull) _capFull.hidden = true;
+    if (_capShort) _capShort.hidden = false;
   });
   document.getElementById('gallery-download-btn').addEventListener('click', async () => {
     try {
