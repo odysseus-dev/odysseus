@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text, inspect
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -1672,11 +1672,18 @@ def _migrate_add_notifications_enabled():
 def _migrate_add_endpoint_stream_timeout():
     """Add stream_timeout_seconds column to model_endpoints (per-endpoint LLM
     read-timeout override; null falls back to the global
-    agent_stream_timeout_seconds setting)."""
+    agent_stream_timeout_seconds setting).
+
+    Dialect-agnostic (inspector + plain ADD COLUMN, valid on both SQLite and
+    Postgres) because — unlike the older PRAGMA-based migrations, which only
+    backfill columns that predate a given Postgres install's initial
+    Base.metadata.create_all() — this column may need to be added to an
+    already-running Postgres database that was created before this column
+    existed."""
     try:
-        with engine.connect() as conn:
-            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(model_endpoints)"))]
-            if "stream_timeout_seconds" not in cols:
+        cols = [c["name"] for c in inspect(engine).get_columns("model_endpoints")]
+        if "stream_timeout_seconds" not in cols:
+            with engine.connect() as conn:
                 conn.execute(text("ALTER TABLE model_endpoints ADD COLUMN stream_timeout_seconds INTEGER"))
                 conn.commit()
                 logging.getLogger(__name__).info("Added stream_timeout_seconds column to model_endpoints")
