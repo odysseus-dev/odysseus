@@ -1086,6 +1086,7 @@ async function loadEndpoints() {
             <div style="display:flex;gap:4px;align-items:center;">
               ${_endpointSelectMode ? '' : `
                 ${ep.model_type === 'image' || isChatgptAccount || ep.provider === 'chatgpt-subscription' || (typeof ep.base_url === 'string' && ep.base_url.includes('chatgpt.com/backend-api')) ? '' : `<button type="button" class="admin-btn-sm" data-adm-tools-ep="${ep.id}" data-adm-tools-state="${ep.supports_tools === true ? 'on' : ep.supports_tools === false ? 'off' : 'auto'}" aria-label="Native tool calling: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}" title="Native tool calling for this endpoint.&#10;Auto: decide from the model name / endpoint host.&#10;On: send function schemas by default (needed for local endpoints like Ollama that aren't auto-detected).&#10;Off: use text parsing by default (explicit per-model tool settings and Odysseus models still apply).">Tools: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}</button>`}
+                <button class="admin-btn-sm" data-adm-ep-timeout="${ep.id}" data-adm-ep-timeout-val="${ep.stream_timeout_seconds || ''}" title="LLM response timeout for this endpoint">Timeout${ep.stream_timeout_seconds ? ` (${ep.stream_timeout_seconds}s)` : ''}</button>
                 <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
                 <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
                 ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
@@ -1343,6 +1344,37 @@ async function loadEndpoints() {
           if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
           if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done = true; restore(); }
         });
+      });
+    });
+    queryAll('[data-adm-ep-timeout]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = btn.dataset.admEpTimeout;
+        const current = btn.dataset.admEpTimeoutVal || '';
+        const next = await uiModule.styledPrompt('LLM response timeout (seconds)', {
+          defaultValue: current,
+          placeholder: '30-3600, blank = account default',
+          confirmText: 'Save',
+        });
+        if (next === null || next === undefined) return;
+        const trimmed = String(next).trim();
+        const value = trimmed === '' ? null : parseInt(trimmed, 10);
+        if (value !== null && (!Number.isFinite(value) || value < 30 || value > 3600)) {
+          uiModule.showError('Timeout must be between 30 and 3600 seconds (or blank for default)');
+          return;
+        }
+        try {
+          const res = await fetch(`/api/model-endpoints/${epId}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stream_timeout_seconds: value }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          loadEndpoints();
+        } catch (_) {
+          uiModule.showError('Failed to update timeout');
+        }
       });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
