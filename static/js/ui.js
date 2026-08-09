@@ -488,17 +488,19 @@ function _smoothScrollStep() {
   const current = box.scrollTop;
   const diff = target - current;
 
-  // If content grew substantially since we started (tool output, images),
-  // skip to bottom — don't mistake this for a user scroll-up.
+  // If we're far from the bottom and content has grown, the lag is from
+  // new content, not a user scroll-up. Snap to bottom so the lerp doesn't
+  // fall irrecoverably behind (especially when many small tool results
+  // accumulate faster than the 0.2-factor lerp can keep up).
   const contentGrew = target - _lastTargetHeight;
-  if (diff > 300 && contentGrew > 200) {
+  if (diff > 300 && contentGrew > 20) {
     box.scrollTop = target;
     _lastTargetHeight = target;
     _scrollRafId = requestAnimationFrame(_smoothScrollStep);
     return;
   }
 
-  // If user scrolled up significantly, don't force them down
+  // If user scrolled up with no meaningful new content, respect that.
   if (diff > 300) {
     _scrollRafId = null;
     return;
@@ -508,6 +510,13 @@ function _smoothScrollStep() {
     box.scrollTop = target;
     _lastTargetHeight = target;
     _scrollRafId = null;
+    // Content may have arrived during the final lerp frame (e.g. last
+    // tool output in a chain). If the true bottom is now lower, restart.
+    const finalTarget = box.scrollHeight - box.clientHeight;
+    if (finalTarget > target + 1) {
+      _lastTargetHeight = finalTarget;
+      _scrollRafId = requestAnimationFrame(_smoothScrollStep);
+    }
     return;
   }
 
