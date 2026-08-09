@@ -1384,6 +1384,10 @@ function _openDetail(img) {
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span>
             ${aiTags ? 'Clear AI tags' : 'AI Tag'}
           </button>
+          <button class="dropdown-item-compact" id="gallery-ocr-btn">
+            <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
+            ${(img.caption || '').trim() ? 'Redo AI description' : 'AI description'}
+          </button>
           <button class="dropdown-item-compact" id="gallery-download-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
             Download
@@ -1627,7 +1631,51 @@ function _openDetail(img) {
       uiModule.showError(clearMode ? 'Clear failed' : 'AI tagging failed');
     }
   });
-
+  document.getElementById('gallery-ocr-btn')?.addEventListener('click', async () => {
+    // Force when a caption already exists — the menu item reads "Redo".
+    const redo = Boolean((img.caption || '').trim());
+    const stage = document.getElementById('gallery-detail-image-wrap') || document.getElementById('gallery-detail-img')?.parentElement;
+    let overlay = null, spinner = null;
+    if (stage) {
+      overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;background:color-mix(in srgb, var(--bg) 55%, transparent);z-index:5;';
+      try {
+        spinner = spinnerModule.createWhirlpool(36);
+        spinner.element.style.cssText = 'width:36px;height:36px;margin:0;';
+        overlay.appendChild(spinner.element);
+        const label = document.createElement('div');
+        label.textContent = 'Describing…';
+        label.style.cssText = 'font-size:11px;opacity:0.7;';
+        overlay.appendChild(label);
+      } catch (_) { overlay.textContent = 'Describing…'; }
+      if (getComputedStyle(stage).position === 'static') stage.style.position = 'relative';
+      stage.appendChild(overlay);
+    }
+    const cleanup = () => { try { spinner?.destroy?.(); } catch {} overlay?.remove(); };
+    try {
+      const sel = document.getElementById('gallery-ocr-model');
+      const chosen = (sel && sel.value) || '';
+      const qp = new URLSearchParams();
+      if (chosen) qp.set('model', chosen);
+      if (redo) qp.set('force', '1');
+      const qs = qp.toString();
+      const res = await fetch(`${API_BASE}/api/gallery/${img.id}/ocr${qs ? '?' + qs : ''}`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const data = await res.json();
+      cleanup();
+      if (data.ok) {
+        img.caption = data.caption || '';
+        uiModule.showToast(data.skipped ? 'Already described' : 'Description added');
+        _openDetail(img); // re-render detail
+      } else {
+        uiModule.showError(data.error || 'AI description failed');
+      }
+    } catch (e2) {
+      cleanup();
+      uiModule.showError('AI description failed');
+    }
+  });
   document.getElementById('gallery-download-btn').addEventListener('click', async () => {
     try {
       const res = await fetch(img.url, { credentials: 'same-origin' });
@@ -2058,12 +2106,61 @@ export function openGallery() {
                 Start AI tag
               </button>
             </div>
+            <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:2px;">AI Descriptions</div>
+              <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
+                Describe and transcribe photo contents with a vision model. Skips photos that already have a description.
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <label for="gallery-ocr-model" style="font-size:11px;opacity:0.6;white-space:nowrap;">Model</label>
+                <select id="gallery-ocr-model"
+                        style="flex:1;font-size:11px;padding:3px 6px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;">
+                  <option value="">Use Settings → Vision</option>
+                </select>
+              </div>
+              <div id="gallery-ocr-bar" style="display:none;padding:8px 0 0;">
+                <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px;">
+                  <div id="gallery-ocr-progress" style="height:100%;background:var(--accent, var(--red));width:0%;transition:width 0.2s;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                  <div id="gallery-ocr-status" style="font-size:10px;opacity:0.5;"></div>
+                  <button id="gallery-ocr-cancel" class="gallery-select-btn" style="font-size:10px;padding:1px 6px;">Cancel</button>
+                </div>
+              </div>
+              <div class="memory-toolbar" style="display:flex;flex-direction:row;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;">
+                <button class="memory-toolbar-btn" id="gallery-ocr-all-btn" title="Generate AI descriptions for photos that don't have one (in the current album, if any)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:5px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                  Start AI OCR
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
+    (async () => {
+    const sel = document.getElementById('gallery-ocr-model');
+    if (!sel) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
+      const data = await r.json();
+      const ids = [];
+      (data.items || []).forEach(item => {
+        (item.models || []).forEach(mid => { if (mid && !ids.includes(mid)) ids.push(mid); });
+      });
+      ids.sort((a, b) => String(a).localeCompare(String(b)));
+      ids.forEach(mid => {
+        const opt = document.createElement('option');
+        opt.value = mid;
+        opt.textContent = mid;
+        sel.appendChild(opt);
+      });
+    } catch (e) {
+      console.warn('Failed to load models for gallery OCR picker', e);
+    }
+  })();
   Modals.register('gallery-modal', {
     railBtnId: 'rail-gallery',
     sidebarBtnId: 'tool-gallery-btn',
@@ -2383,7 +2480,96 @@ export function openGallery() {
       if (uiModule) uiModule.showToast(`Tagged ${done - failed} photo${(done - failed) !== 1 ? 's' : ''}`);
     });
   }
+  // ── OCR All (AI Descriptions) ──
+  let _ocrCancelRequested = false;
+  let _ocring = false;
+  const ocrAllBtn = document.getElementById('gallery-ocr-all-btn');
+  const _ocrAllOrigHTML = ocrAllBtn ? ocrAllBtn.innerHTML : '';
+  if (ocrAllBtn) {
+    ocrAllBtn.addEventListener('click', async () => {
+      // While a run is active this button acts as Cancel. Cancelling only
+      // stops issuing new requests — each image commits on its own, so
+      // everything already described stays saved.
+      if (_ocring) {
+        _ocrCancelRequested = true;
+        const _se = document.getElementById('gallery-ocr-status');
+        if (_se) _se.textContent = 'Cancelling…';
+        ocrAllBtn.textContent = 'Cancelling…';
+        ocrAllBtn.disabled = true;
+        return;
+      }
+      if (ocrAllBtn.disabled) return;
+      const scope = _activeAlbum
+        ? (_albums.find(a => a.id === _activeAlbum)?.name || 'this album')
+        : 'entire gallery';
 
+      // Optional per-run model override (blank = use Settings → Vision).
+      const modelInput = document.getElementById('gallery-ocr-model');
+      const ocrModel = (modelInput && modelInput.value.trim()) || '';
+
+      const params = new URLSearchParams();
+      if (_activeAlbum) params.set('album_id', _activeAlbum);
+      let listRes;
+      try {
+        const r = await fetch(`${API_BASE}/api/gallery/ocr-batch?${params.toString()}`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        listRes = await r.json();
+      } catch (e) { uiModule.showError('Failed to fetch OCR queue'); return; }
+      if (!listRes.ok || !Array.isArray(listRes.image_ids) || listRes.image_ids.length === 0) {
+        uiModule.showToast(`No photos need descriptions in ${scope}`);
+        return;
+      }
+      const total = listRes.image_ids.length;
+      const pending = listRes.total_pending || total;
+      if (!await uiModule.styledConfirm(
+        `Describe ${total} of ${pending} photo${total > 1 ? 's' : ''} in ${scope}?` +
+        (ocrModel ? `\n\nUsing model: ${ocrModel}` : ''),
+        { confirmText: 'Describe All' }
+      )) return;
+
+      const bar = document.getElementById('gallery-ocr-bar');
+      const progEl = document.getElementById('gallery-ocr-progress');
+      const statusEl = document.getElementById('gallery-ocr-status');
+      const cancelBtn = document.getElementById('gallery-ocr-cancel');
+      bar.style.display = '';
+      progEl.style.width = '0%';
+      _ocring = true;
+      _ocrCancelRequested = false;
+      ocrAllBtn.classList.add('active', 'gallery-tag-cancelling');
+      ocrAllBtn.textContent = 'Cancel';
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      if (cancelBtn) cancelBtn.onclick = () => { _ocrCancelRequested = true; statusEl.textContent = 'Cancelling...'; };
+
+      let done = 0, failed = 0;
+      for (const id of listRes.image_ids) {
+        if (_ocrCancelRequested) break;
+        try {
+          const qp = ocrModel ? `?model=${encodeURIComponent(ocrModel)}` : '';
+          const r = await fetch(`${API_BASE}/api/gallery/${id}/ocr${qp}`, {
+            method: 'POST', credentials: 'same-origin',
+          });
+          const d = await r.json();
+          if (!d.ok) failed++;
+        } catch (_) { failed++; }
+        done++;
+        progEl.style.width = `${Math.round((done / total) * 100)}%`;
+        statusEl.textContent = `Describing ${done}/${total}${failed ? ` — ${failed} failed` : ''}`;
+      }
+
+      statusEl.textContent = _ocrCancelRequested
+        ? `Cancelled after ${done}/${total}${failed ? ` (${failed} failed)` : ''}`
+        : `Done — described ${done - failed}/${total}${failed ? ` (${failed} failed)` : ''}`;
+      _ocring = false;
+      ocrAllBtn.disabled = false;
+      ocrAllBtn.classList.remove('active', 'gallery-tag-cancelling');
+      ocrAllBtn.innerHTML = _ocrAllOrigHTML;
+      if (cancelBtn) cancelBtn.style.display = '';
+      setTimeout(() => { bar.style.display = 'none'; }, 3000);
+      await _fetchLibrary(false);
+      if (uiModule) uiModule.showToast(`Described ${done - failed} photo${(done - failed) !== 1 ? 's' : ''}`);
+    });
+  }
   // ── Toolbar overflow (⋮) ──
   const moreBtn = document.getElementById('gallery-toolbar-more-btn');
   const moreMenu = document.getElementById('gallery-toolbar-more-menu');
