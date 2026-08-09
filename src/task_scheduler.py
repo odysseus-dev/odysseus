@@ -343,6 +343,7 @@ class TaskScheduler:
         self._executing_lock = asyncio.Lock()
         self._pending_notifications = []  # completed task notifications
         self._durable_notifications_enabled = True
+        self._last_notification_purge = None
         self._task_defer_counts = {}
         # Strict serial execution — exactly one task runs at a time. Anything
         # else (manual trigger, scheduled dispatch, task chain) waits behind
@@ -613,6 +614,33 @@ class TaskScheduler:
                 except asyncio.CancelledError: pass
         logger.info("Task scheduler stopped")
 
+    async def _purge_expired_notifications_if_due(self):
+        """Run one bounded purge on startup and then at most once per hour."""
+        from src.notifications import (
+            NOTIFICATION_PURGE_BATCH_SIZE,
+            NOTIFICATION_PURGE_INTERVAL_SECONDS,
+            purge_expired_notifications,
+        )
+
+        now = time.monotonic()
+        last_purge = getattr(self, "_last_notification_purge", None)
+        if last_purge is not None and now - last_purge < NOTIFICATION_PURGE_INTERVAL_SECONDS:
+            return
+        self._last_notification_purge = now
+        try:
+            result = await asyncio.to_thread(
+                purge_expired_notifications,
+                limit=NOTIFICATION_PURGE_BATCH_SIZE,
+            )
+            if result["events_deleted"]:
+                logger.info(
+                    "Purged %d expired notification events and %d inbox items",
+                    result["events_deleted"],
+                    result["inbox_items_deleted"],
+                )
+        except Exception:
+            logger.warning("Expired notification purge failed", exc_info=True)
+
     async def _note_pings_loop(self):
         """Built-in note-due scanner — ticks every 60s inside the scheduler.
         Pure infra (no LLM), doesn't surface in the Tasks UI. Iterates
@@ -689,6 +717,7 @@ class TaskScheduler:
                 await self._check_due_tasks()
             except Exception:
                 logger.exception("Error in task scheduler loop")
+            await self._purge_expired_notifications_if_due()
             # Sleep until the next scheduled run, capped at 60s. A `* * * * *`
             # cron task previously fired up to ~60s late because we always
             # slept the full minute; now the loop wakes near the boundary.

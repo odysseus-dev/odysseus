@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session as OrmSession
 
 from core.database import (
+    NOTIFICATION_RETENTION_DAYS,
     NotificationEvent,
     NotificationInboxItem,
     SessionLocal,
@@ -22,6 +26,10 @@ ACTIONABLE = "actionable"
 EVENT_CLASSES = {SYSTEM_EVENT, INBOX_RECORD, ACTIONABLE}
 INBOX_CLASSES = {INBOX_RECORD, ACTIONABLE}
 SEVERITIES = {"info", "attention", "urgent", "error"}
+
+NOTIFICATION_PURGE_BATCH_SIZE = 500
+NOTIFICATION_PURGE_INTERVAL_SECONDS = 60 * 60
+_DEDUPE_WRITE_ATTEMPTS = 3
 
 
 def _normalize_owner(owner: str | None) -> str | None:
@@ -50,6 +58,59 @@ def _iso(dt: datetime | None) -> str | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _utc_naive(dt: datetime) -> datetime:
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _retention_expiry(
+    event_class: str,
+    retention_expires_at: datetime | None,
+    *,
+    now: datetime,
+) -> datetime:
+    if retention_expires_at is not None:
+        return _utc_naive(retention_expires_at)
+    return now + timedelta(days=NOTIFICATION_RETENTION_DAYS[event_class])
+
+
+def _event_is_active(now: datetime | None = None):
+    return NotificationEvent.retention_expires_at > (now or utcnow_naive())
+
+
+def _retryable_dedupe_conflict(exc: Exception) -> bool:
+    if isinstance(exc, IntegrityError):
+        return True
+    if isinstance(exc, OperationalError):
+        message = str(exc).lower()
+        return "database is locked" in message or "database table is locked" in message
+    return False
+
+
+def _commit_with_dedupe_retry(*, dedupe_key: str | None, write, serialize):
+    attempts = _DEDUPE_WRITE_ATTEMPTS if dedupe_key else 1
+    for attempt in range(attempts):
+        db = SessionLocal()
+        try:
+            row = write(db)
+            db.commit()
+            db.refresh(row)
+            return serialize(row)
+        except (IntegrityError, OperationalError) as exc:
+            db.rollback()
+            if (
+                not dedupe_key
+                or not _retryable_dedupe_conflict(exc)
+                or attempt + 1 >= attempts
+            ):
+                raise
+            time.sleep(0.01 * (2 ** attempt))
+        finally:
+            db.close()
+    raise RuntimeError("Notification dedupe retry exhausted")
 
 
 def _owner_query(query, model, owner: str | None):
@@ -138,6 +199,7 @@ def _upsert_event(
     owner = _normalize_owner(owner)
     event_class = _validate_event_class(event_class)
     severity = _validate_severity(severity)
+    now = utcnow_naive()
     event = None
     if dedupe_key:
         event = _owner_query(db.query(NotificationEvent), NotificationEvent, owner).filter(
@@ -148,7 +210,7 @@ def _upsert_event(
             id=str(uuid.uuid4()),
             owner=owner,
             dedupe_key=dedupe_key,
-            created_at=utcnow_naive(),
+            created_at=now,
         )
         db.add(event)
 
@@ -161,7 +223,11 @@ def _upsert_event(
     event.severity = severity
     event.category = _clamp_text(category, 80)
     event.metadata_json = metadata or {}
-    event.retention_expires_at = retention_expires_at
+    event.retention_expires_at = _retention_expiry(
+        event_class,
+        retention_expires_at,
+        now=now,
+    )
     return event
 
 
@@ -180,9 +246,8 @@ def record_notification_event(
     metadata: dict[str, Any] | None = None,
     retention_expires_at: datetime | None = None,
 ) -> dict[str, Any]:
-    db = SessionLocal()
-    try:
-        event = _upsert_event(
+    def _write(db):
+        return _upsert_event(
             db,
             owner=owner,
             event_class=event_class,
@@ -197,11 +262,12 @@ def record_notification_event(
             metadata=metadata,
             retention_expires_at=retention_expires_at,
         )
-        db.commit()
-        db.refresh(event)
-        return _serialize_event(event)
-    finally:
-        db.close()
+
+    return _commit_with_dedupe_retry(
+        dedupe_key=dedupe_key,
+        write=_write,
+        serialize=_serialize_event,
+    )
 
 
 def create_inbox_notification(
@@ -223,8 +289,8 @@ def create_inbox_notification(
 ) -> dict[str, Any]:
     if notification_kind not in INBOX_CLASSES:
         raise ValueError(f"Unknown inbox notification_kind: {notification_kind}")
-    db = SessionLocal()
-    try:
+
+    def _write(db):
         event = _upsert_event(
             db,
             owner=owner,
@@ -256,11 +322,13 @@ def create_inbox_notification(
         item.notification_kind = notification_kind
         item.primary_action = _clamp_text(primary_action, 80)
         item.action_url = _clamp_text(action_url, 2000)
-        db.commit()
-        db.refresh(item)
-        return _serialize_item(item)
-    finally:
-        db.close()
+        return item
+
+    return _commit_with_dedupe_retry(
+        dedupe_key=dedupe_key,
+        write=_write,
+        serialize=_serialize_item,
+    )
 
 
 def record_task_notification(
@@ -344,7 +412,10 @@ def list_inbox_notifications(
 ) -> list[dict[str, Any]]:
     db = SessionLocal()
     try:
-        q = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner)
+        q = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).join(
+            NotificationEvent,
+            NotificationInboxItem.event_id == NotificationEvent.id,
+        ).filter(_event_is_active())
         if not include_archived:
             q = q.filter(NotificationInboxItem.archived_at == None)  # noqa: E711
         if not include_dismissed:
@@ -363,7 +434,9 @@ def list_notification_events(
 ) -> list[dict[str, Any]]:
     db = SessionLocal()
     try:
-        q = _owner_query(db.query(NotificationEvent), NotificationEvent, owner)
+        q = _owner_query(db.query(NotificationEvent), NotificationEvent, owner).filter(
+            _event_is_active()
+        )
         if event_class:
             q = q.filter(NotificationEvent.event_class == event_class)
         events = q.order_by(NotificationEvent.created_at.desc()).limit(_safe_limit(limit, default=100)).all()
@@ -375,7 +448,11 @@ def list_notification_events(
 def count_unread_notifications(*, owner: str | None) -> int:
     db = SessionLocal()
     try:
-        q = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).filter(
+        q = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).join(
+            NotificationEvent,
+            NotificationInboxItem.event_id == NotificationEvent.id,
+        ).filter(
+            _event_is_active(),
             NotificationInboxItem.is_read == False,  # noqa: E712
             NotificationInboxItem.dismissed_at == None,  # noqa: E711
             NotificationInboxItem.archived_at == None,  # noqa: E711
@@ -388,7 +465,11 @@ def count_unread_notifications(*, owner: str | None) -> int:
 def mark_notification_read(*, item_id: str, owner: str | None, read: bool = True) -> dict[str, Any] | None:
     db = SessionLocal()
     try:
-        item = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).filter(
+        item = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).join(
+            NotificationEvent,
+            NotificationInboxItem.event_id == NotificationEvent.id,
+        ).filter(
+            _event_is_active(),
             NotificationInboxItem.id == item_id
         ).first()
         if not item:
@@ -405,7 +486,11 @@ def mark_notification_read(*, item_id: str, owner: str | None, read: bool = True
 def dismiss_notification(*, item_id: str, owner: str | None) -> dict[str, Any] | None:
     db = SessionLocal()
     try:
-        item = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).filter(
+        item = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).join(
+            NotificationEvent,
+            NotificationInboxItem.event_id == NotificationEvent.id,
+        ).filter(
+            _event_is_active(),
             NotificationInboxItem.id == item_id
         ).first()
         if not item:
@@ -423,7 +508,11 @@ def dismiss_notification(*, item_id: str, owner: str | None) -> dict[str, Any] |
 def archive_notification(*, item_id: str, owner: str | None) -> dict[str, Any] | None:
     db = SessionLocal()
     try:
-        item = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).filter(
+        item = _owner_query(db.query(NotificationInboxItem), NotificationInboxItem, owner).join(
+            NotificationEvent,
+            NotificationInboxItem.event_id == NotificationEvent.id,
+        ).filter(
+            _event_is_active(),
             NotificationInboxItem.id == item_id
         ).first()
         if not item:
@@ -434,5 +523,49 @@ def archive_notification(*, item_id: str, owner: str | None) -> dict[str, Any] |
         db.commit()
         db.refresh(item)
         return _serialize_item(item)
+    finally:
+        db.close()
+
+
+def purge_expired_notifications(
+    *,
+    limit: int = NOTIFICATION_PURGE_BATCH_SIZE,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Delete at most one bounded batch of expired events and inbox rows."""
+    try:
+        bounded_limit = int(limit)
+    except (TypeError, ValueError):
+        bounded_limit = NOTIFICATION_PURGE_BATCH_SIZE
+    bounded_limit = max(1, min(NOTIFICATION_PURGE_BATCH_SIZE, bounded_limit))
+    cutoff = _utc_naive(now) if now is not None else utcnow_naive()
+
+    db = SessionLocal()
+    try:
+        event_ids = [
+            row[0]
+            for row in db.query(NotificationEvent.id).filter(
+                or_(
+                    NotificationEvent.retention_expires_at == None,  # noqa: E711
+                    NotificationEvent.retention_expires_at <= cutoff,
+                )
+            ).order_by(
+                NotificationEvent.retention_expires_at.asc(),
+                NotificationEvent.created_at.asc(),
+            ).limit(bounded_limit).all()
+        ]
+        if not event_ids:
+            return {"events_deleted": 0, "inbox_items_deleted": 0}
+        inbox_items_deleted = db.query(NotificationInboxItem).filter(
+            NotificationInboxItem.event_id.in_(event_ids)
+        ).delete(synchronize_session=False)
+        events_deleted = db.query(NotificationEvent).filter(
+            NotificationEvent.id.in_(event_ids)
+        ).delete(synchronize_session=False)
+        db.commit()
+        return {
+            "events_deleted": int(events_deleted or 0),
+            "inbox_items_deleted": int(inbox_items_deleted or 0),
+        }
     finally:
         db.close()
