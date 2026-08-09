@@ -2111,12 +2111,10 @@ export function openGallery() {
               <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
                 Describe and transcribe photo contents with a vision model. Skips photos that already have a description.
               </div>
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-                <label for="gallery-ocr-model" style="font-size:11px;opacity:0.6;white-space:nowrap;">Model</label>
-                <select id="gallery-ocr-model"
-                        style="flex:1;font-size:11px;padding:3px 6px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;">
-                  <option value="">Use Settings → Vision</option>
-                </select>
+              <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:8px;">
+                <label class="settings-label">Model</label>
+                <span class="adm-model-logo" id="gallery-ocr-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
+                <select id="gallery-ocr-model" class="settings-select"><option value="">Use Settings → Vision</option></select>
               </div>
               <div id="gallery-ocr-bar" style="display:none;padding:8px 0 0;">
                 <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px;">
@@ -2140,7 +2138,7 @@ export function openGallery() {
     </div>
   `;
   document.body.appendChild(modal);
-    (async () => {
+(async () => {
     const sel = document.getElementById('gallery-ocr-model');
     if (!sel) return;
     try {
@@ -2157,6 +2155,13 @@ export function openGallery() {
         opt.textContent = mid;
         sel.appendChild(opt);
       });
+      const logoEl = document.getElementById('gallery-ocr-model-logo');
+      if (logoEl) {
+        const { providerLogo } = await import('./providers.js');
+        const apply = () => { logoEl.innerHTML = providerLogo(sel.value) || ''; };
+        apply();
+        sel.addEventListener('change', apply);
+      }
     } catch (e) {
       console.warn('Failed to load models for gallery OCR picker', e);
     }
