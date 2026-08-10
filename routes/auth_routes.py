@@ -84,6 +84,26 @@ class SetOpenRegistrationRequest(BaseModel):
 SESSION_COOKIE = "odysseus_session"
 
 
+def _session_cookie_secure(request: Request) -> bool:
+    """Secure flag for the password-login session cookie.
+
+    SECURE_COOKIES=true always wins.  Unlike the historical behaviour,
+    SECURE_COOKIES=false (the bundled Compose default) can no longer
+    downgrade the cookie when the request itself arrived over HTTPS —
+    a stock TLS deployment must not issue a bearer cookie eligible for
+    cleartext transmission.  X-Forwarded-Proto is honoured only when the
+    deployment explicitly opts in via TRUST_PROXY_HEADERS, so a client
+    cannot influence cookie policy with a spoofed header.
+    """
+    if os.getenv("SECURE_COOKIES", "").strip().lower() in ("true", "1", "yes"):
+        return True
+    forwarded = ""
+    if os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in ("true", "1", "yes"):
+        forwarded = getattr(request, "headers", {}).get("x-forwarded-proto", "")
+    scheme = forwarded or getattr(getattr(request, "url", None), "scheme", "") or "http"
+    return scheme == "https"
+
+
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -157,7 +177,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             value=token,
             httponly=True,
             samesite="lax",
-            secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+            secure=_session_cookie_secure(request),
             path="/",
         )
         if body.remember:
@@ -186,6 +206,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             u = result.get("username")
             if u:
                 result["privileges"] = auth_manager.get_privileges(u)
+                result["is_oidc"] = auth_manager.is_oidc_user(u)
         except Exception:
             pass
         return result
@@ -200,6 +221,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "OIDC users don't have a password — manage credentials through your identity provider")
         if len(body.new_password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
         current_token = request.cookies.get(SESSION_COOKIE)
@@ -219,6 +242,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "Two-factor authentication is managed by your identity provider for OIDC users")
         if auth_manager.totp_enabled(user):
             raise HTTPException(400, "2FA is already enabled")
         secret = auth_manager.totp_generate_secret(user)
@@ -242,6 +267,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "Two-factor authentication is managed by your identity provider for OIDC users")
         if not auth_manager.totp_confirm_enable(user, body.code):
             raise HTTPException(400, "Invalid code — try again")
         backup = auth_manager.users.get(user, {}).get("totp_backup_codes", [])
@@ -256,6 +283,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "Two-factor authentication is managed by your identity provider for OIDC users")
         if not auth_manager.totp_disable(user, body.password):
             raise HTTPException(400, "Invalid password")
         return {"ok": True}
