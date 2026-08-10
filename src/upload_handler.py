@@ -782,43 +782,69 @@ class UploadHandler:
         """
         uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
         candidates = (uploads_db_path, uploads_db_path + ".bak")
-        signature = self._upload_index_signature(candidates)
-        if fail_on_error:
-            # A backup is intentionally the previous snapshot. It is useful for
-            # non-destructive reads, but cannot authorize deletion when the live
-            # index is missing or corrupt.
-            if not os.path.exists(uploads_db_path):
-                raise ValueError("live uploads database is missing")
-            existing_candidates = [uploads_db_path]
-        else:
-            existing_candidates = [path for path in candidates if os.path.exists(path)]
-        if not existing_candidates:
-            self._index_cache = {}
-            self._index_signature = signature
-            return {}
+        for _attempt in range(3):
+            signature = self._upload_index_signature(candidates)
+            if fail_on_error:
+                # A backup is intentionally the previous snapshot. It is useful for
+                # non-destructive reads, but cannot authorize deletion when the live
+                # index is missing or corrupt.
+                if not os.path.exists(uploads_db_path):
+                    raise ValueError("live uploads database is missing")
+                existing_candidates = [uploads_db_path]
+            else:
+                existing_candidates = [
+                    path for path in candidates if os.path.exists(path)
+                ]
+            if not existing_candidates:
+                self._index_cache = {}
+                self._index_signature = signature
+                return {}
 
-        # Check cache validity
-        if (
-            not fail_on_error
-            and signature is not None
-            and self._index_cache is not None
-            and signature == self._index_signature
-        ):
-            return self._index_cache
+            # Check cache validity
+            if (
+                not fail_on_error
+                and signature is not None
+                and self._index_cache is not None
+                and signature == self._index_signature
+            ):
+                return self._index_cache
 
-        # Try the live file first, fall back to the .bak sibling if the
-        # live file is truncated/corrupted.
-        for candidate in existing_candidates:
-            try:
-                with open(candidate, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    self._index_cache = data
-                    self._index_signature = self._upload_index_signature(candidates)
-                    return data
-            except Exception as e:
-                logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+            # Try the live file first, fall back to the .bak sibling if the
+            # live file is truncated/corrupted. A candidate parsed from an old
+            # inode is accepted only when the whole index signature stays
+            # stable through the read; otherwise retry so the cache cannot pair
+            # stale data with a fresh replacement signature.
+            index_changed_during_read = False
+            for candidate in existing_candidates:
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    verified_signature = self._upload_index_signature(candidates)
+                    if (
+                        signature is not None
+                        and verified_signature is not None
+                        and verified_signature != signature
+                    ):
+                        index_changed_during_read = True
+                        break
+                    if isinstance(data, dict):
+                        self._index_cache = data
+                        self._index_signature = verified_signature
+                        return data
+                except Exception as e:
+                    logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+                    verified_signature = self._upload_index_signature(candidates)
+                    if (
+                        signature is not None
+                        and verified_signature is not None
+                        and verified_signature != signature
+                    ):
+                        index_changed_during_read = True
+                        break
+                    continue
+            if index_changed_during_read:
                 continue
+            break
 
         if fail_on_error:
             raise ValueError("live uploads database is unreadable")

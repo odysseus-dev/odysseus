@@ -15,6 +15,7 @@ These tests exercise:
 * Smoke tests: normal upload, duplicate detection, info lookup after
   a backup-recovery scenario.
 """
+import builtins
 import concurrent.futures
 import io
 import json
@@ -298,6 +299,35 @@ def test_unchanged_upload_index_uses_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(json, "load", fail_if_parsed)
 
     assert handler._load_upload_index() == original
+
+
+def test_upload_index_retries_when_replaced_during_read(tmp_path, monkeypatch):
+    """Do not cache old JSON under the signature of a newer atomic replace."""
+    handler = _make_handler(tmp_path)
+    db_path = _db_path(handler)
+    old_index = {"owner:old": _seed_entry("owner", "old", "old_id")}
+    new_index = {"owner:new": _seed_entry("owner", "new", "new_id")}
+    handler._atomic_write_json(db_path, old_index)
+    handler._index_cache = None
+    handler._index_signature = None
+
+    real_open = builtins.open
+    replaced = False
+
+    def racing_open(file, mode="r", *args, **kwargs):
+        nonlocal replaced
+        handle = real_open(file, mode, *args, **kwargs)
+        if os.fspath(file) == db_path and "r" in mode and not replaced:
+            replaced = True
+            replacement = db_path + ".replacement"
+            with real_open(replacement, "w", encoding="utf-8") as out:
+                json.dump(new_index, out)
+            os.replace(replacement, db_path)
+        return handle
+
+    monkeypatch.setattr(builtins, "open", racing_open)
+
+    assert handler._load_upload_index() == new_index
 
 
 # ---------------------------------------------------------------------------
