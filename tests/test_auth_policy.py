@@ -80,6 +80,7 @@ def test_policy_returns_session_days(tmp_path):
 
 def _policy_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
+    clear_module("routes.auth.auth_routes")
     _real_core_package()
     from routes.auth_routes import setup_auth_routes
 
@@ -113,6 +114,7 @@ def test_policy_endpoint_values_match_manager(tmp_path):
 
 def _setup_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
+    clear_module("routes.auth.auth_routes")
     _real_core_package()
     from routes.auth_routes import SetupRequest, setup_auth_routes
 
@@ -125,6 +127,7 @@ def _setup_endpoint(auth_manager):
 
 def _signup_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
+    clear_module("routes.auth.auth_routes")
     _real_core_package()
     from routes.auth_routes import SignupRequest, setup_auth_routes
 
@@ -137,6 +140,7 @@ def _signup_endpoint(auth_manager):
 
 def _change_password_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
+    clear_module("routes.auth.auth_routes")
     _real_core_package()
     from routes.auth_routes import ChangePasswordRequest, setup_auth_routes
 
@@ -232,6 +236,7 @@ class _CapturingResponse:
 
 def _login_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
+    clear_module("routes.auth.auth_routes")
     _real_core_package()
     from routes.auth_routes import LoginRequest, setup_auth_routes
 
