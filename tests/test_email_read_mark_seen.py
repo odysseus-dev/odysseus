@@ -25,13 +25,17 @@ def _route_endpoint(router, path: str, method: str):
 
 
 class FakeImap:
-    def __init__(self, store_status="OK"):
+    def __init__(self, store_status="OK", readonly_mailbox=False):
         self.store_status = store_status
+        # Shared archives and some provider folders reject a read-write SELECT.
+        self.readonly_mailbox = readonly_mailbox
         self.selects = []
         self.commands = []
 
     def select(self, mailbox, readonly=False):
         self.selects.append((mailbox, readonly))
+        if self.readonly_mailbox and not readonly:
+            raise OSError("[READ-ONLY] Mailbox is read-only")
         return "OK", [b"1"]
 
     def uid(self, command, uid, *args):
@@ -52,7 +56,7 @@ class FakeImap:
         raise AssertionError(f"unexpected IMAP command: {command}")
 
 
-def _install_fakes(monkeypatch, tmp_path, *, store_status="OK"):
+def _install_fakes(monkeypatch, tmp_path, *, store_status="OK", readonly_mailbox=False):
     import routes.email_helpers as email_helpers
     import routes.email_routes as email_routes
 
@@ -66,7 +70,7 @@ def _install_fakes(monkeypatch, tmp_path, *, store_status="OK"):
 
     @contextmanager
     def fake_imap(account_id=None, owner=""):
-        conn = FakeImap(store_status=store_status)
+        conn = FakeImap(store_status=store_status, readonly_mailbox=readonly_mailbox)
         connections.append(conn)
         yield conn
 
@@ -145,7 +149,13 @@ async def test_cached_read_awaits_one_seen_store_without_refetch(monkeypatch, tm
 
 
 @pytest.mark.asyncio
-async def test_seen_store_failure_is_reported_and_not_cached_as_read(monkeypatch, tmp_path):
+async def test_seen_store_failure_returns_the_body_and_reports_the_failure(monkeypatch, tmp_path):
+    """A failed STORE must not cost the reader the message.
+
+    The body was fetched successfully before the flag update was attempted, so
+    the response stays a normal read and carries `mark_seen_failed` for the
+    client to roll its optimistic unread marker back.
+    """
     email_routes, connections, indexed_updates = _install_fakes(
         monkeypatch, tmp_path, store_status="NO"
     )
@@ -156,10 +166,64 @@ async def test_seen_store_failure_is_reported_and_not_cached_as_read(monkeypatch
         "42", folder="INBOX", account_id="acct-a", mark_seen=True, full=False, owner="alice"
     )
 
-    assert result == {"error": "Mail operation failed"}
+    assert "error" not in result
+    assert result["uid"] == "42"
+    assert result["mark_seen_failed"] is True
     assert len(connections) == 1
     assert [command[0] for command in connections[0].commands] == ["FETCH", "STORE"]
+    # The local index must not claim a transition the provider rejected.
     assert indexed_updates == []
+
+
+@pytest.mark.asyncio
+async def test_read_only_mailbox_serves_the_message_without_marking_seen(monkeypatch, tmp_path):
+    """A mailbox that refuses a read-write SELECT is still readable.
+
+    Opening the message is the user's actual goal; the \\Seen transition is a
+    side effect of it. A folder that cannot accept flag changes must therefore
+    fall back to a read-only selection rather than failing the open.
+    """
+    email_routes, connections, indexed_updates = _install_fakes(
+        monkeypatch, tmp_path, readonly_mailbox=True
+    )
+    router = email_routes.setup_email_routes()
+    read_email = _route_endpoint(router, "/api/email/read/{uid}", "GET")
+
+    result = await read_email(
+        "42", folder="Archive", account_id="acct-a", mark_seen=True, full=False, owner="alice"
+    )
+
+    assert "error" not in result
+    assert result["uid"] == "42"
+    assert result["mark_seen_failed"] is True
+    # Read-write attempt first, then the read-only retry on the same connection.
+    assert [readonly for _mailbox, readonly in connections[0].selects] == [False, True]
+    # No STORE is attempted once the mailbox is known to be read-only.
+    assert [command[0] for command in connections[0].commands] == ["FETCH"]
+    assert indexed_updates == []
+
+
+@pytest.mark.asyncio
+async def test_failed_seen_state_is_not_replayed_from_cache(monkeypatch, tmp_path):
+    """`mark_seen_failed` describes one request, not the stored message.
+
+    A second read that does not ask to mark seen must come back clean, or every
+    later reader would inherit a STORE failure it never issued.
+    """
+    email_routes, connections, _ = _install_fakes(monkeypatch, tmp_path, store_status="NO")
+    router = email_routes.setup_email_routes()
+    read_email = _route_endpoint(router, "/api/email/read/{uid}", "GET")
+
+    failed = await read_email(
+        "42", folder="INBOX", account_id="acct-a", mark_seen=True, full=False, owner="alice"
+    )
+    replayed = await read_email(
+        "42", folder="INBOX", account_id="acct-a", mark_seen=False, full=False, owner="alice"
+    )
+
+    assert failed["mark_seen_failed"] is True
+    assert replayed.get("mark_seen_failed", False) is False
+    assert replayed["uid"] == "42"
 
 
 @pytest.mark.asyncio
@@ -184,7 +248,12 @@ async def test_unparseable_read_does_not_mark_seen(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cached_seen_store_failure_is_reported(monkeypatch, tmp_path):
+async def test_cached_seen_store_failure_returns_the_cached_body(monkeypatch, tmp_path):
+    """A cache hit already holds a complete message; a failed STORE cannot take it away.
+
+    This is the path where withholding the body would be least defensible — the
+    response is served from memory and needed no network at all.
+    """
     email_routes, connections, indexed_updates = _install_fakes(
         monkeypatch, tmp_path, store_status="NO"
     )
@@ -199,7 +268,10 @@ async def test_cached_seen_store_failure_is_reported(monkeypatch, tmp_path):
     )
 
     assert first["uid"] == "42"
-    assert second == {"error": "Failed to mark email read"}
+    assert "error" not in second
+    assert second["uid"] == "42"
+    assert second["body"] == first["body"]
+    assert second["mark_seen_failed"] is True
     assert len(connections) == 2
     assert [command[0] for command in connections[0].commands] == ["FETCH"]
     assert [command[0] for command in connections[1].commands] == ["STORE"]

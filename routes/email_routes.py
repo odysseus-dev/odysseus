@@ -2860,13 +2860,22 @@ def setup_email_routes():
                 return indexed_response
             return {"emails": [], "total": 0, "error": "Mail operation failed"}
 
-    def _read_email_sync(uid, folder, account_id, owner, mark_seen=True, full=False):
+    def _read_email_sync(uid, folder, account_id, owner, mark_seen=False, full=False):
         """Sync IMAP read — wrapped in to_thread by the async handler.
 
         The normal reader path fetches the headers plus a bounded body prefix.
         That avoids downloading multi-megabyte attachments just to open a
         message. Full-message fetch remains available for flows that need
         attachment metadata immediately, such as forwarding.
+
+        `mark_seen` defaults to False because it mutates provider state: it
+        selects the mailbox read-write and issues a STORE. Only a foreground
+        open should ask for it, and it has to ask explicitly.
+
+        A failed \\Seen transition is reported as `mark_seen_failed` on an
+        otherwise normal response, never as an error. The body has already been
+        fetched at that point, so refusing to return it would turn a cosmetic
+        flag failure into an unreadable message.
         """
         import time as _t
         _t0 = _t.monotonic()
@@ -2874,6 +2883,7 @@ def setup_email_routes():
         preview_bytes = 384 * 1024
         _t_select = 0.0
         _t_fetch = 0.0
+        mark_seen_failed = False
         try:
             with _imap(account_id, owner=owner) as conn:
                 # A foreground open owns both the body fetch and the \Seen
@@ -2881,7 +2891,20 @@ def setup_email_routes():
                 # route never schedules a second connection that can race the
                 # response. Prefetch/read-only callers retain BODY.PEEK and a
                 # read-only mailbox selection.
-                conn.select(_q(folder), readonly=not mark_seen)
+                try:
+                    conn.select(_q(folder), readonly=not mark_seen)
+                except Exception as select_exc:
+                    if not mark_seen:
+                        raise
+                    # Read-only mailboxes (shared archives, some provider
+                    # folders) reject a read-write SELECT. Serve the message
+                    # read-only and report the flag failure.
+                    logger.warning(
+                        f"read-write SELECT rejected for {folder!r}; "
+                        f"serving read-only without \\Seen: {select_exc}"
+                    )
+                    conn.select(_q(folder), readonly=True)
+                    mark_seen_failed = True
                 _t_select = _t.monotonic() - _t0
                 fetch_query = "(BODY.PEEK[])" if full else f"(BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.{preview_bytes}>)"
                 status, msg_data = _imap_uid_fetch(conn, uid, fetch_query)
@@ -2928,12 +2951,20 @@ def setup_email_routes():
                 parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
                 attachments = _list_attachments_from_msg(msg) if full else (_email_attachment_meta_cache_get(owner, account_id, folder, uid) or [])
 
-                if mark_seen:
+                if mark_seen and not mark_seen_failed:
                     seen_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
                     if seen_status != "OK":
-                        raise RuntimeError(f"IMAP STORE \\Seen failed for UID {uid}")
+                        # Report, don't raise. The parsed body below is still a
+                        # valid response; only the flag claim is untrue.
+                        logger.warning(
+                            f"IMAP STORE \\Seen failed for UID {uid} in {folder!r}: {seen_status}"
+                        )
+                        mark_seen_failed = True
 
-            if mark_seen:
+            # Only record the local flag transition when the provider actually
+            # accepted it, so the index and list cache cannot drift ahead of
+            # the mailbox.
+            if mark_seen and not mark_seen_failed:
                 _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
                 _update_list_cache_seen(account_id, folder, uid, True)
 
@@ -3057,6 +3088,10 @@ def setup_email_routes():
                 "boundaries": cached_boundaries,
                 "thread_turns": cached_turns,
                 "sender_signature": cached_sender_sig,
+                # Per-request, not part of the message: the route strips this
+                # before caching so a one-off flag failure is never replayed to
+                # later readers.
+                "mark_seen_failed": mark_seen_failed,
             }
         except Exception as e:
             logger.error(f"Failed to read email {uid}: {e}")
@@ -3101,10 +3136,13 @@ def setup_email_routes():
             if cached.get("attachment_version") != EMAIL_READ_ATTACHMENT_VERSION:
                 cached = None
         if cached is not None:
+            # A cache hit already holds a complete, valid message. Await the
+            # STORE so the response reports the real flag state, but never let
+            # a failed STORE withhold a body we are holding in memory.
             if mark_seen and not await _asyncio.to_thread(
                 _mark_email_seen_sync, uid, folder, account_id, owner
             ):
-                return {"error": "Failed to mark email read"}
+                return {**cached, "mark_seen_failed": True}
             return cached
         if not full:
             persisted = _email_preview_cache_get(owner, account_id, folder, uid)
@@ -3113,13 +3151,17 @@ def setup_email_routes():
                 if mark_seen and not await _asyncio.to_thread(
                     _mark_email_seen_sync, uid, folder, account_id, owner
                 ):
-                    return {"error": "Failed to mark email read"}
+                    return {**persisted, "mark_seen_failed": True}
                 return persisted
         result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, mark_seen, full)
         if result and not result.get("error"):
-            _read_cache_put(ck, result)
+            # `mark_seen_failed` describes this request, not the message, so it
+            # must not enter either cache — a later reader would otherwise be
+            # told a STORE failed that it never issued.
+            cacheable = {k: v for k, v in result.items() if k != "mark_seen_failed"}
+            _read_cache_put(ck, cacheable)
             if not full:
-                _email_preview_cache_put(owner, account_id, folder, uid, result)
+                _email_preview_cache_put(owner, account_id, folder, uid, cacheable)
         return result
 
     def _schedule_recent_email_warm(emails: list, folder: str, account_id: str | None, owner: str):

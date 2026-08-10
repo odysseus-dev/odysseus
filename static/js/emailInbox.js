@@ -881,8 +881,11 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     }
 
     if (!isCurrentOpen()) return;
-    em.is_read = true;
-    if (itemEl) itemEl.classList.remove('email-unread');
+    // Only claim the message is read when the provider accepted the \Seen
+    // transition. A failed STORE still opens the message; it just stays unread.
+    const markedSeen = !data.mark_seen_failed;
+    em.is_read = markedSeen;
+    if (itemEl) itemEl.classList.toggle('email-unread', !markedSeen);
 
     // Addresses to exclude from Reply All. Prefer the full set of configured
     // accounts (so a multi-account user's other mailboxes are excluded too),

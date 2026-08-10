@@ -5346,8 +5346,16 @@ async function _toggleCardPreview(card, em) {
       if (isCurrentOpen()) showFailedReader(`Failed to load email: ${data.error}`);
       return;
     }
-    authoritativeReadSucceeded = true;
-    commitReadState();
+    if (data.mark_seen_failed) {
+      // The body is authoritative even when the provider refused the \Seen
+      // transition. Render the message and roll the unread marker back so the
+      // list keeps telling the truth, rather than refusing to open a message
+      // we successfully read.
+      restoreUnreadState();
+    } else {
+      authoritativeReadSucceeded = true;
+      commitReadState();
+    }
     if (!isCurrentOpen()) return;
     _stampReaderContext(reader, { ...em, ...data }, state._libFolder, state._libAccountId);
 
