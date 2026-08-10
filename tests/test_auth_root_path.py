@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from urllib.parse import urljoin, urlparse
 
 import pytest
 
@@ -17,6 +18,60 @@ from core.middleware import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_login_page_uses_mount_aware_urls():
+    html = (ROOT / "static/login.html").read_text(encoding="utf-8")
+
+    assert "window.__odysseusLoginAppUrl" in html
+    for api_path in (
+        "/api/version",
+        "/api/auth/policy",
+        "/api/auth/status",
+        "/api/auth/login",
+        "/api/auth/setup",
+        "/api/auth/signup",
+        "/api/sessions",
+        "/api/auth/features",
+        "/api/auth/settings",
+    ):
+        assert f"appUrl('{api_path}')" in html
+
+    assert "window.location.replace(appUrl('/'))" in html
+    assert (
+        "__odysseusLoginAppUrl || ((path) => path))('/static/js/theme.js')"
+        in html
+    )
+
+
+def test_login_page_static_assets_resolve_under_mount_path():
+    html = (ROOT / "static/login.html").read_text(encoding="utf-8")
+    for forbidden in (
+        "fetch('/api/",
+        'fetch("/api/',
+        "window.location.replace('/')",
+        'window.location.replace("/")',
+        "import('/static/",
+        'href="/static/',
+        "url('/static/",
+    ):
+        assert forbidden not in html
+
+    mounted_login_url = "https://example.test/odysseus/login"
+    for relative_asset, mounted_path in (
+        ("static/manifest.json", "/odysseus/static/manifest.json"),
+        ("static/icons/icon-192.png", "/odysseus/static/icons/icon-192.png"),
+        (
+            "static/fonts/FiraCode-Regular.woff2",
+            "/odysseus/static/fonts/FiraCode-Regular.woff2",
+        ),
+        (
+            "static/fonts/FiraCode-SemiBold.woff2",
+            "/odysseus/static/fonts/FiraCode-SemiBold.woff2",
+        ),
+    ):
+        assert relative_asset in html
+        assert urlparse(urljoin(mounted_login_url, relative_asset)).path == mounted_path
 
 
 @pytest.mark.parametrize(
