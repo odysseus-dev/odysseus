@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "CURATED BY HAND — the HuggingFace API cannot supply this for MLX repos.",
+    "safetensors.total (which feeds the API's numParameters) counts PACKED",
+    "tensors, so a 4-bit MLX build reports a fraction of its real parameter",
+    "count: mlx-community/Devstral-Small-2505-4bit reports 3.68B for a 23.6B",
+    "model, and mlx-community/Qwen3-0.6B-4bit reports ~93M for a 596M model.",
+    "Every hwfit number downstream (VRAM fit, speed, score) is derived from the",
+    "parameter count, so an uncorrected MLX row ranks as a model an order of",
+    "magnitude smaller than it is.",
+    "params_b = real (unpacked) parameters in billions. bits = MLX quant width.",
+    "download_gb = approximate bundle size on disk. context = trained context.",
+    "Dense models only — MoE rows need an active-parameter count this table",
+    "doesn't carry, and a wrong active count skews speed worse than the packed",
+    "total does. Add a row here when a popular mlx-community repo ranks visibly",
+    "wrong; there is no API to derive these from."
+  ],
+  "models": {
+    "mlx-community/Qwen3-0.6B-4bit": {"params_b": 0.596, "bits": 4, "download_gb": 0.35, "context": 32768},
+    "mlx-community/Qwen3-0.6B-8bit": {"params_b": 0.596, "bits": 8, "download_gb": 0.64, "context": 32768},
+    "mlx-community/Qwen3-1.7B-4bit": {"params_b": 1.72, "bits": 4, "download_gb": 0.99, "context": 32768},
+    "mlx-community/Qwen3-1.7B-8bit": {"params_b": 1.72, "bits": 8, "download_gb": 1.83, "context": 32768},
+    "mlx-community/Qwen3-4B-4bit": {"params_b": 4.02, "bits": 4, "download_gb": 2.28, "context": 32768},
+    "mlx-community/Qwen3-4B-8bit": {"params_b": 4.02, "bits": 8, "download_gb": 4.28, "context": 32768},
+    "mlx-community/Qwen3-8B-4bit": {"params_b": 8.19, "bits": 4, "download_gb": 4.63, "context": 32768},
+    "mlx-community/Qwen3-8B-8bit": {"params_b": 8.19, "bits": 8, "download_gb": 8.71, "context": 32768},
+    "mlx-community/Qwen3-14B-4bit": {"params_b": 14.8, "bits": 4, "download_gb": 8.32, "context": 32768},
+    "mlx-community/Llama-3.2-1B-Instruct-4bit": {"params_b": 1.24, "bits": 4, "download_gb": 0.73, "context": 131072},
+    "mlx-community/Llama-3.2-3B-Instruct-4bit": {"params_b": 3.21, "bits": 4, "download_gb": 1.82, "context": 131072},
+    "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit": {"params_b": 8.03, "bits": 4, "download_gb": 4.53, "context": 131072},
+    "mlx-community/Mistral-7B-Instruct-v0.3-4bit": {"params_b": 7.25, "bits": 4, "download_gb": 4.08, "context": 32768},
+    "mlx-community/Mistral-Nemo-Instruct-2407-4bit": {"params_b": 12.2, "bits": 4, "download_gb": 6.91, "context": 131072},
+    "mlx-community/Devstral-Small-2505-4bit": {"params_b": 23.6, "bits": 4, "download_gb": 13.4, "context": 131072},
+    "mlx-community/gemma-3-4b-it-4bit": {"params_b": 4.3, "bits": 4, "download_gb": 2.44, "context": 131072},
+    "mlx-community/gemma-3-12b-it-4bit": {"params_b": 12.2, "bits": 4, "download_gb": 6.87, "context": 131072},
+    "mlx-community/Phi-4-mini-instruct-4bit": {"params_b": 3.84, "bits": 4, "download_gb": 2.17, "context": 131072},
+    "mlx-community/Phi-3-mini-4k-instruct-4bit": {"params_b": 3.82, "bits": 4, "download_gb": 2.16, "context": 4096},
+    "mlx-community/Phi-3-mini-128k-instruct-4bit": {"params_b": 3.82, "bits": 4, "download_gb": 2.16, "context": 131072}
+  }
+}

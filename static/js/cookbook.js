@@ -10,6 +10,11 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
 import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
+// MLX serve engines live in their own browser-free module so their launch
+// commands stay unit-testable; re-exported here because that's where the serve
+// panel already looks for them.
+import { MLX_ENGINES, buildMlxServeCmd as _buildMlxServeCmd } from './cookbookMlxEngines.js';
+export { MLX_ENGINES };
 
 // Sub-modules
 import {
@@ -986,18 +991,8 @@ export function _buildServeCmd(f, modelName, backend) {
     const _mlxLoraScales = _listField(f.mlx_lora_scales).filter(s => /^-?\d+(?:\.\d+)?$/.test(s));
     if (_mlxLoraScales.length) cmd += ` --lora-scales ${_mlxLoraScales.map(_shellQuote).join(' ')}`;
   } else if (backend === 'mlx') {
-    const mlxPy = _isWindows() ? 'python' : _py3Bin;
-    const mlxHost = f.host ? '0.0.0.0' : '127.0.0.1';
-    cmd += `${mlxPy} -m mlx_lm.server --model ${_shellQuote(modelName)} --host ${mlxHost} --port ${f.port || '8080'}`;
-    const mlxMaxTokens = String(f.ctx || '').trim();
-    if (/minimax|mini-max/i.test(modelName)) {
-      cmd += ` --temp 0.7 --top-p 0.9 --max-tokens ${mlxMaxTokens || '2048'}`;
-    } else if (/^\d+$/.test(mlxMaxTokens)) {
-      // MLX-LM server has no vLLM-style --context-length flag. The closest
-      // server-side request budget it exposes is --max-tokens, so wire the
-      // Cookbook Context/Auto control there for MLX launches.
-      cmd += ` --max-tokens ${mlxMaxTokens}`;
-    }
+    // Pluggable MLX engine (mlx-lm default, oMLX optional) — see MLX_ENGINES.
+    cmd += _buildMlxServeCmd(f, modelName, _isWindows() ? 'python' : _py3Bin);
   }
   return cmd;
 }
@@ -3622,6 +3617,7 @@ const shared = {
   _isMetal,
   _buildEnvPrefix,
   _buildServeCmd,
+  MLX_ENGINES,
   _shellQuote,
   _psQuote,
   _detectBackend,

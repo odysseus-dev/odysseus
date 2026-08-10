@@ -12,6 +12,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { mlxModelDirFor } from './cookbookMlxEngines.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -25,6 +26,7 @@ let _isWindows;
 let _isMetal;
 let _buildEnvPrefix;
 let _buildServeCmd;
+let MLX_ENGINES;
 let _shellQuote;
 let _psQuote;
 let _detectBackend;
@@ -194,6 +196,14 @@ function _repoLooksGgufLike(model, repo) {
 }
 
 function _serveBackendWarning(model, repo, backend, fields = {}) {
+  // MLX has no CUDA/CPU fallback. A remote host is trusted to be a Mac (the
+  // SSH target is the user's call) — same rule the server-side guard applies.
+  if (backend === 'mlx' && !_isMetal() && !fields.host) {
+    return {
+      title: 'MLX needs Apple Silicon',
+      body: 'MLX runs only on Apple Silicon (Metal). On this machine, use vLLM/SGLang (CUDA/ROCm) or llama.cpp/Ollama (GGUF) instead — or pick a remote Mac as the serve target.',
+    };
+  }
   const awqLike = _repoLooksAwqLike(model, repo);
   const ggufLike = _repoLooksGgufLike(model, repo);
   if (awqLike && (backend === 'llamacpp' || backend === 'ollama')) {
@@ -1512,6 +1522,13 @@ function _rerenderCachedModels() {
       // (updateBackendVisibility, runtime readiness, command builder)
       // still fires via dispatchEvent('change') on selection.
       panelHtml += `<label>${_l('Engine','Inference engine: MLX, vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<div class="hwfit-backend-picker" data-backend-picker style="position:relative;width:100%;"><select class="hwfit-sf hwfit-backend-source" data-field="backend" style="display:none;">${backendOpts}</select><button type="button" class="hwfit-backend-btn" data-backend-btn aria-haspopup="listbox" aria-expanded="false" style="display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 8px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;font-size:11px;cursor:pointer;text-align:left;position:relative;top:-4px;"><span class="hwfit-backend-btn-icon" data-backend-icon-slot aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--accent, var(--red));flex-shrink:0;"></span><span class="hwfit-backend-btn-label" data-backend-label style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.6;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg></button><div class="hwfit-backend-menu" data-backend-menu role="listbox" hidden style="position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:100;background:var(--panel, var(--bg));border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.22);padding:4px;"></div></div></label>`;
+      // MLX is a family of servers, not one binary — every engine speaks the
+      // same OpenAI-compatible /v1 protocol, so only the launch command differs.
+      panelHtml += `<label class="hwfit-backend-mlx">${_l('MLX Engine', 'Which MLX server to launch. mlx-lm = Apple’s official single-model server (already installed with the mlx-lm dependency). oMLX = continuous batching and multi-model serving from a directory.')}<select class="hwfit-sf" data-field="mlx_engine">${Object.entries(MLX_ENGINES).map(([v, e]) => `<option value="${v}"${sv('mlx_engine', 'mlx_lm') === v ? ' selected' : ''}>${esc(e.label)}</option>`).join('')}</select></label>`;
+      // oMLX's --model-dir. Prefilled from the model's own resolved location;
+      // blank for a default-HF-cache model, whose only handle is a repo id that
+      // oMLX can't resolve — that's the case this input exists for.
+      panelHtml += `<label class="hwfit-backend-mlx">${_l('MLX Model Dir', 'oMLX only: the directory oMLX scans for models (the request’s model field then picks one). Prefilled from this model’s own folder when Odysseus can resolve a path; leave blank to let oMLX use its own default. The mlx-lm engine ignores it.')}<input type="text" class="hwfit-sf" data-field="mlx_model_dir" value="${esc(sv('mlx_model_dir', mlxModelDirFor(_savedModelPath || _defaultServeModel)))}" placeholder="auto" /></label>`;
       panelHtml += `<input type="hidden" class="hwfit-sf" data-field="host" value="${esc(_es.remoteHost || '')}" />`;
       // Inference mode pill (llama.cpp only) — lives directly to the
       // RIGHT of Backend in Row 1 so the engine and the GPU/CPU choice
@@ -1887,6 +1904,15 @@ function _rerenderCachedModels() {
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');
           f._reasoning_parser_value = _rpEl2?.dataset?.parser || '';
+        }
+        if (backend === 'mlx') {
+          // oMLX serves a directory of models; mlx-lm takes the resolved model
+          // path (serveModel). Derive oMLX's dir from that SAME resolved path,
+          // never from the download base dir — see mlxModelDirFor. What the
+          // user typed into MLX Model Dir wins; an unresolvable model (a bare
+          // repo id in the default HF cache) stays empty on purpose, and the
+          // command then omits --model-dir instead of guessing one.
+          f._mlx_model_dir = String(f.mlx_model_dir || '').trim() || mlxModelDirFor(serveModel);
         }
         if (f.vllm_env_preset === 'minimax_m3_cuda') {
           const existingEnv = String(f.extra_env || '').trim();
@@ -4249,6 +4275,7 @@ export function initServe(shared) {
   _isMetal = shared._isMetal;
   _buildEnvPrefix = shared._buildEnvPrefix;
   _buildServeCmd = shared._buildServeCmd;
+  MLX_ENGINES = shared.MLX_ENGINES;
   _shellQuote = shared._shellQuote;
   _psQuote = shared._psQuote;
   _detectBackend = shared._detectBackend;

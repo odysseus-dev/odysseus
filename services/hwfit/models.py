@@ -2,6 +2,8 @@ import json
 import os
 import re
 
+from services.hwfit.mlx_curated import apply_curated_mlx_metadata
+
 QUANT_HIERARCHY = ["Q8_0", "Q6_K", "Q5_K_M", "Q4_K_M", "Q3_K_M", "Q2_K"]
 
 QUANT_BPP = {
@@ -132,6 +134,10 @@ def _normalize_model_entry(model):
     inferred = infer_quantization_from_name(model.get("name", ""))
     if inferred and (model.get("quantization") in (None, "", "Q4_K_M") or model.get("_discovered")):
         model["quantization"] = inferred
+    # MLX rows arrive with a PACKED parameter count (the HF API has no other
+    # number to give for them), which under-sizes the model by the quant's
+    # packing factor. Correct the well-known repos from the curated table.
+    apply_curated_mlx_metadata(model)
     return model
 
 
