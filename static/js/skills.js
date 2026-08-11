@@ -83,11 +83,9 @@ export async function loadSkills(cascade = false) {
   // Play the domino-in entrance on this load (set when the tab is opened,
   // not for the silent re-loads after an edit/delete).
   if (cascade) _cascadeNext = true;
-  if (cascade && loaded && !_loadPromise && _playSkillsCascade()) {
-    _cascadeNext = false;
-    updateCount();
-    return;
-  }
+  // Always re-fetch when the tab is explicitly opened — the cascade
+  // animation is handled inside renderSkillsList() via _cascadeNext.
+  // Skipping the fetch here caused stale data on panel close/reopen (#5870).
   if (_loadPromise) return _loadPromise;
   _loadPromise = (async () => {
   try {
