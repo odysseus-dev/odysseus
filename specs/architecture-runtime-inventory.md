@@ -152,13 +152,13 @@ Routes can be grouped into logical feature domains. Current flat structure obscu
 | **Email** | `email_routes.py`, `email_helpers.py`, `email_pollers.py` | 5,936 | HIGH — most complex domain |
 | **Chat / Agent** | `chat_routes.py`, `chat_helpers.py`, `shell_routes.py`, `codex_routes.py`, `skills_routes.py` | 6,365 | HIGH — core interaction surface |
 | **Cookbook** | `cookbook_routes.py`, `cookbook_helpers.py`, `cookbook_output.py` | 4,110 | MEDIUM |
-| **Model / LLM** | `model_routes.py`, `assistant_routes.py`, `copilot_routes.py`, `chatgpt_subscription_routes.py` | 2,934 | MEDIUM — copilot and chatgpt_subscription share device-flow + model-cache invalidation pattern |
+| **Model / LLM** | `model_routes.py`, `assistant_routes.py`, `copilot_routes.py`, `chatgpt_subscription_routes.py` | 3,412 | MEDIUM — copilot and chatgpt_subscription share device-flow + model-cache invalidation pattern |
 | **Calendar / Contacts** | `calendar_routes.py`, `contacts_routes.py` | 2,336 | MEDIUM |
 | **Documents** | `document_routes.py`, `document_helpers.py` | 1,954 | LOW |
 | **Auth** | `auth_routes.py`, `api_token_routes.py`, `device_flow.py` | 1,171 | LOW |
 | **Tasks** | `task_routes.py` (standalone) | 1,157 | LOW |
 | **Session** | `session_routes.py` (standalone) | 1,287 | LOW |
-| **Gallery** | `gallery_routes.py`, `gallery_helpers.py`, `editor_draft_routes.py` | 2,084 | LOW — editor_draft is persisted gallery-editor sessions with `GalleryImage` back-reference |
+| **Gallery** | `gallery_routes.py`, `gallery_helpers.py`, `editor_draft_routes.py` | 2,658 | LOW — editor_draft is persisted gallery-editor sessions with `GalleryImage` back-reference |
 | **Memory** | `memory_routes.py` | — | LOW |
 | **Research** | `research_routes.py` | — | LOW |
 | **MCP** | `mcp_routes.py` | — | LOW |
@@ -168,12 +168,12 @@ Routes can be grouped into logical feature domains. Current flat structure obscu
 | **System / Admin** (new, navigation grouping) | `diagnostics_routes.py`, `workspace_routes.py` | 195 | LOW — privileged operator endpoints (health probes, filesystem browser); navigation grouping, not a required single move PR |
 | **Other** (residual flat) | `prefs_routes.py`, `upload_routes.py`, `hwfit_routes.py`, `preset_routes.py`, `signature_routes.py`, `embedding_routes.py`, `emoji_routes.py`, `font_routes.py`, `personal_routes.py` | ~2,251 | LOW individual, MEDIUM cumulative — no genuine functional peer; stay flat |
 
-> **Note:** This ownership map is a **navigation reference**, not a fixed PR slicing plan. Future route moves should be grouped by coupling and regression risk rather than automatically making one PR per table row. Each row represents a logical ownership boundary; some rows may warrant multiple PRs, and some flat files may never need to be moved.
+> **Note:** This ownership map is a **navigation reference**, not a fixed PR slicing plan. Future route moves should be grouped by coupling and regression risk rather than automatically making one PR per table row. Small independent mechanical moves may be grouped by risk tier; large or coupled areas (email, chat/agent, cookbook) should remain separate PRs. Compatibility-shim retirement is later cleanup, not part of the move itself.
 >
 > **chatgpt_subscription_routes.py and copilot_routes.py**: both share the same shape — they use the shared `device_flow` helper, provision a `ModelEndpoint`, and invalidate the model cache. Both are now listed under **Model / LLM** for consistency. A future move may group them into a provider-integration subpackage, but that decision is deferred until Model / LLM itself is migrated.
 >
 > **Files already migrated** to subdirectories (now shims, removed from "Other"):
-> vault, webhook, search, history, cleanup, compare, admin_wipe, document, auth, mcp (slices #4903–#5899; 15 route domains total)
+> vault, webhook, search, history, cleanup, compare, admin_wipe, document (slices #4903–#5885; 13 route domains total — auth #5898 and mcp #5899 pending)
 
 ---
 
