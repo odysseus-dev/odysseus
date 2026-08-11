@@ -26,6 +26,18 @@ body:
         - label: I am running the latest code from the `dev` branch (the default branch you get on clone, where fixes land first) and the bug still reproduces there. Please `git pull` the latest `dev` before filing.
           required: true
 
+  - type: input
+    id: revision
+    attributes:
+      label: Odysseus Revision
+      description: |
+        From the repository root (on the host when using Docker), run
+        `git show -s --abbrev=12 --format='%h (%cs)' HEAD`
+        and paste the output exactly.
+      placeholder: "1fef4929cf1d (2026-08-11)"
+    validations:
+      required: true
+
   - type: dropdown
     id: install-method
     attributes:
