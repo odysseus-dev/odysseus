@@ -392,6 +392,45 @@ def analyze_image_with_vl(image_path: str, owner: str | None = None) -> str:
     return analyze_image_with_vl_result(image_path, owner=owner).get("text", "")
 
 
+# Short, verb-first on purpose — an over-specified prompt makes thinking
+# models spend their whole budget verifying compliance instead of describing
+# the image (see VISION_DESCRIBE_PROMPT's history in the OCR feature).
+_MAIN_MODEL_CAPTION_PROMPT = (
+    "Describe this image in one or two sentences, suitable as a photo caption. "
+    "Report only what is visible in the image itself."
+)
+
+
+async def describe_image_for_caption(
+    image_path: str, url: str, model_id: str, headers: dict | None = None,
+) -> str:
+    """Ask an already-resolved model/endpoint for a caption-style image description.
+
+    For multimodal main models, the model already saw the image as part of
+    the chat turn, but its reply answers whatever the user asked and is
+    rarely a usable caption. This fires one dedicated, description-only call
+    to the SAME model/endpoint the turn used (not the separate VL model —
+    see analyze_image_with_vl_result for that path) so a gallery caption
+    still gets produced.
+    """
+    with open(image_path, "rb") as f:
+        img_data = base64.b64encode(f.read()).decode("utf-8")
+    ext = os.path.splitext(image_path)[1].lower()
+    mime_map = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
+    img_format = mime_map.get(ext, "jpeg")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": _MAIN_MODEL_CAPTION_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/{img_format};base64,{img_data}"}},
+            ],
+        }
+    ]
+    from src.llm_core import llm_call_async
+    return await llm_call_async(url, model_id, messages, headers=headers, timeout=120)
+
+
 def build_user_content(
     text: str,
     attachment_ids: list[str] | None,

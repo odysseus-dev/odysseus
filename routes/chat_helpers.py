@@ -1151,6 +1151,51 @@ async def _run_extraction_jobs_sequentially(session_id: str, jobs: list, max_wai
             logger.warning("[bg-extract] %s extraction job failed for session %s", name, session_id, exc_info=True)
 
 
+async def _caption_multimodal_image_attachments(uploaded_files: list, sess, owner: str | None) -> None:
+    """Caption freshly-attached images when the main model is multimodal.
+
+    The main model already saw these images as part of its own reply, but
+    that reply answers whatever the user asked, not a usable caption — so
+    this fires one dedicated describe-only call per image (via
+    describe_image_for_caption) to the SAME model/endpoint that generated
+    the turn's response, then syncs the result the same way the text-only
+    VL path does: written to the attachment's own vision cache (so the chat
+    "Caption" button and any resend pick it up) and to the gallery caption.
+
+    Callers must pre-filter uploaded_files to image attachments that don't
+    already carry a "vision" description (attachment_ref only sets that when
+    the text-only VL path ran or a user correction exists) — this only fills
+    the gap left by the multimodal path, it never overwrites an existing one.
+    """
+    if not sess.endpoint_url or not sess.model or not uploaded_files:
+        return
+    from src.constants import UPLOAD_DIR
+    from src.document_processor import describe_image_for_caption
+    from src.chat_handler import _sync_upload_vision_to_gallery
+
+    for ref in uploaded_files:
+        att_id = ref.get("id") or ref.get("attachment_id")
+        path = ref.get("path")
+        if not att_id or not path or not os.path.exists(path):
+            continue
+        try:
+            text = await describe_image_for_caption(path, sess.endpoint_url, sess.model, sess.headers)
+        except Exception as e:
+            logger.warning("[multimodal-caption] describe failed for %s: %s", att_id, e)
+            continue
+        text = (text or "").strip()
+        if not text:
+            continue
+        try:
+            cache_dir = os.path.join(UPLOAD_DIR, ".vision")
+            os.makedirs(cache_dir, exist_ok=True)
+            with open(os.path.join(cache_dir, f"{att_id}.txt"), "w", encoding="utf-8") as f:
+                f.write(text)
+        except Exception as e:
+            logger.warning("[multimodal-caption] cache write failed for %s: %s", att_id, e)
+        _sync_upload_vision_to_gallery({"hash": ref.get("checksum_sha256")}, owner, text)
+
+
 def run_post_response_tasks(
     sess,
     session_manager,
@@ -1172,6 +1217,7 @@ def run_post_response_tasks(
     owner: str = None,
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
+    uploaded_files: list | None = None,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
@@ -1188,6 +1234,21 @@ def run_post_response_tasks(
     turn's request too.
     """
     _extraction_jobs: list = []
+
+    # Multimodal-model image captioning — fills the gallery-caption gap for
+    # turns where the main model saw the image directly (no separate VL
+    # call, so nothing captioned it). Only images without a "vision" entry
+    # already qualify; the text-only VL path and user corrections both set
+    # that, so this never overwrites either.
+    if allow_background_extraction and not incognito and not compare_mode and uploaded_files:
+        _img_atts = [
+            r for r in uploaded_files
+            if str(r.get("mime", "")).startswith("image/") and not r.get("vision")
+        ]
+        if _img_atts:
+            _extraction_jobs.append(("image-caption", _caption_multimodal_image_attachments(
+                _img_atts, sess, owner,
+            )))
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0

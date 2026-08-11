@@ -910,6 +910,7 @@ def setup_chat_routes(
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=not tool_policy.block_all_tool_calls,
+            uploaded_files=ctx.uploaded_files,
         )
 
         return {
@@ -2228,6 +2229,7 @@ def setup_chat_routes(
                                         not tool_policy.block_all_tool_calls
                                         and not tool_approval_continuation
                                     ),
+                                    uploaded_files=ctx.uploaded_files,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -2502,6 +2504,7 @@ def setup_chat_routes(
                                         not tool_policy.block_all_tool_calls
                                         and not tool_approval_continuation
                                     ),
+                                    uploaded_files=ctx.uploaded_files,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
