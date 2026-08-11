@@ -2731,20 +2731,23 @@ function initializeEventListeners() {
     'sidebar-new-chat':    '#sidebar-new-chat-btn',
     'sidebar-search':      '#sidebar-search-btn',
 	    'sessions-section':    '#sessions-section',
-	    'email-section':       '#email-section',
+	    'email-section':       '#email-section, #rail-email',
 	    'tools-section':       '#tools-section',
     // Per-tool visibility — fine-grained control over which entries show
-    // inside the Tools section in the sidebar.
-    'tool-calendar':       '#tool-calendar-btn',
-    'tool-compare':        '#tool-compare-btn',
-    'tool-cookbook':       '#tool-cookbook-btn',
-    'tool-research':       '#tool-research-btn',
-    'tool-gallery':        '#tool-gallery-btn',
-    'tool-library':        '#tool-library-btn',
-    'tool-memory':         '#tool-memory-btn',
-    'tool-notes':          '#tool-notes-btn',
-    'tool-tasks':          '#tool-tasks-btn',
-    'tool-theme':          '#tool-theme-btn',
+    // in the sidebar Tools section AND the collapsed icon rail. Each
+    // selector pairs the sidebar button with its #rail-* counterpart so a
+    // tab hidden in the full view stays hidden when the sidebar is
+    // minimized to the icon rail (id mapping mirrors _railToolMap).
+    'tool-calendar':       '#tool-calendar-btn, #rail-calendar',
+    'tool-compare':        '#tool-compare-btn, #rail-compare',
+    'tool-cookbook':       '#tool-cookbook-btn, #rail-cookbook',
+    'tool-research':       '#tool-research-btn, #rail-research',
+    'tool-gallery':        '#tool-gallery-btn, #rail-gallery',
+    'tool-library':        '#tool-library-btn, #rail-archive',
+    'tool-memory':         '#tool-memory-btn, #rail-memory',
+    'tool-notes':          '#tool-notes-btn, #rail-notes',
+    'tool-tasks':          '#tool-tasks-btn, #rail-tasks',
+    'tool-theme':          '#tool-theme-btn, #rail-theme',
     'user-bar':            '#user-bar-profile',
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',
