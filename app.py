@@ -805,7 +805,7 @@ app.include_router(setup_font_routes())
 # MCP (Model Context Protocol)
 from src.mcp_manager import McpManager
 from src.agent_tools import set_mcp_manager
-from routes.mcp_routes import setup_mcp_routes
+from routes.mcp.mcp_routes import setup_mcp_routes
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
