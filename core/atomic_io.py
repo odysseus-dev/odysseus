@@ -15,17 +15,21 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from typing import Any, Optional
 
 
 def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
     """Atomically persist `data` as JSON at `path`.
 
-    The temp file uses the live PID as a suffix so two processes saving the
-    same file (e.g. unit tests) don't collide on the rename target.
+    The temp file uses a random suffix so two concurrent writers saving the
+    same file don't collide on the rename target. A PID suffix does not do
+    this: the PID is constant for the life of a process, so two writers on
+    the same path within one process (or one single-process container, where
+    the PID never changes at all) still race for the same temp file.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = f"{path}.tmp.{uuid.uuid4().hex}"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=indent)
         f.flush()
@@ -37,7 +41,7 @@ def atomic_write_text(path: str, text: str) -> None:
     if not isinstance(text, str):
         raise TypeError("atomic_write_text expects a string")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = f"{path}.tmp.{uuid.uuid4().hex}"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
         f.flush()

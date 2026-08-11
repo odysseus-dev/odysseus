@@ -1683,7 +1683,20 @@ export async function loadSessions() {
         url += `?active_incognito_id=${encodeURIComponent(currentSessionId)}`;
       }
       const res = await fetch(url);
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const payload = await res.json();
+          detail = payload?.detail || payload?.error || '';
+        } catch (_) {}
+        const error = new Error(detail || `Session request failed (HTTP ${res.status})`);
+        error.status = res.status;
+        throw error;
+      }
       fetched = await res.json();
+    }
+    if (!Array.isArray(fetched)) {
+      throw new Error('Session request returned an invalid response');
     }
     sessions = _normalizeSessionsList(fetched);
     renderSessionList();
@@ -1807,9 +1820,15 @@ export async function loadSessions() {
         _autoCreateInProgress = false;
       }
     }
+    return true;
   } catch (error) {
     console.error('Error in loadSessions:', error);
-    uiModule.showError('Failed to load sessions: ' + error.message);
+    // app.js's global fetch wrapper owns expired-auth navigation. Avoid
+    // flashing a redundant session error while that 401 redirect is pending.
+    if (error?.status !== 401) {
+      uiModule.showError('Failed to load sessions: ' + error.message);
+    }
+    return false;
   }
 }
 
@@ -1847,6 +1866,10 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     const _isTransientChat = !!_meta && (_meta.folder === 'Assistant' || _meta.folder === 'Tasks');
     if (!_isTransientChat) {
       Storage.set('lastSessionId', id);
+      // Update URL hash without triggering hashchange handler
+      if (window.location.hash !== '#' + id) {
+        history.replaceState(null, '', '#' + id);
+      }
     }
     // Restore character preset for persistent chats
     try {
@@ -2313,6 +2336,7 @@ export async function materializePendingSession() {
     currentSessionId = payload.id;
     if (!isIncognito) {
       Storage.set('lastSessionId', payload.id);
+      history.replaceState(null, '', '#' + payload.id);
     }
 
     // Reload the sidebar in the background. Awaiting this used to block the first
