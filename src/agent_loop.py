@@ -23,6 +23,11 @@ from src.llm_core import (
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
+from src.intent_router import (
+    IntentRoute,
+    active_constraint_disabled_tools,
+    select_active_intents,
+)
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
@@ -1372,6 +1377,25 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         "domains": domains,
         "retrieval_query": retrieval_query,
     }
+
+
+def _merge_active_intent_route(
+    deterministic: Dict[str, object],
+    route: Optional[IntentRoute],
+) -> Dict[str, object]:
+    """Add eligible semantic domains without removing deterministic output."""
+
+    if route is None:
+        return deterministic
+    selection = select_active_intents(route)
+    if not selection.needs_tools:
+        return deterministic
+    merged = dict(deterministic)
+    merged["domains"] = set(deterministic.get("domains") or set()).union(
+        selection.domains
+    )
+    merged["low_signal"] = False
+    return merged
 
 
 def _turn_targets_active_document(intent: Dict[str, object], last_user: str, active_document) -> bool:
@@ -3102,6 +3126,7 @@ async def stream_agent_loop(
     uploaded_files: Optional[List[Dict]] = None,
     workload: str = "foreground",
     _is_teacher_run: bool = False,
+    intent_route: Optional[IntentRoute] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -3117,6 +3142,22 @@ async def stream_agent_loop(
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
+    _active_constraint_tools = (
+        active_constraint_disabled_tools(intent_route)
+        if intent_route is not None
+        else set()
+    )
+    disabled_tools.update(_active_constraint_tools)
+    _active_no_browse = bool(
+        intent_route
+        and intent_route.rollout_mode == "active"
+        and "web.no_browse" in intent_route.constraints
+    )
+    _active_read_only = bool(
+        intent_route
+        and intent_route.rollout_mode == "active"
+        and "workspace.read_only" in intent_route.constraints
+    )
     if tool_policy:
         disabled_tools.update(tool_policy.all_disabled_names())
         if tool_policy.disable_mcp:
@@ -3152,6 +3193,15 @@ async def stream_agent_loop(
             temperature = 0.2
     _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
     _intent = _classify_agent_request(messages, _last_user)
+    if intent_route and intent_route.rollout_mode in {"shadow", "active"}:
+        logger.info(
+            "[intent-router] agent-route=%s",
+            intent_route.log_fields(
+                deterministic_needs_tools=bool(_intent.get("domains")),
+                deterministic_domains=tuple(_intent.get("domains") or ()),
+            ),
+        )
+    _intent = _merge_active_intent_route(_intent, intent_route)
     _low_signal_turn = bool(_intent.get("low_signal"))
     _casual_low_signal_turn = _is_casual_low_signal(_last_user)
     _existing_conversation = _user_turn_count(messages) > 1
@@ -3214,6 +3264,21 @@ async def stream_agent_loop(
             _last_user[:80],
         )
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
+    if _active_read_only and mcp_mgr:
+        _read_only_mcp_map, _read_only_mcp_q = mcp_mgr.plan_mode_blocked_mcp()
+        for _sid, _names in _read_only_mcp_map.items():
+            _mcp_disabled_map.setdefault(_sid, set()).update(_names)
+        disabled_tools.update(_read_only_mcp_q)
+    if _active_no_browse and mcp_mgr:
+        for _browser_tool in mcp_mgr.get_all_tools():
+            if _browser_tool.get("server_id") != "builtin_browser":
+                continue
+            _mcp_disabled_map.setdefault("builtin_browser", set()).add(
+                _browser_tool.get("name")
+            )
+            _qualified_name = _browser_tool.get("qualified_name")
+            if _qualified_name:
+                disabled_tools.add(_qualified_name)
     if _direct_low_signal:
         logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
         direct_messages = (
@@ -3556,7 +3621,10 @@ async def stream_agent_loop(
         logger.info("[agent-intent] odysseus doc finetune tool clamp=%s", sorted(_relevant_tools))
     elif _ody_notes_finetune_mode and _relevant_tools is not None:
         _relevant_tools = {"manage_notes", "manage_calendar", "manage_tasks", "ask_user", "update_plan"}
-        disabled_tools.difference_update({"manage_notes", "manage_calendar", "manage_tasks"})
+        disabled_tools.difference_update(
+            {"manage_notes", "manage_calendar", "manage_tasks"}
+            - _active_constraint_tools
+        )
         logger.info("[agent-intent] odysseus notes finetune tool clamp=%s", sorted(_relevant_tools))
     elif _ody_general_no_tool_mode:
         _relevant_tools = set()
@@ -4624,6 +4692,7 @@ async def stream_agent_loop(
             _ody_clamped_tool_allowed = (
                 _ody_notes_finetune_mode
                 and block.tool_type in {"manage_notes", "manage_calendar", "manage_tasks"}
+                and block.tool_type not in _active_constraint_tools
             )
             if tool_policy and tool_policy.blocks(block.tool_type) and not _ody_clamped_tool_allowed:
                 desc = f"{block.tool_type}: BLOCKED"

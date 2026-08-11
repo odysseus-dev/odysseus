@@ -7,13 +7,17 @@ import numpy as np
 import pytest
 
 from src.intent_router import (
+    ActiveIntentSelection,
     INTENT_DEFINITIONS,
     IntentDefinition,
     IntentRoute,
     IntentRouter,
+    IntentScore,
+    active_constraint_disabled_tools,
     classify_intent_route,
     extract_intent_constraints,
     get_intent_router_mode,
+    select_active_intents,
 )
 
 
@@ -154,7 +158,119 @@ def test_mode_defaults_invalid_values_to_off(monkeypatch):
     monkeypatch.delenv("ODYSSEUS_INTENT_ROUTER_MODE", raising=False)
     assert get_intent_router_mode() == "off"
     assert get_intent_router_mode("SHADOW") == "shadow"
-    assert get_intent_router_mode("active") == "off"
+    assert get_intent_router_mode("active") == "active"
+    assert get_intent_router_mode("unexpected") == "off"
+
+
+def _active_route(*intents, constraints=(), source="semantic"):
+    return IntentRoute(
+        top_intents=tuple(intents),
+        constraints=tuple(constraints),
+        source=source,
+        rollout_mode="active",
+    )
+
+
+def test_active_selection_preserves_multiple_high_confidence_tool_intents():
+    route = _active_route(
+        IntentScore("workspace.modify", 0.91, True, ("files",)),
+        IntentScore("workspace.test", 0.82, True, ("files",)),
+        IntentScore("chat.explain", 0.30, False, ()),
+    )
+
+    selected = select_active_intents(route, min_score=0.60, min_margin=0.08)
+
+    assert isinstance(selected, ActiveIntentSelection)
+    assert [intent.name for intent in selected.intents] == [
+        "workspace.modify",
+        "workspace.test",
+    ]
+    assert selected.domains == ("files",)
+    assert selected.needs_tools is True
+    assert selected.reason == "selected"
+
+
+def test_active_selection_rejects_explanation_conflict_and_low_confidence():
+    explanation = _active_route(
+        IntentScore("chat.explain", 0.80, False, ()),
+        IntentScore("system.execute", 0.77, True, ("files",)),
+    )
+    low_confidence = _active_route(
+        IntentScore("email.read", 0.50, True, ("email",)),
+    )
+
+    assert select_active_intents(
+        explanation, min_score=0.60, min_margin=0.08
+    ).reason == "conflicting"
+    assert select_active_intents(
+        low_confidence, min_score=0.60, min_margin=0.08
+    ).reason == "low_confidence"
+
+
+def test_active_selection_obeys_negative_constraints():
+    route = _active_route(
+        IntentScore("web.search", 0.94, True, ("web",)),
+        IntentScore("git.publish", 0.90, True, ("files",)),
+        constraints=("web.no_browse", "git.no_push"),
+    )
+
+    selected = select_active_intents(route, min_score=0.60, min_margin=0.08)
+
+    assert selected.needs_tools is False
+    assert selected.reason == "constrained"
+    assert selected.domains == ()
+    assert active_constraint_disabled_tools(route) >= {
+        "web_search",
+        "web_fetch",
+        "builtin_browser",
+        "trigger_research",
+        "manage_research",
+    }
+
+
+def test_active_read_only_constraint_uses_fail_closed_mutator_policy():
+    route = _active_route(constraints=("workspace.read_only",))
+
+    disabled = active_constraint_disabled_tools(route)
+
+    assert disabled >= {
+        "bash",
+        "python",
+        "write_file",
+        "edit_file",
+        "apply_patch",
+        "create_document",
+        "manage_notes",
+        "manage_calendar",
+        "manage_tasks",
+        "send_email",
+        "manage_settings",
+        "ui_control",
+    }
+
+
+def test_shadow_constraints_do_not_change_tool_policy():
+    route = IntentRoute(
+        constraints=("web.no_browse",),
+        source="semantic",
+        rollout_mode="shadow",
+    )
+
+    assert active_constraint_disabled_tools(route) == set()
+    assert select_active_intents(route).reason == "inactive"
+
+
+@pytest.mark.parametrize("source", ["timeout", "unavailable", "empty"])
+def test_active_selection_falls_back_when_semantic_route_is_unavailable(source):
+    route = _active_route(
+        IntentScore("email.read", 0.99, True, ("email",)),
+        source=source,
+    )
+
+    selected = select_active_intents(route)
+
+    assert selected.needs_tools is False
+    assert selected.reason == source
 
 
 @pytest.mark.asyncio

@@ -21,15 +21,21 @@ from typing import Callable, Protocol, Sequence
 
 import numpy as np
 
+from src.tool_security import plan_mode_disabled_tools
+
 logger = logging.getLogger(__name__)
 
 INTENT_ROUTER_MODE_ENV = "ODYSSEUS_INTENT_ROUTER_MODE"
 INTENT_ROUTER_TIMEOUT_MS_ENV = "ODYSSEUS_INTENT_ROUTER_TIMEOUT_MS"
 INTENT_ROUTER_MIN_SCORE_ENV = "ODYSSEUS_INTENT_ROUTER_MIN_SCORE"
+INTENT_ROUTER_ACTIVE_MIN_SCORE_ENV = "ODYSSEUS_INTENT_ROUTER_ACTIVE_MIN_SCORE"
+INTENT_ROUTER_ACTIVE_MIN_MARGIN_ENV = "ODYSSEUS_INTENT_ROUTER_ACTIVE_MIN_MARGIN"
 
 _DEFAULT_TIMEOUT_MS = 75
 _DEFAULT_MIN_SCORE = 0.35
-_VALID_MODES = frozenset({"off", "shadow"})
+_DEFAULT_ACTIVE_MIN_SCORE = 0.62
+_DEFAULT_ACTIVE_MIN_MARGIN = 0.08
+_VALID_MODES = frozenset({"off", "shadow", "active"})
 
 
 class IntentEncoder(Protocol):
@@ -114,6 +120,16 @@ class IntentRoute:
                 ),
             }
         return fields
+
+
+@dataclass(frozen=True)
+class ActiveIntentSelection:
+    """High-confidence additive signals that may affect active routing."""
+
+    intents: tuple[IntentScore, ...] = ()
+    domains: tuple[str, ...] = ()
+    needs_tools: bool = False
+    reason: str = "inactive"
 
 
 INTENT_DEFINITIONS: tuple[IntentDefinition, ...] = (
@@ -376,6 +392,29 @@ _CONSTRAINT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
+_CONSTRAINT_INTENT_BLOCKS: dict[str, frozenset[str]] = {
+    "git.no_push": frozenset({"git.publish"}),
+    "git.no_commit": frozenset({"git.commit"}),
+    "web.no_browse": frozenset({"web.search", "research.run"}),
+    "workspace.read_only": frozenset(
+        {"workspace.modify", "git.commit", "git.publish", "document.write"}
+    ),
+    "system.no_execute": frozenset({"system.execute", "workspace.test"}),
+}
+
+_CONSTRAINT_TOOL_BLOCKS: dict[str, frozenset[str]] = {
+    "web.no_browse": frozenset(
+        {
+            "web_search",
+            "web_fetch",
+            "builtin_browser",
+            "trigger_research",
+            "manage_research",
+        }
+    ),
+    "system.no_execute": frozenset({"bash", "python", "manage_bg_jobs"}),
+}
+
 
 def get_intent_router_mode(value: str | None = None) -> str:
     """Return a validated rollout mode, defaulting invalid values to off."""
@@ -402,6 +441,101 @@ def _bounded_env_float(name: str, default: float, low: float, high: float) -> fl
     except (TypeError, ValueError):
         logger.warning("Invalid %s; using %s", name, default)
         return default
+
+
+def select_active_intents(
+    route: IntentRoute,
+    *,
+    min_score: float | None = None,
+    min_margin: float | None = None,
+) -> ActiveIntentSelection:
+    """Select additive active-mode signals without weakening hard routing.
+
+    Operational labels must clear an absolute confidence threshold and beat
+    the strongest explanation/conversation label by a margin. Explicit
+    negative constraints remove conflicting labels before domains are exposed.
+    """
+
+    if route.rollout_mode != "active":
+        return ActiveIntentSelection(reason="inactive")
+    if route.source != "semantic":
+        return ActiveIntentSelection(reason=route.source)
+
+    score_threshold = (
+        min_score
+        if min_score is not None
+        else _bounded_env_float(
+            INTENT_ROUTER_ACTIVE_MIN_SCORE_ENV,
+            _DEFAULT_ACTIVE_MIN_SCORE,
+            -1.0,
+            1.0,
+        )
+    )
+    margin_threshold = (
+        min_margin
+        if min_margin is not None
+        else _bounded_env_float(
+            INTENT_ROUTER_ACTIVE_MIN_MARGIN_ENV,
+            _DEFAULT_ACTIVE_MIN_MARGIN,
+            0.0,
+            2.0,
+        )
+    )
+    strongest_non_tool = max(
+        (intent.score for intent in route.top_intents if not intent.needs_tools),
+        default=-1.0,
+    )
+    blocked_names = {
+        name
+        for constraint in route.constraints
+        for name in _CONSTRAINT_INTENT_BLOCKS.get(constraint, ())
+    }
+    eligible = tuple(
+        intent
+        for intent in route.top_intents
+        if intent.needs_tools
+        and intent.name not in blocked_names
+        and intent.score >= score_threshold
+        and intent.score >= strongest_non_tool + margin_threshold
+    )
+    if not eligible:
+        scored_tools = tuple(
+            intent
+            for intent in route.top_intents
+            if intent.needs_tools and intent.score >= score_threshold
+        )
+        if scored_tools and all(intent.name in blocked_names for intent in scored_tools):
+            reason = "constrained"
+        elif scored_tools and strongest_non_tool > -1.0:
+            reason = "conflicting"
+        else:
+            reason = "low_confidence"
+        return ActiveIntentSelection(reason=reason)
+
+    domains = tuple(
+        sorted({domain for intent in eligible for domain in intent.domains})
+    )
+    return ActiveIntentSelection(
+        intents=eligible,
+        domains=domains,
+        needs_tools=True,
+        reason="selected",
+    )
+
+
+def active_constraint_disabled_tools(route: IntentRoute) -> set[str]:
+    """Return tool names denied by constraints, active mode only."""
+
+    if route.rollout_mode != "active":
+        return set()
+    disabled = {
+        tool
+        for constraint in route.constraints
+        for tool in _CONSTRAINT_TOOL_BLOCKS.get(constraint, ())
+    }
+    if "workspace.read_only" in route.constraints:
+        disabled.update(plan_mode_disabled_tools())
+    return disabled
 
 
 def _normalise_rows(values: np.ndarray, *, expected_rows: int) -> np.ndarray:

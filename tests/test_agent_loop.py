@@ -2,6 +2,7 @@
 and _append_tool_results. Uses mock imports to avoid loading the full app stack."""
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 _MOCKED_IMPORTS = [
@@ -37,6 +38,7 @@ try:
     from src.agent_loop import (
         _detect_admin_intent,
         _classify_agent_request,
+        _merge_active_intent_route,
         _compute_final_metrics,
         _append_tool_results,
         _insert_before_latest_user,
@@ -72,6 +74,74 @@ def test_polish_internet_search_request_classifies_as_web():
 
     assert intent["low_signal"] is False
     assert "web" in intent["domains"]
+
+
+def test_active_intent_route_adds_domains_without_removing_deterministic_ones():
+    from src.intent_router import IntentRoute, IntentScore
+
+    deterministic = {
+        "low_signal": False,
+        "continuation": False,
+        "domains": {"email"},
+        "retrieval_query": "send this and add a reminder",
+    }
+    route = IntentRoute(
+        top_intents=(
+            IntentScore(
+                "calendar.write",
+                0.90,
+                True,
+                ("notes_calendar_tasks",),
+            ),
+        ),
+        source="semantic",
+        rollout_mode="active",
+    )
+
+    merged = _merge_active_intent_route(deterministic, route)
+
+    assert merged["domains"] == {"email", "notes_calendar_tasks"}
+    assert deterministic["domains"] == {"email"}
+
+
+def test_shadow_and_conflicting_routes_do_not_change_agent_intent():
+    from src.intent_router import IntentRoute, IntentScore
+
+    deterministic = {
+        "low_signal": True,
+        "continuation": False,
+        "domains": set(),
+        "retrieval_query": "how does deployment work",
+    }
+    shadow = IntentRoute(
+        top_intents=(IntentScore("system.execute", 0.99, True, ("files",)),),
+        source="semantic",
+        rollout_mode="shadow",
+    )
+    conflicting = IntentRoute(
+        top_intents=(
+            IntentScore("chat.explain", 0.90, False, ()),
+            IntentScore("system.execute", 0.86, True, ("files",)),
+        ),
+        source="semantic",
+        rollout_mode="active",
+    )
+
+    assert _merge_active_intent_route(deterministic, shadow) is deterministic
+    assert _merge_active_intent_route(deterministic, conflicting) is deterministic
+
+
+def test_active_read_only_constraint_cannot_be_bypassed_by_notes_clamp():
+    source = Path(__file__).resolve().parent.parent.joinpath(
+        "src", "agent_loop.py"
+    ).read_text(encoding="utf-8")
+
+    assert "mcp_mgr.plan_mode_blocked_mcp()" in source
+    assert (
+        '{"manage_notes", "manage_calendar", "manage_tasks"}\n'
+        "            - _active_constraint_tools"
+    ) in source
+    assert "block.tool_type not in _active_constraint_tools" in source
 
 
 def test_insert_before_latest_user_places_context_before_last_user_turn():
