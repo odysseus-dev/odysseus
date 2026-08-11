@@ -3594,6 +3594,20 @@ async def stream_agent_loop(
                 _removed_doc_file_tools,
             )
 
+    # ── Respect user's bash/shell toggle ──────────────────────────────
+    # Per-turn RAG/keyword/domain selection can drop bash from the tool
+    # list even when the user's toggle is ON (e.g. non-English queries
+    # that don't match the English-only domain regex).  The toggle is
+    # the user's explicit choice — when bash is not disabled, it MUST
+    # be available every turn.
+    # Plan mode, guide-only mode, non-admin restrictions, and web-intent
+    # modes all correctly add "bash" to disabled_tools before this point.
+    if "bash" not in disabled_tools:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.add("bash")
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
