@@ -10,6 +10,18 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+class MemoryStoreUnreadable(RuntimeError):
+    """memory.json exists on disk but could not be read or parsed.
+
+    "The contents are unknown" is categorically different from "there are no
+    memories". A read-modify-write caller that conflates the two appends to an
+    empty view and then persists it, destroying the whole store — the writes
+    are atomic, so the loss is durable. Raised by
+    :meth:`MemoryManager.load_all_for_update` so those callers fail closed.
+    """
+
+
 def tokenize(text: str) -> List[str]:
     """Simple tokenizer that splits on whitespace and removes punctuation."""
     return [word.strip('.,!?";') for word in text.split()]
@@ -110,21 +122,69 @@ class MemoryManager:
             with open(self.memory_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
     
-    def load_all(self) -> List[Dict]:
-        """Load all memory entries from JSON file (unfiltered)."""
+    def _read_entries(self) -> List[Dict]:
+        """Parse the store, or raise :class:`MemoryStoreUnreadable`.
+
+        Returns ``[]`` only when the file genuinely does not exist. Every other
+        failure mode raises, so callers can tell "no memories" apart from
+        "couldn't read the memories".
+        """
         if not os.path.exists(self.memory_file):
             return []
 
         try:
             with open(self.memory_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, list):
-                    return self._validate_entries(data)
-        except (json.JSONDecodeError, PermissionError) as e:
-            logger.error("Error loading memory.json: %s", e)
-            return self._migrate_from_legacy()
+        except OSError as e:
+            # PermissionError is an OSError (a scanner holding the file, a
+            # permissions problem, bad media).
+            raise MemoryStoreUnreadable(
+                f"cannot read {self.memory_file}: {e}"
+            ) from e
+        except json.JSONDecodeError as e:
+            # This is the branch that actually destroyed stores: the file reads
+            # back fine, so nothing stops the save that follows. A truncated
+            # memory.json is reachable because core/database.py rewrites it with
+            # a plain open(..,"w") + json.dump during migration.
+            #
+            # Preserved behaviour: a corrupt store still gets one shot at the
+            # pre-JSON memory.txt migration. Only raise when that finds nothing,
+            # so we never report "empty" for a store we simply failed to parse.
+            legacy = self._migrate_from_legacy()
+            if legacy:
+                return legacy
+            raise MemoryStoreUnreadable(
+                f"{self.memory_file} is not valid JSON: {e}"
+            ) from e
 
-        return []
+        if not isinstance(data, list):
+            raise MemoryStoreUnreadable(
+                f"{self.memory_file} is not a JSON array (got {type(data).__name__})"
+            )
+        return self._validate_entries(data)
+
+    def load_all(self) -> List[Dict]:
+        """Load all memory entries from JSON file (unfiltered).
+
+        Lenient by design: this feeds display, search, and context-injection
+        paths, so an unreadable store degrades to an empty list rather than
+        breaking chat. Never build a value from this that you intend to save
+        back — use :meth:`load_all_for_update` for that.
+        """
+        try:
+            return self._read_entries()
+        except MemoryStoreUnreadable as e:
+            logger.error("Error loading memory.json: %s", e)
+            return []
+
+    def load_all_for_update(self) -> List[Dict]:
+        """Load for a read-modify-write cycle.
+
+        Propagates :class:`MemoryStoreUnreadable` instead of degrading to ``[]``
+        so a caller can never append to an empty view and persist it over a
+        store that was only temporarily unreadable (issue #5673).
+        """
+        return self._read_entries()
 
     def load(self, owner: str = None) -> List[Dict]:
         """Load memory entries, optionally filtered by owner."""
@@ -135,7 +195,12 @@ class MemoryManager:
 
     def claim_ownerless(self, owner: str):
         """Assign all ownerless memory entries to the given owner."""
-        entries = self.load_all()
+        try:
+            entries = self.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            # Skip the sweep rather than rewrite the store from an unknown view.
+            logger.error("Skipping ownerless claim, memory store unreadable: %s", e)
+            return
         changed = False
         claimed = 0
         for entry in entries:
@@ -235,7 +300,12 @@ class MemoryManager:
         if not ids:
             return
         id_set = set(ids)
-        entries = self.load_all()
+        try:
+            entries = self.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            # Best-effort counter; never worth rewriting the store blind.
+            logger.error("Skipping uses bump, memory store unreadable: %s", e)
+            return
         changed = False
         for e in entries:
             if e.get("id") in id_set:

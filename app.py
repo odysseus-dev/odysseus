@@ -739,7 +739,7 @@ app.include_router(setup_stt_routes(stt_service))
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
-from routes.document_routes import setup_document_routes
+from routes.document.document_routes import setup_document_routes
 document_router = setup_document_routes(session_manager, upload_handler)
 app.include_router(document_router)
 
@@ -820,7 +820,7 @@ set_ai_rag_manager(rag_manager, personal_docs_mgr)
 logger.info("AI interaction tools initialized (session, memory, RAG, UI control)")
 
 # Webhooks
-from routes.webhook_routes import setup_webhook_routes
+from routes.webhook.webhook_routes import setup_webhook_routes
 app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
 
 # API Tokens
@@ -852,7 +852,7 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
-from routes.vault_routes import setup_vault_routes
+from routes.vault.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
