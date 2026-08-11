@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text, inspect
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -457,6 +457,11 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # Per-endpoint LLM completion read-timeout override, in seconds. NULL =
+    # fall back to the global agent_stream_timeout_seconds setting. Useful for
+    # a single slow/local model that needs more headroom than every other
+    # configured endpoint.
+    stream_timeout_seconds = Column(Integer, nullable=True)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
@@ -1664,6 +1669,28 @@ def _migrate_add_notifications_enabled():
         logging.getLogger(__name__).warning(f"notifications_enabled migration: {e}")
 
 
+def _migrate_add_endpoint_stream_timeout():
+    """Add stream_timeout_seconds column to model_endpoints (per-endpoint LLM
+    read-timeout override; null falls back to the global
+    agent_stream_timeout_seconds setting).
+
+    Dialect-agnostic (inspector + plain ADD COLUMN, valid on both SQLite and
+    Postgres) because — unlike the older PRAGMA-based migrations, which only
+    backfill columns that predate a given Postgres install's initial
+    Base.metadata.create_all() — this column may need to be added to an
+    already-running Postgres database that was created before this column
+    existed."""
+    try:
+        cols = [c["name"] for c in inspect(engine).get_columns("model_endpoints")]
+        if "stream_timeout_seconds" not in cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE model_endpoints ADD COLUMN stream_timeout_seconds INTEGER"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added stream_timeout_seconds column to model_endpoints")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model_endpoints stream_timeout_seconds migration: {e}")
+
+
 def _migrate_add_crew_member_id():
     """Add crew_member_id column to sessions and scheduled_tasks tables if missing."""
     try:
@@ -1972,6 +1999,7 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_add_endpoint_stream_timeout()
 
 
 def _migrate_backfill_task_folders():

@@ -1971,6 +1971,7 @@ def setup_model_routes(model_discovery):
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
                     "model_refresh_interval": getattr(r, "model_refresh_interval", None),
                     "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                    "stream_timeout_seconds": getattr(r, "stream_timeout_seconds", None),
                 })
             if upgraded_legacy_pins:
                 db.commit()
@@ -2569,6 +2570,10 @@ def setup_model_routes(model_discovery):
                 if "model_refresh_timeout" in body:
                     timeout = _parse_positive_int(body.get("model_refresh_timeout"), minimum=1, maximum=60)
                     ep.model_refresh_timeout = timeout
+                if "stream_timeout_seconds" in body:
+                    ep.stream_timeout_seconds = _parse_positive_int(
+                        body.get("stream_timeout_seconds"), minimum=30, maximum=3600
+                    )
                 # Rotating an API key used to require DELETE+POST, which wiped
                 # endpoint_url/model from every session referencing the old base
                 # URL. Allow in-place updates so the admin can change the key
@@ -2602,6 +2607,7 @@ def setup_model_routes(model_discovery):
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",
                 "model_refresh_interval": getattr(ep, "model_refresh_interval", None),
                 "model_refresh_timeout": getattr(ep, "model_refresh_timeout", None),
+                "stream_timeout_seconds": getattr(ep, "stream_timeout_seconds", None),
             }
         finally:
             db.close()
