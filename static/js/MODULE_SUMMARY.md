@@ -61,6 +61,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`chatRenderer.js`** | Message DOM construction: `addMessage`, role labels, model route labels, color coding, footers, metrics, code blocks, sources boxes (`web`/`research`/`RAG`), findings box, images, report links, ask-user cards, welcome screen, and transcript utilities. |
 | **`streamingRenderer.js`** | Incremental streaming renderer used by `chat.js`. Freezes finalized DOM blocks and only re-renders the growing tail to avoid flicker and O(N²) re-parsing. |
 | **`streamingSegmenter.js`** | Splits a token stream into display units (text vs code fences) for `streamingRenderer.js`. |
+| **`liveThinkingThrottle.js`** | Trailing-edge coalescer for the live thinking block in `chat.js`: one DOM commit per 100 ms carrying the latest reasoning text, with `flush`/`cancel` for terminal and session-switch paths. |
 | **`slashCommands.js`** | Slash-command registry (`/help`, `/setup`, etc.), parsing, and dispatch handlers. Exported functions are consumed by `chat.js` and `slashAutocomplete.js`. |
 | **`slashAutocomplete.js`** | Composer autocomplete popup for `/` commands. |
 | **`composerArrowUpRecall.js`** | Recall last user message with `↑` on an empty composer. |
