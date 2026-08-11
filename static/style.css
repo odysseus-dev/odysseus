@@ -41136,3 +41136,250 @@ body.theme-frosted .modal {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
 }
+
+/* ── Memory Graph View (beta) ── */
+
+.memory-graph-modal-content {
+  width: min(1180px, 94vw);
+  height: min(820px, 90vh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.memory-graph-modal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+.memory-graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.memory-graph-search {
+  flex: 1 1 160px;
+  min-width: 120px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+.memory-graph-cat-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.memory-graph-cat-chip {
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.55;
+  white-space: nowrap;
+}
+.memory-graph-cat-chip.active {
+  opacity: 1;
+  border-color: var(--mg-cat-color, var(--accent, var(--red)));
+  color: var(--mg-cat-color, var(--accent, var(--red)));
+  background: color-mix(in srgb, var(--mg-cat-color, var(--accent, var(--red))) 14%, transparent);
+}
+.memory-graph-link-mode-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.memory-graph-link-mode-btn.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.memory-graph-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.memory-graph-slider-row input[type="range"] {
+  width: 80px;
+}
+.memory-graph-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+.memory-graph-canvas {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+.memory-graph-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.memory-graph-demo-banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, var(--warn) 20%, var(--panel));
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  z-index: 5;
+  white-space: nowrap;
+}
+.memory-graph-detail-panel {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.memory-graph-detail-panel.hidden { display: none; }
+.memory-graph-detail-empty {
+  color: var(--color-muted);
+  font-size: 12px;
+  margin: auto;
+  text-align: center;
+}
+.memory-graph-detail-cat {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--mg-cat-color, var(--border));
+  color: var(--mg-cat-color, var(--fg));
+  width: fit-content;
+}
+.memory-graph-detail-text {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.memory-graph-detail-textarea {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+.memory-graph-detail-meta {
+  font-size: 10.5px;
+  color: var(--color-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.memory-graph-detail-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.memory-graph-detail-actions button {
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.memory-graph-detail-actions button:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.memory-graph-detail-actions button.danger { color: var(--red); border-color: var(--red); }
+.memory-graph-detail-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.memory-graph-detail-links-title {
+  font-size: 10.5px;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.memory-graph-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.memory-graph-link-row-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-graph-link-row-remove {
+  cursor: pointer;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.memory-graph-link-row-remove:hover { opacity: 1; color: var(--red); }
+.memory-graph-legend {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--color-muted);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  z-index: 4;
+}
+.memory-graph-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.85;
+}
+.memory-graph-legend-caret { font-size: 9px; transition: transform 0.15s; }
+.memory-graph-legend.collapsed .memory-graph-legend-caret { transform: rotate(-90deg); }
+.memory-graph-legend.collapsed .memory-graph-legend-body { display: none; }
+.memory-graph-legend-body { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.memory-graph-legend-row { display: flex; align-items: center; gap: 5px; }
+.memory-graph-legend-line { width: 14px; height: 0; border-top: 2px solid var(--fg); display: inline-block; }
+.memory-graph-legend-line.dashed { border-top-style: dashed; }

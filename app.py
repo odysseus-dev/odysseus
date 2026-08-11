@@ -666,6 +666,13 @@ app.include_router(setup_session_routes(
 from routes.admin_wipe.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
 
+# Memory Graph View (beta) — MUST be included before memory_router below.
+# memory_routes.py's GET/PUT/DELETE /api/memory/{memory_id} wildcard would
+# otherwise swallow GET /api/memory/graph, since Starlette matches routes in
+# registration order across the whole app, not by specificity.
+from routes.memory.memory_graph_routes import setup_memory_graph_routes
+app.include_router(setup_memory_graph_routes(memory_manager, memory_vector=memory_vector))
+
 # Memory
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)

@@ -25,6 +25,7 @@ import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js?v=20260722emailfastindex1';
 import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
+import memoryGraphModule from './js/memoryGraph.js?v=20260729memorygraph1';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
@@ -1068,6 +1069,19 @@ function initializeEventListeners() {
     });
   }
 
+  // Memory Graph tool button
+  const toolMemoryGraphBtn = el('tool-memory-graph-btn');
+  if (toolMemoryGraphBtn) {
+    toolMemoryGraphBtn.addEventListener('click', async () => {
+      if (!memoryGraphModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('memory-graph-modal')) {
+        if (memoryGraphModule.isMemoryGraphOpen()) memoryGraphModule.closeMemoryGraph();
+        else memoryGraphModule.openMemoryGraph();
+      }
+    });
+  }
+
   // Calendar tool button
   const toolCalendarBtn = el('tool-calendar-btn');
   if (toolCalendarBtn) {
@@ -1218,6 +1232,7 @@ function initializeEventListeners() {
       setTimeout(_goFullscreen, 200);
     },
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
+    '/memory-graph': () => document.getElementById('tool-memory-graph-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
@@ -2742,6 +2757,7 @@ function initializeEventListeners() {
     'tool-gallery':        '#tool-gallery-btn',
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
+    'tool-memory-graph':   '#tool-memory-graph-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
