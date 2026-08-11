@@ -20,7 +20,7 @@ from src.upload_limits import (
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
-from src.constants import GENERATED_IMAGES_DIR, VISION_MAX_TOKENS
+from src.constants import GENERATED_IMAGES_DIR, VISION_MAX_TOKENS, VISION_DESCRIBE_PROMPT
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery.gallery_helpers import (
@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
 
+def _reasoning_as_caption(reasoning: str) -> str:
+    """Salvage a caption from a thinking model's reasoning block.
+
+    Reasoning is written as working notes — bullets, "Input:", "Task:",
+    self-corrections. Strip the scaffolding and keep the prose sentences so
+    a deployment with only a thinking model still gets a usable description.
+    """
+    lines = []
+    for raw in (reasoning or "").splitlines():
+        line = raw.strip().lstrip("*-").strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith(("input:", "task:", "goal:", "plan:", "step ", "wait", "let me", "actually")):
+            continue
+        if line.endswith(":") and len(line) < 40:
+            continue
+        lines.append(line)
+    return " ".join(lines).strip()
 
 def _b64_to_pil_image(image_b64: str, *, mode: str = "RGBA"):
     if not image_b64:
@@ -2310,12 +2329,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "Could not resolve a vision endpoint"}
             provider = _detect_provider(chat_url)
 
-            ocr_prompt = (
-                "Describe this image in two parts, separated by a blank line.\n\n"
-                "First: a single summary under 40 words.\n\n"
-                "Then: a fuller description including any legible text transcribed exactly. "
-                "Report only what is clearly visible; if text is unreadable, say so rather than guessing."
-            )
+            ocr_prompt = VISION_DESCRIBE_PROMPT
 
             if provider == "anthropic":
                 payload = {
@@ -2342,7 +2356,7 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    _tok_key: 1024,
+                    _tok_key: VISION_MAX_TOKENS,
                     "temperature": 0.2,
                 }
                 if _restricts_temperature(model_name):
@@ -2368,6 +2382,7 @@ def setup_gallery_routes() -> APIRouter:
                         logger.warning(
                             "ocr: %s returned empty content with reasoning present "
                             "— use a non-thinking model or raise max_tokens", model_name)
+                        content = _reasoning_as_caption(msg.get("reasoning", ""))
 
             caption = (content or "").strip()
             if not caption:
@@ -2453,7 +2468,7 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    _tok_key: 800,
+                    _tok_key: VISION_MAX_TOKENS,
                     "temperature": 0.3,
                 }
                 # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.

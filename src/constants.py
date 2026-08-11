@@ -129,3 +129,15 @@ def internal_api_base() -> str:
     if override:
         return override.rstrip("/")
     return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}"
+
+# Shared prompt for all vision/OCR description calls (chat attachments and
+# gallery captions) so both paths produce the same two-part shape: a short
+# summary the UI can show collapsed, then the full description.
+VISION_DESCRIBE_PROMPT = (
+    "Describe this image in detail. Open with a one or two sentence overview, "
+    "then a blank line, then everything else you can see. "
+    "This text is displayed as plain text, not rendered markdown, so do not use "
+    "**bold**, *italics*, # headings, or backticks. "
+    "Report only what is clearly visible; transcribe any legible text exactly, "
+    "and if text is unreadable say so rather than guessing."
+)

@@ -49,10 +49,10 @@ function _captionBlock(caption, esc) {
   const summary = full.slice(0, i).trim();
   const rest = full.slice(i).trim();
   return `<div class="gallery-detail-prompt">`
-    + `<span id="gallery-caption-short">${esc(summary)} `
+    + `<span id="gallery-caption-short">${esc(summary)}<br>`
     + `<button type="button" id="gallery-caption-toggle" style="background:none;border:0;padding:0;color:var(--red);font:inherit;cursor:pointer;text-decoration:underline;">show more</button>`
     + `</span>`
-    + `<span id="gallery-caption-full" hidden>${esc(summary)}<br><br>${esc(rest)} `
+    + `<span id="gallery-caption-full" hidden>${esc(summary)}<br><br>${esc(rest).replace(/\n/g, '<br>')}<br>`
     + `<button type="button" id="gallery-caption-collapse" style="background:none;border:0;padding:0;color:var(--red);font:inherit;cursor:pointer;text-decoration:underline;">show less</button>`
     + `</span></div>`;
 }
