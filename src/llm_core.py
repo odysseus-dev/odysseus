@@ -2109,7 +2109,17 @@ async def llm_call_async(
                     response = _parse_ollama_response(data)
                 else:
                     msg = data["choices"][0]["message"]
-                    response = msg.get("content") or msg.get("reasoning_content") or ""
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        # Mistral structured content — extract thinking + text
+                        # (same contract as llm_call / stream_llm; see #5435).
+                        text_part, thinking_part = _normalize_mistral_content(content)
+                        if thinking_part:
+                            response = thinking_part + "\n\n" + (text_part or "")
+                        else:
+                            response = text_part or msg.get("reasoning_content") or ""
+                    else:
+                        response = content or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:

@@ -248,6 +248,15 @@
       }, { once: true });
     })();
   </script>
+  <!-- Preload the two faces first paint actually uses: Fira Code 400 and 600,
+       the app font and the weight the sidebar and header text render at. They
+       are declared in style.css, so without a hint they are only discovered
+       after the stylesheet parses and then queue behind the module graph.
+       crossorigin is required even though these are same-origin: fonts are
+       always fetched in CORS mode, and a preload whose mode does not match the
+       real request is discarded and the font fetched a second time. -->
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
   <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
   <link rel="modulepreload" href="/static/app.js?v=20260808startupshell1">
   <link rel="modulepreload" href="/static/js/chat.js?v=20260801fix1">
