@@ -481,7 +481,7 @@ const QWEN_ROLE_MARKER_RE = /<\/?\|(?:assistant|assistan|user|system|tool)\|>?|<
 // Keep in sync with _QWEN_BARE_MARKER_RE in src/tool_parsing.py. At least one
 // pipe is required around `end`: with both optional (`\|?end\|?`) this also ate
 // a bare `end` on its own line, breaking Ruby/Lua/shell snippets (#5547).
-const QWEN_BARE_MARKER_RE = /(?:^|[\t\r\n ])(?:\/?\|end\||\|end|end\|)(?=[\t\r\n ]|$)|(?:^|[\r\n])assistan(?:t)?(?=[\r\n]|$)/gi;
+const QWEN_BARE_MARKER_RE = /(?:^|[\t\r\n ])(?:\/?\|end\||\|end|end\|)(?=[\t\r\n ]|$)|(?:^|[\r\n])[ \t]*assistan(?:t)?[ \t]*(?=[\r\n]|$)/gi;
 // Self-narration about tool results (model echoing stdout/exit_code)
 const TOOL_NARRATION_RE = /(?:The (?:result|output) shows?:?\s*)?-?\s*(?:stdout|stderr|exit_code):\s*.+/gi;
 

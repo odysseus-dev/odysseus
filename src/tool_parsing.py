@@ -193,7 +193,7 @@ _QWEN_ROLE_MARKER_RE = re.compile(r"</?\|(?:assistant|assistan|user|system|tool)
 # one; see #5547. `|end`, `end|`, `|end|` and `/|end|` still strip as before.
 _QWEN_BARE_MARKER_RE = re.compile(
     r"(?:^|[\t\r\n ])(?:/?\|end\||\|end|end\|)(?=[\t\r\n ]|$)|"
-    r"(?:^|[\r\n])assistan(?:t)?(?=[\r\n]|$)",
+    r"(?:^|[\r\n])[ \t]*assistan(?:t)?[ \t]*(?=[\r\n]|$)",
     re.IGNORECASE,
 )
 

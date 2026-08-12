@@ -46,6 +46,8 @@ STRIPPED = [
     ("a |end b", "a  b"),
     ("a end| b", "a  b"),
     ("Before\nassistant\nAfter", "Before \nAfter"),   # bare-marker on its own line still stripped
+    ("Before\n  assistant\t \nAfter", "Before \nAfter"),     # whitespace-padded marker still stripped
+    ("Before\n\tassistan  \nAfter", "Before \nAfter"),       # truncated marker variant still stripped
 ]
 
 
