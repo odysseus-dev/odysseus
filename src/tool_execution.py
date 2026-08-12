@@ -722,6 +722,7 @@ async def execute_tool_block(
             content=getattr(block, "content", None),
             workspace=workspace,
             security_mode=(run_policy.mode if run_policy is not None else "sandbox"),
+            security_context=security_context,
         )
         if not approval_claimed:
             return (

@@ -4619,6 +4619,7 @@ async def stream_agent_loop(
             content=approved.content,
             workspace=workspace,
             security_mode=run_policy.mode,
+            security_context=run_security,
         )
         if approval_matches:
             yield (

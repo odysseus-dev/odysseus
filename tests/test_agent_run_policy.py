@@ -223,6 +223,9 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         content="printf modified",
         workspace="/tmp/workspace",
         security_mode="ask",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
     )
     assert not grant.claim(
         owner="alice",
@@ -239,6 +242,9 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         content="printf exact",
         workspace="/tmp/workspace",
         security_mode="ask",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
     )
     assert not grant.claim(
         owner="alice",
@@ -247,6 +253,34 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         content="printf exact",
         workspace="/tmp/workspace",
         security_mode="ask",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
+    )
+
+
+def test_approval_rejects_changed_current_provenance():
+    store = ToolApprovalStore()
+    pending = _pending(store)
+    grant = store.consume(
+        pending.approval_id,
+        decision="approve",
+        owner="alice",
+        session_id="session-1",
+    )
+
+    assert grant is not None
+    assert not grant.claim(
+        owner="alice",
+        session_id="session-1",
+        tool_name="bash",
+        content="printf exact",
+        workspace="/tmp/workspace",
+        security_mode="ask",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True,
+            private_data_context_seen=True,
+        ),
     )
 
 

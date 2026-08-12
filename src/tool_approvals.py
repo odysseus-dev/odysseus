@@ -257,7 +257,8 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
-        security_mode: Any = "sandbox",
+        security_mode: Any,
+        security_context: ToolRunSecurityContext,
     ) -> bool:
         if self._claimed:
             return False
@@ -271,6 +272,9 @@ class ExactToolApproval:
             or result_sensitivity != self.pending.result_sensitivity
         ):
             return False
+        current_provenance = security_context.to_provenance().labels()
+        if current_provenance != self.pending.provenance:
+            return False
         expected = _binding_payload(
             owner=owner,
             session_id=session_id,
@@ -283,7 +287,7 @@ class ExactToolApproval:
             document_digest=self.pending.document_digest,
             selected_tools=self.pending.selected_tools,
             continuation_query=self.pending.continuation_query,
-            provenance=self.pending.provenance,
+            provenance=current_provenance,
             effects=effects,
             result_integrity=result_integrity,
             result_sensitivity=result_sensitivity,
@@ -299,7 +303,8 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
-        security_mode: Any = "sandbox",
+        security_mode: Any,
+        security_context: ToolRunSecurityContext,
     ) -> bool:
         with self._lock:
             return self._matches_unlocked(
@@ -309,6 +314,7 @@ class ExactToolApproval:
                 content=content,
                 workspace=workspace,
                 security_mode=security_mode,
+                security_context=security_context,
             )
 
     def claim(
@@ -319,7 +325,8 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
-        security_mode: Any = "sandbox",
+        security_mode: Any,
+        security_context: ToolRunSecurityContext,
     ) -> bool:
         with self._lock:
             if not self._matches_unlocked(
@@ -329,6 +336,7 @@ class ExactToolApproval:
                 content=content,
                 workspace=workspace,
                 security_mode=security_mode,
+                security_context=security_context,
             ):
                 return False
             self._claimed = True
