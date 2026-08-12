@@ -448,7 +448,7 @@ async function initDefaultChat() {
   var fbContainer = el('set-defaultFallbacks');
   var addFbBtn = el('set-defaultAddFallback');
   var _endpoints = [];
-  var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
+  var _fallbacks = []; // Hidden legacy DOM hook; stored values are not loaded or saved.
 
   function enabledEndpoints() {
     return _endpoints.filter(function(e) { return e.is_enabled; });
@@ -534,11 +534,6 @@ async function initDefaultChat() {
     var settings = await res.json();
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
-    _fallbacks = Array.isArray(settings.default_model_fallbacks)
-      ? settings.default_model_fallbacks.map(function(f) {
-          return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
-        })
-      : [];
     renderFallbacks();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
@@ -547,13 +542,11 @@ async function initDefaultChat() {
 
   async function saveDefault() {
     try {
-      var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           default_endpoint_id: epSel.value,
-          default_model: modelSel.value,
-          default_model_fallbacks: clean
+          default_model: modelSel.value
         })
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
@@ -5790,29 +5783,30 @@ export function close() {
   window.history.replaceState(null, '', clean);
   const success = sp.has('email_oauth_success');
   const errMsg = sp.get('email_oauth_error') || '';
-  // Open settings → integrations after the app has initialised.
-  function _tryOpen() {
-    if (window.settingsModule && typeof window.settingsModule.open === 'function') {
-      window.settingsModule.open('integrations');
-      // Brief toast-style banner.
-      const banner = document.createElement('div');
-      banner.textContent = success
-        ? '✓ Google account connected — email is ready'
-        : `Google OAuth failed: ${errMsg || 'unknown error'}`;
-      Object.assign(banner.style, {
-        position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-        background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
-        color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
-        fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
-      });
-      document.body.appendChild(banner);
-      setTimeout(() => banner.remove(), 4000);
-    } else {
-      setTimeout(_tryOpen, 100);
-    }
+  // Open settings → integrations once the document is ready. This module owns
+  // the open() API, so it does not need to wait for a window-level alias.
+  function _showResult() {
+    open('integrations');
+    // Brief toast-style banner.
+    const banner = document.createElement('div');
+    banner.textContent = success
+      ? 'Google account connected — email is ready'
+      : `Google OAuth failed: ${errMsg || 'unknown error'}`;
+    Object.assign(banner.style, {
+      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+      background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
+      color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
+      fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+    });
+    document.body.appendChild(banner);
+    setTimeout(() => banner.remove(), 4000);
   }
-  _tryOpen();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _showResult, { once: true });
+  } else {
+    _showResult();
+  }
 })();
 
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
