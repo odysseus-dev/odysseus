@@ -1,11 +1,14 @@
+import ipaddress
 import json
 import os
+import time
 import uuid
 import logging
 import re
 from typing import Dict, List, Optional, Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
+import httpcore
 import httpx
 from fastapi import HTTPException
 
@@ -354,6 +357,152 @@ def _find_integration(identifier: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+# httpcore raises its own exception hierarchy; map the ones a simple request can
+# surface back to their httpx equivalents so the caller's `except httpx.*` blocks
+# below behave exactly as they did with the default transport.
+_HTTPCORE_TO_HTTPX_EXC = {
+    httpcore.ConnectError: httpx.ConnectError,
+    httpcore.ConnectTimeout: httpx.ConnectTimeout,
+    httpcore.NetworkError: httpx.NetworkError,
+    httpcore.PoolTimeout: httpx.PoolTimeout,
+    httpcore.ProtocolError: httpx.ProtocolError,
+    httpcore.ReadError: httpx.ReadError,
+    httpcore.ReadTimeout: httpx.ReadTimeout,
+    httpcore.RemoteProtocolError: httpx.RemoteProtocolError,
+    httpcore.TimeoutException: httpx.TimeoutException,
+    httpcore.WriteError: httpx.WriteError,
+    httpcore.WriteTimeout: httpx.WriteTimeout,
+}
+
+
+class _PinnedAsyncBackend(httpcore.AsyncNetworkBackend):
+    """Network backend that connects only to the pre-validated IPs, in order.
+
+    Every address here came out of the single SSRF resolution, so moving to the
+    next one after a connect failure is not re-resolution — it's ordinary
+    multi-address fallback restricted to the set the guard already approved.
+    httpcore takes TLS SNI and the ``Host`` header from the request URL rather
+    than the connect host, so pinning the socket destination leaves certificate
+    validation and vhost routing pointed at the original hostname.
+    """
+
+    def __init__(self, ips: List[ipaddress._BaseAddress]):
+        self._ips = [str(ip) for ip in ips]
+        self._real = httpcore.AnyIOBackend()
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None,
+                          socket_options=None):
+        # One shared connect budget: each attempt gets the time left until the
+        # original deadline, so N dead addresses can't stretch the connect
+        # phase to N * timeout.
+        deadline = None if timeout is None else time.monotonic() + timeout
+        last_exc: Optional[Exception] = None
+        for ip in self._ips:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            try:
+                return await self._real.connect_tcp(
+                    ip, port, remaining, local_address, socket_options
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_exc = exc
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+        raise last_exc
+
+    async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        return await self._real.connect_unix_socket(path, timeout, socket_options)
+
+    async def sleep(self, seconds: float) -> None:
+        return await self._real.sleep(seconds)
+
+
+class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
+    """httpx transport that pins the TCP connect to the pre-resolved IP(s).
+
+    Kept local, mirroring the per-module pinned transports web fetch and
+    webhook delivery already carry, rather than coupling api_call to the
+    webhook subsystem. The request URL passes through unchanged, so SNI and the
+    ``Host`` header stay the original hostname; only the socket destination is
+    pinned, which is what closes the rebinding window.
+    """
+
+    def __init__(self, ips: List[ipaddress._BaseAddress]):
+        self._pinned_ips = list(ips)
+        self._pool = httpcore.AsyncConnectionPool(
+            # Reuse the CA trust the default httpx client would build (certifi
+            # plus SSL_CERT_FILE / SSL_CERT_DIR when trust_env is set) so
+            # swapping in this transport doesn't quietly change which chains
+            # verify. ssl.create_default_context() would use system roots.
+            ssl_context=httpx.create_ssl_context(),
+            http1=True,
+            http2=False,
+            network_backend=_PinnedAsyncBackend(ips),
+        )
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        core_req = httpcore.Request(
+            method=request.method,
+            url=httpcore.URL(
+                scheme=request.url.raw_scheme,
+                host=request.url.raw_host,
+                port=request.url.port,
+                target=request.url.raw_path,
+            ),
+            headers=request.headers.raw,
+            content=request.stream,
+            extensions=request.extensions,
+        )
+        try:
+            core_resp = await self._pool.handle_async_request(core_req)
+            content = b"".join([chunk async for chunk in core_resp.aiter_stream()])
+            await core_resp.aclose()
+        except Exception as exc:
+            mapped = _HTTPCORE_TO_HTTPX_EXC.get(type(exc))
+            if mapped is not None:
+                raise mapped(str(exc)) from exc
+            raise
+        return httpx.Response(
+            status_code=core_resp.status,
+            headers=core_resp.headers,
+            content=content,
+            extensions=core_resp.extensions,
+        )
+
+    async def aclose(self) -> None:
+        await self._pool.aclose()
+
+
+def _validated_ips(raw_ips: List[str]) -> List[ipaddress._BaseAddress]:
+    """Return every entry that parses as an IP address, de-duplicated, order
+    preserved.
+
+    check_outbound_url only reports ok when *all* of these classify as safe, so
+    the whole list is guard-approved and any of them is a legitimate connect
+    target. Skipping unparseable entries mirrors how the guard walks the same
+    resolver output.
+
+    De-duplication matters because the resolver is getaddrinfo(host, None) with
+    no socktype filter, so glibc reports the same address once per socktype
+    (SOCK_STREAM/SOCK_DGRAM/SOCK_RAW) — a single-homed host comes back three
+    times. Without this, the connect fallback would spend the shared deadline
+    retrying one dead address instead of moving on to a genuinely different one.
+    """
+    ips: List[ipaddress._BaseAddress] = []
+    seen = set()
+    for raw in raw_ips:
+        if not isinstance(raw, str):
+            continue
+        try:
+            ip = ipaddress.ip_address(raw.split("%")[0])  # strip IPv6 zone id
+        except ValueError:
+            continue
+        if ip in seen:
+            continue
+        seen.add(ip)
+        ips.append(ip)
+    return ips
+
+
 async def execute_api_call(
     integration_id: str,
     method: str,
@@ -409,13 +558,31 @@ async def execute_api_call(
     # loopback for locked-down deployments. Private stays allowed by default
     # because LAN integrations (Home Assistant, Miniflux, ntfy) are the
     # primary use case.
-    from src.url_safety import check_outbound_url
+    from src.url_safety import check_outbound_url, _default_resolver
     block_private = os.getenv(
         "INTEGRATION_API_BLOCK_PRIVATE_IPS", "false"
     ).lower() == "true"
-    ok, reason = check_outbound_url(url, block_private=block_private)
+    # Resolve the host exactly once and remember the IPs the guard validated so
+    # the request below can be pinned to them. check_outbound_url only reports
+    # (ok, reason); a plain httpx client re-resolves the host at connect time,
+    # which reopens a DNS-rebinding TOCTOU — a base_url host that answers with a
+    # public IP for the guard and then flips to 169.254.169.254 for the connect
+    # would reach cloud metadata with the integration's auth headers attached.
+    resolved_ips: List[str] = []
+
+    def _recording_resolver(host: str) -> List[str]:
+        ips = _default_resolver(host)
+        resolved_ips[:] = ips
+        return ips
+
+    ok, reason = check_outbound_url(
+        url, block_private=block_private, resolver=_recording_resolver
+    )
     if not ok:
         return {"error": f"URL rejected: {reason}", "exit_code": 1}
+    pinned_ips = _validated_ips(resolved_ips)
+    if not pinned_ips:
+        return {"error": "URL rejected: host did not resolve to a usable address", "exit_code": 1}
 
     method = method.upper()
 
@@ -455,7 +622,9 @@ async def execute_api_call(
             auth = httpx.BasicAuth(parts[0], parts[1])
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, transport=_PinnedAsyncTransport(pinned_ips)
+        ) as client:
             response = await client.request(
                 method,
                 url,

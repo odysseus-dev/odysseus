@@ -1,6 +1,7 @@
 # src/llm_core.py
 import httpx
 import asyncio
+import copy
 import time
 import json
 import logging
@@ -644,7 +645,7 @@ def _build_ollama_payload(
     if options:
         payload["options"] = options
     if tools:
-        payload["tools"] = tools
+        payload["tools"] = _alias_harmony_tools(tools, model)
     return payload
 
 
@@ -1053,6 +1054,57 @@ def _model_disallows_reasoning_effort_with_chat_tools(model: str) -> bool:
     """OpenAI GPT 5.x variants reject reasoning_effort + tools on chat completions."""
     m = (model or "").strip().lower()
     return bool(re.match(r"^(?:openai/)?gpt-5(?:[.\-]\d+)?(?:[-_:].*)?$", m))
+
+
+# gpt-oss (harmony) ships BUILT-IN tools named `python` and `browser`, invoked
+# with the raw body as the argument (`to=python` + bare source), while custom
+# functions use `to=functions.NAME` + JSON. A tool we expose under a built-in's
+# name therefore gets called with the built-in convention: the model emits raw
+# code, the server tries to parse it as JSON, and the whole request dies
+# ("error parsing tool call: raw='import sys, ...'"). In streaming mode Ollama
+# does not even report it — it truncates the stream, so the turn looks like an
+# empty response. `bash` collides the same way in practice.
+#
+# Measured on gpt-oss:20b via Ollama /v1 with a fixed agentic prompt:
+#   tools named python+bash ............ 2/6 succeeded (4 parse failures)
+#   python renamed ..................... 5/6
+#   python and bash renamed ............ 6/6
+#
+# So rename the colliding tools on the way out and map the names back on the
+# way in. Confined to the transport layer: callers keep using the real names.
+_HARMONY_TOOL_ALIASES = {
+    "python": "run_python_code",
+    "bash": "run_shell_command",
+    "browser": "web_browser_tool",
+}
+_HARMONY_TOOL_ALIASES_REVERSE = {v: k for k, v in _HARMONY_TOOL_ALIASES.items()}
+
+
+def _is_harmony_model(model: str) -> bool:
+    """True for gpt-oss / harmony-format models, which have built-in tool names."""
+    return "gpt-oss" in (model or "").lower()
+
+
+def _alias_harmony_tools(tools: Optional[List[Dict]], model: str) -> Optional[List[Dict]]:
+    """Rename tools that collide with harmony built-ins. Returns a copy."""
+    if not tools or not _is_harmony_model(model):
+        return tools
+    out = []
+    for t in tools:
+        fn = t.get("function") or {}
+        alias = _HARMONY_TOOL_ALIASES.get(fn.get("name"))
+        if alias:
+            t = copy.deepcopy(t)
+            t["function"]["name"] = alias
+        out.append(t)
+    return out
+
+
+def _unalias_harmony_tool_name(name: str, model: str) -> str:
+    """Map an aliased tool name in a model response back to the real name."""
+    if not _is_harmony_model(model):
+        return name
+    return _HARMONY_TOOL_ALIASES_REVERSE.get(name, name)
 
 
 def _scrub_openai_chat_tool_reasoning(payload: Dict, target_url: str, model: str) -> None:
@@ -2109,7 +2161,17 @@ async def llm_call_async(
                     response = _parse_ollama_response(data)
                 else:
                     msg = data["choices"][0]["message"]
-                    response = msg.get("content") or msg.get("reasoning_content") or ""
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        # Mistral structured content — extract thinking + text
+                        # (same contract as llm_call / stream_llm; see #5435).
+                        text_part, thinking_part = _normalize_mistral_content(content)
+                        if thinking_part:
+                            response = thinking_part + "\n\n" + (text_part or "")
+                        else:
+                            response = text_part or msg.get("reasoning_content") or ""
+                    else:
+                        response = content or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
@@ -2226,7 +2288,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
-            payload["tools"] = tools
+            payload["tools"] = _alias_harmony_tools(tools, model)
         elif tool_choice_none:
             payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
@@ -2360,7 +2422,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                         if fn.get("name"):
                             _ollama_tool_calls.append({
                                 "id": tc.get("id") or f"call_{len(_ollama_tool_calls)}",
-                                "name": fn.get("name") or "",
+                                "name": _unalias_harmony_tool_name(fn.get("name") or "", model),
                                 "arguments": json.dumps(fn.get("arguments") or {}),
                             })
                     if j.get("done"):
@@ -2740,7 +2802,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             if tc.get("extra_content"):
                                                 _tc_acc[idx]["extra_content"] = tc["extra_content"]
                                             if func.get("name"):
-                                                _tc_acc[idx]["name"] = func["name"]
+                                                # Map harmony aliases back to real
+                                                # tool names before anything
+                                                # downstream sees them.
+                                                _tc_acc[idx]["name"] = _unalias_harmony_tool_name(func["name"], model)
                                             if "arguments" in func:
                                                 # Guard against a null arguments delta: `func` can be
                                                 # {"arguments": None} (JSON null), and a raw `+= None`
