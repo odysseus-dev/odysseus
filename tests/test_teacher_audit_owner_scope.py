@@ -24,9 +24,12 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
         seen["messages"] = messages
         return "teacher reply"
 
+    from src.agent_tools import model_interaction_tools
+
     monkeypatch.setattr("src.ai_interaction._resolve_model", fake_resolve_model)
     monkeypatch.setattr(
-        "src.agent_tools.model_interaction_tools._TEACHER_SYSTEM_PROMPT",
+        model_interaction_tools,
+        "_TEACHER_SYSTEM_PROMPT",
         "sys",
     )
     monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
