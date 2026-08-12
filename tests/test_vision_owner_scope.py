@@ -55,8 +55,8 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
         seen["fallback_owner"] = owner
         return []
 
-    def fake_llm_call(url, model, messages, headers=None, timeout=None):
-        seen["llm"] = (url, model, headers, timeout, messages)
+    def fake_llm_call(url, model, messages, headers=None, timeout=None, max_tokens=None, temperature=None):
+        seen["llm"] = (url, model, headers, timeout, messages, max_tokens, temperature)
         return "description"
 
     monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": "gpt-4o"})
@@ -80,8 +80,12 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
         "http://primary.test/chat/completions",
         "vision-primary",
         {"X-Test": "1"},
-        120,
+        300,
     )
+    # Same reasoning-model-truncation fix as the ai-tag path (VISION_MAX_TOKENS,
+    # low temperature) — thinking-capable vision models otherwise spend their
+    # whole budget on <think> and return empty content.
+    assert seen["llm"][5] == dp.VISION_MAX_TOKENS
 
 
 def test_request_vision_call_sites_pass_owner():
