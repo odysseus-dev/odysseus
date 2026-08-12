@@ -801,15 +801,6 @@ def setup_session_routes(
         finally:
             db.close()
 
-    @router.get("/history/{sid}")
-    def get_history(request: Request, sid: str):
-        _verify_session_owner(request, sid)
-        try:
-            session = session_manager.get_session(sid)
-        except KeyError:
-            raise HTTPException(404, f"Session {sid} not found")
-        return {"history": [msg.to_dict() for msg in session.history]}
-    
     @router.get("/session/{sid}/export")
     def export_session(request: Request, sid: str, fmt: str = "md", filename: str = ""):
         """Export conversation history as a downloadable file.

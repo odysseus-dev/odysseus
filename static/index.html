@@ -248,8 +248,17 @@
       }, { once: true });
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20260723tasksbulkfeedback1">
-  <link rel="modulepreload" href="/static/app.js?v=20260723tasksbulkfeedback1">
+  <!-- Preload the two faces first paint actually uses: Fira Code 400 and 600,
+       the app font and the weight the sidebar and header text render at. They
+       are declared in style.css, so without a hint they are only discovered
+       after the stylesheet parses and then queue behind the module graph.
+       crossorigin is required even though these are same-origin: fonts are
+       always fetched in CORS mode, and a preload whose mode does not match the
+       real request is discarded and the font fetched a second time. -->
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
+  <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
+  <link rel="modulepreload" href="/static/app.js?v=20260808startupshell1">
   <link rel="modulepreload" href="/static/js/chat.js?v=20260801fix1">
   <link rel="modulepreload" href="/static/js/ui.js">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -286,7 +295,13 @@
       if(!document.getElementById('app-loader')){clearInterval(iv);return}
       render();
     },150);
-    setTimeout(function(){var l=document.getElementById('app-loader');if(l){l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
+    // startupShell.js hides the loader as soon as the shell is wired; it calls
+    // back here to stop the wave because this interval is owned by this script.
+    window.__odysseusLoaderWaveStop=function(){clearInterval(iv)};
+    // Last-resort fallback for a boot that never reaches app.js at all. Must
+    // still REMOVE the node: sessions.js reads its presence as "startup in
+    // progress" and stops clearing the composer while it is around.
+    setTimeout(function(){var l=document.getElementById('app-loader');if(l){clearInterval(iv);l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
   })();
   </script>
   <!-- Memory Management Modal -->
@@ -813,7 +828,13 @@
             <button class="session-bulk-btn" id="session-bulk-cancel" title="Cancel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
         </div>
-        <div id="session-list" role="listbox"></div>
+        <div id="session-list" role="listbox">
+          <!-- Sidebar-local bootstrap state. renderSessionList() replaces the
+               whole list on first hydration, so this row is transient. -->
+          <div id="session-list-loading" class="list-item session-list-bootstrap" role="option" aria-disabled="true" aria-live="polite" aria-atomic="true">
+            <span class="grow muted" data-session-list-status>Loading chats…</span>
+          </div>
+        </div>
       </div>
       <!-- Hidden dropdown for session actions -->
       <div id="session-actions-dropdown" class="dropdown hidden">
@@ -1483,7 +1504,7 @@
                 <span class="adm-model-logo" id="set-defaultModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-defaultModelSelect" class="settings-select"></select>
               </div>
-              <div class="settings-row" style="align-items:flex-start;">
+              <div class="settings-row" style="align-items:flex-start;" hidden>
                 <label class="settings-label" style="margin-top:6px;">Fallbacks</label>
                 <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
                   <div id="set-defaultFallbacks" class="settings-fallbacks"></div>
@@ -2531,7 +2552,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260723compareicon1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js?v=20260723tasksbulkfeedback1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20260808startupshell1"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>

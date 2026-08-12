@@ -20,6 +20,395 @@ from src.interactive_gate import wait_for_interactive_quiet
 logger = logging.getLogger(__name__)
 
 
+def _read_email_urgency_state(state_path):
+    """Read one atomic urgency checkpoint, tolerating the legacy shape."""
+    from pathlib import Path
+
+    state_path = Path(state_path)
+    try:
+        state = (
+            json.loads(state_path.read_text(encoding="utf-8"))
+            if state_path.exists()
+            else {}
+        )
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _email_urgency_account_generations(state):
+    """Return normalized per-account checkpoint/complete generations.
+
+    Checkpoint generations fence every accepted state mutation. Complete
+    generations advance only for a non-stale complete scan. Missing metadata
+    is the legacy generation zero.
+    """
+    raw = state.get("account_generations", {}) if isinstance(state, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+
+    generations = {}
+    for account_id, value in raw.items():
+        if isinstance(value, dict):
+            checkpoint = value.get("checkpoint", 0)
+            complete = value.get("complete", 0)
+        else:
+            # Tolerate an intermediate scalar representation as one completed
+            # checkpoint generation instead of discarding its fence.
+            checkpoint = value
+            complete = value
+        try:
+            checkpoint = max(0, int(checkpoint))
+        except (TypeError, ValueError):
+            checkpoint = 0
+        try:
+            complete = max(0, int(complete))
+        except (TypeError, ValueError):
+            complete = 0
+        generations[str(account_id)] = {
+            "checkpoint": checkpoint,
+            "complete": complete,
+        }
+    return generations
+
+
+def _email_urgency_string_set(value):
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return set()
+    return {str(item) for item in value if isinstance(item, (str, int))}
+
+
+def _acquire_email_urgency_state_lock(
+    state_path,
+    lock_db_path,
+    cancel_event,
+    timeout_seconds=120,
+):
+    """Acquire the cross-process urgency lock without blocking the app loop."""
+    import sqlite3
+    import time
+    from pathlib import Path
+
+    state_path = Path(state_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout_seconds
+
+    while not cancel_event.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise sqlite3.OperationalError("timed out waiting for urgency state lock")
+        conn = sqlite3.connect(
+            str(lock_db_path),
+            timeout=min(0.25, max(0.01, remaining)),
+            check_same_thread=False,
+        )
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            if "locked" not in str(exc).lower():
+                raise
+            cancel_event.wait(min(0.05, max(0.0, remaining)))
+            continue
+        except BaseException:
+            conn.close()
+            raise
+
+        if cancel_event.is_set():
+            conn.rollback()
+            conn.close()
+            return None, None
+        return conn, _read_email_urgency_state(state_path)
+
+    return None, None
+
+
+def _close_email_urgency_state_lock(conn):
+    if conn is None:
+        return
+    try:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
+def _commit_email_urgency_state(conn, state_path, next_state):
+    """Atomically publish JSON before releasing the SQLite write lock."""
+    import uuid
+    from pathlib import Path
+
+    state_path = Path(state_path)
+    temp_path = state_path.with_name(
+        f".{state_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        temp_path.write_text(json.dumps(next_state), encoding="utf-8")
+        temp_path.replace(state_path)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        temp_path.unlink(missing_ok=True)
+        conn.close()
+
+
+async def _run_email_urgency_state_transaction(
+    state_path,
+    lock_db_path,
+    operation,
+):
+    """Serialize one urgency decision while keeping async work on this loop.
+
+    Only lock acquisition waits in a worker thread. ``operation`` is awaited
+    on the caller's long-lived event loop, where shared async clients, locks,
+    and the browser-notification queue belong. Cancellation rolls back the
+    SQLite transaction and never publishes a checkpoint.
+    """
+    import asyncio
+    import threading
+
+    loop = asyncio.get_running_loop()
+    cancel_event = threading.Event()
+    acquire_future = loop.run_in_executor(
+        None,
+        _acquire_email_urgency_state_lock,
+        state_path,
+        lock_db_path,
+        cancel_event,
+    )
+    try:
+        conn, prior = await asyncio.shield(acquire_future)
+    except asyncio.CancelledError as cancelled:
+        cancel_event.set()
+        # The acquisition worker owns any connection until it returns. Wait
+        # for its short busy-poll to observe cancellation, then close a lock it
+        # may have won concurrently with the cancellation request.
+        while True:
+            try:
+                conn, _prior = await asyncio.shield(acquire_future)
+                break
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                conn = None
+                break
+        _close_email_urgency_state_lock(conn)
+        raise cancelled
+
+    if conn is None:
+        raise asyncio.CancelledError
+
+    try:
+        result, next_state = await operation(prior)
+        # Keep this small atomic publish synchronous. There is no await between
+        # the successful operation and commit, so cancellation cannot be
+        # observed and then followed by a checkpoint.
+        try:
+            _commit_email_urgency_state(conn, state_path, next_state)
+        finally:
+            conn = None
+        return result
+    except BaseException:
+        _close_email_urgency_state_lock(conn)
+        raise
+
+
+def _email_urgency_account_key(message_key):
+    return str(message_key).split(":", 1)[0]
+
+
+def _email_urgency_payload_account_ids(state):
+    """Return account IDs that still own user-visible urgency payload."""
+    if not isinstance(state, dict):
+        return set()
+
+    per_uid = state.get("per_uid", {})
+    per_uid_keys = per_uid if isinstance(per_uid, dict) else {}
+    return {
+        _email_urgency_account_key(key) for key in per_uid_keys
+    } | {
+        _email_urgency_account_key(key)
+        for key in _email_urgency_string_set(state.get("notified_uids", []))
+    }
+
+
+def _email_urgency_known_account_ids(state):
+    """Return payload owners plus generation-only active/retired markers."""
+    return _email_urgency_payload_account_ids(state) | set(
+        _email_urgency_account_generations(state)
+    )
+
+
+def _email_urgency_stale_accounts(
+    prior,
+    base_account_generations,
+    account_ids,
+):
+    prior_generations = _email_urgency_account_generations(prior)
+    base_generations = _email_urgency_account_generations(
+        {"account_generations": base_account_generations}
+    )
+    return {
+        str(account_id)
+        for account_id in account_ids
+        if prior_generations.get(str(account_id), {}).get("checkpoint", 0)
+        != base_generations.get(str(account_id), {}).get("checkpoint", 0)
+    }
+
+
+def _merge_email_urgency_state(
+    prior,
+    *,
+    owner,
+    per_uid_scores,
+    notified_uids,
+    all_unread_keys,
+    fully_scanned_account_ids,
+    base_account_generations,
+    timestamp,
+    retired_account_ids=(),
+    base_payload_account_ids=(),
+    known_account_ids=(),
+):
+    """Merge a scan without letting an older snapshot erase newer facts."""
+    prior_per_uid = prior.get("per_uid", {})
+    if not isinstance(prior_per_uid, dict):
+        prior_per_uid = {}
+    complete = {str(account_id) for account_id in fully_scanned_account_ids}
+    prior_generations = _email_urgency_account_generations(prior)
+    retire_requested = {str(account_id) for account_id in retired_account_ids}
+    observed_accounts = {
+        _email_urgency_account_key(key) for key in per_uid_scores
+    } | complete | retire_requested
+    stale_accounts = _email_urgency_stale_accounts(
+        prior,
+        base_account_generations,
+        observed_accounts,
+    )
+    prior_payload_accounts = _email_urgency_payload_account_ids(prior)
+    base_payload_accounts = {
+        str(account_id) for account_id in base_payload_account_ids
+    }
+    # A selected account can be absent from the base snapshot. If another
+    # worker creates its first payload before this transaction wins the lock,
+    # membership itself is a fence even when both snapshots normalize to the
+    # legacy generation zero.
+    retired_accounts = {
+        account_id
+        for account_id in retire_requested - stale_accounts
+        if not (
+            account_id in prior_payload_accounts
+            and account_id not in base_payload_accounts
+        )
+    }
+    fresh_complete = complete - stale_accounts - retired_accounts
+    changed_accounts = set(fresh_complete)
+
+    merged_per_uid = {
+        key: value
+        for key, value in prior_per_uid.items()
+        if _email_urgency_account_key(key) not in retired_accounts
+    }
+    for key in list(merged_per_uid):
+        account_id = _email_urgency_account_key(key)
+        if account_id in fresh_complete:
+            merged_per_uid.pop(key, None)
+            changed_accounts.add(account_id)
+    # Partial scans may add or refresh facts, but absence from a partial scan
+    # is not evidence that another checkpoint or UI row is stale. When another
+    # worker committed after this scan captured its base generation, discard
+    # this account's whole stale snapshot. A key absent from the newer state
+    # may have been removed/read, so even a stale-only key is not safely
+    # additive without another fresh scan.
+    for key, value in per_uid_scores.items():
+        account_id = _email_urgency_account_key(key)
+        if account_id in stale_accounts or account_id in retired_accounts:
+            continue
+        if merged_per_uid.get(key) != value:
+            changed_accounts.add(account_id)
+        merged_per_uid[key] = value
+
+    prior_notified = _email_urgency_string_set(prior.get("notified_uids", []))
+    merged_notified = {
+        key
+        for key in prior_notified
+        if _email_urgency_account_key(key) not in retired_accounts
+    }
+    for key in _email_urgency_string_set(notified_uids) - prior_notified:
+        account_id = _email_urgency_account_key(key)
+        if account_id in stale_accounts or account_id in retired_accounts:
+            continue
+        merged_notified.add(key)
+        changed_accounts.add(account_id)
+    for key in list(merged_notified):
+        if (
+            _email_urgency_account_key(key) in fresh_complete
+            and key not in all_unread_keys
+        ):
+            merged_notified.discard(key)
+            changed_accounts.add(_email_urgency_account_key(key))
+
+    next_generations = {
+        account_id: dict(value)
+        for account_id, value in prior_generations.items()
+    }
+    for account_id in changed_accounts:
+        generation = next_generations.setdefault(
+            account_id,
+            {"checkpoint": 0, "complete": 0},
+        )
+        generation["checkpoint"] += 1
+        if account_id in fresh_complete:
+            generation["complete"] += 1
+    for account_id in {str(value) for value in known_account_ids}:
+        next_generations.setdefault(
+            account_id,
+            {"checkpoint": 0, "complete": 0},
+        )
+    for account_id in retired_accounts:
+        # Every authoritative absence advances its generation, even when the
+        # prior state is already a payload-empty tombstone. A re-enabled scan
+        # may have captured that previous tombstone immediately before the
+        # account was disabled/deleted again; monotonic advancement is what
+        # makes that in-flight scan stale.
+        generation = next_generations.setdefault(
+            account_id,
+            {"checkpoint": 0, "complete": 0},
+        )
+        generation["checkpoint"] += 1
+
+    total_unread = 0
+    total_urgent = 0
+    max_score = 0
+    for value in merged_per_uid.values():
+        if not isinstance(value, dict):
+            continue
+        try:
+            score = max(0, min(3, int(value.get("score", 0))))
+        except (TypeError, ValueError):
+            score = 0
+        max_score = max(max_score, score)
+        if value.get("unread"):
+            total_unread += 1
+            if score >= 2:
+                total_urgent += 1
+
+    return {
+        "ts": timestamp,
+        "owner": owner or "",
+        "total_unread": total_unread,
+        "total_urgent": total_urgent,
+        "max_score": max_score,
+        "per_uid": merged_per_uid,
+        "notified_uids": sorted(merged_notified),
+        "account_generations": next_generations,
+    }
+
+
 class TaskNoop(BaseException):
     """Raised by an action when it determined there's nothing to do.
 
@@ -1878,6 +2267,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # filename for single-user installs (matches prior behaviour).
         _owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
         STATE_PATH = _P(DATA_DIR) / f"email_urgency_state_{_owner_slug}.json"
+        STATE_LOCK_DB = STATE_PATH.with_suffix(".lock.sqlite3")
         CACHE_DIR = _P(EMAIL_URGENCY_CACHE_DIR)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1892,34 +2282,143 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             "shopping", "social", "work", "personal", "legal", "support", "promo",
         }
 
-        # ── 1. Resolve LLM candidates (utility primary + utility fallbacks; fall
-        # through to default chat as a last resort).
+        # Resolve with the task owner as before, but defer the availability
+        # gate until after authoritative account cleanup. State retirement must
+        # still run when no model is configured.
         from src.task_endpoint import resolve_task_candidates
         candidates = resolve_task_candidates(owner=owner)
-        if not candidates:
-            return "No LLM endpoint available", False
-
         target_account_id = _email_task_account_id(kwargs)
 
-        # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
+        # ── 1. Enumerate enabled accounts. Match this task's owner AND fall
         # back to the legacy "unowned account whose imap_user / from_address
         # == this owner" pattern — same rule `_get_email_config` uses, so a
         # pre-multi-user account row still gets picked up for the seeded task.
-        db = _SL()
-        try:
-            from sqlalchemy import and_ as _and, or_ as _or
-            q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
-            if owner:
-                unowned = _or(_EA.owner == None, _EA.owner == "")  # noqa: E711
-                same_mailbox = _or(_EA.imap_user == owner, _EA.from_address == owner)
-                q = q.filter(_or(_EA.owner == owner, _and(unowned, same_mailbox)))
-            if target_account_id:
-                q = q.filter(_EA.id == target_account_id)
-            accounts = q.all()
-        finally:
-            db.close()
+        def _enumerate_enabled_accounts():
+            db = _SL()
+            try:
+                from sqlalchemy import and_ as _and, or_ as _or
+                q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
+                if owner:
+                    unowned = _or(_EA.owner == None, _EA.owner == "")  # noqa: E711
+                    same_mailbox = _or(
+                        _EA.imap_user == owner,
+                        _EA.from_address == owner,
+                    )
+                    q = q.filter(
+                        _or(_EA.owner == owner, _and(unowned, same_mailbox))
+                    )
+                if target_account_id:
+                    q = q.filter(_EA.id == target_account_id)
+                return q.all()
+            finally:
+                db.close()
+
+        initial_accounts = _enumerate_enabled_accounts()
+        initial_account_ids = {
+            str(account.id) for account in initial_accounts
+        }
+
+        # Register every account before IMAP work, including its first-ever
+        # scan. A concurrent zero-account cleanup can then advance this marker
+        # and fence delivery even before the scan has produced payload.
+        registered_state = None
+        if initial_account_ids:
+            async def _register_accounts(prior):
+                next_state = _merge_email_urgency_state(
+                    prior,
+                    owner=owner,
+                    per_uid_scores={},
+                    notified_uids=prior.get("notified_uids", []),
+                    all_unread_keys=set(),
+                    fully_scanned_account_ids=set(),
+                    base_account_generations=(
+                        _email_urgency_account_generations(prior)
+                    ),
+                    timestamp=_time.time(),
+                    known_account_ids=initial_account_ids,
+                )
+                # Return the exact state committed by registration. This is
+                # the scan's generation token: adopting a later checkpoint
+                # after account cleanup would let the stale scan appear fresh.
+                return next_state, next_state
+
+            registered_state = await _run_email_urgency_state_transaction(
+                STATE_PATH,
+                STATE_LOCK_DB,
+                _register_accounts,
+            )
+
+        # Revalidate after registration. If deletion/disable and its cleanup
+        # completed before the marker was published, this second enumeration
+        # observes the absence and this action retires its own marker instead
+        # of starting IMAP. Accounts newly appearing between the two reads are
+        # left for the next pass rather than scanned without prior registration.
+        verified_accounts = _enumerate_enabled_accounts()
+        enabled_account_ids = {
+            str(account.id) for account in verified_accounts
+        }
+        accounts = [
+            account
+            for account in verified_accounts
+            if str(account.id) in initial_account_ids
+        ]
+
+        # Capture the checkpoint basis before cleanup or IMAP. A full
+        # owner-wide enumeration authoritatively retires all known state IDs
+        # absent from the current enabled/visible set. A scoped task may retire
+        # only its selected missing/disabled account. Existing accounts remain
+        # present even if their later network scan fails, so transient IMAP
+        # failure never erases their last known state.
+        base_state = (
+            registered_state
+            if registered_state is not None
+            else _read_email_urgency_state(STATE_PATH)
+        )
+        base_account_generations = _email_urgency_account_generations(
+            base_state
+        )
+        base_payload_account_ids = _email_urgency_payload_account_ids(base_state)
+        known_state_account_ids = _email_urgency_known_account_ids(base_state)
+        if target_account_id:
+            retired_account_ids = (
+                {str(target_account_id)}
+                if str(target_account_id) not in enabled_account_ids
+                else set()
+            )
+        else:
+            retired_account_ids = (
+                known_state_account_ids - enabled_account_ids
+            )
+
+        if retired_account_ids:
+            async def _retire_accounts(prior):
+                next_state = _merge_email_urgency_state(
+                    prior,
+                    owner=owner,
+                    per_uid_scores={},
+                    notified_uids=prior.get("notified_uids", []),
+                    all_unread_keys=set(),
+                    fully_scanned_account_ids=set(),
+                    base_account_generations=base_account_generations,
+                    timestamp=_time.time(),
+                    retired_account_ids=retired_account_ids,
+                    base_payload_account_ids=base_payload_account_ids,
+                )
+                return None, next_state
+
+            await _run_email_urgency_state_transaction(
+                STATE_PATH,
+                STATE_LOCK_DB,
+                _retire_accounts,
+            )
         if not accounts:
             raise TaskNoop("no email accounts configured")
+
+        # ── 2. Account retirement above is state maintenance and does not
+        # depend on model availability. Scanning still requires the utility
+        # primary/fallback candidates resolved for this task owner.
+        if not candidates:
+            return "No LLM endpoint available", False
 
         urgency_prompt = settings.get("urgent_email_prompt", "")
         per_uid_scores = {}   # key = "<acc_id>:<uid>" → {"score": 0-3, "reason": "..."}
@@ -1929,6 +2428,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         failed_classifications = []
         tag_write_details = []
         scanned = 0
+        fully_scanned_account_ids = set()
 
         def _heuristic_email_verdict(item: dict) -> dict:
             blob = (
@@ -2024,16 +2524,27 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             def _scan_one(account=acc, cache_uids=cache.get("uids", {})):
                 """Sync IMAP work runs in a thread."""
                 results = []
+                scan_complete = True
                 conn = _imap_connect(account.id)
                 try:
-                    conn.select("INBOX", readonly=True)
+                    select_status, _select_data = conn.select("INBOX", readonly=True)
+                    if select_status != "OK":
+                        return results, False
                     # Tag recent inbox mail, not only unread mail. Urgency
                     # reminders below still only notify for unread messages.
                     since_str = AGE_CUTOFF.strftime("%d-%b-%Y")
                     status, data = conn.uid("SEARCH", None, f'(SINCE {since_str})')
-                    if status != "OK" or not data or not data[0]:
-                        return results
-                    uids = data[0].split()[-30:]
+                    if status != "OK":
+                        return results, False
+                    if not data or not data[0]:
+                        return results, True
+                    matching_uids = data[0].split()
+                    if len(matching_uids) > 30:
+                        # The scale guard deliberately processes only the most
+                        # recent 30. That is a partial account snapshot, so it
+                        # cannot justify pruning older checkpoint facts.
+                        scan_complete = False
+                    uids = matching_uids[-30:]
                     for uid_b in uids:
                         uid = uid_b.decode() if isinstance(uid_b, bytes) else str(uid_b)
                         key = f"{account.id}:{uid}"
@@ -2041,12 +2552,41 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                         cached_ok = isinstance(cached, dict) and cached.get("triage_version") == TRIAGE_VERSION
                         results.append({"key": key, "uid": uid, "cached": cached if cached_ok else None})
                         if cached_ok:
-                            # Already classified — skip the fetch.
+                            # Cached verdicts still need a lightweight FLAGS
+                            # refresh. Without it a cached unread message looks
+                            # read and its successful notification checkpoint
+                            # is pruned on the next pass.
+                            try:
+                                st, flag_data = conn.uid("FETCH", uid_b, "(UID FLAGS)")
+                                if st != "OK" or not flag_data:
+                                    scan_complete = False
+                                    results.pop()
+                                    continue
+                                flag_parts = []
+                                for part in flag_data:
+                                    if isinstance(part, (bytes, bytearray)):
+                                        flag_parts.append(bytes(part))
+                                    elif (
+                                        isinstance(part, tuple)
+                                        and part
+                                        and isinstance(part[0], (bytes, bytearray))
+                                    ):
+                                        flag_parts.append(bytes(part[0]))
+                                flags_blob = b" ".join(flag_parts)
+                                results[-1]["unread"] = b"\\Seen" not in flags_blob
+                            except Exception as _fe:
+                                scan_complete = False
+                                results.pop()
+                                logger.debug(
+                                    f"urgency: flag fetch for uid {uid} failed: {_fe}"
+                                )
                             continue
                         # Pull headers + first ~800 chars of plaintext body.
                         try:
                             st, msg_data = conn.uid("FETCH", uid_b, "(UID FLAGS RFC822.HEADER BODY.PEEK[TEXT]<0.800>)")
                             if st != "OK" or not msg_data:
+                                scan_complete = False
+                                results.pop()
                                 continue
                             flags_blob = b" ".join(
                                 part[0] for part in msg_data
@@ -2060,6 +2600,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                                 if isinstance(part, tuple) and part[1]:
                                     raw += part[1] + b"\n\n"
                             if not raw:
+                                scan_complete = False
+                                results.pop()
                                 continue
                             msg = _email_mod.message_from_bytes(raw)
                             # Skip Odysseus-generated reminders so the scanner
@@ -2115,17 +2657,21 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                                 "unread": is_unread,
                             })
                         except Exception as _fe:
+                            scan_complete = False
+                            results.pop()
                             logger.debug(f"urgency: header fetch for uid {uid} failed: {_fe}")
                 finally:
                     try: conn.logout()
                     except Exception: pass
-                return results
+                return results, scan_complete
 
             try:
-                items = await _aio.to_thread(_scan_one)
+                items, scan_complete = await _aio.to_thread(_scan_one)
             except Exception as e:
                 logger.warning(f"urgency: IMAP scan failed for account {acc.id}: {e}")
                 continue
+            if scan_complete:
+                fully_scanned_account_ids.add(str(acc.id))
 
             for item in items:
                 scanned += 1
@@ -2262,13 +2808,13 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     logger.debug(f"urgency: LLM classify failed for {key}: {e}")
                     continue
 
-            # ── Prune cache entries for UIDs that are no longer in the recent
-            # scan window. Read messages remain cached because tags are useful
-            # on read mail too; unread state is refreshed per scan above.
-            seen_uids = {it["uid"] for it in items}
-            cache_uids = cache.get("uids", {})
-            for stale in [u for u in cache_uids if u not in seen_uids]:
-                cache_uids.pop(stale, None)
+            if scan_complete:
+                # Only a complete account scan proves a cached UID left the
+                # recent window. Partial/failing scans preserve prior facts.
+                seen_uids = {it["uid"] for it in items}
+                cache_uids = cache.get("uids", {})
+                for stale in [u for u in cache_uids if u not in seen_uids]:
+                    cache_uids.pop(stale, None)
 
             try:
                 cache_file.write_text(_json.dumps(cache), encoding="utf-8")
@@ -2372,40 +2918,34 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 4. Aggregate state. urgent = score ≥ 2.
         urgent_keys = [k for k, v in per_uid_scores.items() if v.get("score", 0) >= 2 and v.get("unread")]
-        max_score = max((v.get("score", 0) for v in per_uid_scores.values()), default=0)
-        total_urgent = len(urgent_keys)
 
-        # Load prior state to know which urgent UIDs we've already notified.
-        try:
-            prior = _json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
-        except Exception:
-            prior = {}
-        notified_uids = set(prior.get("notified_uids", []))
-
-        # ── 5. Fire reminder ONLY when a previously-unnotified UID scores urgent.
-        new_urgent = [k for k in urgent_keys if k not in notified_uids]
+        # ── 5. Fire a reminder only when a previously-unnotified UID scores
+        # urgent. The read, decision, delivery, and checkpoint are serialized
+        # below so two scheduler workers cannot both act on the same stale
+        # state or overwrite each other's successful checkpoint.
         newly_notified = set()
         notify_failed = set()
-        if new_urgent:
-            title = "Urgent email" if total_urgent == 1 else f"{total_urgent} urgent emails"
-            # Build a real listing — subject · sender · reason for each urgent
-            # one — so the reminder email tells you which messages to act on,
-            # not just "4 needing reply". Optional deep-link when the user has
-            # `app_public_url` configured in Settings (so the email row links
-            # straight into the Odysseus Email tab).
-            # Sort: highest-scored UIDs first; cap at 10 to keep the email tidy.
+
+        def _urgency_reminder_payload(reminder_keys):
+            total = len(reminder_keys)
+            title = "Urgent email" if total == 1 else f"{total} urgent emails"
             sorted_urgent = sorted(
-                ((k, per_uid_scores[k]) for k in urgent_keys),
-                key=lambda kv: kv[1].get("score", 0), reverse=True,
+                ((key, per_uid_scores[key]) for key in reminder_keys),
+                key=lambda item: item[1].get("score", 0),
+                reverse=True,
             )[:10]
             _pub = (settings.get("app_public_url") or "").strip().rstrip("/")
             from urllib.parse import quote as _quote
-            lines = [f"{total_urgent} email" + ("" if total_urgent == 1 else "s") + " need an urgent reply:", ""]
-            for i, (k, v) in enumerate(sorted_urgent, 1):
-                subj = (v.get("subject") or "(no subject)")[:160]
-                frm = v.get("from") or ""
-                why = v.get("reason") or ""
-                uid_for_link = str(k).split(":", 1)[-1]
+            lines = [
+                f"{total} email" + ("" if total == 1 else "s")
+                + " need an urgent reply:",
+                "",
+            ]
+            for i, (key, value) in enumerate(sorted_urgent, 1):
+                subj = (value.get("subject") or "(no subject)")[:160]
+                frm = value.get("from") or ""
+                why = value.get("reason") or ""
+                uid_for_link = str(key).split(":", 1)[-1]
                 hash_link = f"#email={_quote('INBOX', safe='')}:{uid_for_link}"
                 open_link = f"{_pub}/{hash_link}" if _pub else hash_link
                 line = f"{i}. {subj}"
@@ -2415,57 +2955,94 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     line += f"  ·  {why}"
                 lines.append(line)
                 lines.append(f"   Open email: {open_link}")
-            if total_urgent > len(sorted_urgent):
+            if total > len(sorted_urgent):
                 lines.append("")
-                lines.append(f"…and {total_urgent - len(sorted_urgent)} more.")
-            body = "\n".join(lines)
-            try:
-                # Call dispatch_reminder DIRECTLY (no HTTP/auth roundtrip — the
-                # endpoint version 401's the background scheduler because it
-                # has no session cookie).
-                from routes.note_routes import dispatch_reminder
-                dispatch_result = await dispatch_reminder(
-                    title=title, note_body=body, note_id="urgent-email",
-                    owner=owner or "",
-                )
-                channel = (settings.get("reminder_channel") or "browser").strip().lower()
-                delivered = bool(dispatch_result.get("browser_sent"))
-                if channel == "email":
-                    delivered = bool(dispatch_result.get("email_sent"))
-                elif channel == "ntfy":
-                    delivered = bool(dispatch_result.get("ntfy_sent"))
-                elif channel == "webhook":
-                    delivered = bool(dispatch_result.get("webhook_sent"))
-                if delivered:
-                    newly_notified.update(new_urgent)
-                else:
+                lines.append(f"…and {total - len(sorted_urgent)} more.")
+            return title, "\n".join(lines)
+
+        async def _dispatch_urgency_reminder(reminder_keys):
+            # Call dispatch_reminder directly: a scheduler has no browser
+            # session cookie with which to call the HTTP endpoint.
+            from routes.note_routes import dispatch_reminder
+            title, body = _urgency_reminder_payload(reminder_keys)
+            return await dispatch_reminder(
+                title=title,
+                note_body=body,
+                note_id="urgent-email",
+                owner=owner or "",
+            )
+
+        async def _dispatch_and_checkpoint(prior):
+            notified_uids = _email_urgency_string_set(
+                prior.get("notified_uids", [])
+            )
+            observed_accounts = {
+                _email_urgency_account_key(key) for key in per_uid_scores
+            } | fully_scanned_account_ids
+            stale_accounts = _email_urgency_stale_accounts(
+                prior,
+                base_account_generations,
+                observed_accounts,
+            )
+            # Generation fencing must happen before delivery, not only during
+            # merge. A stale-only unread UID may have been removed, read, or
+            # downgraded by the newer completed scan.
+            deliverable_urgent = [
+                key
+                for key in urgent_keys
+                if _email_urgency_account_key(key) not in stale_accounts
+            ]
+            new_urgent = [
+                key
+                for key in deliverable_urgent
+                if key not in notified_uids
+            ]
+            if new_urgent:
+                try:
+                    dispatch_result = await _dispatch_urgency_reminder(
+                        deliverable_urgent
+                    )
+                    channel = (settings.get("reminder_channel") or "browser").strip().lower()
+                    delivered = bool(dispatch_result.get("browser_sent"))
+                    if channel == "email":
+                        delivered = bool(dispatch_result.get("email_sent"))
+                    elif channel == "ntfy":
+                        delivered = bool(dispatch_result.get("ntfy_sent"))
+                    elif channel == "webhook":
+                        delivered = bool(dispatch_result.get("webhook_sent"))
+                    if delivered:
+                        newly_notified.update(new_urgent)
+                        notified_uids.update(new_urgent)
+                    else:
+                        notify_failed.update(new_urgent)
+                        logger.warning(
+                            "urgency: reminder dispatch returned no successful "
+                            f"delivery path: {dispatch_result}"
+                        )
+                except Exception as e:
+                    logger.warning(f"urgency: reminder dispatch failed: {e}")
                     notify_failed.update(new_urgent)
-                    logger.warning(f"urgency: reminder dispatch returned no successful delivery path: {dispatch_result}")
-            except Exception as e:
-                logger.warning(f"urgency: reminder dispatch failed: {e}")
-                notify_failed.update(new_urgent)
-            # Mark only successfully delivered UIDs as notified so a transient
-            # SMTP/ntfy/browser failure retries instead of lying forever.
-            notified_uids.update(newly_notified)
 
-        # Prune notified_uids that aren't unread anymore (so a future re-urgent
-        # message with the same UID — rare but possible after archive→unarchive
-        # — can re-notify). Keep only UIDs still in `all_unread_keys`.
-        notified_uids = {u for u in notified_uids if u in all_unread_keys}
+            next_state = _merge_email_urgency_state(
+                prior,
+                owner=owner,
+                per_uid_scores=per_uid_scores,
+                notified_uids=notified_uids,
+                all_unread_keys=all_unread_keys,
+                fully_scanned_account_ids=fully_scanned_account_ids,
+                base_account_generations=base_account_generations,
+                timestamp=_time.time(),
+            )
+            return notified_uids, next_state
 
-        state = {
-            "ts": _time.time(),
-            "owner": owner or "",
-            "total_unread": len(all_unread_keys),
-            "total_urgent": total_urgent,
-            "max_score": max_score,
-            "per_uid": per_uid_scores,
-            "notified_uids": sorted(notified_uids),
-        }
         try:
-            STATE_PATH.write_text(_json.dumps(state), encoding="utf-8")
+            await _run_email_urgency_state_transaction(
+                STATE_PATH,
+                STATE_LOCK_DB,
+                _dispatch_and_checkpoint,
+            )
         except Exception as e:
-            logger.warning(f"urgency: state write failed: {e}")
+            logger.warning(f"urgency: state transaction failed: {e}")
 
         # ── 6. Activity-log summary — counts line on top, then per-tier
         # bulleted breakdown so the user can see WHICH emails ranked where

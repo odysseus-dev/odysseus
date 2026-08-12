@@ -21,6 +21,7 @@ from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.foreground_model_routing import build_foreground_model_candidates
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
@@ -1399,14 +1400,14 @@ def setup_chat_routes(
             thinking_response = ""
             last_metrics = None
 
-            # Configured fallback chain for the default chat model. Tried in
-            # order if the session's primary model fails before producing
-            # output. Resolved once per request.
-            try:
-                from src.endpoint_resolver import resolve_chat_fallback_candidates
-                _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
-            except Exception:
-                _fallback_candidates = []
+            # Foreground Chat and Agent requests use one owner-aware policy
+            # boundary. Legacy `default_model_fallbacks` data is not eligible.
+            _foreground_candidates = build_foreground_model_candidates(
+                sess.endpoint_url,
+                sess.model,
+                sess.headers,
+                owner=_user,
+            )
 
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if effective_do_research else None
@@ -1522,9 +1523,8 @@ def setup_chat_routes(
                 _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
-                    _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
                     async for chunk in stream_llm_with_fallback(
-                        _chat_candidates,
+                        _foreground_candidates,
                         messages,
                         temperature=ctx.preset.temperature,
                         # Respect the preset; 0/unset = let the server decide (no
@@ -1710,7 +1710,7 @@ def setup_chat_routes(
                         disabled_tools=disabled_tools if disabled_tools else None,
                         tool_policy=tool_policy,
                         owner=_user,
-                        fallbacks=_fallback_candidates,
+                        fallbacks=_foreground_candidates[1:],
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
