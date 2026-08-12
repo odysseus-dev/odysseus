@@ -1450,6 +1450,8 @@ import {
       _displayOverride = null;
       const skipBubble = _hideUserBubble;
       _hideUserBubble = false;
+      const regenerateSend = _pendingRegenerateSend;
+      _pendingRegenerateSend = false;
       // Auto-recovery counter: carries across a turn's auto-continues, but resets
       // when the user genuinely sends a new message (so each task gets a fresh cap).
       // A real user turn (visible bubble) ALWAYS resets the budget — even if a
@@ -1653,6 +1655,7 @@ import {
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      if (regenerateSend) fd.append('regenerate', 'true');
       if (selectedRouteForSend.model) fd.append('selected_model', selectedRouteForSend.model);
       if (selectedRouteForSend.endpoint_url) fd.append('selected_endpoint_url', selectedRouteForSend.endpoint_url);
       if (selectedRouteForSend.endpoint_id) fd.append('selected_endpoint_id', selectedRouteForSend.endpoint_id);
@@ -5206,7 +5209,7 @@ import {
       if (replaceFromHere) {
         // Regenerate flows intentionally trim history to this point before
         // resubmitting. The plain "Resend message" action must not do this.
-        const keepCount = msgIndex;
+        const keepCount = msgIndex + 1;
         await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5223,6 +5226,7 @@ import {
           sibling = next;
         }
         _hideUserBubble = true;
+        _pendingRegenerateSend = true;
       }
       _pendingRegenAttachments = _ids;
 
@@ -5320,7 +5324,7 @@ import {
       variants.push({ raw: oldRaw, html: oldHtml, label: 'original' });
     }
 
-    const keepCount = userIndex;
+    const keepCount = userIndex + 1;
 
     try {
       await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
@@ -5342,6 +5346,7 @@ import {
       _hideUserBubble = true;
       const messageInput = uiModule.el('message');
       messageInput.value = userText;
+      _pendingRegenerateSend = true;
       const submitBtn = document.querySelector('.send-btn');
       if (submitBtn) submitBtn.click();
 
@@ -5357,6 +5362,7 @@ import {
   // File-ids carried over from the original user message during a regen, so
   // photos / OCR overrides survive into the new send. Consumed once.
   let _pendingRegenAttachments = null;
+  let _pendingRegenerateSend = false;
 
   /**
    * Called after streaming completes to attach variant navigation if this was a regen.

@@ -5428,7 +5428,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const target = rawTarget && rawTarget.nodeType === Node.TEXT_NODE ? rawTarget.parentElement : rawTarget;
       const sendButtons = Array.from(document.querySelectorAll('#doc-email-send-btn'));
       const targetBtn = target && target.closest ? target.closest('#doc-email-send-btn') : null;
-      const rectBtn = sendButtons.find((candidate) => _eventInsideElement(e, candidate));
+      const rectBtn = sendButtons.find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return candidate.offsetParent !== null && rect.width > 0 && rect.height > 0 && _eventInsideElement(e, candidate);
+      });
       const btn = targetBtn || rectBtn || null;
       if (!btn || btn.disabled) return;
       if (e) {
