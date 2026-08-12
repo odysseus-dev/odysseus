@@ -435,12 +435,14 @@ def test_web_page_message_initializes_taint_with_structured_provenance():
 
 def test_untrusted_context_message_arms_gate_by_default_and_can_opt_out():
     from src.prompt_security import untrusted_context_message
+    from src.provenance import ProvenanceOrigin
 
     armed = untrusted_context_message("MCP tools", "attacker-controlled description")
     opted_out = untrusted_context_message(
         "server status",
         "known-safe",
         arm_tool_gate=False,
+        origin=ProvenanceOrigin.ODYSSEUS,
     )
 
     assert armed["metadata"]["tool_gate_untrusted"] is True

@@ -80,18 +80,18 @@ def test_agent_provenance_migration_adds_fail_closed_columns(
     tmp_path,
 ):
     import sqlite3
+    from sqlalchemy import create_engine
     import core.database as database
 
     db_path = tmp_path / "legacy.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
-    monkeypatch.setattr(
-        database,
-        "DATABASE_URL",
-        f"sqlite:///{db_path}",
-    )
-
-    database._migrate_add_agent_provenance_columns()
+    migration_engine = create_engine(f"sqlite:///{db_path}")
+    monkeypatch.setattr(database, "engine", migration_engine)
+    try:
+        database._migrate_add_agent_provenance_columns()
+    finally:
+        migration_engine.dispose()
 
     with sqlite3.connect(db_path) as conn:
         columns = {
@@ -107,4 +107,4 @@ def test_agent_provenance_migration_adds_fail_closed_columns(
     ):
         assert name in columns
         assert columns[name][3] == 1
-        assert str(columns[name][4]) in {"0", "'0'"}
+        assert str(columns[name][4]).casefold() in {"0", "'0'", "false"}
