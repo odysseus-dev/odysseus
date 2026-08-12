@@ -87,7 +87,7 @@ def test_known_imap_mailbox_call_sites_are_quoted():
     assert "conn.select(sent_name" not in pollers
     assert "imap.append(sent_folder" not in pollers
 
-    document_routes = Path("routes/document_routes.py").read_text()
+    document_routes = Path("routes/document/document_routes.py").read_text()
     assert "conn.select(doc.source_email_folder" not in document_routes
 
 

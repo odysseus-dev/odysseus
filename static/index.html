@@ -248,11 +248,20 @@
       }, { once: true });
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20260723tasksbulkfeedback1">
-  <link rel="modulepreload" href="/static/app.js?v=20260723tasksbulkfeedback1">
-  <link rel="modulepreload" href="/static/js/chat.js?v=20260722ctxheader4">
+  <!-- Preload the two faces first paint actually uses: Fira Code 400 and 600,
+       the app font and the weight the sidebar and header text render at. They
+       are declared in style.css, so without a hint they are only discovered
+       after the stylesheet parses and then queue behind the module graph.
+       crossorigin is required even though these are same-origin: fonts are
+       always fetched in CORS mode, and a preload whose mode does not match the
+       real request is discarded and the font fetched a second time. -->
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
+  <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
+  <link rel="modulepreload" href="/static/app.js?v=20260808startupshell1">
+  <link rel="modulepreload" href="/static/js/chat.js?v=20260801fix1">
   <link rel="modulepreload" href="/static/js/ui.js">
-  <link rel="modulepreload" href="/static/js/sessions.js?v=20260722ctxheader4">
+  <link rel="modulepreload" href="/static/js/sessions.js">
   <link rel="modulepreload" href="/static/js/markdown.js">
 </head>
 <body>
@@ -286,7 +295,13 @@
       if(!document.getElementById('app-loader')){clearInterval(iv);return}
       render();
     },150);
-    setTimeout(function(){var l=document.getElementById('app-loader');if(l){l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
+    // startupShell.js hides the loader as soon as the shell is wired; it calls
+    // back here to stop the wave because this interval is owned by this script.
+    window.__odysseusLoaderWaveStop=function(){clearInterval(iv)};
+    // Last-resort fallback for a boot that never reaches app.js at all. Must
+    // still REMOVE the node: sessions.js reads its presence as "startup in
+    // progress" and stops clearing the composer while it is around.
+    setTimeout(function(){var l=document.getElementById('app-loader');if(l){clearInterval(iv);l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
   })();
   </script>
   <!-- Memory Management Modal -->
@@ -365,6 +380,7 @@
                 <span class="skill-rich-ph"><span class="k">Add a memory</span> &mdash; e.g. 'I prefer concise replies' <svg class="k" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:4px;" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
               </div>
               <select id="new-memory-category" class="memory-edit-cat-select" aria-label="Memory category"></select>
+              <button type="button" id="new-memory-add-btn" class="theme-io-btn" title="Save this memory" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add</button>
             </div>
           </div>
           <div class="admin-card">
@@ -812,7 +828,13 @@
             <button class="session-bulk-btn" id="session-bulk-cancel" title="Cancel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
         </div>
-        <div id="session-list" role="listbox"></div>
+        <div id="session-list" role="listbox">
+          <!-- Sidebar-local bootstrap state. renderSessionList() replaces the
+               whole list on first hydration, so this row is transient. -->
+          <div id="session-list-loading" class="list-item session-list-bootstrap" role="option" aria-disabled="true" aria-live="polite" aria-atomic="true">
+            <span class="grow muted" data-session-list-status>Loading chats…</span>
+          </div>
+        </div>
       </div>
       <!-- Hidden dropdown for session actions -->
       <div id="session-actions-dropdown" class="dropdown hidden">
@@ -1005,7 +1027,7 @@
       var tips = mobile ? phone : desktop;
       var el = document.getElementById('welcome-tip');
       if (el) {
-        el.textContent = 'Pick a model if you want, or just type.';
+        el.textContent = tips[Math.floor(Math.random() * tips.length)];
       }
       fetch('/api/version').then(function(r){return r.json()}).then(function(d){
         if (d.version) window._appVersion = d.version;
@@ -2504,7 +2526,7 @@
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
-<script type="module" src="/static/js/sessions.js?v=20260722ctxheader4"></script>
+<script type="module" src="/static/js/sessions.js"></script>
 <script type="module" src="/static/js/memory.js?v=20260722memoryloading1"></script>
 <script type="module" src="/static/js/skills.js"></script>
 <script type="module" src="/static/js/tourHints.js"></script>
@@ -2522,7 +2544,7 @@
 <script type="module" src="/static/js/chatRenderer.js?v=20260722emailfastindex1"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js?v=20260722emailfastindex1"></script>
-  <script type="module" src="/static/js/chat.js?v=20260722ctxheader4"></script>
+  <script type="module" src="/static/js/chat.js?v=20260801fix1"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>
@@ -2530,7 +2552,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260723compareicon1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js?v=20260723tasksbulkfeedback1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20260808startupshell1"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
