@@ -73,6 +73,30 @@ _HF_TOKEN_STATUS_SNIPPET = (
 )
 
 
+def _windows_local_pid_record_line(pid_path: Path, ready_path: Path) -> str:
+    """Build the Git Bash prelude that records a Win32-stoppable PID.
+
+    Python publishes the detached outer process's Win32 PID first, then touches
+    ``ready_path``. The inner Git Bash runner waits for that publication before
+    replacing the fallback with its own Win32 PID from /proc/<msys-pid>/winpid.
+
+    Missing, malformed, or late mappings leave the valid outer PID untouched.
+    """
+    pp = shlex.quote(pid_path.as_posix())
+    rp = shlex.quote(ready_path.as_posix())
+    return (
+        "i=0; "
+        f"while [ ! -e {rp} ] && [ \"$i\" -lt 500 ]; do "
+        "i=$((i+1)); sleep 0.01; done; "
+        f"if [ -e {rp} ]; then "
+        "winpid=\"$(cat /proc/$$/winpid 2>/dev/null || true)\"; "
+        "case \"$winpid\" in ''|*[!0-9]*) ;; "
+        f"*) printf '%s\\n' \"$winpid\" > {pp} ;; esac; "
+        "fi; "
+        f"rm -f {rp}"
+    )
+
+
 def _append_mlx_image_server_script(runner_lines: list[str]) -> None:
     """Write the MLX image API helper next to the tmux runner on remote hosts."""
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mlx_image_server.py"
@@ -978,24 +1002,17 @@ def setup_cookbook_routes() -> APIRouter:
         directly (simple commands only). Returns the launched job record."""
         log_path = TMUX_LOG_DIR / f"{session_id}.log"
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
+        pid_ready_path: Path | None = None
         bash = find_bash()
         if bash:
             # Run the existing bash wrapper verbatim through Git Bash, redirecting
             # all output to the log the poller reads. Paths handed to bash use
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            pp = shlex.quote(pid_path.as_posix())
-            # Record the serving shell's REAL Windows PID, not bash's MSYS PID.
-            # Git Bash's `$$` is the MSYS/Cygwin pid (e.g. 723), which Win32
-            # tooling (taskkill, Get-CimInstance ParentProcessId, Stop-Process)
-            # cannot match — so the frontend Stop-Tree walk finds nothing and the
-            # llama-server child survives after Stop (the GPU stays pinned). The
-            # `/proc/$$/winpid` map yields the true Win32 pid; if it is somehow
-            # unavailable the write is skipped, leaving the outer proc.pid written
-            # below (line ~1023) — also a valid Windows ancestor of the serve.
+            pid_ready_path = TMUX_LOG_DIR / f"{session_id}.pid.ready"
+            pid_ready_path.unlink(missing_ok=True)
             inner.write_text(
-                f"winpid=\"$(cat /proc/$$/winpid 2>/dev/null)\"; "
-                f"[ -n \"$winpid\" ] && printf '%s\\n' \"$winpid\" > {pp}\n"
+                _windows_local_pid_record_line(pid_path, pid_ready_path) + "\n"
                 + "\n".join(bash_lines) + "\n",
                 encoding="utf-8",
             )
@@ -1030,7 +1047,18 @@ def setup_cookbook_routes() -> APIRouter:
             env=env,
             **detached_popen_kwargs(),
         )
+        # Publish a valid Win32 ancestor first. The Git Bash runner may then
+        # replace it with its own Win32 pid, but never before this fallback exists.
         pid_path.write_text(str(proc.pid), encoding="utf-8")
+        if pid_ready_path is not None:
+            try:
+                pid_ready_path.touch()
+            except OSError as e:
+                logger.warning(
+                    "Could not publish Windows local PID handoff for %s: %s",
+                    session_id,
+                    e,
+                )
         return {"pid": proc.pid, "log_path": str(log_path)}
 
     @router.post("/api/model/download")
