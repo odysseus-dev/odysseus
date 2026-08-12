@@ -1231,34 +1231,31 @@ def _migrate_add_security_mode_column():
         logging.getLogger(__name__).warning(
             f"Migration check for security_mode failed: {e}"
         )
+
+
 def _migrate_add_agent_provenance_columns():
     """Add monotonic per-thread provenance state to existing databases."""
-    import sqlite3
-    db_path = DATABASE_URL.replace("sqlite:///", "")
-    if not os.path.exists(db_path):
-        return
     columns_to_add = (
         "agent_external_untrusted_seen",
         "agent_workspace_untrusted_seen",
         "agent_odysseus_untrusted_seen",
         "agent_private_data_seen",
     )
-    conn = None
     try:
-        conn = sqlite3.connect(db_path)
-        columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
-        }
+        inspector = inspect(engine)
+        if "sessions" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("sessions")}
         changed = False
-        for column in columns_to_add:
-            if column not in columns:
-                conn.execute(
-                    f"ALTER TABLE sessions ADD COLUMN {column} BOOLEAN "
-                    "NOT NULL DEFAULT 0"
-                )
-                changed = True
+        with engine.begin() as conn:
+            for column in columns_to_add:
+                if column not in columns:
+                    conn.execute(text(
+                        f"ALTER TABLE sessions ADD COLUMN {column} BOOLEAN "
+                        "NOT NULL DEFAULT FALSE"
+                    ))
+                    changed = True
         if changed:
-            conn.commit()
             logging.getLogger(__name__).info(
                 "Migrated: added agent provenance columns to sessions"
             )
@@ -1266,11 +1263,8 @@ def _migrate_add_agent_provenance_columns():
         logging.getLogger(__name__).warning(
             f"Migration check for agent provenance failed: {e}"
         )
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+
+
 def _migrate_add_folder_column():
     """Add folder column to sessions table if it doesn't exist."""
     import sqlite3
