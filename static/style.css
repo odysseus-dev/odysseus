@@ -38015,6 +38015,12 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   outline-offset: 2px;
   border-radius: 5px;
 }
+/* Bootstrap row shown while the session list hydrates, and on load failure.
+   Reads as a normal list row but is not selectable. */
+.session-list-bootstrap {
+  cursor: default;
+  pointer-events: none;
+}
 #email-lib-grid .date-section-header {
   padding: 10px 5px 3px;
 }

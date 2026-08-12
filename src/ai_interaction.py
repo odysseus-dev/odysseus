@@ -22,6 +22,7 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.constants import GENERATED_IMAGES_DIR
+from src.memory import MemoryStoreUnreadable
 
 logger = logging.getLogger(__name__)
 
@@ -384,7 +385,15 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Memory text cannot be empty"}
 
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
-        memories = _memory_manager.load_all()
+        # Strict load: this is a read-modify-write, and it is the path an
+        # ordinary "remember that I prefer X" takes. Degrading to [] here would
+        # save just this one entry over a store we only failed to read,
+        # atomically destroying every memory in it (issue #5673).
+        try:
+            memories = _memory_manager.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            logger.error("Refusing to add memory, store unreadable: %s", e)
+            return {"error": "Memory store is temporarily unreadable — nothing was saved."}
         memories.append(entry)
         _memory_manager.save(memories)
 
