@@ -49,7 +49,14 @@ function makeWorld() {
           return sel === '[data-session-list-status]' ? this.status : null;
         },
       };
-      if (statusText !== null) el.status = { textContent: statusText };
+      if (statusText !== null) {
+        el.status = {
+          textContent: statusText,
+          attrs: {},
+          setAttribute(k, v) { this.attrs[k] = v; },
+          getAttribute(k) { return this.attrs[k]; },
+        };
+      }
       byId.set(id, el);
       return el;
     },
@@ -146,6 +153,21 @@ cases.failed_hydration_marks_sidebar_row = async () => {
     beforePaint,
     afterPaint: row.status.textContent,
     loaderRemoved: !w.byId.has('app-loader'),
+  };
+};
+
+cases.failed_hydration_uses_i18n = async () => {
+  const w = makeWorld();
+  const row = w.addElement('session-list-loading', { statusText: 'Loading chats…' });
+  window.odysseusI18n = {
+    t: (key) => key === 'ui.chats.unavailable' ? 'Chats nicht verfügbar' : key,
+  };
+  const shell = await loadModule();
+  shell.markSessionListUnavailableIfStillBootstrapping();
+  w.paint(2);
+  return {
+    text: row.status.textContent,
+    key: row.status.getAttribute('data-i18n'),
   };
 };
 
@@ -321,6 +343,13 @@ def test_failed_session_load_marks_the_sidebar_row(results):
     assert r["beforePaint"] == "Loading chats…", "failure written before the render frame"
     assert r["afterPaint"] == "Chats unavailable"
     assert r["loaderRemoved"] is True, "a failed load must still free the shell"
+
+
+def test_failed_session_load_uses_the_semantic_translation_key(results):
+    assert results["failed_hydration_uses_i18n"] == {
+        "text": "Chats nicht verfügbar",
+        "key": "ui.chats.unavailable",
+    }
 
 
 def test_zero_session_success_never_shows_a_failure(results):

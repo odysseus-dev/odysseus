@@ -23,7 +23,14 @@ def test_email_summary_renderer_ignores_untrusted_provider_error_text():
       import {{ _renderEmailSummaryError }} from '{_UTILS}';
       const host = {{
         ownerDocument: {{
-          createElement() {{ return {{ style: {{}}, textContent: '' }}; }},
+          createElement() {{
+            return {{
+              style: {{}},
+              textContent: '',
+              attrs: {{}},
+              setAttribute(name, value) {{ this.attrs[name] = value; }},
+            }};
+          }},
         }},
         replaceChildren(node) {{ this.child = node; }},
       }};
@@ -34,6 +41,7 @@ def test_email_summary_renderer_ignores_untrusted_provider_error_text():
       console.log(JSON.stringify({{
         text: host.child.textContent,
         color: host.child.style.color,
+        key: host.child.attrs['data-i18n'],
       }}));
     """
 
@@ -48,5 +56,73 @@ def test_email_summary_renderer_ignores_untrusted_provider_error_text():
 
     assert proc.returncode == 0, proc.stderr
     rendered = json.loads(proc.stdout)
-    assert rendered == {"text": "Failed to summarize", "color": "var(--red)"}
+    assert rendered == {
+        "text": "Failed to summarize",
+        "color": "var(--red)",
+        "key": "ui.failed.to.summarize",
+    }
     assert secret not in proc.stdout
+
+
+def test_email_summary_renderer_uses_semantic_translation_keys():
+    script = f"""
+      import {{ _renderEmailSummaryError }} from '{_UTILS}';
+      const translations = {{
+        'ui.no.email.body.to.summarize': 'Kein E-Mail-Text zum Zusammenfassen',
+        'ui.no.model.configured.for.email.summaries': 'Kein Modell konfiguriert',
+        'ui.the.model.returned.an.empty.summary': 'Leere Zusammenfassung',
+      }};
+      globalThis.window = {{
+        odysseusI18n: {{ t: (key) => translations[key] || key }},
+      }};
+      function render(error_code) {{
+        const host = {{
+          ownerDocument: {{
+            createElement() {{
+              return {{
+                style: {{}},
+                textContent: '',
+                attrs: {{}},
+                setAttribute(name, value) {{ this.attrs[name] = value; }},
+              }};
+            }},
+          }},
+          replaceChildren(node) {{ this.child = node; }},
+        }};
+        _renderEmailSummaryError(host, {{ error_code }});
+        return {{
+          text: host.child.textContent,
+          key: host.child.attrs['data-i18n'],
+        }};
+      }}
+      console.log(JSON.stringify([
+        render('email_summary_missing_body'),
+        render('email_summary_not_configured'),
+        render('email_summary_empty'),
+      ]));
+    """
+
+    proc = subprocess.run(
+        ["node", "--input-type=module"],
+        input=script,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == [
+        {
+            "text": "Kein E-Mail-Text zum Zusammenfassen",
+            "key": "ui.no.email.body.to.summarize",
+        },
+        {
+            "text": "Kein Modell konfiguriert",
+            "key": "ui.no.model.configured.for.email.summaries",
+        },
+        {
+            "text": "Leere Zusammenfassung",
+            "key": "ui.the.model.returned.an.empty.summary",
+        },
+    ]

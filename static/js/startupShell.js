@@ -20,6 +20,14 @@ const ROUTES_NEEDING_SESSIONS = new Set(['/email']);
 let _routeOpener = null;
 let _routeOpenerNeedsSessions = false;
 
+function _translatedText(key, fallback) {
+  try {
+    const translated = window.odysseusI18n?.t?.(key);
+    if (typeof translated === 'string' && translated !== key) return translated;
+  } catch (_) {}
+  return fallback;
+}
+
 function _loader() {
   return document.getElementById(LOADER_ID);
 }
@@ -72,7 +80,8 @@ export function markSessionListUnavailableIfStillBootstrapping() {
     const row = document.getElementById(SESSION_BOOTSTRAP_ROW_ID);
     if (!row) return;
     const status = row.querySelector('[data-session-list-status]') || row;
-    status.textContent = 'Chats unavailable';
+    status.setAttribute?.('data-i18n', 'ui.chats.unavailable');
+    status.textContent = _translatedText('ui.chats.unavailable', 'Chats unavailable');
   });
 }
 

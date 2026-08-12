@@ -31,21 +31,50 @@ export function _esc(text) {
 }
 
 const _EMAIL_SUMMARY_ERROR_MESSAGES = Object.freeze({
-  email_summary_missing_body: 'No email body to summarize',
-  email_summary_not_configured: 'No model configured for email summaries',
-  email_summary_empty: 'The model returned an empty summary',
-  email_summary_unavailable: 'Failed to summarize',
+  email_summary_missing_body: Object.freeze({
+    key: 'ui.no.email.body.to.summarize',
+    fallback: 'No email body to summarize',
+  }),
+  email_summary_not_configured: Object.freeze({
+    key: 'ui.no.model.configured.for.email.summaries',
+    fallback: 'No model configured for email summaries',
+  }),
+  email_summary_empty: Object.freeze({
+    key: 'ui.the.model.returned.an.empty.summary',
+    fallback: 'The model returned an empty summary',
+  }),
+  email_summary_unavailable: Object.freeze({
+    key: 'ui.failed.to.summarize',
+    fallback: 'Failed to summarize',
+  }),
 });
 
-export function _emailSummaryErrorMessage(result) {
+const _DEFAULT_EMAIL_SUMMARY_ERROR = _EMAIL_SUMMARY_ERROR_MESSAGES.email_summary_unavailable;
+
+function _emailSummaryErrorDescriptor(result) {
   const code = String(result?.error_code || '');
-  return _EMAIL_SUMMARY_ERROR_MESSAGES[code] || 'Failed to summarize';
+  return _EMAIL_SUMMARY_ERROR_MESSAGES[code] || _DEFAULT_EMAIL_SUMMARY_ERROR;
+}
+
+function _translatedUiText(key, fallback) {
+  try {
+    const translated = globalThis.window?.odysseusI18n?.t?.(key);
+    if (typeof translated === 'string' && translated !== key) return translated;
+  } catch (_) {}
+  return fallback;
+}
+
+export function _emailSummaryErrorMessage(result) {
+  const descriptor = _emailSummaryErrorDescriptor(result);
+  return _translatedUiText(descriptor.key, descriptor.fallback);
 }
 
 export function _renderEmailSummaryError(container, result) {
+  const descriptor = _emailSummaryErrorDescriptor(result);
   const message = container.ownerDocument.createElement('span');
   message.style.color = 'var(--red)';
-  message.textContent = _emailSummaryErrorMessage(result);
+  message.setAttribute?.('data-i18n', descriptor.key);
+  message.textContent = _translatedUiText(descriptor.key, descriptor.fallback);
   container.replaceChildren(message);
 }
 

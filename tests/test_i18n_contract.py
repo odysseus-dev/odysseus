@@ -177,6 +177,79 @@ def test_catalog_ledger_preserves_source_line_locations():
     assert f"static/index.html:{source_line}" in record["locations"]
 
 
+def test_new_browser_messages_have_stable_semantic_keys():
+    english = _json(I18N_DIR / "en.json")
+    expected = {
+        "ui.save.this.memory": "Save this memory",
+        "ui.loading.chats": "Loading chats…",
+        "ui.chats.unavailable": "Chats unavailable",
+        "ui.no.email.body.to.summarize": "No email body to summarize",
+        "ui.no.model.configured.for.email.summaries": (
+            "No model configured for email summaries"
+        ),
+        "ui.the.model.returned.an.empty.summary": (
+            "The model returned an empty summary"
+        ),
+        "ui.session.request.failed.http.value": (
+            "Session request failed (HTTP {0})"
+        ),
+        "ui.session.request.returned.an.invalid.response": (
+            "Session request returned an invalid response"
+        ),
+        "ui.welcome.tip.search_chats": (
+            "Tip: Press Ctrl+K to search across all your conversations."
+        ),
+        "ui.welcome.tip.toggle_sidebar": (
+            "Tip: Press Ctrl+B to quickly toggle the sidebar."
+        ),
+        "ui.welcome.tip.move_sidebar": (
+            "Tip: Shift-click the sidebar toggle to swap it to the other side."
+        ),
+        "ui.welcome.tip.drop_files": (
+            "Tip: Drag and drop files onto the chat to attach them."
+        ),
+        "ui.welcome.tip.session_menu": (
+            "Tip: Right-click a session for rename, delete, and memory options."
+        ),
+        "ui.welcome.tip.session_menu_touch": (
+            "Tip: Long-press a session for rename, delete, and memory options."
+        ),
+        "ui.welcome.tip.nobody_mode": (
+            "Tip: Tap the eye icon for Nobody mode — no history saved."
+        ),
+        "ui.welcome.tip.agent_mode": (
+            "Tip: Switch to Agent mode for web search and code execution."
+        ),
+        "ui.welcome.tip.compare_mode": (
+            "Tip: Use Compare mode to test different models side by side."
+        ),
+        "ui.welcome.tip.attach_files": (
+            "Tip: Attach images or files using the + button next to the input."
+        ),
+    }
+
+    assert {key: english.get(key) for key in expected} == expected
+    assert "function" not in english.values()
+
+    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'data-i18n-title="ui.save.this.memory"' in index
+    assert 'data-i18n="ui.loading.chats"' in index
+    for key in expected:
+        if key.startswith("ui.welcome.tip."):
+            assert f"['{key}'," in index
+
+    for locale in STEAM_LOCALES:
+        if locale == "en":
+            continue
+        catalog = _json(I18N_DIR / f"{locale}.json")
+        for key, source in expected.items():
+            assert catalog[key] != source, (locale, key)
+        assert catalog["ui.session.request.failed.http.value"].count("{0}") == 1
+        assert "Ctrl+K" in catalog["ui.welcome.tip.search_chats"]
+        assert "Ctrl+B" in catalog["ui.welcome.tip.toggle_sidebar"]
+        assert "+" in catalog["ui.welcome.tip.attach_files"]
+
+
 def test_executable_catalog_fragments_remain_byte_identical():
     english = _json(I18N_DIR / "en.json")
     opaque_sources = {
@@ -305,6 +378,7 @@ def test_auth_app_pwa_and_offline_shell_are_wired():
     assert "/static/i18n/registry.json" in worker
     assert "/static/i18n/en.json" in worker
     assert "/static/i18n/fr.json" not in worker
+    assert "odysseus-v378-i18n-dev-refresh" in worker
     assert "setI18nText(setupNote, 'auth.first_time_setup'" in login
     assert "auth.two_factor_code" in login
 

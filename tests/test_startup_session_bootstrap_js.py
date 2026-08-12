@@ -275,6 +275,34 @@ globalThis.fetch = async () => {
   return response;
 };
 const authResult = await sessions.loadSessions();
+const authAddedError = __sessionErrors.length !== errorsBeforeAuth;
+const authRedirect = window.location.href;
+
+const errorsBeforeLocalized = [...__sessionErrors];
+window.location.href = '/';
+window.odysseusI18n = {
+  t(key, parameters = {}) {
+    const translations = {
+      'ui.failed.to.load.sessions': 'Sessions konnten nicht geladen werden:',
+      'ui.session.request.failed.http.value': `Sitzungsanfrage fehlgeschlagen (HTTP ${parameters[0]})`,
+      'ui.session.request.returned.an.invalid.response': 'Ungültige Sitzungsantwort',
+    };
+    return translations[key] || key;
+  },
+};
+globalThis.fetch = async () => ({
+  ok: false,
+  status: 502,
+  json: async () => ({}),
+});
+const requestFailureResult = await sessions.loadSessions();
+globalThis.fetch = async () => ({
+  ok: true,
+  status: 200,
+  json: async () => ({ sessions: [] }),
+});
+const invalidResponseResult = await sessions.loadSessions();
+const localizedErrors = __sessionErrors.slice(errorsBeforeLocalized.length);
 
 console.log(JSON.stringify({
   seeded,
@@ -291,10 +319,13 @@ console.log(JSON.stringify({
   draft: message.value,
   lastSessionId: localStorage.getItem('lastSessionId'),
   historyWrites: world.historyWrites(),
-  errors: __sessionErrors,
+  errors: errorsBeforeLocalized,
+  localizedErrors,
+  requestFailureResult,
+  invalidResponseResult,
   authResult,
-  authRedirect: window.location.href,
-  authAddedError: __sessionErrors.length !== errorsBeforeAuth,
+  authRedirect,
+  authAddedError,
 }));
 """
 
@@ -354,3 +385,13 @@ def test_401_keeps_global_auth_redirect_contract(results):
     assert results["authRedirect"] == "/login"
     assert results["authAddedError"] is False
     assert results["sessionIds"] == ["existing"]
+
+
+def test_session_request_fallback_errors_use_semantic_translations(results):
+    assert results["requestFailureResult"] is False
+    assert results["invalidResponseResult"] is False
+    assert results["localizedErrors"] == [
+        "Sessions konnten nicht geladen werden: "
+        "Sitzungsanfrage fehlgeschlagen (HTTP 502)",
+        "Sessions konnten nicht geladen werden: Ungültige Sitzungsantwort",
+    ]

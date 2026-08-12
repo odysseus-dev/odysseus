@@ -132,6 +132,24 @@ const CORE_MESSAGES = Object.freeze({
   'ui.email.folder.trash': 'Trash',
   'ui.email.folder.drafts': 'Drafts',
   'ui.email.folder.scheduled': 'Scheduled',
+  'ui.save.this.memory': 'Save this memory',
+  'ui.loading.chats': 'Loading chats…',
+  'ui.chats.unavailable': 'Chats unavailable',
+  'ui.no.email.body.to.summarize': 'No email body to summarize',
+  'ui.no.model.configured.for.email.summaries': 'No model configured for email summaries',
+  'ui.the.model.returned.an.empty.summary': 'The model returned an empty summary',
+  'ui.session.request.failed.http.value': 'Session request failed (HTTP {0})',
+  'ui.session.request.returned.an.invalid.response': 'Session request returned an invalid response',
+  'ui.welcome.tip.search_chats': 'Tip: Press Ctrl+K to search across all your conversations.',
+  'ui.welcome.tip.toggle_sidebar': 'Tip: Press Ctrl+B to quickly toggle the sidebar.',
+  'ui.welcome.tip.move_sidebar': 'Tip: Shift-click the sidebar toggle to swap it to the other side.',
+  'ui.welcome.tip.drop_files': 'Tip: Drag and drop files onto the chat to attach them.',
+  'ui.welcome.tip.session_menu': 'Tip: Right-click a session for rename, delete, and memory options.',
+  'ui.welcome.tip.session_menu_touch': 'Tip: Long-press a session for rename, delete, and memory options.',
+  'ui.welcome.tip.nobody_mode': 'Tip: Tap the eye icon for Nobody mode — no history saved.',
+  'ui.welcome.tip.agent_mode': 'Tip: Switch to Agent mode for web search and code execution.',
+  'ui.welcome.tip.compare_mode': 'Tip: Use Compare mode to test different models side by side.',
+  'ui.welcome.tip.attach_files': 'Tip: Attach images or files using the + button next to the input.',
   'css.copied': '✓ Copied',
   'css.editing': 'EDITING',
   'css.drop_to_attach': 'Drop to attach',
@@ -610,6 +628,13 @@ function skipStringNode(node, parent) {
   if ((parent.type === 'ObjectProperty' || parent.type === 'ObjectMethod') && parent.key === node && !parent.computed) return true;
   if ((parent.type === 'MemberExpression' || parent.type === 'OptionalMemberExpression') && parent.property === node && !parent.computed) return true;
   if (parent.type === 'Directive' || parent.type === 'DirectiveLiteral') return true;
+  if (
+    parent.type === 'BinaryExpression'
+    && ['==', '!=', '===', '!=='].includes(parent.operator)
+  ) {
+    const other = parent.left === node ? parent.right : parent.right === node ? parent.left : null;
+    if (other?.type === 'UnaryExpression' && other.operator === 'typeof') return true;
+  }
   return parent.type === 'CallExpression' && parent.callee?.type === 'Import';
 }
 

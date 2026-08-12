@@ -21,6 +21,8 @@ const HISTORY_DISPLAY_CHAR_LIMIT = 160000;
 const HISTORY_DISPLAY_TAIL_CHARS = 20000;
 const HISTORY_PAGE_LIMIT_MOBILE = 8;
 const HISTORY_PAGE_LIMIT_DESKTOP = 24;
+const SESSION_REQUEST_FAILED_KEY = 'ui.session.request.failed.http.value';
+const SESSION_RESPONSE_INVALID_KEY = 'ui.session.request.returned.an.invalid.response';
 
 const SIDEBAR_MAX_VISIBLE = 10;
 const FOLDER_MAX_VISIBLE = 5;
@@ -33,6 +35,19 @@ const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key 
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
 let _historyPager = null;
+
+function _translatedSessionText(key, fallback, parameters = {}) {
+  try {
+    const translated = window.odysseusI18n?.t?.(key, parameters);
+    if (typeof translated === 'string' && translated !== key) return translated;
+  } catch (_) {}
+  return String(fallback).replace(
+    /\{([A-Za-z_][A-Za-z0-9_]*|\d+)\}/g,
+    (placeholder, name) => (
+      Object.hasOwn(parameters, name) ? String(parameters[name]) : placeholder
+    ),
+  );
+}
 
 function _shouldPreserveStartupComposer(msgInput) {
   if (!msgInput || !msgInput.value) return false;
@@ -1689,14 +1704,21 @@ export async function loadSessions() {
           const payload = await res.json();
           detail = payload?.detail || payload?.error || '';
         } catch (_) {}
-        const error = new Error(detail || `Session request failed (HTTP ${res.status})`);
+        const error = new Error(detail || _translatedSessionText(
+          SESSION_REQUEST_FAILED_KEY,
+          'Session request failed (HTTP {0})',
+          { 0: res.status },
+        ));
         error.status = res.status;
         throw error;
       }
       fetched = await res.json();
     }
     if (!Array.isArray(fetched)) {
-      throw new Error('Session request returned an invalid response');
+      throw new Error(_translatedSessionText(
+        SESSION_RESPONSE_INVALID_KEY,
+        'Session request returned an invalid response',
+      ));
     }
     sessions = _normalizeSessionsList(fetched);
     renderSessionList();
@@ -1826,7 +1848,11 @@ export async function loadSessions() {
     // app.js's global fetch wrapper owns expired-auth navigation. Avoid
     // flashing a redundant session error while that 401 redirect is pending.
     if (error?.status !== 401) {
-      uiModule.showError('Failed to load sessions: ' + error.message);
+      const prefix = _translatedSessionText(
+        'ui.failed.to.load.sessions',
+        'Failed to load sessions:',
+      );
+      uiModule.showError(`${prefix} ${error.message}`);
     }
     return false;
   }

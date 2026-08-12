@@ -748,6 +748,30 @@ async function main() {
         }
         if (!window.odysseusI18n) throw new Error('index i18n runtime did not initialize');
         await window.odysseusI18n.ready;
+        const welcomeTipElement = document.getElementById('welcome-tip');
+        const welcomeTipKey = welcomeTipElement.getAttribute('data-i18n');
+        const initialWelcomeTip = welcomeTipElement.textContent.trim();
+        document.getElementById('incognito-btn').click();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const nobodyWelcomeTip = {
+          key: welcomeTipElement.getAttribute('data-i18n'),
+          text: welcomeTipElement.textContent.trim(),
+          expected: window.odysseusI18n.t(
+            'ui.temporary.session.won.t.be.saved.and.no.memory.activation'
+          ),
+        };
+        document.getElementById('incognito-btn').click();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const welcomeTip = {
+          key: welcomeTipKey,
+          expected: window.odysseusI18n.t(welcomeTipKey),
+          initial: initialWelcomeTip,
+          nobody: nobodyWelcomeTip,
+          restored: {
+            key: welcomeTipElement.getAttribute('data-i18n'),
+            text: welcomeTipElement.textContent.trim(),
+          },
+        };
         const settings = (await import('/static/js/settings.js')).default;
         settings.open('account');
         for (let attempt = 0; attempt < 100 && !document.getElementById('tfa-setup-btn'); attempt += 1) {
@@ -794,7 +818,7 @@ async function main() {
           settingsNavLabelLeft: settingsNavLabel.left,
         };
         await window.odysseusI18n.setLocale('fr', { persist: false, announce: false });
-        return { ...french, rtl };
+        return { ...french, welcomeTip, rtl };
       })()`,
     });
     result.index = valueFrom(indexEvaluation);
@@ -807,6 +831,13 @@ async function main() {
       || result.index.rearrange === '↑↓ Rearrange'
       || result.index.twoFactor.includes('Add an extra layer of security')
       || result.index.twoFactor.includes('Set Up 2FA')
+      || !result.index.welcomeTip.key?.startsWith('ui.welcome.tip.')
+      || result.index.welcomeTip.initial !== result.index.welcomeTip.expected
+      || result.index.welcomeTip.nobody.key !== 'ui.temporary.session.won.t.be.saved.and.no.memory.activation'
+      || result.index.welcomeTip.nobody.text === 'Temporary session — won’t be saved and no memory activation.'
+      || result.index.welcomeTip.nobody.text !== result.index.welcomeTip.nobody.expected
+      || result.index.welcomeTip.restored.key !== result.index.welcomeTip.key
+      || result.index.welcomeTip.restored.text !== result.index.welcomeTip.expected
     ) {
       throw new Error(`localized app shell failed: ${JSON.stringify(result.index)}`);
     }

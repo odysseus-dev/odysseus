@@ -937,7 +937,11 @@ function initializeEventListeners() {
         welcomeSub.textContent = 'Deep multi-step research with source gathering and synthesis.';
       }
       if (tipEl) {
-        if (!tipEl.dataset.researchOrigTip) tipEl.dataset.researchOrigTip = tipEl.textContent;
+        if (!tipEl.dataset.researchOrigTip) {
+          tipEl.dataset.researchOrigTip = tipEl.textContent;
+          tipEl.dataset.researchOrigI18n = tipEl.getAttribute('data-i18n') || '';
+        }
+        tipEl.removeAttribute('data-i18n');
         tipEl.textContent = '';
         tipEl.style.display = 'none';
       }
@@ -959,9 +963,13 @@ function initializeEventListeners() {
       }
       if (tipEl && tipEl.dataset.researchOrigTip) {
         tipEl.textContent = tipEl.dataset.researchOrigTip;
+        if (tipEl.dataset.researchOrigI18n) {
+          tipEl.setAttribute('data-i18n', tipEl.dataset.researchOrigI18n);
+        }
         tipEl.style.opacity = '';
         tipEl.style.display = '';
         delete tipEl.dataset.researchOrigTip;
+        delete tipEl.dataset.researchOrigI18n;
       }
       // Restore Nobody toggle
       const _incBtn2 = el('incognito-btn');
@@ -2624,7 +2632,14 @@ function initializeEventListeners() {
           welcomeSub.textContent = "Who am I? I'm nobody.";
           welcomeSub.style.display = '';
         }
-        if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
+        if (tipEl) {
+          tipEl.dataset.originalTip = tipEl.textContent;
+          tipEl.dataset.originalTipI18n = tipEl.getAttribute('data-i18n') || '';
+          tipEl.setAttribute('data-i18n', 'ui.temporary.session.won.t.be.saved.and.no.memory.activation');
+          tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.';
+          tipEl.style.opacity = '0.5';
+          tipEl.style.marginTop = '8px';
+        }
         // Default to plain chat: disable tools visually, switch to chat mode.
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
         // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
@@ -2674,7 +2689,17 @@ function initializeEventListeners() {
           }
           welcomeSub2.style.display = '';
         }
-        if (tipEl && tipEl.dataset.originalTip) { tipEl.textContent = tipEl.dataset.originalTip; tipEl.style.opacity = ''; tipEl.style.marginTop = ''; }
+        if (tipEl && tipEl.dataset.originalTip) {
+          tipEl.textContent = tipEl.dataset.originalTip;
+          if (tipEl.dataset.originalTipI18n) {
+            tipEl.setAttribute('data-i18n', tipEl.dataset.originalTipI18n);
+          } else {
+            tipEl.removeAttribute('data-i18n');
+          }
+          tipEl.style.opacity = '';
+          tipEl.style.marginTop = '';
+          delete tipEl.dataset.originalTipI18n;
+        }
         // Heal any previously-persisted false values from the old Nobody bug
         // so agent-mode defaults (web/bash ON) come back.
         const _ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
