@@ -166,6 +166,21 @@ def test_workspace_write_diff_taints_before_later_host_action():
     assert context.decision_for("bash").allowed is False
 
 
+def test_hugging_face_search_result_is_external_untrusted():
+    context = ToolRunSecurityContext()
+
+    context.observe_tool_result(
+        "search_hf_models",
+        {"output": "creator-controlled repository metadata", "exit_code": 0},
+    )
+
+    assert (
+        capabilities_for_tool("search_hf_models").result_integrity
+        is ResultIntegrity.EXTERNAL_UNTRUSTED
+    )
+    assert context.external_untrusted_context_seen is True
+
+
 def test_model_visible_failed_web_result_taints_run():
     context = ToolRunSecurityContext()
 
