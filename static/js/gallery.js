@@ -50,10 +50,10 @@ function _captionBlock(caption, esc) {
   const rest = full.slice(i).trim();
   return `<div class="gallery-detail-prompt">`
     + `<span id="gallery-caption-short">${esc(summary)}<br>`
-    + `<button type="button" id="gallery-caption-toggle" style="background:none;border:0;padding:0;color:var(--red);font:inherit;cursor:pointer;text-decoration:underline;">show more</button>`
+    + `<button type="button" id="gallery-caption-toggle" class="gallery-caption-toggle-btn">show more</button>`
     + `</span>`
     + `<span id="gallery-caption-full" hidden>${esc(summary)}<br><br>${esc(rest).replace(/\n/g, '<br>')}<br>`
-    + `<button type="button" id="gallery-caption-collapse" style="background:none;border:0;padding:0;color:var(--red);font:inherit;cursor:pointer;text-decoration:underline;">show less</button>`
+    + `<button type="button" id="gallery-caption-collapse" class="gallery-caption-toggle-btn">show less</button>`
     + `</span></div>`;
 }
 let _search = '';

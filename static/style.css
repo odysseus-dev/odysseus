@@ -19171,6 +19171,16 @@ body.gallery-selecting .gallery-dl-btn,
   white-space: pre-wrap;
   line-height: 1.4;
 }
+/* Plain-text link button for the OCR caption show more / show less toggle. */
+.gallery-caption-toggle-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--red);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
 .gallery-tag-input,
 .gallery-detail-name-input {
   width: 100%;
