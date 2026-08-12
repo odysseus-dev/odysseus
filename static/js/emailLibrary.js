@@ -13,7 +13,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import {
   _esc, _escLinkify, _extractName, _parseTurnMeta,
   _formatBubbleDate, _formatRecipients, _senderColor, _initials,
-  _sanitizeHtml,
+  _sanitizeHtml, _renderEmailSummaryError,
   _TALON_WROTE, _TALON_FROM, _TALON_SENT, _TALON_SUBJ, _TALON_TO,
   _TALON_ORIG_RE, _SIG_BLOAT_MIN_CHARS,
 } from './emailLibrary/utils.js';
@@ -30,6 +30,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
 let _libLoadSeq = 0;
+let _emailMailboxGeneration = 0;
+let _emailCardOpenSeq = 0;
+let _emailReadMutationSeq = 0;
+const _emailReadMutations = new Map();
 let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
@@ -837,14 +841,41 @@ document.addEventListener('keydown', (e) => {
   e.stopImmediatePropagation?.();
 }, true);
 
-function _syncEmailReadState(uid, isRead = true) {
+function _emailReadContextKey(context) {
+  return [context.accountId, context.folder, context.uid].map(value => String(value || '')).join('\u0000');
+}
+
+function _emailReadContextIsCurrent(context) {
+  if (!context) return true;
+  return (
+    String(state._libAccountId || '') === context.accountId &&
+    String(state._libFolder || 'INBOX') === context.libraryFolder &&
+    _emailMailboxGeneration === context.mailboxGeneration
+  );
+}
+
+function _emailMatchesReadContext(email, context) {
+  if (String(email?.uid || '') !== context.uid) return false;
+  const accountId = String(email?.account_id || context.accountId);
+  const folder = String(email?.folder || context.folder);
+  return accountId === context.accountId && folder === context.folder;
+}
+
+function _syncEmailReadState(uid, isRead = true, context = null) {
   if (uid == null) return;
   const uidStr = String(uid);
   const read = !!isRead;
-  const match = (state._libEmails || []).find(x => String(x.uid) === uidStr);
+  if (context && (!_emailReadContextIsCurrent(context) || uidStr !== context.uid)) return;
+  const match = (state._libEmails || []).find(x => (
+    context ? _emailMatchesReadContext(x, context) : String(x.uid) === uidStr
+  ));
   if (match) match.is_read = read;
 
   document.querySelectorAll('.doclib-card[data-uid="' + CSS.escape(uidStr) + '"]').forEach(card => {
+    if (context && (
+      String(card.dataset.emailAccount || '') !== context.accountId ||
+      String(card.dataset.emailFolder || '') !== context.folder
+    )) return;
     card.classList.toggle('email-card-unread', !read);
     const titleRow = card.querySelector('.email-card-titlerow');
     if (read) {
@@ -1762,11 +1793,18 @@ function _rememberedEmailAccountId() {
 // results and __scheduled__ are deliberately not cached.
 const _libListCache = new Map();
 const _LIB_CACHE_MAX = 24;
+const _LIB_INITIAL_PAGE_SIZE = 100;
 const _LIB_SESSION_CACHE_PREFIX = 'odysseus.email.list.';
 const _LIB_SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
 const _LIB_LAST_ACCOUNT_KEY = 'odysseus.email.lastAccountId';
-let _libPrewarmTimer = null;
+const _LIB_PREWARM_COOLDOWN_MS = 5 * 60 * 1000;
+let _libPrewarmDelayTimer = null;
+let _libPrewarmIdleHandle = null;
 let _libPrewarmPromise = null;
+let _libPrewarmResolve = null;
+let _libPrewarmAbortController = null;
+let _libPrewarmDetachPriorityListeners = null;
+let _libPrewarmGeneration = 0;
 let _libLastPrewarmAt = 0;
 let _libUnreadPrewarmKey = '';
 let _libUnreadPrewarmAt = 0;
@@ -1908,6 +1946,7 @@ function _resetEmailListForFreshLoad({ useCache = true } = {}) {
   _exitEmailReaderModeForList();
   _resetBulkSelectionForContextChange();
   state._libOffset = 0;
+  _emailMailboxGeneration += 1;
   _libLoadSeq += 1;
   const ck = _libCacheKey();
   const cached = useCache ? _libCacheGet(ck) : null;
@@ -2076,162 +2115,319 @@ function _isChatInteractionBusy() {
   }
 }
 
-function _loadEmailsWhenChatIdle({ delay = 50, retries = 180, options = {} } = {}) {
-  const run = () => {
-    if (!state._libOpen || !document.getElementById('email-lib-modal')) return;
-    if (_isChatInteractionBusy() && retries > 0) {
-      setTimeout(() => _loadEmailsWhenChatIdle({ delay: 1000, retries: retries - 1, options }), 1000);
+function _canRunEmailPrewarm() {
+  if (state._libOpen || state._libLoading || _libSearchInFlight) return false;
+  if (document.visibilityState && document.visibilityState !== 'visible') return false;
+  return !_isChatInteractionBusy();
+}
+
+function _isEmailPrewarmTemporarilyBlocked() {
+  if (state._libOpen || state._libLoading || _libSearchInFlight) return false;
+  if (document.visibilityState && document.visibilityState !== 'visible') return false;
+  return _isChatInteractionBusy();
+}
+
+function _isEmailPrewarmCurrent(generation, signal) {
+  return generation === _libPrewarmGeneration
+    && !signal?.aborted
+    && _canRunEmailPrewarm();
+}
+
+function _settleEmailPrewarm(generation, value = false) {
+  if (generation !== _libPrewarmGeneration) return;
+  const resolve = _libPrewarmResolve;
+  const detachPriorityListeners = _libPrewarmDetachPriorityListeners;
+  _libPrewarmDelayTimer = null;
+  _libPrewarmIdleHandle = null;
+  _libPrewarmPromise = null;
+  _libPrewarmResolve = null;
+  _libPrewarmAbortController = null;
+  _libPrewarmDetachPriorityListeners = null;
+  detachPriorityListeners?.();
+  resolve?.(value);
+}
+
+function _cancelEmailPrewarm() {
+  const resolve = _libPrewarmResolve;
+  const detachPriorityListeners = _libPrewarmDetachPriorityListeners;
+  _libPrewarmGeneration += 1;
+  if (_libPrewarmDelayTimer !== null) {
+    clearTimeout(_libPrewarmDelayTimer);
+  }
+  if (_libPrewarmIdleHandle !== null && typeof window.cancelIdleCallback === 'function') {
+    try { window.cancelIdleCallback(_libPrewarmIdleHandle); } catch (_) {}
+  }
+  try { _libPrewarmAbortController?.abort(); } catch (_) {}
+  _libPrewarmDelayTimer = null;
+  _libPrewarmIdleHandle = null;
+  _libPrewarmPromise = null;
+  _libPrewarmResolve = null;
+  _libPrewarmAbortController = null;
+  _libPrewarmDetachPriorityListeners = null;
+  detachPriorityListeners?.();
+  resolve?.(false);
+}
+
+function _scheduleEmailPrewarm(task, { delay = 0 } = {}) {
+  if (_libPrewarmPromise) return _libPrewarmPromise;
+  // Do not disguise a timer as idle work. Browsers without the genuine idle
+  // callback simply skip this optional optimization and load on demand.
+  if (typeof window.requestIdleCallback !== 'function') return Promise.resolve(false);
+
+  const generation = ++_libPrewarmGeneration;
+  _libPrewarmPromise = new Promise(resolve => { _libPrewarmResolve = resolve; });
+  const promise = _libPrewarmPromise;
+  let attemptPending = false;
+  let retryRequested = false;
+
+  function clearScheduledAttempt() {
+    if (_libPrewarmDelayTimer !== null) clearTimeout(_libPrewarmDelayTimer);
+    if (_libPrewarmIdleHandle !== null && typeof window.cancelIdleCallback === 'function') {
+      try { window.cancelIdleCallback(_libPrewarmIdleHandle); } catch (_) {}
+    }
+    _libPrewarmDelayTimer = null;
+    _libPrewarmIdleHandle = null;
+  }
+
+  function scheduleIdleRetry(delay = 500) {
+    if (generation !== _libPrewarmGeneration) return;
+    retryRequested = true;
+    if (attemptPending || _libPrewarmDelayTimer !== null || _libPrewarmIdleHandle !== null) return;
+    if (document.visibilityState && document.visibilityState !== 'visible') return;
+    _libPrewarmDelayTimer = setTimeout(requestIdle, Math.max(50, Number(delay) || 500));
+  }
+
+  function handlePriorityChange() {
+    if (generation !== _libPrewarmGeneration) return;
+    if (_canRunEmailPrewarm()) {
+      scheduleIdleRetry(50);
       return;
     }
-    _loadEmails(options);
+
+    const priorityBlocked = _isChatInteractionBusy()
+      || (document.visibilityState && document.visibilityState !== 'visible');
+    if (!priorityBlocked) return;
+
+    retryRequested = true;
+    clearScheduledAttempt();
+    const controller = _libPrewarmAbortController;
+    _libPrewarmAbortController = null;
+    try { controller?.abort(); } catch (_) {}
+    // A hidden page waits for visibilitychange. Chat priority also retains the
+    // timer fallback for busy-until windows whose final transition has no event.
+    if (!document.visibilityState || document.visibilityState === 'visible') {
+      scheduleIdleRetry();
+    }
+  }
+
+  window.addEventListener('odysseus:chat-busy-change', handlePriorityChange);
+  document.addEventListener('visibilitychange', handlePriorityChange);
+  _libPrewarmDetachPriorityListeners = () => {
+    window.removeEventListener('odysseus:chat-busy-change', handlePriorityChange);
+    document.removeEventListener('visibilitychange', handlePriorityChange);
   };
-  setTimeout(run, Math.max(0, Number(delay) || 0));
+
+  function requestIdle() {
+    if (generation !== _libPrewarmGeneration) return;
+    _libPrewarmDelayTimer = null;
+    try {
+      _libPrewarmIdleHandle = window.requestIdleCallback((deadline) => {
+        if (generation !== _libPrewarmGeneration) return;
+        _libPrewarmIdleHandle = null;
+        const hasIdleBudget = Boolean(
+          deadline
+          && !deadline.didTimeout
+          && typeof deadline.timeRemaining === 'function'
+          && deadline.timeRemaining() > 0
+        );
+        if (!_canRunEmailPrewarm()) {
+          if (_isEmailPrewarmTemporarilyBlocked()) {
+            scheduleIdleRetry();
+          } else {
+            _settleEmailPrewarm(generation, false);
+          }
+          return;
+        }
+        if (!hasIdleBudget) {
+          scheduleIdleRetry();
+          return;
+        }
+        if (generation !== _libPrewarmGeneration) {
+          _settleEmailPrewarm(generation, false);
+          return;
+        }
+        const controller = new AbortController();
+        _libPrewarmAbortController = controller;
+        attemptPending = true;
+        retryRequested = false;
+        Promise.resolve()
+          .then(() => task({ signal: controller.signal, generation }))
+          .then(value => {
+            if (controller !== _libPrewarmAbortController || controller.signal.aborted) return;
+            _settleEmailPrewarm(generation, Boolean(value));
+          })
+          .catch(() => {
+            if (controller !== _libPrewarmAbortController || controller.signal.aborted) return;
+            _settleEmailPrewarm(generation, false);
+          })
+          .finally(() => {
+            attemptPending = false;
+            if (generation !== _libPrewarmGeneration) return;
+            if (retryRequested) scheduleIdleRetry();
+          });
+      });
+    } catch (_) {
+      _settleEmailPrewarm(generation, false);
+    }
+  }
+
+  const wait = Math.max(0, Number(delay) || 0);
+  if (wait > 0) _libPrewarmDelayTimer = setTimeout(requestIdle, wait);
+  else requestIdle();
+  return promise;
 }
 
 export function prewarmEmailLibrary({ delay = 2500 } = {}) {
-  if (_libPrewarmTimer || _libPrewarmPromise) return;
+  if (_libPrewarmPromise) return _libPrewarmPromise;
   const elapsed = Date.now() - _libLastPrewarmAt;
-  if (elapsed >= 0 && elapsed < 5 * 60 * 1000) return;
-  _libPrewarmTimer = setTimeout(() => {
-    _libPrewarmTimer = null;
-    _libPrewarmPromise = _prewarmEmailViews()
-      .catch(() => {})
-      .finally(() => { _libPrewarmPromise = null; });
-  }, Math.max(0, Number(delay) || 0));
+  if (elapsed >= 0 && elapsed < _LIB_PREWARM_COOLDOWN_MS) return Promise.resolve(false);
+  return _scheduleEmailPrewarm(_prewarmEmailViews, { delay });
 }
 
-async function _ensureEmailAccountsForPrewarm() {
+function _chooseEmailPrewarmAccountId(accounts) {
+  const enabled = Array.isArray(accounts) ? accounts.filter(a => a && a.enabled !== false) : [];
+  const remembered = _rememberedEmailAccountId();
+  const current = String(state._libAccountId || '').trim();
+  const chosen = enabled.find(a => String(a.id || '') === remembered)
+    || enabled.find(a => String(a.id || '') === current)
+    || enabled.find(a => a.is_default)
+    || enabled[0]
+    || null;
+  return String(chosen?.id || '').trim();
+}
+
+async function _ensureEmailAccountsForPrewarm({ signal, generation } = {}) {
+  if (!_isEmailPrewarmCurrent(generation, signal)) return null;
   const accountsFresh = _libAccountsLoadedAt && (Date.now() - _libAccountsLoadedAt) < _LIB_ACCOUNTS_TTL_MS;
-  if (Array.isArray(state._libAccounts) && state._libAccounts.length && accountsFresh) {
-    if (!state._libAccountId) {
-      const def = state._libAccounts.find(a => a.is_default) || state._libAccounts[0];
-      state._libAccountId = def?.id || null;
-      _publishActiveAccount();
-    }
-    return;
-  }
-  try {
-    const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
-    if (!accountsRes.ok) return;
-    const accountsData = await accountsRes.json().catch(() => ({}));
-    if (Array.isArray(accountsData.accounts)) {
-      state._libAccounts = accountsData.accounts;
-      _libAccountsLoadedAt = Date.now();
-      if (!state._libAccountId && state._libAccounts.length) {
-        const def = state._libAccounts.find(a => a.is_default) || state._libAccounts[0];
-        state._libAccountId = def?.id || null;
-        _publishActiveAccount();
+  if (!(Array.isArray(state._libAccounts) && state._libAccounts.length && accountsFresh)) {
+    try {
+      const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, {
+        credentials: 'same-origin',
+        signal,
+      });
+      if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+      if (accountsRes.ok) {
+        const accountsData = await accountsRes.json().catch(() => ({}));
+        if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+        if (Array.isArray(accountsData.accounts)) {
+          state._libAccounts = accountsData.accounts;
+          _libAccountsLoadedAt = Date.now();
+        }
       }
+    } catch (err) {
+      if (err?.name === 'AbortError') return null;
     }
-  } catch (_) {}
+  }
+
+  const accountId = _chooseEmailPrewarmAccountId(state._libAccounts);
+  if (!_isEmailPrewarmCurrent(generation, signal)) return null;
+  if (!accountId) return null;
+  if (accountId && state._libAccountId !== accountId) {
+    state._libAccountId = accountId;
+    _publishActiveAccount();
+  }
+  return accountId;
 }
 
-export async function prewarmUnreadEmails({ limit = 8, maxUid = 0 } = {}) {
-  if (state._libOpen) return;
-  await _ensureEmailAccountsForPrewarm();
-  if (state._libOpen) return;
-  const accountId = state._libAccountId || '';
+export function prewarmUnreadEmails({ limit = 8, maxUid = 0 } = {}) {
+  return _scheduleEmailPrewarm(
+    context => _prewarmUnreadEmailsNow({ limit, maxUid }, context),
+    { delay: 0 }
+  );
+}
+
+async function _prewarmUnreadEmailsNow({ limit = 8, maxUid = 0 } = {}, { signal, generation } = {}) {
+  if (!_isEmailPrewarmCurrent(generation, signal)) return false;
+  const accountId = await _ensureEmailAccountsForPrewarm({ signal, generation });
+  if (accountId === null || !_isEmailPrewarmCurrent(generation, signal)) return false;
   const n = Math.max(1, Math.min(20, Number(limit) || 8));
   const key = `${accountId}|${maxUid || 0}|${n}`;
-  if (_libUnreadPrewarmKey === key && (Date.now() - _libUnreadPrewarmAt) < 60 * 1000) return;
-  _libUnreadPrewarmKey = key;
-  _libUnreadPrewarmAt = Date.now();
+  if (_libUnreadPrewarmKey === key && (Date.now() - _libUnreadPrewarmAt) < 60 * 1000) return true;
   try {
     const folder = 'INBOX';
-	    const res = await fetch(emailApiUrl('/api/email/list', {
-	      folder,
-	      limit: n,
-	      offset: 0,
-	      filter: 'unread',
-	      account_id: accountId || undefined,
-	    }), { credentials: 'same-origin' });
-	    if (state._libOpen) return;
-	    if (!res.ok) return;
+    const res = await fetch(emailApiUrl('/api/email/list', {
+      folder,
+      limit: n,
+      offset: 0,
+      filter: 'unread',
+      account_id: accountId || undefined,
+    }), {
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!_isEmailPrewarmCurrent(generation, signal) || !res.ok) return false;
     const data = await res.json().catch(() => null);
-    if (!data || data.error || !Array.isArray(data.emails) || !data.emails.length) return;
+    if (!_isEmailPrewarmCurrent(generation, signal)) return false;
+    if (!data || data.error || !Array.isArray(data.emails) || !data.emails.length) return false;
     const sync = data.sync || {};
     _libCachePut(_libCacheKeyFor(accountId, folder, 'unread', false), {
       emails: data.emails,
       total: data.total || data.emails.length,
       sync,
     });
-  } catch (_) {}
+    _libUnreadPrewarmKey = key;
+    _libUnreadPrewarmAt = Date.now();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
-function _sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function _prewarmEmailViews() {
-  if (state._libOpen) return;
-  _libLastPrewarmAt = Date.now();
+async function _prewarmEmailViews({ signal, generation } = {}) {
+  if (!_isEmailPrewarmCurrent(generation, signal)) return false;
   _setEmailSyncStatus({ warming: true });
   const folder = 'INBOX';
   const filter = 'all';
-
-  // The accounts request is cheap and warms the account strip for first open.
-  // Then folder/list requests warm both the client cache and the backend
-  // IMAP/read caches. Failure stays silent: no configured mail should not nag.
   try {
-    const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
-    if (accountsRes.ok) {
-      const accountsData = await accountsRes.json().catch(() => ({}));
-      if (Array.isArray(accountsData.accounts)) {
-        state._libAccounts = accountsData.accounts;
-        _libAccountsLoadedAt = Date.now();
-      }
+    const accountId = await _ensureEmailAccountsForPrewarm({ signal, generation });
+    if (accountId === null || !_isEmailPrewarmCurrent(generation, signal)) return false;
+    const ck = _libCacheKeyFor(accountId, folder, filter, false);
+    if (_libCacheGet(ck)) {
+      _libLastPrewarmAt = Date.now();
+      return true;
     }
-  } catch (_) {}
 
-  const accounts = Array.isArray(state._libAccounts) ? state._libAccounts.filter(a => a && a.enabled !== false) : [];
-  const preferred = state._libAccountId
-    || (accounts.find(a => a.is_default)?.id)
-    || (accounts[0]?.id)
-    || '';
-  if (!state._libAccountId && preferred) {
-    state._libAccountId = preferred;
-    _publishActiveAccount();
-  }
-  const orderedAccountIds = [
-    preferred,
-    ...accounts.map(a => a.id).filter(id => id && id !== preferred),
-  ].filter((id, idx, arr) => arr.indexOf(id) === idx);
-  if (!orderedAccountIds.length) orderedAccountIds.push('');
-
-  try {
-    for (const accountId of orderedAccountIds.slice(0, 4)) {
-      if (state._libOpen) return;
-      const ck = _libCacheKeyFor(accountId, folder, filter, false);
-      if (_libCacheGet(ck)) continue;
-      await fetch(emailApiUrl('/api/email/folders', { account_id: accountId || undefined }), { credentials: 'same-origin' }).catch(() => null);
-      await fetch(emailApiUrl('/api/email/unread-state', { folder, account_id: accountId || undefined }), { credentials: 'same-origin' }).catch(() => null);
-      const res = await fetch(emailApiUrl('/api/email/list', {
-        folder,
-        limit: 100,
-        offset: 0,
-        filter,
-        account_id: accountId || undefined,
-      }), {
-        credentials: 'same-origin',
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && !data.error) {
-          const sync = data.sync || {};
-          _libCachePut(ck, {
-            emails: data.emails || [],
-            total: data.total || 0,
-            sync,
-          });
-          _setEmailSyncStatus({
-            updatedAt: sync.updated_at || new Date().toISOString(),
-            source: sync.source || '',
-            warming: true,
-          });
-        }
-      }
-      await _sleep(900);
-    }
+    // One optional first-page request only. Folder metadata, unread state, and
+    // other accounts remain demand-driven so startup cannot fan out into IMAP.
+    const res = await fetch(emailApiUrl('/api/email/list', {
+      folder,
+      limit: _LIB_INITIAL_PAGE_SIZE,
+      offset: 0,
+      filter,
+      account_id: accountId || undefined,
+    }), {
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!_isEmailPrewarmCurrent(generation, signal) || !res.ok) return false;
+    const data = await res.json().catch(() => null);
+    if (!_isEmailPrewarmCurrent(generation, signal)) return false;
+    if (!data || data.error || !Array.isArray(data.emails)) return false;
+    const sync = data.sync || {};
+    _libCachePut(ck, {
+      emails: data.emails,
+      total: data.total || 0,
+      sync,
+    });
+    _libLastPrewarmAt = Date.now();
+    _setEmailSyncStatus({
+      updatedAt: sync.updated_at || new Date().toISOString(),
+      source: sync.source || '',
+      warming: true,
+    });
+    return true;
+  } catch (_) {
+    return false;
   } finally {
     _setEmailSyncStatus({ warming: false });
   }
@@ -2286,16 +2482,34 @@ function _publishActiveAccount() {
 
 export function initEmailLibrary(config) {
   state._docModule = config.documentModule;
-  state._onEmailClick = config.onEmailClick;
+  const onEmailClick = config.onEmailClick;
+  state._onEmailClick = typeof onEmailClick === 'function' ? (options = {}) => {
+    const accountId = String(state._libAccountId || '');
+    const libraryFolder = String(state._libFolder || 'INBOX');
+    const messageFolder = String(options.email?.folder || libraryFolder);
+    const mailboxGeneration = _emailMailboxGeneration;
+    const mailboxContext = Object.freeze({
+      accountId,
+      libraryFolder,
+      messageFolder,
+      mailboxGeneration,
+      isCurrent: () => (
+        String(state._libAccountId || '') === accountId &&
+        String(state._libFolder || 'INBOX') === libraryFolder &&
+        _emailMailboxGeneration === mailboxGeneration
+      ),
+    });
+    return onEmailClick({ ...options, mailboxContext });
+  } : null;
 }
 
 export function isOpen() { return state._libOpen; }
 
 export function openEmailLibrary(opts = {}) {
-  if (_libPrewarmTimer) {
-    clearTimeout(_libPrewarmTimer);
-    _libPrewarmTimer = null;
-  }
+  // Foreground email always wins: cancel a delayed/idle callback and abort the
+  // one optional request if it has already started. Generation checks make a
+  // non-abortable response harmless if it races this transition.
+  _cancelEmailPrewarm();
   // Force-clean any stale state from previous attempts
   const existing = document.getElementById('email-lib-modal');
   if (existing) existing.remove();
@@ -2303,6 +2517,7 @@ export function openEmailLibrary(opts = {}) {
     document.removeEventListener('keydown', state._libEscHandler, true);
     state._libEscHandler = null;
   }
+  _emailMailboxGeneration += 1;
   state._libOpen = true;
   // On mobile the sidebar overlays content — close it so the email view isn't
   // opened behind it (same pattern as session-switch/delete).
@@ -2926,7 +3141,7 @@ export function openEmailLibrary(opts = {}) {
   }
   const fastAccountAtOpen = state._libAccountId || '';
   if (fastAccountAtOpen) {
-    _loadEmailsWhenChatIdle({ delay: 0 });
+    _loadEmails({ useCache: true });
   }
   // If we already know the previous/default account, paint that inbox first
   // from the durable index and validate accounts in parallel. Cold refreshes
@@ -2936,7 +3151,7 @@ export function openEmailLibrary(opts = {}) {
     _loadFolders();
     _loadEmailReminderBellVisibility();
     if (!fastAccountAtOpen || fastAccountAtOpen !== (state._libAccountId || '')) {
-      _loadEmailsWhenChatIdle();
+      _loadEmails({ useCache: true });
     }
   })();
 }
@@ -3121,6 +3336,7 @@ export async function openEmailLibrarySettings() {
 }
 
 export function closeEmailLibrary() {
+  _cancelEmailPrewarm();
   const modal = document.getElementById('email-lib-modal');
   if (modal) modal.remove();
   if (_libSyncTicker) {
@@ -4554,7 +4770,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 450);
         try {
-          const fastRes = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}&cached_only=1`, {
+          const fastRes = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=${_LIB_INITIAL_PAGE_SIZE}&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}&cached_only=1`, {
             signal: ctrl.signal,
           });
           const fastData = await fastRes.json().catch(() => null);
@@ -4581,7 +4797,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       // opens omit it so rapid close/reopen returns instantly; the
       // Refresh button passes `force: true` to add it back.
       const buster = force ? `&_=${Date.now()}` : '';
-      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
+      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=${_LIB_INITIAL_PAGE_SIZE}&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
       const data = await res.json();
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
       if (data.error) throw new Error(data.error);
@@ -4836,6 +5052,8 @@ function _createCard(em) {
   else if (!em.is_read) cls += ' email-card-unread';
   card.className = cls;
   card.dataset.uid = String(em.uid);
+  card.dataset.emailAccount = String(em.account_id || state._libAccountId || '');
+  card.dataset.emailFolder = String(em.folder || state._libFolder || 'INBOX');
   if (state._selectMode && state._selectedUids.has(em.uid)) card.classList.add('selected');
 
   // Checkbox in select mode
@@ -5162,6 +5380,25 @@ async function _toggleCardPreview(card, em) {
   // currently-selected folder for normal inbox cards.
   const folderAtStart = (em && em.folder) || libraryFolderAtStart;
   const uidAtStart = String(em?.uid || card?.dataset?.uid || '');
+  const wasReadAtStart = !!em?.is_read;
+  const openGeneration = ++_emailCardOpenSeq;
+  const readContext = Object.freeze({
+    accountId: String(accountAtStart),
+    libraryFolder: String(libraryFolderAtStart),
+    folder: String(folderAtStart),
+    uid: uidAtStart,
+    mailboxGeneration: _emailMailboxGeneration,
+  });
+  const readContextKey = _emailReadContextKey(readContext);
+  const isCurrentOpen = () => (
+    openGeneration === _emailCardOpenSeq &&
+    _emailReadContextIsCurrent(readContext) &&
+    accountAtStart === (state._libAccountId || '') &&
+    libraryFolderAtStart === (state._libFolder || 'INBOX') &&
+    uidAtStart === String(card?.dataset?.uid || '') &&
+    card.isConnected &&
+    card.classList.contains('email-card-expanded')
+  );
   const grid = card.closest('.doclib-grid');
   const gridRect = grid?.getBoundingClientRect?.();
   const modal = document.getElementById('email-lib-modal');
@@ -5186,6 +5423,30 @@ async function _toggleCardPreview(card, em) {
     return;
   }
 
+  // Every authoritative open supersedes any older optimistic mutation for the
+  // same immutable mailbox identity. Carry the original unread state forward
+  // so a close/reopen followed by failure still rolls back exactly once, while
+  // a late failure from the superseded request cannot undo a newer success.
+  const previousMutation = _emailReadMutations.get(readContextKey);
+  const readMutation = {
+    generation: ++_emailReadMutationSeq,
+    rollbackUnread: !wasReadAtStart || !!previousMutation?.rollbackUnread,
+  };
+  _emailReadMutations.set(readContextKey, readMutation);
+  const restoreUnreadState = () => {
+    if (_emailReadMutations.get(readContextKey)?.generation !== readMutation.generation) return;
+    _emailReadMutations.delete(readContextKey);
+    if (readMutation.rollbackUnread) _syncEmailReadState(uidAtStart, false, readContext);
+  };
+  const commitReadState = () => {
+    // A successful STORE/mark_seen is authoritative for this immutable
+    // mailbox identity even when a newer open is still pending. Retire that
+    // newer rollback token too, otherwise its later failure could restore an
+    // unread state that no longer exists at the provider.
+    _emailReadMutations.delete(readContextKey);
+    _syncEmailReadState(uidAtStart, true, readContext);
+  };
+
   // Collapse any other expanded card
   if (grid) {
     grid.querySelectorAll('.email-card-expanded').forEach(c => {
@@ -5207,10 +5468,10 @@ async function _toggleCardPreview(card, em) {
   requestAnimationFrame(() => {
     try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
   });
-  if (!em.is_read) {
-    _syncEmailReadState(em.uid, true);
-    fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`, { method: 'POST' })
-      .catch(err => console.error('Failed to mark email read:', err));
+  if (!wasReadAtStart) {
+    // Keep the current optimistic visual update, but let the read request below
+    // own the provider-side \Seen transition. A failure restores unread state.
+    _syncEmailReadState(uidAtStart, true, readContext);
   }
   // Class hook on the modal so the header-hide / padding rules work on
   // browsers without :has() support (Firefox mobile) — the :has() versions
@@ -5239,25 +5500,28 @@ async function _toggleCardPreview(card, em) {
     } catch (_) {}
   };
 
+  let authoritativeReadSucceeded = false;
   try {
-    const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`);
+    const accountQueryAtStart = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
+    const res = await fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uidAtStart)}?folder=${encodeURIComponent(folderAtStart)}${accountQueryAtStart}&mark_seen=true`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (
-      accountAtStart !== (state._libAccountId || '') ||
-      libraryFolderAtStart !== (state._libFolder || 'INBOX') ||
-      uidAtStart !== String(card?.dataset?.uid || '') ||
-      !card.isConnected ||
-      !card.classList.contains('email-card-expanded')
-    ) {
-      return;
-    }
     if (data.error) {
-      showFailedReader(`Failed to load email: ${data.error}`);
+      restoreUnreadState();
+      if (isCurrentOpen()) showFailedReader(`Failed to load email: ${data.error}`);
       return;
     }
-    // Mark as read locally
-    _syncEmailReadState(em.uid, true);
+    if (data.mark_seen_failed) {
+      // The body is authoritative even when the provider refused the \Seen
+      // transition. Render the message and roll the unread marker back so the
+      // list keeps telling the truth, rather than refusing to open a message
+      // we successfully read.
+      restoreUnreadState();
+    } else {
+      authoritativeReadSucceeded = true;
+      commitReadState();
+    }
+    if (!isCurrentOpen()) return;
     _stampReaderContext(reader, { ...em, ...data }, state._libFolder, state._libAccountId);
 
     // Build the attachments wrap using the shared helper so the signature-
@@ -5439,7 +5703,10 @@ async function _toggleCardPreview(card, em) {
     // Always stop bubbling so the card's click doesn't fire while reading.
     reader.addEventListener('click', (ev) => { ev.stopPropagation(); });
   } catch (e) {
-    showFailedReader(e?.message ? `Failed to load email: ${e.message}` : 'Failed to load email');
+    if (!authoritativeReadSucceeded) restoreUnreadState();
+    if (isCurrentOpen()) {
+      showFailedReader(e?.message ? `Failed to load email: ${e.message}` : 'Failed to load email');
+    }
   }
 }
 
@@ -7259,12 +7526,11 @@ async function _generateSummary(reader, data, btn) {
         if (label) label.textContent = 'Summary';
       }
     } else {
-      content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || 'Failed to summarize')}</span>`;
-      panel.remove();
+      _renderEmailSummaryError(content, result);
     }
   } catch (e) {
     sp.destroy();
-    panel.remove();
+    _renderEmailSummaryError(content, null);
     if (uiModule) uiModule.showError?.('Failed to summarize');
   } finally {
     if (btn) btn.disabled = false;
