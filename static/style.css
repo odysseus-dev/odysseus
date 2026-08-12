@@ -4771,8 +4771,8 @@ body.bg-pattern-sparkles {
       .chat-top-bar {
         padding: 1px 8px;
         min-height: 14px;
-        margin-top: calc(-31px - env(safe-area-inset-top, 0px));
-        padding-top: calc(31px + env(safe-area-inset-top, 0px));
+        margin-top: -31px;
+        padding-top: 31px;
       }
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
@@ -7441,16 +7441,6 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #tasks-modal {
         padding-top: env(safe-area-inset-top, 0px) !important;
         align-items: stretch !important;
-      }
-      /* Memory, Settings, Compare — 85dvh sheets, also shift below safe area */
-      #memory-modal,
-      #settings-modal,
-      #compare-model-overlay {
-        padding-top: env(safe-area-inset-top, 0px) !important;
-      }
-      /* Deep Research — bottom-sheet, shift below safe area */
-      #research-overlay {
-        padding-top: env(safe-area-inset-top, 0px) !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the
          shared `.modal-content::before` rule (the pane carries that class).
@@ -14590,7 +14580,7 @@ mark.doc-find-mark.current {
        render it as a narrow side pane ("sidebar") on a phone. */
     position: fixed !important;
     inset: 0 !important;
-    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    top: env(safe-area-inset-top, 0px) !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
     max-width: 100% !important;
     width: 100% !important;
     flex: none !important;
@@ -14600,8 +14590,6 @@ mark.doc-find-mark.current {
     border-bottom: none;
     /* Rounded top corners like the other mobile sheet windows. */
     border-radius: 14px 14px 0 0;
-    /* Push the entire sheet below the iOS status bar / dynamic island. */
-    padding-top: env(safe-area-inset-top, 0px);
     /* Slide up from the bottom (sheet), not in from the side, on mobile. */
     animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
     transform-origin: bottom center;
