@@ -331,8 +331,9 @@ fetch('/api/model-endpoints/<endpoint-id>', {
 
 Find `<endpoint-id>` by inspecting the `/api/model-endpoints` response (or
 your browser's network tab while Settings loads the endpoint list). Send
-`supports_tools: false` the same way to force text-based tool calls off, or
-`supports_tools: null` to return the endpoint to the Auto heuristic.
+`supports_tools: false` to disable native structured tool calls and force the
+conservative fenced/text path, or `supports_tools: null` to return the endpoint
+to the Auto heuristic.
 
 **Useful checks.**
 
