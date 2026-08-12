@@ -337,13 +337,13 @@ def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> d
     try:
         settings = _load_vl_settings()
         if not settings.get("vision_enabled", True):
-            return {"text": "[Vision is disabled — enable it in Settings → Vision]", "model": ""}
+            return {"text": "[Vision is disabled — enable it in Settings → AI Defaults → Vision]", "model": ""}
         vl_model = settings.get("vision_model", "")
 
         try:
             url, model_id, headers = _resolve_vl_model(vl_model, owner=owner)
         except ValueError:
-            return {"text": "[No vision model configured — set one in Settings → Vision]", "model": vl_model or ""}
+            return {"text": "[No vision model configured — set one in Settings → AI Defaults → Vision]", "model": vl_model or ""}
 
         with open(image_path, "rb") as f:
             img_data = base64.b64encode(f.read()).decode("utf-8")
@@ -361,7 +361,7 @@ def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> d
                 ],
             }
         ]
-        # Vision-specific fallback chain (Settings → Vision → Fallbacks). A
+        # Vision-specific fallback chain (Settings → AI Defaults → Vision → Fallbacks). A
         # downed vision endpoint can fall through to the next configured model
         # — same shape as task/chat but its own list (`vision_model_fallbacks`).
         try:

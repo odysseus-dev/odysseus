@@ -2297,14 +2297,14 @@ def setup_gallery_routes() -> APIRouter:
                                       _uses_max_completion_tokens)
             vl_settings = _load_vl_settings()
             if not vl_settings.get("vision_enabled", True):
-                return {"error": "Vision is disabled — enable it in Settings → Vision"}
+                return {"error": "Vision is disabled — enable it in Settings → AI Defaults → Vision"}
             # Explicit ?model= overrides the configured Vision model so OCR can
             # run on a different model than tagging without changing Settings.
             configured = (model or "").strip() or vl_settings.get("vision_model", "")
             try:
                 chat_url, model_name, headers = _resolve_vl_model(configured, owner=user)
             except ValueError:
-                return {"error": "No vision model configured — set one in Settings → Vision"}
+                return {"error": "No vision model configured — set one in Settings → AI Defaults → Vision"}
             if not chat_url:
                 return {"error": "Could not resolve a vision endpoint"}
             provider = _detect_provider(chat_url)
@@ -2369,7 +2369,7 @@ def setup_gallery_routes() -> APIRouter:
                             "returned empty content", model_name)
                         return {"error": "This vision model spent its whole budget "
                                 "thinking instead of answering. Try again, or switch "
-                                "to a different vision model in Settings → Vision."}
+                                "to a different vision model in Settings → AI Defaults → Vision."}
 
             caption = (content or "").strip()
             if not caption:
@@ -2410,12 +2410,12 @@ def setup_gallery_routes() -> APIRouter:
             from src.document_processor import _load_vl_settings, _resolve_vl_model
             vl_settings = _load_vl_settings()
             if not vl_settings.get("vision_enabled", True):
-                return {"error": "Vision is disabled — enable it in Settings → Vision"}
+                return {"error": "Vision is disabled — enable it in Settings → AI Defaults → Vision"}
             configured = vl_settings.get("vision_model", "")
             try:
                 chat_url, model_name, headers = _resolve_vl_model(configured, owner=user)
             except ValueError:
-                return {"error": "No vision model configured — set one in Settings → Vision"}
+                return {"error": "No vision model configured — set one in Settings → AI Defaults → Vision"}
             if not chat_url:
                 return {"error": "No vision-capable endpoint configured"}
 
@@ -2488,7 +2488,7 @@ def setup_gallery_routes() -> APIRouter:
                             "returned empty content", model_name)
                         return {"error": "This vision model spent its whole budget "
                                 "thinking instead of answering. Try again, or switch "
-                                "to a different vision model in Settings → Vision."}
+                                "to a different vision model in Settings → AI Defaults → Vision."}
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]
