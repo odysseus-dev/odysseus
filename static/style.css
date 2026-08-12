@@ -673,7 +673,7 @@ body.bg-pattern-sparkles {
     /* Fixed hamburger — always visible, toggles sidebar */
     .hamburger-btn {
       position: fixed;
-      top: 12px;
+      top: calc(12px + env(safe-area-inset-top, 0px));
       left: 9px;
       right: auto;
       z-index: 210;
@@ -4629,7 +4629,7 @@ body.bg-pattern-sparkles {
     }
     @media (max-width:768px){
       .box { max-height:none; }
-      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
+      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:calc(42px + env(safe-area-inset-top, 0px)); min-height:0; }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
       .send-btn { width:48px; height:48px !important; border-radius:12px; }
       .send-btn svg { width:22px; height:22px; }
@@ -4785,7 +4785,7 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 48px !important;
         transform: none;
@@ -4847,7 +4847,7 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: calc(6px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 4px !important;
         -webkit-tap-highlight-color: transparent;
@@ -4862,7 +4862,7 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: 8px;
         z-index: 210;
         width: 32px;
@@ -6116,7 +6116,7 @@ body.bg-pattern-sparkles {
     /* Agent indicator */
     #agent-indicator {
       position: fixed;
-      top: 20px;
+      top: calc(20px + env(safe-area-inset-top, 0px));
       right: 20px;
       background: var(--bg);
       color: var(--fg);
@@ -6852,7 +6852,7 @@ body.bg-pattern-sparkles {
     
     #recording-indicator {
       position: fixed;
-      top: 10px;
+      top: calc(10px + env(safe-area-inset-top, 0px));
       left: 0;
       right: 0;
       background: rgba(0, 0, 0, 0.8);
@@ -8759,7 +8759,7 @@ button.hamburger {
 /* Agent indicator */
 #agent-indicator {
   position: fixed;
-  top: 20px;
+  top: calc(20px + env(safe-area-inset-top, 0px));
   right: 20px;
   background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
@@ -9237,7 +9237,7 @@ button.hamburger {
 /* Recording indicator */
 #recording-indicator {
   position: fixed;
-  top: 10px;
+  top: calc(10px + env(safe-area-inset-top, 0px));
   left: 0;
   right: 0;
   background: rgba(0, 0, 0, 0.8);
@@ -28904,7 +28904,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   .ge-image-menu,
   .ge-filter-menu {
     position: fixed;
-    top: 44px;
+    top: calc(44px + env(safe-area-inset-top, 0px));
     right: 8px;
     z-index: 500;
     max-width: calc(100vw - 16px);
