@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 import subprocess
 import time
 import uuid
@@ -13,6 +14,22 @@ from src.execution_sandbox import (
     SandboxUnavailable,
     environment_for_sandbox_launcher,
     sandbox_command,
+)
+
+
+@pytest.fixture(autouse=True)
+def _stable_bubblewrap_lookup(monkeypatch):
+    """Keep argv-only tests independent of the CI runner's package set."""
+    if shutil.which("bwrap") is None:
+        monkeypatch.setattr(
+            "src.execution_sandbox._bubblewrap_binary",
+            lambda: "/usr/bin/bwrap",
+        )
+
+
+requires_bubblewrap = pytest.mark.skipif(
+    shutil.which("bwrap") is None,
+    reason="bubblewrap is required for sandbox runtime assertions",
 )
 
 
@@ -64,6 +81,7 @@ def test_sandbox_rejects_broad_workspace():
         sandbox_command(["/bin/true"], workspace="/")
 
 
+@requires_bubblewrap
 def test_sandbox_hides_odysseus_data_inside_broader_workspace(
     tmp_path,
     monkeypatch,
@@ -129,6 +147,7 @@ def test_sandbox_allows_only_dedicated_workspace_below_data(
         sandbox_command(["/bin/true"], workspace=str(private_dir))
 
 
+@requires_bubblewrap
 def test_sandbox_hides_host_and_environment_at_runtime(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -167,6 +186,7 @@ def test_sandbox_hides_host_and_environment_at_runtime(tmp_path):
     assert not (workspace / ".git" / "blocked").exists()
 
 
+@requires_bubblewrap
 def test_sandbox_network_namespace_has_no_external_route(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -195,6 +215,7 @@ def test_sandbox_network_namespace_has_no_external_route(tmp_path):
     assert completed.returncode == 0, completed.stderr
 
 
+@requires_bubblewrap
 def test_tmux_bash_shell_runs_inside_same_sandbox(tmp_path):
     from src.agent_tools.subprocess_tools import (
         _run_exec,
@@ -234,6 +255,7 @@ def test_tmux_bash_shell_runs_inside_same_sandbox(tmp_path):
     assert (workspace / "tmux-write.txt").exists()
 
 
+@requires_bubblewrap
 def test_detached_background_job_uses_sandbox(tmp_path, monkeypatch):
     from src import bg_jobs
 

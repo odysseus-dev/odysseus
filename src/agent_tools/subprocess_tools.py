@@ -3,12 +3,14 @@ import hashlib
 import os
 import re
 import shutil
+import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
 from core.platform_compat import IS_WINDOWS, find_bash
 from src.constants import MAX_OUTPUT_CHARS
 from src.execution_sandbox import (
+    SandboxUnavailable,
     environment_for_sandbox_launcher,
     sandbox_command,
     sandbox_python_executable,
@@ -309,6 +311,7 @@ class BashTool:
         if isinstance(content, dict):
             content = str(content.get("command") or content.get("cmd") or content.get("code") or "")
         progress_cb = ctx.get("progress_cb")
+        subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
         workspace = agent_cwd()
         # tmux is a POSIX persistence path. A stray MSYS/Cygwin tmux.exe on
@@ -339,17 +342,29 @@ class BashTool:
                 "tmux_session": _tmux_session_name(str(session_id), workspace),
             }
 
-        argv = sandbox_command(
-            ["/bin/bash", "--noprofile", "--norc", "-c", content],
-            workspace=workspace,
-        )
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=environment_for_sandbox_launcher(),
-            cwd=workspace,
-        )
+        try:
+            if IS_WINDOWS:
+                proc = await _create_bash_subprocess(
+                    content,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=subproc_env,
+                    cwd=workspace,
+                )
+            else:
+                argv = sandbox_command(
+                    ["/bin/bash", "--noprofile", "--norc", "-c", content],
+                    workspace=workspace,
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment_for_sandbox_launcher(),
+                    cwd=workspace,
+                )
+        except (RuntimeError, SandboxUnavailable) as exc:
+            return {"error": f"bash: {exc}", "exit_code": 1, "blocked": True}
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_BASH_TIMEOUT,
@@ -368,16 +383,25 @@ class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
+        subproc_env = ctx.get("subproc_env")
         workspace = agent_cwd()
-        argv = sandbox_command(
-            [sandbox_python_executable(), "-I", "-c", content],
-            workspace=workspace,
-        )
+        try:
+            if IS_WINDOWS:
+                argv = [sys.executable, "-I", "-c", content]
+                process_env = subproc_env
+            else:
+                argv = sandbox_command(
+                    [sandbox_python_executable(), "-I", "-c", content],
+                    workspace=workspace,
+                )
+                process_env = environment_for_sandbox_launcher()
+        except SandboxUnavailable as exc:
+            return {"error": f"python: {exc}", "exit_code": 1, "blocked": True}
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=environment_for_sandbox_launcher(),
+            env=process_env,
             cwd=workspace,
         )
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(

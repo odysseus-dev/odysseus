@@ -23,6 +23,8 @@ re-invocation lives in the caller (so this stays import-light and unit-testable)
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 import time
@@ -32,7 +34,10 @@ from typing import Any, Dict, List, Optional
 
 from core.atomic_io import atomic_write_json
 from core.platform_compat import (
+    IS_WINDOWS,
     detached_popen_kwargs,
+    find_bash,
+    git_bash_path,
     kill_process_tree,
     pid_alive,
 )
@@ -123,30 +128,62 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     log_path = _JOBS_DIR / f"{job_id}.log"
     exit_path = _JOBS_DIR / f"{job_id}.exit"
 
-    cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-    cmd_path.write_text(command + "\n", encoding="utf-8")
-    sandbox_argv = sandbox_command(
-        ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
-        workspace=cwd or "",
-        readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
-    )
-    argv = [
-        sys.executable,
-        "-I",
-        "-c",
-        _DETACHED_SANDBOX_WRAPPER,
-        json.dumps(sandbox_argv),
-        str(log_path),
-        str(exit_path),
-    ]
+    if IS_WINDOWS:
+        bash = find_bash()
+        if bash:
+            cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+            cmd_path.write_text(command + "\n", encoding="utf-8")
+            lp, xp, cp = (
+                shlex.quote(git_bash_path(path))
+                for path in (log_path, exit_path, cmd_path)
+            )
+            script_path = _JOBS_DIR / f"{job_id}.sh"
+            script_path.write_text(
+                f"bash {cp} > {lp} 2>&1\n"
+                f"echo $? > {xp}\n",
+                encoding="utf-8",
+            )
+            argv = [bash, str(script_path)]
+        else:
+            child_path = _JOBS_DIR / f"{job_id}.child.cmd"
+            child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")
+            script_path = _JOBS_DIR / f"{job_id}.cmd"
+            script_path.write_text(
+                "@echo off\r\n"
+                f'call "{child_path}" > "{log_path}" 2>&1\r\n'
+                f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
+                encoding="utf-8",
+            )
+            argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+        process_cwd = cwd or None
+        process_env = None
+    else:
+        cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+        cmd_path.write_text(command + "\n", encoding="utf-8")
+        sandbox_argv = sandbox_command(
+            ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
+            workspace=cwd or "",
+            readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
+        )
+        argv = [
+            sys.executable,
+            "-I",
+            "-c",
+            _DETACHED_SANDBOX_WRAPPER,
+            json.dumps(sandbox_argv),
+            str(log_path),
+            str(exit_path),
+        ]
+        process_cwd = None
+        process_env = environment_for_sandbox_launcher()
 
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
-        cwd=None,
-        env=environment_for_sandbox_launcher(),
+        cwd=process_cwd,
+        env=process_env,
         **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 
