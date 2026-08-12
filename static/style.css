@@ -4785,7 +4785,7 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: calc(12px + env(safe-area-inset-top, 0px));
+        top: calc(6px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 48px !important;
         transform: none;
@@ -4847,7 +4847,7 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: calc(6px + env(safe-area-inset-top, 0px));
+        top: env(safe-area-inset-top, 0px);
         left: auto !important;
         right: 4px !important;
         -webkit-tap-highlight-color: transparent;
