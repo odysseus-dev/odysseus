@@ -20,7 +20,7 @@ from src.upload_limits import (
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
-from src.constants import GENERATED_IMAGES_DIR
+from src.constants import GENERATED_IMAGES_DIR, VISION_MAX_TOKENS, VISION_DESCRIBE_PROMPT
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery.gallery_helpers import (
@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
 
+def _reasoning_as_caption(reasoning: str) -> str:
+    """Salvage a caption from a thinking model's reasoning block.
+
+    Reasoning is written as working notes — bullets, "Input:", "Task:",
+    self-corrections. Strip the scaffolding and keep the prose sentences so
+    a deployment with only a thinking model still gets a usable description.
+    """
+    lines = []
+    for raw in (reasoning or "").splitlines():
+        line = raw.strip().lstrip("*-").strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith(("input:", "task:", "goal:", "plan:", "step ", "wait", "let me", "actually")):
+            continue
+        if line.endswith(":") and len(line) < 40:
+            continue
+        lines.append(line)
+    return " ".join(lines).strip()
 
 def _b64_to_pil_image(image_b64: str, *, mode: str = "RGBA"):
     if not image_b64:
@@ -742,6 +761,10 @@ def setup_gallery_routes() -> APIRouter:
             total_tagged = q.filter(
                 GalleryImage.ai_tags.isnot(None), GalleryImage.ai_tags != ""
             ).count()
+            # Same for AI descriptions — "X/Y described" in the OCR section.
+            total_described = q.filter(
+                GalleryImage.caption.isnot(None), GalleryImage.caption != ""
+            ).count()
 
             # Sorting
             if sort == "shuffle":
@@ -782,6 +805,7 @@ def setup_gallery_routes() -> APIRouter:
                 "items": items,
                 "total": total,
                 "total_tagged": total_tagged,
+                "total_described": total_described,
                 "tags": sorted(all_tags),
                 "models": all_models,
             }
@@ -1074,6 +1098,28 @@ def setup_gallery_routes() -> APIRouter:
             db.rollback()
             logger.exception("clear_gallery_ai_tags: failed")
             raise HTTPException(500, "Tag update failed")
+        finally:
+            db.close()
+    @router.post("/api/gallery/clear-captions")
+    async def clear_gallery_captions(request: Request, image_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(GalleryImage.is_active == True)
+            q = _owner_filter(q, user)
+            if image_id:
+                q = q.filter(GalleryImage.id == image_id)
+            cleared = 0
+            for img in q.all():
+                if img.caption:
+                    img.caption = ''
+                    cleared += 1
+            db.commit()
+            return {"ok": True, "cleared": cleared}
+        except Exception:
+            db.rollback()
+            logger.exception("clear_gallery_captions: failed")
+            raise HTTPException(500, "Caption update failed")
         finally:
             db.close()
 
@@ -2213,7 +2259,144 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     # ---- AI auto-tag ----
+    # ---- POST /api/gallery/ocr-batch ----
+    # Returns the ids that still need an OCR description. The client loops
+    # over them calling /{id}/ocr one at a time, so cancelling just stops
+    # issuing requests — everything already processed stays committed.
+    @router.post("/api/gallery/ocr-batch")
+    async def ocr_batch(
+        request: Request,
+        album_id: Optional[str] = Query(None),
+        limit: int = Query(200),
+        force: int = Query(0),
+    ):
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(GalleryImage.is_active == True)
+            if not force:
+                q = q.filter(
+                    (GalleryImage.caption == None) | (GalleryImage.caption == "")
+                )
+            q = _owner_filter(q, user)
+            if album_id:
+                q = q.filter(GalleryImage.album_id == album_id)
+            pending = q.count()
+            ids = [img.id for img in q.limit(max(1, min(limit, 500))).all()]
+            return {"ok": True, "queued": len(ids), "total_pending": pending, "image_ids": ids}
+        finally:
+            db.close()
 
+    # ---- POST /api/gallery/{image_id}/ocr ----
+    @router.post("/api/gallery/{image_id}/ocr")
+    async def ocr_image(
+        request: Request,
+        image_id: str,
+        model: Optional[str] = Query(None),
+        force: int = Query(0),
+    ):
+        """Describe/transcribe an image with a vision model, store in caption."""
+        import base64, httpx
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            img = _get_or_404_image(db, image_id, user)
+            if not force and (img.caption or "").strip():
+                return {"ok": True, "skipped": True, "caption": img.caption}
+
+            img_path = _gallery_image_path(img.filename)
+            if not img_path.exists():
+                raise HTTPException(404, "Image file not found")
+            b64 = base64.b64encode(img_path.read_bytes()).decode()
+            ext = img.filename.rsplit(".", 1)[-1].lower()
+            mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                    "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
+
+            from src.document_processor import _load_vl_settings, _resolve_vl_model
+            from src.llm_core import (_detect_provider, _restricts_temperature,
+                                      _uses_max_completion_tokens)
+            vl_settings = _load_vl_settings()
+            if not vl_settings.get("vision_enabled", True):
+                return {"error": "Vision is disabled — enable it in Settings → Vision"}
+            # Explicit ?model= overrides the configured Vision model so OCR can
+            # run on a different model than tagging without changing Settings.
+            configured = (model or "").strip() or vl_settings.get("vision_model", "")
+            try:
+                chat_url, model_name, headers = _resolve_vl_model(configured, owner=user)
+            except ValueError:
+                return {"error": "No vision model configured — set one in Settings → Vision"}
+            if not chat_url:
+                return {"error": "Could not resolve a vision endpoint"}
+            provider = _detect_provider(chat_url)
+
+            ocr_prompt = VISION_DESCRIBE_PROMPT
+
+            if provider == "anthropic":
+                payload = {
+                    "model": model_name,
+                    "max_tokens": 1024,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {
+                                "type": "base64", "media_type": mime, "data": b64,
+                            }},
+                            {"type": "text", "text": ocr_prompt},
+                        ],
+                    }],
+                }
+            else:
+                _tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model_name) else "max_tokens"
+                payload = {
+                    "model": model_name,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": ocr_prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                        ],
+                    }],
+                    _tok_key: VISION_MAX_TOKENS,
+                    "temperature": 0.2,
+                }
+                if _restricts_temperature(model_name):
+                    payload.pop("temperature", None)
+
+            h = {"Content-Type": "application/json"}
+            if headers:
+                h.update(headers)
+            async with httpx.AsyncClient(timeout=300) as client:
+                resp = await client.post(chat_url, json=payload, headers=h)
+                if resp.status_code != 200:
+                    logger.error("ocr vision model: status %s: %s", resp.status_code, resp.text[:500])
+                    return {"error": "Vision model request failed"}
+                data = resp.json()
+                if provider == "anthropic":
+                    content = (data.get("content") or [{}])[0].get("text", "")
+                else:
+                    msg = data.get("choices", [{}])[0].get("message", {}) or {}
+                    content = msg.get("content", "") or ""
+                    # Thinking models put the answer in `reasoning` and leave
+                    # content empty when they run out of budget mid-thought.
+                    if not content.strip() and msg.get("reasoning"):
+                        logger.warning(
+                            "ocr: %s returned empty content with reasoning present "
+                            "— use a non-thinking model or raise max_tokens", model_name)
+                        content = _reasoning_as_caption(msg.get("reasoning", ""))
+
+            caption = (content or "").strip()
+            if not caption:
+                return {"error": "Vision model returned no text"}
+            img.caption = caption
+            db.commit()
+            return {"ok": True, "caption": caption, "model": model_name}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("OCR description failed")
+            return {"error": "OCR description failed"}
+        finally:
+            db.close()
     @router.post("/api/gallery/{image_id}/ai-tag")
     async def ai_tag_image(request: Request, image_id: str):
         """Send image to vision model for auto-tagging."""
@@ -2253,11 +2436,9 @@ def setup_gallery_routes() -> APIRouter:
             from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
-                "Analyze this photo. Return ONLY a comma-separated list of tags. "
-                "Include: objects, people (describe by appearance — age range, gender), "
-                "scene/setting, activities, mood/atmosphere, colors, location type, "
-                "time of day, weather if visible, any text/signs visible. "
-                "Be specific but concise. 10-25 tags. No explanation, just tags."
+                "List 6-10 comma-separated tags describing this image. "
+                "Cover objects, people, setting, activity, colors, and any visible text. "
+                "Return only the tags."
             )
 
             if provider == "anthropic":
@@ -2285,7 +2466,7 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    _tok_key: 200,
+                    _tok_key: VISION_MAX_TOKENS,
                     "temperature": 0.3,
                 }
                 # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
