@@ -1230,6 +1230,7 @@ class TaskScheduler:
     async def _execute_action(self, task, run_id: str | None = None) -> tuple:
         """Execute a built-in action (no LLM needed)."""
         from src.builtin_actions import BUILTIN_ACTIONS
+        from src.llm_core import capture_model_usage
 
         action_fn = BUILTIN_ACTIONS.get(task.action)
         if not action_fn:
@@ -1250,7 +1251,15 @@ class TaskScheduler:
             # through as `command` so action_cookbook_serve can json.loads it.
             elif task.action == "cookbook_serve" and task.prompt:
                 kwargs["command"] = task.prompt
-            result, success = await action_fn(**kwargs)
+            def _record_model(model: str):
+                self._last_run_model = model
+
+            # Some built-in actions use the shared LLM fallback chain even
+            # though their task type is "action". Capture the candidate that
+            # actually succeeds so TaskRun.model is populated just like it is
+            # for ordinary LLM and research tasks.
+            with capture_model_usage(_record_model):
+                result, success = await action_fn(**kwargs)
             return result, success
         except TaskNoop:
             # Bubble up so _execute_task_locked can drop the run row silently.
