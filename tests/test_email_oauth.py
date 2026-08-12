@@ -29,6 +29,7 @@ import base64
 import json
 import time
 import unittest.mock as mock
+from types import SimpleNamespace
 
 import pytest
 
@@ -272,8 +273,14 @@ def _callback_endpoint():
 
 
 class _FakeRequest:
-    """Minimal stand-in for starlette Request — the callback only reads headers."""
-    headers = {"host": "localhost:7000"}
+    """Minimal stand-in for starlette Request — the callback reads the Host header
+    and the request scheme. Behind a TLS terminator uvicorn's proxy-headers
+    middleware rewrites the scheme from `X-Forwarded-Proto`, so the route sees
+    `https` there and `http` on a plain origin."""
+
+    def __init__(self, scheme="http", host="localhost:7000"):
+        self.headers = {"host": host}
+        self.url = SimpleNamespace(scheme=scheme)
 
 
 def _location(resp):
@@ -413,6 +420,119 @@ async def test_callback_valid_owner_writes_encrypted_tokens_to_intended_account(
     assert _dec(target.oauth_access_token) == raw_access
     assert _dec(target.oauth_refresh_token) == raw_refresh
     assert other.oauth_access_token is None, "tokens must only touch the intended account"
+
+
+# ── Redirect URI scheme ───────────────────────────────────────────
+#
+# Google rejects the token exchange unless the callback's `redirect_uri` is
+# byte-identical to the one the authorize step sent, so both routes have to
+# agree — including on the scheme. Deriving it from the request keeps HTTPS
+# deployments working without pinning GOOGLE_OAUTH_REDIRECT_URI by hand;
+# hardcoding `http://` produced an unusable redirect behind any TLS front.
+
+def _authorize_endpoint():
+    """Return the live google_oauth_authorize endpoint from the email router."""
+    from routes.email_routes import setup_email_routes
+    router = setup_email_routes()
+    for route in router.routes:
+        if route.path == "/api/email/oauth/google/authorize" and "GET" in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError("google_oauth_authorize route not found")
+
+
+def _posted_redirect_uri(mock_post):
+    """Pull `redirect_uri` out of the mocked Google token-exchange POST."""
+    return mock_post.call_args.kwargs["data"]["redirect_uri"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheme", ("http", "https"))
+async def test_callback_redirect_uri_follows_the_request_scheme(scheme, monkeypatch):
+    """The token exchange must echo the scheme the request actually arrived on —
+    `https` behind a TLS terminator, `http` on a plain origin."""
+    from routes.email_helpers import make_oauth_state
+
+    monkeypatch.delenv("GOOGLE_OAUTH_REDIRECT_URI", raising=False)
+
+    db, Factory = _make_db()
+    _make_account(db, account_id="acct-s", owner="alice", imap_user="alice@example.com")
+    db.close()
+
+    token_resp = mock.MagicMock()
+    token_resp.raise_for_status = mock.MagicMock()
+    token_resp.json.return_value = {"access_token": "ya29.t", "refresh_token": "1//r", "expires_in": 3600}
+    userinfo_resp = mock.MagicMock()
+    userinfo_resp.is_success = True
+    userinfo_resp.json.return_value = {"email": "alice@example.com", "name": "Alice"}
+
+    state = make_oauth_state("acct-s", "alice")
+
+    with mock.patch("httpx.post", return_value=token_resp) as mock_post, \
+         mock.patch("httpx.get", return_value=userinfo_resp), \
+         mock.patch("core.database.SessionLocal", Factory):
+        callback = _callback_endpoint()
+        await callback(
+            code="4/code", state=state, error=None,
+            request=_FakeRequest(scheme=scheme, host="odysseus.example.ts.net:7443"),
+        )
+
+    assert _posted_redirect_uri(mock_post) == (
+        f"{scheme}://odysseus.example.ts.net:7443/api/email/oauth/google/callback"
+    )
+
+
+@pytest.mark.asyncio
+async def test_callback_redirect_uri_env_override_still_wins(monkeypatch):
+    """An explicit GOOGLE_OAUTH_REDIRECT_URI is used verbatim — deriving the
+    scheme must not override a value the operator pinned by hand."""
+    from routes.email_helpers import make_oauth_state
+
+    pinned = "https://mail.example.com/api/email/oauth/google/callback"
+    monkeypatch.setenv("GOOGLE_OAUTH_REDIRECT_URI", pinned)
+
+    db, Factory = _make_db()
+    _make_account(db, account_id="acct-p", owner="alice", imap_user="alice@example.com")
+    db.close()
+
+    token_resp = mock.MagicMock()
+    token_resp.raise_for_status = mock.MagicMock()
+    token_resp.json.return_value = {"access_token": "ya29.t", "refresh_token": "1//r", "expires_in": 3600}
+    userinfo_resp = mock.MagicMock()
+    userinfo_resp.is_success = True
+    userinfo_resp.json.return_value = {"email": "alice@example.com", "name": "Alice"}
+
+    state = make_oauth_state("acct-p", "alice")
+
+    with mock.patch("httpx.post", return_value=token_resp) as mock_post, \
+         mock.patch("httpx.get", return_value=userinfo_resp), \
+         mock.patch("core.database.SessionLocal", Factory):
+        callback = _callback_endpoint()
+        await callback(code="4/code", state=state, error=None, request=_FakeRequest(scheme="http"))
+
+    assert _posted_redirect_uri(mock_post) == pinned
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheme", ("http", "https"))
+async def test_authorize_redirect_uri_follows_the_request_scheme(scheme, monkeypatch):
+    """The authorize step builds the same redirect_uri the callback will send.
+    `owner=""` is the unconfigured / single-user case, so no DB is touched."""
+    import urllib.parse
+
+    monkeypatch.delenv("GOOGLE_OAUTH_REDIRECT_URI", raising=False)
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id.apps.googleusercontent.com")
+
+    authorize = _authorize_endpoint()
+    resp = await authorize(
+        account_id="acct-a",
+        request=_FakeRequest(scheme=scheme, host="odysseus.example.ts.net:7443"),
+        owner="",
+    )
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(resp.headers["location"]).query)
+    assert query["redirect_uri"] == [
+        f"{scheme}://odysseus.example.ts.net:7443/api/email/oauth/google/callback"
+    ]
 
 
 @pytest.mark.asyncio

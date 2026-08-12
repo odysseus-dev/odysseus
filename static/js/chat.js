@@ -23,6 +23,12 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
+import {
+  createIncrementalDisplayProjector,
+  createLiveThinkingThrottle,
+  createThinkingAnalysisGate,
+  stripLiveThinkingTags,
+} from './liveThinkingThrottle.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -349,6 +355,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
   async function _adoptOpenedSessionBeforeAutoCreate() {
     if (!sessionModule || !sessionModule.getCurrentSessionId || sessionModule.getCurrentSessionId()) return true;
+    // Don't adopt a stale session when the user explicitly started a New Chat
+    // (pending state set) — the send path must materialize the pending session.
+    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) return false;
     const activeRowId = document.querySelector('.list-item.active-session[data-session-id], .session-item.active[data-session-id]')?.dataset?.sessionId || '';
     const hashId = _hashSessionCandidate();
     const lastSelectedId = String(window.__odysseusLastSelectedSessionId || '').trim();
@@ -559,7 +568,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
   // Background streaming support
   const _backgroundStreams = new Map(); // sessionId -> { status, accumulated, sourcesHtml, abortCtrl, query, metrics }
-  const _activeStreams = new Map();     // sessionId -> { abortCtrl, holder, query, startedAt }
+  const _activeStreams = new Map();     // sessionId -> { abortCtrl, holder, query, startedAt, cancelViewWork, finalizeView }
   const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
@@ -1067,19 +1076,23 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       }
       // Render whatever was accumulated so far
       if (currentHolder && currentAccumulated) {
-        // Store accumulated in a closure variable before it gets cleared
-        const stoppedContent = currentAccumulated;
-        
-        // Store raw content in dataset for consistency with other messages
-        currentHolder.dataset.raw = stoppedContent;
-        
-        currentHolder.querySelector('.body').innerHTML = markdownModule.processWithThinking(
-          markdownModule.squashOutsideCode(stoppedContent)
-        );
+        const _activeStopStream = _getForegroundStreamState();
+        const _terminalView = _activeStopStream?.finalizeView?.() || null;
+        const _stoppedViewHolder = _terminalView?.holder || currentHolder;
+        const _viewPreparedByStream = !!_terminalView;
+        // The stream finalizer may close a synthetic reasoning tag. Capture the
+        // durable raw value only after that canonical terminal preparation.
+        const stoppedContent = _terminalView?.raw || currentAccumulated;
+        _stoppedViewHolder.dataset.raw = stoppedContent;
+        if (!_viewPreparedByStream) {
+          _stoppedViewHolder.querySelector('.body').innerHTML = markdownModule.processWithThinking(
+            markdownModule.squashOutsideCode(stoppedContent)
+          );
+        }
         
         // Highlight code blocks
         if (window.hljs) {
-          currentHolder.querySelectorAll('pre code').forEach((block) => {
+          _stoppedViewHolder.querySelectorAll('pre code').forEach((block) => {
             window.hljs.highlightElement(block);
           });
         }
@@ -1094,7 +1107,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         continueBtn.className = 'continue-btn';
         continueBtn.title = 'Continue';
         continueBtn.textContent = '\u25B8';
-        const _stoppedHolder = currentHolder; // capture before it gets cleared
+        const _stoppedHolder = _stoppedViewHolder; // capture before globals are cleared
         continueBtn.addEventListener('click', () => {
           stoppedIndicator.remove();
           _hideUserBubble = true;
@@ -1108,16 +1121,16 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           }
         });
         stoppedIndicator.appendChild(continueBtn);
-        currentHolder.querySelector('.body').appendChild(stoppedIndicator);
+        _stoppedViewHolder.querySelector('.body').appendChild(stoppedIndicator);
 
         // Tell server to mark this message as stopped
         const _sid = sessionModule.getCurrentSessionId();
         if (_sid) fetch(`${API_BASE}/api/session/${_sid}/mark-stopped`, { method: 'POST' }).catch(e => console.warn('mark-stopped failed:', e));
 
         // Add footer with copy/regen if not already present
-        if (!currentHolder.querySelector('.msg-footer')) {
-          currentHolder.dataset.raw = stoppedContent;
-          currentHolder.appendChild(createMsgFooter(currentHolder));
+        if (!_stoppedViewHolder.querySelector('.msg-footer')) {
+          _stoppedViewHolder.dataset.raw = stoppedContent;
+          _stoppedViewHolder.appendChild(createMsgFooter(_stoppedViewHolder));
         }
 
         uiModule.scrollHistory();
@@ -1365,8 +1378,19 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     let processingProbeTimer = null;
     let processingProbeAbort = null;
     let _renderStream = () => {};
+    let _finalizeRoundRender = () => {};
+    let _finalizeInterruptedView = () => null;
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
+    let _flushLiveThinking = () => '';
+    let _cancelLiveThinkingWork = () => {};
+    // Declared out here, not inside the try: in an ES module a function declared
+    // in the try block is scoped to that block, so `catch` (a sibling scope)
+    // cannot see it. Calling one from catch throws ReferenceError and kills the
+    // rest of the error path — the stream never finalizes and the partial
+    // message is lost. Assigned below, alongside the two helpers above.
+    let _closeOpenThinkingMarkup = () => {};
+    let _endThinkingOnTerminalPath = () => {};
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
@@ -1403,6 +1427,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     currentAccumulated = '';
     currentHolder = null;
     
+    let abortCtrl = null;
+    let streamingTTS = false;
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
@@ -1716,7 +1742,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       }
 
 
-      const abortCtrl = new AbortController();
+      abortCtrl = new AbortController();
       abortCtrl._reason = '';
       currentAbort = abortCtrl;
 
@@ -1758,6 +1784,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         query: streamQuery,
         startedAt: Date.now(),
         lastActivity: Date.now(),
+        // Resolve the mutable closure at call time: live-thinking helpers are
+        // installed after the stream entry is registered.
+        cancelViewWork: () => _cancelLiveThinkingWork(),
+        finalizeView: () => _finalizeInterruptedView(),
       });
       _syncForegroundStreamGlobals();
       holder._researchQuery = msg; // Store query for notification text
@@ -1897,14 +1927,17 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       let isThinking = false;
       let thinkingStartTime = null;
       // Streaming TTS: synthesize sentence-by-sentence during streaming
-      const streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
+      streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
       if (streamingTTS) window.aiTTSManager.streamingStart();
       // Multi-bubble agent tracking
       let roundHolder = holder;       // Current AI text bubble (changes per round)
       let roundText = '';             // Text accumulated for current round
+      let roundReplyText = null;      // Reply-only text after a thinking transition
       let currentToolBubble = null;   // Current tool execution bubble
       let lastToolThread = null;      // Visible tool timeline for tool-only turns
       let roundFinalized = false;     // Whether current round's text is finalized
+      let roundFinalization = null;   // Terminal owner/result for the current round
+      let lastContentRoundHolder = null; // Last non-empty round for an empty continuation Stop
       let _sourcesHtml = '';          // Sources box HTML to prepend to body
       let _sourcesExpanded = false;   // Track if user expanded sources during stream
       let _sourcesData = null;        // Raw sources data for rebuilding
@@ -1965,7 +1998,19 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         if (lastToolThread && lastToolThread.isConnected) lastToolThread.classList.add('has-bottom');
         roundHolder = newWrap;
         roundText = '';
+        roundReplyText = null;
         roundFinalized = false;
+        roundFinalization = null;
+        isThinking = false;
+        _thinkingMode = null;
+        _cancelThinkingGrace();
+        _thinkingAnalysisGate.reset();
+        _roundDisplayProjector.reset();
+        _replyDisplayProjector.reset();
+        _docFenceOpened = false;
+        _docFenceContentStart = -1;
+        _docFenceCandidateStart = -1;
+        _docFenceCandidateMarker = '';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
@@ -2056,6 +2101,16 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       // Document streaming state (text-fence detection)
       let _docFenceOpened = false;
       let _docFenceContentStart = -1;
+      let _docFenceCandidateStart = -1;
+      let _docFenceCandidateMarker = '';
+      const _thinkingAnalysisGate = createThinkingAnalysisGate({
+        startsWithReasoningPrefix: markdownModule.startsWithReasoningPrefix,
+      });
+      const _roundDisplayProjector = createIncrementalDisplayProjector(_streamDisplayText);
+      const _replyDisplayProjector = createIncrementalDisplayProjector(_streamDisplayText);
+      let _thinkingMode = null;
+      let _thinkingRecheckAt = 0;
+      let _thinkingGraceTimer = null;
       let _liveThinkSection = null;
       let _liveThinkContent = null;
       let _liveThinkInner = null;
@@ -2065,6 +2120,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       let _liveThinkTokenCount = 0;
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
+      let _liveThinkRenderThrottle = null;
+      let _liveThinkLatestText = '';
+      let _liveThinkTimerId = null;
+      let _liveThinkReducedMotion = false;
 
       function _estimateThinkingTokens(text) {
         const clean = (text || '').trim();
@@ -2078,6 +2137,259 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         return time && tokens ? time + ' · ' + tokens : (time || tokens);
       }
 
+      function _stripThinkingWrappers(text) {
+        return text
+          .replace(/<\|channel>thought\s*\n?/gi, '')
+          .replace(/<\|channel>response\s*\n?/gi, '')
+          .replace(/<channel\|>/gi, '')
+          .replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+      }
+
+      // While thinking is still open, every think tag in the round is noise, so
+      // strip them all. Do NOT slice from the first <think> to the first </think>:
+      // the false-close detection below deliberately keeps us in the thinking
+      // state for `<think>The</think>` followed by real thinking left untagged,
+      // and slicing would pin the live box to "The" for the rest of the stream.
+      function _liveThinkingText(text) {
+        const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
+        return _stripThinkingWrappers(stripLiveThinkingTags(normalized));
+      }
+
+      // Once thinking has closed, the reply that follows </think> must not leak
+      // into the thinking box, so go through extractThinkingBlocks — it already
+      // collapses the false-close pattern and merges every block into one.
+      function _closedThinkingText(text) {
+        const normalized = markdownModule.normalizeThinkingMarkup(_streamDisplayText(text || ''));
+        const blocks = markdownModule.extractThinkingBlocks
+          ? markdownModule.extractThinkingBlocks(normalized)?.thinkingBlocks
+          : null;
+        if (blocks?.length) return _stripThinkingWrappers(blocks.join('\n\n'));
+        return _liveThinkingText(text);
+      }
+
+      function _commitLiveThinkingText(text) {
+        _liveThinkLatestText = String(text ?? '');
+        _liveThinkTokenCount = _estimateThinkingTokens(_liveThinkLatestText);
+        const target = _liveThinkInner;
+        if (!target || !target.isConnected) return;
+        const thinkBox = target.closest('.thinking-content');
+        const nearBottom = !thinkBox || thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
+        target.style.whiteSpace = 'pre-wrap';
+        target.textContent = _liveThinkLatestText;
+        if (thinkBox && nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
+        if (nearBottom) uiModule.scrollHistory();
+      }
+
+      function _ensureLiveThinkingThrottle() {
+        if (!_liveThinkRenderThrottle) {
+          _liveThinkRenderThrottle = createLiveThinkingThrottle(_commitLiveThinkingText, {
+            prepare: ({ text, prepared }) => prepared ? String(text ?? '') : _liveThinkingText(text),
+          });
+        }
+        return _liveThinkRenderThrottle;
+      }
+
+      function _stopLiveThinkTimer() {
+        if (_liveThinkTimerId !== null) clearInterval(_liveThinkTimerId);
+        _liveThinkTimerId = null;
+      }
+
+      function _startLiveThinkTimer() {
+        if (_liveThinkTimerId !== null || !_liveThinkTimerEl) return;
+        _liveThinkReducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        const cadence = _liveThinkReducedMotion ? 1000 : 250;
+        _liveThinkTimerId = setInterval(() => {
+          if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) {
+            _stopLiveThinkTimer();
+            return;
+          }
+          const elapsed = (Date.now() - thinkingStartTime) / 1000;
+          const seconds = elapsed.toFixed(_liveThinkReducedMotion ? 0 : 1);
+          _liveThinkTimerEl.textContent = _formatThinkStats(seconds, _liveThinkTokenCount);
+        }, cadence);
+      }
+
+      function _queueLiveThinking(text, prepared = false) {
+        _ensureLiveThinkingThrottle().update({ text, prepared });
+        _startLiveThinkTimer();
+      }
+
+      _flushLiveThinking = ({ text = null, rich = false } = {}) => {
+        if (text !== null) _queueLiveThinking(text, true);
+        if (_liveThinkRenderThrottle) _liveThinkRenderThrottle.flush();
+        if (rich && _liveThinkInner && _liveThinkInner.isConnected) {
+          _liveThinkInner.style.whiteSpace = '';
+          _liveThinkInner.innerHTML = markdownModule.mdToHtml(_liveThinkLatestText);
+        }
+        return _liveThinkLatestText;
+      };
+
+      _cancelLiveThinkingWork = () => {
+        if (_liveThinkRenderThrottle) _liveThinkRenderThrottle.cancel();
+        _liveThinkRenderThrottle = null;
+        _stopLiveThinkTimer();
+        _cancelThinkingGrace();
+      };
+
+      function _finalizeLiveThinking(text, rich = true) {
+        const finalText = _flushLiveThinking({ text, rich });
+        _cancelLiveThinkingWork();
+        return finalText;
+      }
+
+      // Close the synthetic <think> we opened around vLLM reasoning deltas, so a
+      // stream that ends mid-thinking doesn't persist an unclosed tag.
+      // `currentAccumulated` is the FOREGROUND stop-state text — mirror the guard
+      // the delta path uses (`if (!_isBg) currentAccumulated = accumulated`), or a
+      // backgrounded stream overwrites the visible session's stop-state and
+      // abortCurrentRequest/detachCurrentStream write it into the wrong bubble.
+      _closeOpenThinkingMarkup = (isBackground) => {
+        if (!_thinkOpen) return;
+        accumulated += '</think>';
+        roundText += '</think>';
+        if (!isBackground) currentAccumulated = accumulated;
+        _thinkOpen = false;
+      };
+
+      // Terminal finalize used by the catch path, which cannot see the
+      // block-scoped helpers below.
+      _endThinkingOnTerminalPath = ({ rich = true } = {}) => {
+        if (isThinking) {
+          isThinking = false;
+          _thinkingMode = null;
+          _thinkingRecheckAt = 0;
+          _finalizeLiveThinking(_closedThinkingText(roundText), rich);
+        } else {
+          _cancelLiveThinkingWork();
+        }
+      };
+
+      // Shared teardown for the terminal paths that end thinking without the
+      // normal </think> transition (tool_start, agent_step, [DONE], errors).
+      function _endLiveThinkingSection({ rich = true } = {}) {
+        isThinking = false;
+        _thinkingMode = null;
+        _thinkingRecheckAt = 0;
+        _finalizeLiveThinking(_closedThinkingText(roundText), rich);
+        const elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
+        if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
+        if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = elapsed ? _formatThinkStats(elapsed, _liveThinkTokenCount) : '';
+        if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+      }
+
+      function _cancelThinkingGrace() {
+        if (_thinkingGraceTimer !== null) clearTimeout(_thinkingGraceTimer);
+        _thinkingGraceTimer = null;
+        _thinkingRecheckAt = 0;
+      }
+
+      function _finishLiveThinkingTransition() {
+        if (!isThinking) return;
+        isThinking = false;
+        _thinkingMode = null;
+        _cancelThinkingGrace();
+        const closedText = _closedThinkingText(roundText);
+        const thinkTextLen = closedText.trim().length;
+        _finalizeLiveThinking(closedText, thinkTextLen >= 20);
+
+        // Models sometimes emit a trivial marker such as <think>The</think>.
+        if (thinkTextLen < 20 && _liveThinkSection) {
+          _liveThinkSection.remove();
+          _liveThinkSection = null;
+          _liveThinkContent = null;
+          _liveThinkInner = null;
+          _liveThinkHeader = null;
+          _liveThinkSpinnerSlot = null;
+          _liveThinkTimerEl = null;
+          _liveThinkTokenCount = 0;
+          _liveThinkToggle = null;
+          _liveThinkDomId = null;
+          if (spinner && spinner.element) spinner.destroy();
+          _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
+          _scheduleThinkingSpinner();
+          return;
+        }
+
+        const elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
+        if (elapsed) {
+          accumulated = accumulated.replace(/<think>/i, '<think time="' + elapsed + '">');
+          roundText = roundText.replace(/<think>/i, '<think time="' + elapsed + '">');
+        }
+        if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
+        if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+        if (_liveThinkTimerEl && elapsed) {
+          _liveThinkTimerEl.textContent = _formatThinkStats(elapsed, _liveThinkTokenCount);
+          _liveThinkTimerEl.style.marginLeft = 'auto';
+          _liveThinkTimerEl.style.marginRight = '5px';
+          const headerRow = _liveThinkTimerEl.closest('.thinking-header');
+          if (headerRow) {
+            if (_liveThinkToggle && _liveThinkToggle.parentElement === headerRow) headerRow.insertBefore(_liveThinkTimerEl, _liveThinkToggle);
+            else headerRow.appendChild(_liveThinkTimerEl);
+          }
+        }
+
+        const thinkingId = 'think-' + Date.now();
+        const liveHeader = _liveThinkSection && _liveThinkSection.querySelector('.thinking-header');
+        if (liveHeader) liveHeader.dataset.thinkingId = thinkingId;
+        if (_liveThinkContent) _liveThinkContent.id = thinkingId;
+        if (_liveThinkToggle) _liveThinkToggle.id = thinkingId + '-toggle';
+
+        const streamElement = _liveThinkSection ? _liveThinkSection.parentElement : roundHolder.querySelector('.stream-content');
+        const replyHost = streamElement || roundHolder.querySelector('.body');
+        if (replyHost && !replyHost.querySelector('.live-reply-content')) {
+          const replyElement = document.createElement('div');
+          replyElement.className = 'live-reply-content';
+          replyHost.appendChild(replyElement);
+        }
+        _renderStream();
+      }
+
+      function _scheduleThinkingGrace() {
+        if (_thinkingGraceTimer !== null || !_thinkingRecheckAt) return;
+        const delay = Math.max(0, _thinkingRecheckAt - Date.now());
+        _thinkingGraceTimer = setTimeout(() => {
+          _thinkingGraceTimer = null;
+          if (!isThinking || !roundHolder?.isConnected || abortCtrl?.signal?.aborted) return;
+          _finishLiveThinkingTransition();
+        }, delay);
+      }
+
+      // Terminal paths replace the whole round, so they should perform exactly
+      // one rich markdown render instead of richly finalizing thinking, then
+      // rendering the reply, then replacing both again.
+      _finalizeRoundRender = () => {
+        if (roundFinalized) return roundFinalization;
+        const terminalHolder = roundHolder || holder;
+        const dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText));
+        if (!dt.trim()) {
+          terminalHolder.style.display = 'none';
+          roundFinalized = true;
+          roundFinalization = { rendered: true, holder: terminalHolder, hasContent: false };
+          return roundFinalization;
+        }
+        const body = terminalHolder.querySelector('.body');
+        const content = _ensureStreamLayout(body);
+        content.style.minHeight = '';
+        content.innerHTML = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
+        if (window.hljs) terminalHolder.querySelectorAll('pre code').forEach((block) => window.hljs.highlightElement(block));
+        roundFinalized = true;
+        lastContentRoundHolder = terminalHolder;
+        roundFinalization = { rendered: true, holder: terminalHolder, hasContent: true };
+        return roundFinalization;
+      };
+      _finalizeInterruptedView = () => {
+        _closeOpenThinkingMarkup(false);
+        _endThinkingOnTerminalPath({ rich: false });
+        const finalization = _finalizeRoundRender();
+        return {
+          rendered: !!finalization?.rendered,
+          holder: finalization?.hasContent
+            ? finalization.holder
+            : (lastContentRoundHolder || finalization?.holder || roundHolder || holder),
+          raw: accumulated,
+        };
+      };
+
       function _replyAfterClosedThinking(text) {
         text = markdownModule.normalizeThinkingMarkup(text || '');
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
@@ -2089,8 +2401,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       }
 
       // Direct render helper for streaming text
-      _renderStream = () => {
-        let dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText));
+      _renderStream = ({ knownNormal = false, displayText = null, replyText = null } = {}) => {
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
 
@@ -2098,14 +2409,16 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         let liveReply = contentEl.querySelector('.live-reply-content');
         if (liveReply) {
           // Extract reply text — handle native <think> tags and non-tag patterns
-          const closedThinkReply = _replyAfterClosedThinking(dt);
-          const { thinkingBlocks, content: replyText } = closedThinkReply
-            ? { thinkingBlocks: [''], content: closedThinkReply }
-            : markdownModule.extractThinkingBlocks(dt);
-          let replyTrimmed = '';
-          if (thinkingBlocks.length) {
-            replyTrimmed = (replyText || '').trim();
-          } else {
+          let replyTrimmed = replyText === null ? '' : String(replyText);
+          if (replyText === null) {
+            const dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText));
+            const closedThinkReply = _replyAfterClosedThinking(dt);
+            const { thinkingBlocks, content: extractedReply } = closedThinkReply
+              ? { thinkingBlocks: [''], content: closedThinkReply }
+              : markdownModule.extractThinkingBlocks(dt);
+            if (thinkingBlocks.length) {
+              replyTrimmed = (extractedReply || '').trim();
+            } else {
             // Non-tag: check for garbled <think> (reasoning\n<think>reply)
             const _gm = dt.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
             if (_gm && _gm[1].trim()) {
@@ -2114,7 +2427,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
               // Pure non-tag: find reply boundary
               const _rPrefixes = markdownModule.startsWithReasoningPrefix;
               const _rpStarts = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-              const _rt = (replyText || '').trimStart();
+              const _rt = (extractedReply || '').trimStart();
               if (_rPrefixes(_rt)) {
                 const _rLines = _rt.split('\n');
                 for (let _ri = 1; _ri < _rLines.length; _ri++) {
@@ -2131,6 +2444,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 }
               }
             }
+            }
+          }
+          if (replyText === null) {
+            roundReplyText = replyTrimmed;
+            _replyDisplayProjector.reset();
+            replyTrimmed = _replyDisplayProjector.append(replyTrimmed, roundReplyText);
           }
           if (replyTrimmed) {
             const r = liveReply._streamRenderer ||
@@ -2145,8 +2464,18 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           return;
         }
 
+        // Thinking compatibility normalization and display stripping are
+        // intentionally omitted from the known-normal path. The incremental
+        // projector already handled the newly appended boundary, so repeating
+        // the full-round regex chains per delta would restore O(N^2) work.
+        let dt = displayText === null
+          ? (knownNormal
+              ? _roundDisplayProjector.current()
+              : markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText)))
+          : String(displayText);
+
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
-        if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
+        if (!knownNormal && markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
           const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
           const thinkContent = dt.substring(Math.max(thinkStart, 0))
             .replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought\s*\n?/i, '')
@@ -2219,6 +2548,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
             // On first transition to background, store state in map
             if (_isBg && !_backgroundStreams.has(streamSessionId)) {
+              // Leave the block in its finished shape (rich, no pre-wrap) rather
+              // than frozen as plain text — the user may navigate back to it.
+              _flushLiveThinking({ rich: true });
+              _cancelLiveThinkingWork();
               _backgroundStreams.set(streamSessionId, {
                 status: 'running',
                 accumulated: accumulated,
@@ -2235,6 +2568,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 
             if (data === '[DONE]') {
               _streamSawDone = true;
+              _closeOpenThinkingMarkup(_isBg);
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone && !_isBg) {
@@ -2265,7 +2599,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
               // Force-close thinking if still open (model never output boundary)
               if (isThinking) {
                 isThinking = false;
-                cancelAnimationFrame(_thinkTimerRAF);
+                // The final round render below is authoritative and will render
+                // the complete thinking + reply markup once.
+                _finalizeLiveThinking(_closedThinkingText(roundText), false);
                 var _elapsedDone = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                 if (_elapsedDone) {
                   accumulated = accumulated.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
@@ -2293,14 +2629,6 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 if (_liveHdrDone) _liveHdrDone.dataset.thinkingId = _thinkIdDone;
                 if (_liveThinkContent) _liveThinkContent.id = _thinkIdDone;
                 if (_liveThinkToggle) _liveThinkToggle.id = _thinkIdDone + '-toggle';
-                // Create live-reply container so final render preserves thinking bar
-                var _streamElDone = _liveThinkSection ? _liveThinkSection.parentElement : roundHolder.querySelector('.stream-content');
-                if (!_streamElDone) _streamElDone = roundHolder.querySelector('.body');
-                if (_streamElDone && !_streamElDone.querySelector('.live-reply-content')) {
-                  var _replyElDone = document.createElement('div');
-                  _replyElDone.className = 'live-reply-content';
-                  _streamElDone.appendChild(_replyElDone);
-                }
               }
               // Normal foreground completion — metrics will be displayed in the final render block below
               break;
@@ -2367,22 +2695,37 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 	                }
 	                _ensureVisibleRoundForDelta();
 	                roundText += _delta;
+	                _roundDisplayProjector.append(_delta, roundText);
 
 	                // --- Text-fence doc streaming (for models that don't use native tool calls) ---
-                if (!_docFenceOpened && documentModule && (roundText.includes('```create_document\n') || roundText.includes('```document\n') || roundText.includes('```documen\n'))) {
-                  const fenceMarker = roundText.includes('```document\n') ? '```document\n' : (roundText.includes('```documen\n') ? '```documen\n' : '```create_document\n');
-                  const fenceIdx = roundText.indexOf(fenceMarker);
-                  const afterFence = roundText.slice(fenceIdx + fenceMarker.length);
-                  const fenceLines = afterFence.split('\n');
-                  if (fenceLines.length >= 1 && fenceLines[0].trim()) {
-                    _docFenceOpened = true;
-                    const title = fenceLines[0].trim();
-                    // Keep in sync with backend _KNOWN_LANGS in src/tool_implementations.py
-                    const knownLangs = ['python','py','javascript','js','typescript','ts','html','css','json','yaml','bash','sql','rust','go','java','c','cpp','markdown','text','plain','ruby','swift','kotlin','php','email','csv','xml','toml','ini'];
-                    const isLang = fenceLines.length >= 2 && knownLangs.includes(fenceLines[1].trim().toLowerCase());
-                    const lang = isLang ? fenceLines[1].trim() : '';
-                    _docFenceContentStart = fenceIdx + fenceMarker.length + title.length + 1 + (isLang ? fenceLines[1].length + 1 : 0);
-                    documentModule.streamDocOpen(title, lang);
+                if (!_docFenceOpened && documentModule) {
+                  // Only inspect the newly appended boundary. Re-scanning the
+                  // full round for every reasoning delta is quadratic even
+                  // before thinking normalization runs.
+                  const fenceMarkers = ['```document\n', '```documen\n', '```create_document\n'];
+                  const fenceScanStart = Math.max(0, roundText.length - _delta.length - 24);
+                  if (_docFenceCandidateStart < 0) {
+                    for (const candidate of fenceMarkers) {
+                      const candidateIdx = roundText.indexOf(candidate, fenceScanStart);
+                      if (candidateIdx >= 0 && (_docFenceCandidateStart < 0 || candidateIdx < _docFenceCandidateStart)) {
+                        _docFenceCandidateMarker = candidate;
+                        _docFenceCandidateStart = candidateIdx;
+                      }
+                    }
+                  }
+                  if (_docFenceCandidateStart >= 0) {
+                    const afterFence = roundText.slice(_docFenceCandidateStart + _docFenceCandidateMarker.length);
+                    const fenceLines = afterFence.split('\n');
+                    if (fenceLines.length >= 1 && fenceLines[0].trim()) {
+                      _docFenceOpened = true;
+                      const title = fenceLines[0].trim();
+                      // Keep in sync with backend _KNOWN_LANGS in src/tool_implementations.py
+                      const knownLangs = ['python','py','javascript','js','typescript','ts','html','css','json','yaml','bash','sql','rust','go','java','c','cpp','markdown','text','plain','ruby','swift','kotlin','php','email','csv','xml','toml','ini'];
+                      const isLang = fenceLines.length >= 2 && knownLangs.includes(fenceLines[1].trim().toLowerCase());
+                      const lang = isLang ? fenceLines[1].trim() : '';
+                      _docFenceContentStart = _docFenceCandidateStart + _docFenceCandidateMarker.length + title.length + 1 + (isLang ? fenceLines[1].length + 1 : 0);
+                      documentModule.streamDocOpen(title, lang);
+                    }
                   }
                 }
                 if (_docFenceOpened && _docFenceContentStart > 0 && documentModule) {
@@ -2396,6 +2739,30 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 // 1. Normal: <think>...no closing tag yet
                 // 2. Malformed: <think></think>\n...text but no second </think> yet
                 // 3. Qwen3.5: "Thinking Process:" without <think> tags
+                // Most deltas cannot change thinking state. Analyze cumulative
+                // text only for a fresh tag/channel/reply boundary, an initial
+                // reasoning prefix, or an expired false-close grace period.
+                if (!_thinkingAnalysisGate.shouldAnalyze(roundText, {
+                  isThinking,
+                  nonTagThinking: _thinkingMode === 'prefix',
+                  recheckAt: _thinkingRecheckAt,
+                })) {
+                  if (isThinking) {
+                    _queueLiveThinking(roundText);
+                  } else {
+                    if (spinner && spinner.element) spinner.destroy();
+                    if (roundReplyText !== null) {
+                      roundReplyText += _delta;
+                      const replyDisplayText = _replyDisplayProjector.append(_delta, roundReplyText);
+                      _renderStream({ replyText: replyDisplayText });
+                    } else {
+                      _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
+                    }
+                    _scheduleThinkingSpinner();
+                    if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
+                  }
+                  continue;
+                }
                 const normalizedRoundText = markdownModule.normalizeThinkingMarkup(roundText);
                 let hasUnclosedThink = markdownModule.hasUnclosedThinkTag(normalizedRoundText);
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
@@ -2427,34 +2794,39 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                     }
                   }
                 }
-                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(normalizedRoundText)) {
-                  // Empty <think></think> — the model likely put thinking outside the tags
-                  const afterEmpty = normalizedRoundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
-                  const closeTags = (afterEmpty.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length;
-                  if (closeTags === 0 && afterEmpty.length > 0) {
-                    hasUnclosedThink = true; // still waiting for real closing tag
-                  }
-                }
                 // Detect false close: <think>short</think> where real thinking follows untagged
-                // Only applies when there's a second </think> later (model leaked thinking outside tags)
-                // Do NOT trigger if the text after </think> contains tool calls (that's real content)
-                if (!hasUnclosedThink && isThinking) {
+                // Do NOT require a prior unclosed delta: providers can emit the
+                // short open+close and leaked reasoning in one chunk.
+                let _falseCloseDeadline = 0;
+                if (!hasUnclosedThink) {
                   const _thinkMatch = normalizedRoundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
                   const _thinkLen = _thinkMatch ? _thinkMatch[1].trim().length : 0;
-                  if (_thinkLen < 20) {
+                  if (_thinkMatch && _thinkLen < 20) {
                     const _afterClose = normalizedRoundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
                     const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
                     const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
-                    if (!_hasToolCall && (_hasOrphanClose || (Date.now() - thinkingStartTime) < 500)) {
-                      hasUnclosedThink = true; // keep waiting for real </think>
+                    const _falseCloseStart = thinkingStartTime || Date.now();
+                    if (_afterClose && !_hasToolCall && !_hasOrphanClose && (Date.now() - _falseCloseStart) < 500) {
+                      hasUnclosedThink = true;
+                      _falseCloseDeadline = _falseCloseStart + 500;
+                      if (isThinking) {
+                        _thinkingRecheckAt = _falseCloseDeadline;
+                        _scheduleThinkingGrace();
+                      }
+                    } else if (isThinking) {
+                      _cancelThinkingGrace();
                     }
                   }
                 }
 
                 if (hasUnclosedThink && !isThinking) {
                   isThinking = true;
+                  _thinkingMode = /<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(normalizedRoundText)
+                    ? 'tag'
+                    : 'prefix';
                   thinkingStartTime = Date.now();
+                  _thinkingRecheckAt = _falseCloseDeadline || 0;
                   if (spinner && spinner.element) spinner.destroy();
 
                   // Create a live thinking box — starts expanded so content streams visibly
@@ -2481,16 +2853,9 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                   _liveThinkSpinnerSlot = thinkContent.querySelector('.live-think-spinner-slot');
                   _liveThinkTimerEl = thinkContent.querySelector('.live-think-timer');
                   _liveThinkToggle = thinkContent.querySelector('.live-think-toggle');
-                  // Live timer
-                  var _thinkTimerStart = Date.now();
-                  var _thinkTimerRAF = 0;
-                  function _tickThinkTimer() {
-                    if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) return;
-                    var s = ((Date.now() - _thinkTimerStart) / 1000).toFixed(1);
-                    _liveThinkTimerEl.textContent = _formatThinkStats(s, _liveThinkTokenCount);
-                    _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
-                  }
-                  _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
+                  _liveThinkLatestText = '';
+                  _cancelLiveThinkingWork();
+                  _queueLiveThinking(roundText);
                   // Whirlpool spinner
                   if (_liveThinkSpinnerSlot) {
                     var _wp = spinnerModule.createWhirlpool(12);
@@ -2500,104 +2865,22 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                     _wp.element.style.transform = 'translateY(-1px)'; // align the whirlpool with the header text
                     _liveThinkSpinnerSlot.appendChild(_wp.element);
                   }
+                  if (_thinkingRecheckAt) _scheduleThinkingGrace();
                 } else if (hasUnclosedThink && isThinking) {
-                  if (_liveThinkInner) {
-                    // Extract raw thinking text (strip known thinking wrappers and prefixes)
-                    var thinkText = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText))
-                      .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
-                      .replace(/<\|channel>thought\s*\n?/gi, '')
-                      .replace(/<\|channel>response\s*\n?/gi, '')
-                      .replace(/<channel\|>/gi, '');
-                    thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                    _liveThinkTokenCount = _estimateThinkingTokens(thinkText);
-                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    if (_liveThinkTimerEl) {
-                      var _elapsedLive = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : '';
-                      _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedLive, _liveThinkTokenCount);
-                    }
-                    // Keep thinking box scrolled to bottom, but let user scroll up
-                    var _followThinking = true;
-                    var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) {
-                      var nearBottom = thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
-                      if (nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
-                      _followThinking = nearBottom;
-                    }
-                  }
-                  if (_followThinking) uiModule.scrollHistory();
+                  _queueLiveThinking(roundText);
                   continue;
                 } else if (!hasUnclosedThink && isThinking) {
-                  isThinking = false;
-                  var _thinkTextLen = _liveThinkInner ? _liveThinkInner.textContent.trim().length : 0;
-
-                  // If thinking was trivially short (< 20 chars), remove the section entirely
-                  // Models sometimes emit <think>The</think> or similar noise
-                  if (_thinkTextLen < 20 && _liveThinkSection) {
-                    _liveThinkSection.remove();
-                    _liveThinkSection = null;
-                    _liveThinkContent = null;
-                    _liveThinkInner = null;
-                    _liveThinkHeader = null;
-                    _liveThinkSpinnerSlot = null;
-                    _liveThinkTimerEl = null;
-                    _liveThinkTokenCount = 0;
-                    _liveThinkToggle = null;
-                    _liveThinkDomId = null;
-                    // Fall through to normal streaming
-                    if (spinner && spinner.element) spinner.destroy();
-                    _renderStream();
-                    _scheduleThinkingSpinner();
-                    continue;
-                  }
-
-                  // Thinking ended — smooth transition: update header, pause, then collapse
-                  // Stop live timer and spinner
-                  cancelAnimationFrame(_thinkTimerRAF);
-                  var elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
-                  // Embed thinking time in the <think> tag for persistence on reload
-                  if (elapsed) {
-                    accumulated = accumulated.replace(/<think>/i, '<think time="' + elapsed + '">');
-                    roundText = roundText.replace(/<think>/i, '<think time="' + elapsed + '">');
-                  }
-                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                  if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
-                  // Move timer to right side of header
-                  if (_liveThinkTimerEl && elapsed) {
-                    _liveThinkTimerEl.textContent = _formatThinkStats(elapsed, _liveThinkTokenCount);
-                    _liveThinkTimerEl.style.marginLeft = 'auto';
-                    _liveThinkTimerEl.style.marginRight = '5px';
-                    var _hdrRow = _liveThinkTimerEl.closest('.thinking-header');
-                    // Chevron furthest right, timer to its left — insert before
-                    // the toggle (appending would put the timer after it).
-                    if (_hdrRow) {
-                      if (_liveThinkToggle && _liveThinkToggle.parentElement === _hdrRow)
-                        _hdrRow.insertBefore(_liveThinkTimerEl, _liveThinkToggle);
-                      else _hdrRow.appendChild(_liveThinkTimerEl);
-                    }
-                  }
-
-                  // Assign stable IDs (for click-toggle handler in markdown.js)
-                  var _thinkId = 'think-' + Date.now();
-                  var _liveHdr = _liveThinkSection && _liveThinkSection.querySelector('.thinking-header');
-                  if (_liveHdr) _liveHdr.dataset.thinkingId = _thinkId;
-                  if (_liveThinkContent) _liveThinkContent.id = _thinkId;
-                  if (_liveThinkToggle) _liveThinkToggle.id = _thinkId + '-toggle';
-
-                  // Append a container for the reply text that follows thinking
-                  var _streamEl = _liveThinkSection ? _liveThinkSection.parentElement : roundHolder.querySelector('.stream-content');
-                  if (!_streamEl) _streamEl = roundHolder.querySelector('.body');
-                  if (_streamEl) {
-                    var _replyEl = document.createElement('div');
-                    _replyEl.className = 'live-reply-content';
-                    _streamEl.appendChild(_replyEl);
-                  }
-
-                  // Render any reply text that arrived with the closing </think> token
-                  _renderStream();
+                  _finishLiveThinkingTransition();
                 } else {
                   // Normal streaming
                   if (spinner && spinner.element) spinner.destroy();
-                  _renderStream();
+                  if (roundReplyText !== null) {
+                    roundReplyText += _delta;
+                    const replyDisplayText = _replyDisplayProjector.append(_delta, roundReplyText);
+                    _renderStream({ replyText: replyDisplayText });
+                  } else {
+                    _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
+                  }
                   _scheduleThinkingSpinner();
                   // Feed streaming TTS with accumulated text
                   if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
@@ -2968,40 +3251,17 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 if (holder && json.id) holder.dataset.dbId = json.id;
 
               } else if (json.type === 'tool_start') {
+                _closeOpenThinkingMarkup(_isBg);
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
                 if (isThinking) {
-                  isThinking = false;
-                  cancelAnimationFrame(_thinkTimerRAF);
-                  var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
-                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
-                  if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
-                  // Assign stable IDs
-                  var _thinkId2 = 'think-' + Date.now();
-                  var _liveHdr2 = _liveThinkSection && _liveThinkSection.querySelector('.thinking-header');
-                  if (_liveHdr2) _liveHdr2.dataset.thinkingId = _thinkId2;
-                  if (_liveThinkContent) _liveThinkContent.id = _thinkId2;
-                  if (_liveThinkToggle) _liveThinkToggle.id = _thinkId2 + '-toggle';
+                  _endLiveThinkingSection({ rich: false });
                 }
-                _renderStream();
                 // --- Finalize current text bubble (only once per round) ---
-                if (!roundFinalized) {
-                  roundFinalized = true;
-                  if (spinner && spinner.element) spinner.destroy();
-                  const dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText));
-                  if (dt.trim()) {
-                    var _body3 = roundHolder.querySelector('.body');
-                    var _contentEl3 = _ensureStreamLayout(_body3);
-                    _contentEl3.style.minHeight = '';  // clear streaming inflate
-                    _contentEl3.innerHTML = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
-                    if (window.hljs) roundHolder.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
-                  } else {
-                    roundHolder.style.display = 'none';
-                  }
-                }
+                if (spinner && spinner.element) spinner.destroy();
+                _finalizeRoundRender();
 
                 // Track tool name for contextual spinner labels
                 _lastToolName = json.tool || '';
@@ -3319,10 +3579,16 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 if (_pu) _setStoredPlan(_pu);
 
               } else if (json.type === 'agent_step') {
+                _closeOpenThinkingMarkup(_isBg);
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
-                _renderStream();
+                if (isThinking) {
+                  _endLiveThinkingSection({ rich: false });
+                } else {
+                  _cancelLiveThinkingWork();
+                }
+                _finalizeRoundRender();
                 // Mark thread as connected to bubble below
                 const _activeThread = document.querySelector('.agent-thread.streaming');
                 if (_activeThread) {
@@ -3331,9 +3597,18 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 // --- New round: create fresh AI bubble with spinner ---
                 currentToolBubble = null;
                 roundFinalized = false;
+                roundFinalization = null;
                 isThinking = false;
+                roundReplyText = null;
+                _thinkingMode = null;
+                _thinkingRecheckAt = 0;
+                _thinkingAnalysisGate.reset();
+                _roundDisplayProjector.reset();
+                _replyDisplayProjector.reset();
                 _docFenceOpened = false;
                 _docFenceContentStart = -1;
+                _docFenceCandidateStart = -1;
+                _docFenceCandidateMarker = '';
                 const box = document.getElementById('chat-history');
                 const newWrap = document.createElement('div');
                 newWrap.className = 'msg msg-ai msg-continuation streaming';
@@ -3407,6 +3682,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                 roundHolder = null;
                 roundText = '';
                 roundFinalized = false;
+                roundFinalization = null;
                 currentToolBubble = null;
                 uiModule.scrollHistory();
 
@@ -3453,7 +3729,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         throw new Error('Stream closed before completion');
       }
 
-      _renderStream();
+      // The final foreground render below is authoritative. Cancel any delayed
+      // live-view work instead of parsing and rendering the full round once
+      // here and then immediately replacing it.
+      _cancelLiveThinkingWork();
       if (spinner && spinner.element) { try { spinner.destroy(); } catch (_) {} spinner = null; }
       _cancelThinkingTimer();
       _removeThinkingSpinner();
@@ -3734,14 +4013,27 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       } // end if (!_isBgFinal)
 
     } catch (err) {
-      _renderStream();
+      // Check if this stream was running in background — needed before any
+      // stop-state write, so an errored background stream can't clobber the
+      // foreground session's text.
+      const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
+      let _catchTerminalView = null;
+      _closeOpenThinkingMarkup(_isBgCatch);
+      if (_isBgCatch) {
+        _cancelLiveThinkingWork();
+      } else if (accumulated) {
+        _catchTerminalView = _finalizeInterruptedView();
+      } else {
+        // Empty terminal views are owned by _renderCancelledBubble; do not run
+        // the rich round renderer first because it hides an empty holder.
+        _endThinkingOnTerminalPath({ rich: false });
+      }
+      const _catchViewHolder = _catchTerminalView?.holder || holder;
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
-      // Check if this stream was running in background
-      const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
 
       if (_isBgCatch) {
         // Error happened while backgrounded — update map, don't touch DOM
@@ -3774,12 +4066,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             if (holder && !accumulated) {
               holder.querySelector('.body').innerHTML =
                 `<div style="color: var(--color-error); font-style: italic; padding: 4px 0;">[${timeoutMsg}]</div>`;
-            } else if (holder && accumulated) {
+            } else if (_catchViewHolder && accumulated) {
               const timeoutNote = document.createElement('div');
               timeoutNote.className = 'stopped-indicator';
               timeoutNote.innerHTML =
                 `<span style="color: var(--color-error);">[${timeoutMsg}]</span>`;
-              holder.querySelector('.body').appendChild(timeoutNote);
+              _catchViewHolder.querySelector('.body').appendChild(timeoutNote);
             }
             if (currentAbort === abortCtrl) currentAbort = null;
             return;
@@ -3790,12 +4082,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             if (holder && !accumulated) {
               holder.querySelector('.body').innerHTML =
                 `<div style="color: var(--color-error); font-style: italic; padding: 4px 0;">[${offlineMsg}]</div>`;
-            } else if (holder && accumulated) {
+            } else if (_catchViewHolder && accumulated) {
               const offlineNote = document.createElement('div');
               offlineNote.className = 'stopped-indicator';
               offlineNote.innerHTML =
                 `<span style="color: var(--color-error);">[${offlineMsg}]</span>`;
-              holder.querySelector('.body').appendChild(offlineNote);
+              _catchViewHolder.querySelector('.body').appendChild(offlineNote);
             }
             if (currentAbort === abortCtrl) currentAbort = null;
             return;
@@ -3806,12 +4098,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             if (holder && !accumulated) {
               holder.querySelector('.body').innerHTML =
                 `<div style="color: var(--color-error); font-style: italic; padding: 4px 0;">[${recoveryMsg}]</div>`;
-            } else if (holder && accumulated) {
+            } else if (_catchViewHolder && accumulated) {
               const recoveryNote = document.createElement('div');
               recoveryNote.className = 'stopped-indicator';
               recoveryNote.innerHTML =
                 `<span style="color: var(--color-error);">[${recoveryMsg}]</span>`;
-              holder.querySelector('.body').appendChild(recoveryNote);
+              _catchViewHolder.querySelector('.body').appendChild(recoveryNote);
             }
             if (currentAbort === abortCtrl) currentAbort = null;
             return;
@@ -3822,11 +4114,11 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             if (holder && !accumulated) {
               holder.querySelector('.body').innerHTML =
                 `<div style="opacity:0.7;font-style:italic;padding:4px 0;">[${staleMsg}]</div>`;
-            } else if (holder && accumulated) {
+            } else if (_catchViewHolder && accumulated) {
               const staleNote = document.createElement('div');
               staleNote.className = 'stopped-indicator';
               staleNote.innerHTML = `<span style="opacity:0.7;">[${staleMsg}]</span>`;
-              holder.querySelector('.body').appendChild(staleNote);
+              _catchViewHolder.querySelector('.body').appendChild(staleNote);
             }
             if (currentAbort === abortCtrl) currentAbort = null;
             return;
@@ -3839,19 +4131,11 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             _renderCancelledBubble(holder);
           }
 
-          // But just in case the stop button didn't render it, render it here
-          if (holder && accumulated && !currentHolder) {
-            holder.dataset.raw = accumulated;
-            holder.querySelector('.body').innerHTML = markdownModule.processWithThinking(
-              markdownModule.squashOutsideCode(accumulated)
-            );
-
-            if (window.hljs) {
-              holder.querySelectorAll('pre code').forEach((block) => {
-                window.hljs.highlightElement(block);
-              });
-            }
-
+          // Navigation and non-button aborts do not pass through the synchronous
+          // Stop renderer. The catch render above owns markdown; add only the
+          // interruption controls here so each terminal path renders once.
+          if (_catchViewHolder && accumulated && currentHolder) {
+            _catchViewHolder.dataset.raw = accumulated;
             const stoppedIndicator = document.createElement('div');
             stoppedIndicator.className = 'stopped-indicator';
             const stoppedLabel = document.createElement('span');
@@ -3864,7 +4148,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             continueBtn.addEventListener('click', () => {
               stoppedIndicator.remove();
               _hideUserBubble = true;
-              _pendingContinue = holder;
+              _pendingContinue = _catchViewHolder;
               const cutoff = accumulated;
               const msgInput = uiModule.el('message');
               if (msgInput) {
@@ -3874,14 +4158,14 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
               }
             });
             stoppedIndicator.appendChild(continueBtn);
-            holder.querySelector('.body').appendChild(stoppedIndicator);
+            _catchViewHolder.querySelector('.body').appendChild(stoppedIndicator);
 
             // Tell server to mark this message as stopped
             const _sid2 = sessionModule.getCurrentSessionId();
             if (_sid2) fetch(`${API_BASE}/api/session/${_sid2}/mark-stopped`, { method: 'POST' }).catch(e => console.warn('mark-stopped failed:', e));
 
-            if (!holder.querySelector('.msg-footer')) {
-              holder.appendChild(createMsgFooter(holder));
+            if (!_catchViewHolder.querySelector('.msg-footer')) {
+              _catchViewHolder.appendChild(createMsgFooter(_catchViewHolder));
             }
 
             uiModule.scrollHistory();
@@ -3907,8 +4191,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
           // cap. Only auto-recover from connection-class failures; deterministic
           // errors (unsupported tools, 4xx/5xx, parse failures) surface right away
           // instead of burning the nudge budget on a guaranteed-to-fail retry.
-          if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
-            const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
+          if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(_catchViewHolder, accumulated, streamSessionId))) {
+            const errorHolder = _catchViewHolder?.querySelector('.body') || document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
               let errMsg = `Error: ${err.message}`;
               // Add hint for tool-call errors
@@ -3921,6 +4205,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         }
       }
     } finally {
+      _cancelLiveThinkingWork();
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
@@ -4075,10 +4360,6 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     _autoNudges++;
     if (holder && accumulated) {
       holder.dataset.raw = accumulated;
-      try {
-        holder.querySelector('.body').innerHTML =
-          markdownModule.processWithThinking(markdownModule.squashOutsideCode(accumulated));
-      } catch (_) {}
     }
     _pendingContinue = holder || null;   // merge the continuation into the same bubble
     _hideUserBubble = true;              // no user bubble for the handshake
@@ -4201,7 +4482,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
    *  Called from both abort paths when no tokens had streamed yet. */
   function _renderCancelledBubble(holder) {
     if (!holder) return;
+    if (holder.dataset.cancelledRendered === '1') return;
+    holder.dataset.cancelledRendered = '1';
     holder.dataset.raw = '';
+    holder.style.display = '';
     const body = holder.querySelector('.body');
     if (body) {
       body.innerHTML = '';
@@ -4257,6 +4541,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       abortCurrentRequest();
       return;
     }
+    // Detachment deliberately keeps the network stream alive, but the outgoing
+    // view must stop all delayed rendering immediately. The reader loop may not
+    // receive another SSE line for an arbitrary amount of time.
+    if (active.cancelViewWork) active.cancelViewWork();
     // Store background stream state
     _backgroundStreams.set(sessionId, {
       status: 'running',
@@ -4787,7 +5075,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
     if (msgIndex < 0) return;
 
     const bodyEl = userMsgElement.querySelector('.body');
-    const currentText = bodyEl ? bodyEl.textContent.trim().replace(/\s*\[\d+ attachment\(s\)\]$/, '') : '';
+    let currentText = (userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
+    currentText = currentText.replace(/\s*\[\d+ attachment\(s\)\]$/, '');
 
     // Replace body with an editable textarea
     const editor = document.createElement('textarea');

@@ -40,6 +40,7 @@ from routes.email_helpers import (
     _pre_retrieve_context,
     _attach_compose_uploads, _cleanup_compose_uploads, _q,
     SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _email_cache_owner_clause,
+    _generate_scheduled_email_summary, _email_summary_failure_log_detail,
 )
 
 logger = logging.getLogger(__name__)
@@ -653,6 +654,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         no_msgid = 0
         examined = 0
         _summaries_created = 0
+        _summary_failed = 0
         _events_created = 0
         _replies_drafted = 0
         _reply_failed = 0
@@ -785,16 +787,17 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
 
                 if need_sum:
                     try:
-                        summary = await task_llm_call_async(
-                            messages=[
-                                {"role": "system", "content": "You are an email summarizer. Format: 1-3 short bullet points (use '- '). Cover: main point, action items, deadlines. If the email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR CONTENTS — pull out invoice totals, deadlines, key clauses, any concrete numbers/dates in PDFs/docs, and reflect them in the bullets. Be terse.\n\nOUTPUT FORMAT: Put ONLY the bullet points between these exact markers, each on its own line:\n<<<SUMMARY>>>\n- ...\n<<<END>>>\nAny reasoning or planning must come BEFORE <<<SUMMARY>>> (ideally inside <think>...</think>). Only the text between the markers is kept."},
-                                {"role": "user", "content": f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\n---\n\nSummarize the email. Output the bullets between <<<SUMMARY>>> and <<<END>>>."},
-                            ],
-                            fallback_url=url, fallback_model=model, fallback_headers=headers,
+                        summary = await _generate_scheduled_email_summary(
+                            url=url,
+                            model=model,
+                            sender=sender,
+                            subject=subject,
+                            body_for_llm=body_for_llm,
+                            headers=req_headers,
                             owner=account_owner or None,
-                            temperature=0.3, max_tokens=16384, timeout=240,
+                            max_tokens=16384,
+                            timeout=240,
                         )
-                        summary = _extract_reply((summary or "").strip())
                         if summary:
                             _c = _sql3.connect(SCHEDULED_DB)
                             _c.execute("""
@@ -808,10 +811,19 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             _summaries_created += 1
                             _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
                             _detail_lines.append(f"summary · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
+                        else:
+                            _summary_failed += 1
+                            _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
+                            _detail_lines.append(f"summary empty · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
                     except Exception as e:
+                        _summary_failed += 1
                         _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
                         _detail_lines.append(f"summary failed · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
-                        logger.warning(f"Auto-summary {uid} failed: {e}")
+                        logger.warning(
+                            "Auto-summary uid=%s failed %s",
+                            _uid_text,
+                            _email_summary_failure_log_detail(e),
+                        )
 
                 if need_reply:
                     await _emit_progress(progress_cb, f"Drafting reply {processed + 1}/{_max_process} · checked {examined}/{len(uid_list)}")
@@ -1320,6 +1332,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
             parts.append(f"processed {processed} new")
         if auto_sum:
             parts.append(f"summarized {_summaries_created}")
+            if _summary_failed:
+                parts.append(f"{_summary_failed} summary failed")
         if auto_reply_draft:
             parts.append(f"drafted {_replies_drafted} repl" + ("y" if _replies_drafted == 1 else "ies"))
             if _reply_failed:

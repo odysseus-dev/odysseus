@@ -30,6 +30,25 @@ export function _esc(text) {
   return div.innerHTML;
 }
 
+const _EMAIL_SUMMARY_ERROR_MESSAGES = Object.freeze({
+  email_summary_missing_body: 'No email body to summarize',
+  email_summary_not_configured: 'No model configured for email summaries',
+  email_summary_empty: 'The model returned an empty summary',
+  email_summary_unavailable: 'Failed to summarize',
+});
+
+export function _emailSummaryErrorMessage(result) {
+  const code = String(result?.error_code || '');
+  return _EMAIL_SUMMARY_ERROR_MESSAGES[code] || 'Failed to summarize';
+}
+
+export function _renderEmailSummaryError(container, result) {
+  const message = container.ownerDocument.createElement('span');
+  message.style.color = 'var(--red)';
+  message.textContent = _emailSummaryErrorMessage(result);
+  container.replaceChildren(message);
+}
+
 function _attrEsc(text) {
   return String(text ?? '')
     .replace(/"/g, '&quot;')
