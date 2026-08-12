@@ -134,10 +134,7 @@ def internal_api_base() -> str:
 # gallery captions) so both paths produce the same two-part shape: a short
 # summary the UI can show collapsed, then the full description.
 VISION_DESCRIBE_PROMPT = (
-    "Describe this image in detail. Open with a one or two sentence overview, "
-    "then a blank line, then everything else you can see. "
-    "This text is displayed as plain text, not rendered markdown, so do not use "
-    "**bold**, *italics*, # headings, or backticks. "
-    "Report only what is clearly visible; transcribe any legible text exactly, "
-    "and if text is unreadable say so rather than guessing."
+    "Describe this image in plain text: a one or two sentence overview, "
+    "a blank line, then everything else you see. Transcribe any readable "
+    "text exactly; don't guess at anything unclear."
 )
