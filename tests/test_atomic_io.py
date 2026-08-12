@@ -1,17 +1,19 @@
 """Tests for ``core.atomic_io`` durability and crash-safety behavior.
 
 ``core.atomic_io`` provides ``atomic_write_json`` and ``atomic_write_text``.
-Both write to a sibling ``.tmp.<pid>`` file, ``fsync`` it, then ``os.replace``
-into place so a crash mid-write leaves the previous good copy untouched rather
-than a truncated/empty file.
+Both write to a sibling ``.tmp.<random>`` file, ``fsync`` it, then
+``os.replace`` into place so a crash mid-write leaves the previous good copy
+untouched rather than a truncated/empty file.
 
 These tests cover the happy path (round-trip, indent, parent-dir creation,
-full overwrite, no leftover tmp) and the two failure paths the implementation
-guarantees: the target file is preserved when serialization fails before the
-replace, and when ``os.replace`` itself fails.
+full overwrite, no leftover tmp), the two failure paths the implementation
+guarantees (the target file is preserved when serialization fails before the
+replace, and when ``os.replace`` itself fails), and that two concurrent
+writers to the same path don't collide on the same temp file.
 """
 import importlib.util
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -82,6 +84,42 @@ def test_atomic_write_json_leaves_no_tmp_file(tmp_path):
     atomic_write_json(str(target), {"a": 1})
 
     assert _tmp_siblings(tmp_path, "data.json") == []
+
+
+def test_atomic_write_json_concurrent_writers_do_not_collide(tmp_path):
+    # Both writers run in this same process, so a PID-based tmp suffix is
+    # identical for both: whichever writer finishes first unlinks the tmp
+    # file (via os.replace) out from under the other, which then raises
+    # FileNotFoundError on its own os.replace instead of landing its write.
+    target = tmp_path / "settings.json"
+    orig_dump = json.dump
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def slow_dump(obj, fp, **kwargs):
+        orig_dump(obj, fp, **kwargs)
+        fp.flush()
+        barrier.wait()
+
+    def write(payload):
+        try:
+            atomic_write_json(str(target), payload)
+        except Exception as exc:  # noqa: BLE001 - captured for the assertion below
+            errors.append(exc)
+
+    json.dump = slow_dump
+    try:
+        t1 = threading.Thread(target=write, args=({"writer": "A"},))
+        t2 = threading.Thread(target=write, args=({"writer": "B"},))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    finally:
+        json.dump = orig_dump
+
+    assert errors == []
+    assert json.loads(target.read_text(encoding="utf-8"))["writer"] in ("A", "B")
 
 
 # ---------------------------------------------------------------------------

@@ -759,6 +759,22 @@ def setup_chat_routes(
             allow_tool_preprocessing=allow_tool_preprocessing,
         )
 
+        # Direct sends to a hidden group participant are whispers. Mirror the
+        # visible user turn into the parent transcript, just like the streaming
+        # route does. Internal group orchestration already writes to the parent
+        # and must opt out to avoid duplicate turns.
+        group_child_whisper = (
+            None
+            if chat_request.group_internal
+            else _group_child_whisper_context(session, ctx.user)
+        )
+        if group_child_whisper:
+            _mirror_group_child_user_message(
+                session_manager,
+                group_child_whisper,
+                ctx.preprocessed.user_content,
+            )
+
         # Research injection
         research_blocked_by_policy = (
             tool_policy.blocks("trigger_research")
@@ -789,6 +805,14 @@ def setup_chat_routes(
         )
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
+        if group_child_whisper:
+            _mirror_group_child_assistant_message(
+                session_manager,
+                group_child_whisper,
+                reply,
+                sess.model,
+                None,
+            )
 
         from core.database import update_session_last_accessed
         update_session_last_accessed(session)
@@ -840,6 +864,7 @@ def setup_chat_routes(
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
+        incognito = str(form_data.get("incognito", "")).lower() == "true"
         group_internal = str(form_data.get("group_internal", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'

@@ -376,40 +376,35 @@ def _sync_group_participant_folder(db, parent_session_id: str, folder: str | Non
 
 
 def _delete_session_with_group_children(session_manager, session_id: str, user) -> bool:
-    participant_ids: set[str] = set()
     db = SessionLocal()
+    target_ids: list[str] = []
+    image_paths = []
     try:
         q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
         q = owner_filter(q, GroupChatState, user)
         group_state = q.first()
+        participant_ids = (
+            sorted(_group_participant_ids_from_state(group_state.state))
+            if group_state
+            else []
+        )
+        target_ids = list(dict.fromkeys([*participant_ids, session_id]))
+
+        for target_id in target_ids:
+            if not session_manager._stage_session_deletion(db, target_id, image_paths):
+                raise RuntimeError(f"Session deletion target not found: {target_id}")
+
         if group_state:
-            participant_ids = _group_participant_ids_from_state(group_state.state)
-    finally:
-        db.close()
-
-    for participant_id in participant_ids:
-        try:
-            session_manager.delete_session(participant_id)
-        except Exception:
-            logger.exception("Failed to delete group child session %s", participant_id)
-            raise
-
-    parent_deleted = bool(session_manager.delete_session(session_id))
-    if not parent_deleted:
-        return False
-
-    db = SessionLocal()
-    try:
-        q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
-        q = owner_filter(q, GroupChatState, user)
-        q.delete(synchronize_session=False)
+            db.delete(group_state)
         db.commit()
     except Exception:
         db.rollback()
-        logger.exception("Failed to remove group state for deleted parent %s", session_id)
+        logger.exception("Failed atomic deletion of session group rooted at %s", session_id)
+        raise
     finally:
         db.close()
 
+    session_manager._finalize_session_deletions(target_ids, image_paths)
     return True
 
 
@@ -1137,15 +1132,6 @@ def setup_session_routes(
         finally:
             db.close()
 
-    @router.get("/history/{sid}")
-    def get_history(request: Request, sid: str):
-        _verify_session_owner(request, sid)
-        try:
-            session = session_manager.get_session(sid)
-        except KeyError:
-            raise HTTPException(404, f"Session {sid} not found")
-        return {"history": [msg.to_dict() for msg in session.history]}
-    
     @router.get("/session/{sid}/export")
     def export_session(request: Request, sid: str, fmt: str = "md", filename: str = ""):
         """Export conversation history as a downloadable file.

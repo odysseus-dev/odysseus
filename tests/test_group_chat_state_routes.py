@@ -13,6 +13,7 @@ from sqlalchemy.pool import NullPool
 
 import core.database as cdb
 from core.database import GroupChatState, Session as DbSession
+from core.session_manager import SessionManager
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(
@@ -83,6 +84,27 @@ def _routes(monkeypatch, session_manager=None):
     monkeypatch.setattr(sr, "SessionLocal", _TS)
     monkeypatch.setattr(sr, "effective_user", lambda request: "alice")
     return sr.setup_session_routes(session_manager or MagicMock(), {})
+
+
+def _atomic_session_manager(session_ids=()):
+    manager = object.__new__(SessionManager)
+    manager.sessions = {session_id: object() for session_id in session_ids}
+    manager.upload_handler = None
+    return manager
+
+
+def _assert_group_rows(db, parent_id, child_ids, *, present):
+    stored_ids = {
+        row.id
+        for row in db.query(DbSession).filter(DbSession.id.in_([parent_id, *child_ids])).all()
+    }
+    state = db.query(GroupChatState).filter(GroupChatState.parent_session_id == parent_id).first()
+    if present:
+        assert stored_ids == {parent_id, *child_ids}
+        assert state is not None
+    else:
+        assert stored_ids == set()
+        assert state is None
 
 
 def _session_stub(session_id, name, archived=False):
@@ -365,18 +387,17 @@ def test_group_parent_delete_cascades_to_children(monkeypatch):
         _add_session(session_id, name="[GRP] participant")
     _add_group_state(parent_id, child_ids)
 
-    sm = MagicMock()
-    sm.delete_session.return_value = True
+    sm = _atomic_session_manager([parent_id, *child_ids])
     router = _routes(monkeypatch, sm)
     delete_session = _endpoint(router, "/api/session/{sid}", "DELETE")
 
     result = delete_session(request=MagicMock(), sid=parent_id)
 
     assert result == {"status": "deleted"}
-    assert {call.args[0] for call in sm.delete_session.call_args_list} == set(child_ids + [parent_id])
+    assert sm.sessions == {}
     db = _TS()
     try:
-        assert db.query(GroupChatState).filter(GroupChatState.parent_session_id == parent_id).first() is None
+        _assert_group_rows(db, parent_id, child_ids, present=False)
     finally:
         db.close()
 
@@ -390,18 +411,17 @@ def test_group_parent_delete_cascades_for_legacy_null_owner_state(monkeypatch):
         _add_session(session_id, name="[GRP] participant")
     _add_group_state(parent_id, child_ids, owner=None)
 
-    sm = MagicMock()
-    sm.delete_session.return_value = True
+    sm = _atomic_session_manager([parent_id, *child_ids])
     router = _routes(monkeypatch, sm)
     delete_session = _endpoint(router, "/api/session/{sid}", "DELETE")
 
     result = delete_session(request=MagicMock(), sid=parent_id)
 
     assert result == {"status": "deleted"}
-    assert {call.args[0] for call in sm.delete_session.call_args_list} == set(child_ids + [parent_id])
+    assert sm.sessions == {}
     db = _TS()
     try:
-        assert db.query(GroupChatState).filter(GroupChatState.parent_session_id == parent_id).first() is None
+        _assert_group_rows(db, parent_id, child_ids, present=False)
     finally:
         db.close()
 
@@ -415,15 +435,59 @@ def test_group_parent_bulk_delete_cascades_to_children(monkeypatch):
         _add_session(session_id, name="[GRP] participant")
     _add_group_state(parent_id, child_ids)
 
-    sm = MagicMock()
-    sm.delete_session.return_value = True
+    sm = _atomic_session_manager([parent_id, *child_ids])
     router = _routes(monkeypatch, sm)
     bulk_delete = _endpoint(router, "/api/sessions/bulk-delete", "POST")
 
     result = asyncio.run(bulk_delete(request=_JsonRequest({"ids": [parent_id]})))
 
     assert result == {"deleted": 1}
-    assert {call.args[0] for call in sm.delete_session.call_args_list} == set(child_ids + [parent_id])
+    assert sm.sessions == {}
+    db = _TS()
+    try:
+        _assert_group_rows(db, parent_id, child_ids, present=False)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("failure_position", ["child", "parent"])
+def test_group_parent_delete_rolls_back_everything_on_staged_failure(
+    monkeypatch,
+    failure_position,
+):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids)
+
+    sm = _atomic_session_manager([parent_id, *child_ids])
+    original_stage = sm._stage_session_deletion
+    failing_id = child_ids[1] if failure_position == "child" else parent_id
+
+    def fail_during_stage(db, session_id, image_paths):
+        if session_id == failing_id:
+            if failure_position == "child":
+                return False
+            raise RuntimeError("injected parent failure")
+        return original_stage(db, session_id, image_paths)
+
+    monkeypatch.setattr(sm, "_stage_session_deletion", fail_during_stage)
+    router = _routes(monkeypatch, sm)
+    delete_session = _endpoint(router, "/api/session/{sid}", "DELETE")
+
+    with pytest.raises(HTTPException) as exc:
+        delete_session(request=MagicMock(), sid=parent_id)
+
+    assert exc.value.status_code == 500
+    assert set(sm.sessions) == {parent_id, *child_ids}
+    db = _TS()
+    try:
+        _assert_group_rows(db, parent_id, child_ids, present=True)
+    finally:
+        db.close()
 
 
 def test_group_chat_state_rejects_participants_from_other_users(monkeypatch):
