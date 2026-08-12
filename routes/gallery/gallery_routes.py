@@ -2477,7 +2477,7 @@ def setup_gallery_routes() -> APIRouter:
             if headers:
                 h.update(headers)
 
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(chat_url, json=payload, headers=h)
                 if resp.status_code != 200:
                     logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])
