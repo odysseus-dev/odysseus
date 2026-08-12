@@ -2487,7 +2487,16 @@ def setup_gallery_routes() -> APIRouter:
                 if provider == "anthropic":
                     content = (data.get("content") or [{}])[0].get("text", "")
                 else:
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    msg = data.get("choices", [{}])[0].get("message", {}) or {}
+                    content = msg.get("content", "") or ""
+                    # Thinking models put the answer in `reasoning` and leave
+                    # content empty when they spend the whole budget there —
+                    # same failure mode as the OCR path, salvage the same way.
+                    if not content.strip() and msg.get("reasoning"):
+                        logger.warning(
+                            "ai_tag: %s returned empty content with reasoning present "
+                            "— use a non-thinking model or raise max_tokens", model_name)
+                        content = _reasoning_as_caption(msg.get("reasoning", ""))
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]
