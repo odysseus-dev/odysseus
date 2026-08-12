@@ -38,6 +38,7 @@ from core.atomic_io import atomic_write_json
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
+    find_bash,
     kill_process_tree,
     pid_alive,
 )
@@ -68,6 +69,24 @@ _MAX_OUTPUT_CHARS = 16000
 # files) is kept before pruning, so neither the store nor data/bg_jobs/ grows
 # without bound. The agent has already consumed the result by then.
 _RETENTION_S = 3600  # 1 hour after follow-up
+
+
+def _host_bash_argv(command: str, command_path: Path) -> list[str]:
+    """Build the explicit full-access shell argv for the current platform."""
+    if IS_WINDOWS:
+        bash = find_bash()
+        if not bash:
+            raise RuntimeError(
+                "Git Bash is required for full-access background jobs on Windows; "
+                "install Git for Windows and restart Odysseus"
+            )
+        return [bash, "-c", command]
+    return [
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        str(command_path),
+    ]
 
 _DETACHED_SANDBOX_WRAPPER = """
 import hashlib
@@ -229,7 +248,7 @@ def launch(
     server restart. The process is put in its own session (setsid) so it
     outlives the request/stream that started it.
     """
-    if IS_WINDOWS:
+    if IS_WINDOWS and execution_profile != ExecutionProfile.HOST_FULL_ACCESS.value:
         raise RuntimeError(
             "Sandboxed agent execution requires Linux with bubblewrap."
         )
@@ -268,11 +287,14 @@ def launch(
                 network_profile=network_profile,
             )
         else:
-            process_argv = full_access_command(
-                ["/bin/bash", "--noprofile", "--norc", str(cmd_path)],
-                working_directory=cwd or "",
-                network_profile=network_profile,
-            )
+            if IS_WINDOWS:
+                process_argv = _host_bash_argv(command, cmd_path)
+            else:
+                process_argv = full_access_command(
+                    ["/bin/bash", "--noprofile", "--norc", str(cmd_path)],
+                    working_directory=cwd or "",
+                    network_profile=network_profile,
+                )
         wrapper_environment = environment_for_sandbox_launcher()
 
         plan_bytes = json.dumps(
