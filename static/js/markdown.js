@@ -758,30 +758,36 @@ export function mdToHtml(src, opts) {
   // Remove empty paragraphs
   s = s.replace(/<p><\/p>/g, '');
 
+  // Every restore below passes a function replacer rather than the block string
+  // itself. With a string replacement, `String.replace` reads `$&`, `` $` ``,
+  // `$'` and `$$` in the *replacement* as substitution patterns, so a restored
+  // block containing them is corrupted: `$&` re-inserts the placeholder, `` $` ``
+  // and `$'` splice in the surrounding document, and `$$` collapses to `$`. Those
+  // sequences are ordinary content in fenced code (`perl -pe 's/x/$& y/'`,
+  // `echo "$$USD"`). A function replacer inserts its return value verbatim.
+
   // CRITICAL: Restore allowed HTML blocks first
   allowedHtmlBlocks.forEach((block, index) => {
-    s = s.replace(`___ALLOWED_HTML_${index}___`, block);
+    s = s.replace(`___ALLOWED_HTML_${index}___`, () => block);
   });
 
   // Restore math blocks
   mathBlocks.forEach((block, index) => {
-    s = s.replace(`___MATH_BLOCK_${index}___`, block);
+    s = s.replace(`___MATH_BLOCK_${index}___`, () => block);
   });
 
   // Restore mermaid diagram blocks
   mermaidBlocks.forEach((block, index) => {
-    s = s.replace(`___MERMAID_BLOCK_${index}___`, block);
+    s = s.replace(`___MERMAID_BLOCK_${index}___`, () => block);
   });
 
   // CRITICAL: Restore code blocks at the end
   codeBlocks.forEach((block, index) => {
-    s = s.replace(`___CODE_BLOCK_${index}___`, block);
+    s = s.replace(`___CODE_BLOCK_${index}___`, () => block);
   });
 
   // Restore inline code spans last, so placeholders carried inside restored
-  // <a>/allowed-HTML blocks are resolved too. The function replacer keeps the
-  // escaped code literal — e.g. a shell snippet like `echo $1` is not treated
-  // as a regex back-reference.
+  // <a>/allowed-HTML blocks are resolved too.
   inlineCodeBlocks.forEach((block, index) => {
     s = s.replace(`___INLINE_CODE_${index}___`, () => block);
   });

@@ -998,7 +998,7 @@ def test_session_html_export_escapes_name():
 
 
 def test_mcp_oauth_page_escapes_reflected_values():
-    src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
+    src = Path(__file__).resolve().parents[1] / "routes" / "mcp" / "mcp_routes.py"
     text = src.read_text()
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
     for var in ("auth_url", "server_id", "host", "redirect_uri"):
