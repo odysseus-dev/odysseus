@@ -65,6 +65,8 @@ _PASSIVE_EXACT_PATHS = {
     "/api/tasks/notifications",
     "/api/research/active",
     "/api/email/urgency-state",
+    # UI idle poll sibling of urgency-state; must not pre-empt background tasks.
+    "/api/email/unread-state",
 }
 
 _PASSIVE_PREFIXES = (
