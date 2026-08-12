@@ -187,8 +187,12 @@ _FUNCTION_MODEL_NAME_RE = re.compile(
 _FUNCTION_MODEL_PARAMS_OPEN_RE = re.compile(r"<parameters>\s*", re.IGNORECASE)
 _FUNCTION_MODEL_PARAMS_CLOSE_RE = re.compile(r"</parameters>", re.IGNORECASE)
 _QWEN_ROLE_MARKER_RE = re.compile(r"</?\|(?:assistant|assistan|user|system|tool)\|>?|</\|end\|>?", re.IGNORECASE)
+# At least one pipe is required around `end`. Both pipes used to be optional
+# (`\|?end\|?`), which also matched a bare `end` on its own line and deleted it
+# from ordinary prose and from Ruby/Lua/shell snippets that close blocks with
+# one; see #5547. `|end`, `end|`, `|end|` and `/|end|` still strip as before.
 _QWEN_BARE_MARKER_RE = re.compile(
-    r"(?:^|[\t\r\n ])(?:\|?end\|?|/?\|end\|)(?=[\t\r\n ]|$)|"
+    r"(?:^|[\t\r\n ])(?:/?\|end\||\|end|end\|)(?=[\t\r\n ]|$)|"
     r"(?:^|[\t\r\n ])assistan(?:t)?(?=[\t\r\n ]|$)",
     re.IGNORECASE,
 )
