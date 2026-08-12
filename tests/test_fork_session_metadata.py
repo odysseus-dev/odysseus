@@ -34,6 +34,11 @@ class _FakeSessionManager:
         self.sessions = {"src-id": source}
         self.created = None
 
+    def get_session(self, session_id):
+        # Fork looks the source up through get_session — the hydration seam —
+        # so a session only present in the DB still forks a real transcript.
+        return self.sessions[session_id]
+
     def create_session(self, session_id=None, name=None, endpoint_url=None,
                        model=None, rag=False, owner=None):
         self.created = _FakeSession(name=name, owner=owner)

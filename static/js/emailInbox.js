@@ -149,6 +149,7 @@ let _loading = false;
 let _expanded = false;
 let _docModule = null;
 let _listSpinner = null;
+let _openEmailRequestSeq = 0;
 let _senderFilter = null;       // email address (lowercased) to filter by, or null
 let _senderFilterLabel = null;  // display label for the active filter chip
 let _showEmailTags = localStorage.getItem('odysseus.email.showTags') !== '0';
@@ -187,7 +188,7 @@ export function init(documentModule) {
       } catch (_) {}
       if (opts.compose) { _composeNew(); return; }
       if (opts.email) {
-        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '');
+        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '', '', opts.mailboxContext || null);
       }
     },
   });
@@ -751,7 +752,21 @@ function _createEmailItem(em) {
   return item;
 }
 
-async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', noteHint = '', prefilledBody = '') {
+async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', noteHint = '', prefilledBody = '', mailboxContext = null) {
+  const openRequestSeq = ++_openEmailRequestSeq;
+  const folderAtStart = mailboxContext?.messageFolder || _currentFolder;
+  const accountAtStart = mailboxContext?.accountId ?? (window.__odysseusActiveEmailAccount || '');
+  const accountQueryAtStart = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
+  const mailboxContextIsCurrent = typeof mailboxContext?.isCurrent === 'function'
+    ? mailboxContext.isCurrent
+    : () => (
+        folderAtStart === _currentFolder &&
+        accountAtStart === (window.__odysseusActiveEmailAccount || '')
+      );
+  const isCurrentOpen = () => (
+    openRequestSeq === _openEmailRequestSeq &&
+    mailboxContextIsCurrent()
+  );
   const aiReplyMode = mode === 'ai-reply-fast' ? 'fast' : '';
   const wantsAiReply = mode === 'ai-reply' || !!aiReplyMode;
   // Body pre-fill from the agent's open_email_reply tool call takes the
@@ -780,9 +795,10 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     let data = preloadedData;
     if (!data) {
       const fullQS = mode === 'forward' ? '&full=1' : '';
-      const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}${fullQS}`);
+      const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${accountQueryAtStart}&mark_seen=true${fullQS}`);
       data = await res.json();
     }
+    if (!isCurrentOpen()) return;
     if (data.error) {
       console.error('Failed to read email:', data.error);
       return;
@@ -808,7 +824,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       message_id: _fallback(data.message_id, em.message_id),
     };
     if (wantsAiReply) {
-      const activeReplyAccount = data.account_id || em.account_id || window.__odysseusActiveEmailAccount || '';
+      const activeReplyAccount = data.account_id || em.account_id || accountAtStart;
       if (data.cached_ai_reply && !noteHint && !activeReplyAccount) {
         aiSuggestedBody = _cleanAiReplyText(data.cached_ai_reply);
       } else {
@@ -834,7 +850,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
               session_id: currentSessionId,
               message_id: data.message_id || '',
               uid: String(em.uid || ''),
-              folder: _currentFolder,
+              folder: folderAtStart,
               account_id: activeReplyAccount,
               fast: true,
               user_hint: (noteHint || '').trim() || undefined,
@@ -842,6 +858,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           });
           const result = await res.json();
           if (draftToastTimer) clearTimeout(draftToastTimer);
+          if (!isCurrentOpen()) return;
           if (result.success && result.reply) {
             aiSuggestedBody = _cleanAiReplyText(result.reply);
           } else {
@@ -855,6 +872,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           }
         } catch (e) {
           if (draftToastTimer) clearTimeout(draftToastTimer);
+          if (!isCurrentOpen()) return;
           console.error('AI reply generation failed:', e);
           import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
           return;
@@ -862,8 +880,12 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       }
     }
 
-    em.is_read = true;
-    if (itemEl) itemEl.classList.remove('email-unread');
+    if (!isCurrentOpen()) return;
+    // Only claim the message is read when the provider accepted the \Seen
+    // transition. A failed STORE still opens the message; it just stays unread.
+    const markedSeen = !data.mark_seen_failed;
+    em.is_read = markedSeen;
+    if (itemEl) itemEl.classList.toggle('email-unread', !markedSeen);
 
     // Addresses to exclude from Reply All. Prefer the full set of configured
     // accounts (so a multi-account user's other mailboxes are excluded too),
@@ -911,7 +933,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     if (mode !== 'forward' && data.message_id) content += `\nIn-Reply-To: ${data.message_id}`;
     if (mode !== 'forward' && data.message_id) content += `\nReferences: ${data.references ? data.references + ' ' + data.message_id : data.message_id}`;
     content += `\nX-Source-UID: ${em.uid}`;
-    content += `\nX-Source-Folder: ${_currentFolder}`;
+    content += `\nX-Source-Folder: ${folderAtStart}`;
     if (data.attachments && data.attachments.length > 0) {
       const attStr = data.attachments.map(a => `${a.index}:${a.filename}:${a.size}`).join('|');
       content += `\nX-Attachments: ${attStr}`;
@@ -980,21 +1002,27 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       // and block Send on long threads.
       const reuseExisting = mode !== 'forward' && !!aiSuggestedBody;
       const existingDocId = (reuseExisting && _docModule.findEmailDocId)
-        ? _docModule.findEmailDocId(em.uid, _currentFolder)
+        ? _docModule.findEmailDocId(em.uid, folderAtStart)
         : null;
       if (existingDocId) {
         if (!_docModule.isPanelOpen()) _docModule.openPanel();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        if (!isCurrentOpen()) return;
         await _docModule.loadDocument(existingDocId);
+        if (!isCurrentOpen()) return;
         if (typeof _docModule.ensureEmailDraftEnvelope === 'function') {
           await _docModule.ensureEmailDraftEnvelope(existingDocId, content);
+          if (!isCurrentOpen()) return;
         }
         if (aiSuggestedBody && typeof _docModule.replaceEmailReplyBody === 'function') {
           await _docModule.replaceEmailReplyBody(existingDocId, aiSuggestedBody, { force: false });
+          if (!isCurrentOpen()) return;
         }
         _bringEmailReplyDraftToFrontOnMobile();
       } else {
+        if (!isCurrentOpen()) return;
         let activeSid = await _createEmailChat(data, { forceNew: true });
+        if (!isCurrentOpen()) return;
         if (!activeSid) {
           console.error('reply: could not obtain a session_id');
           import('./ui.js').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
@@ -1012,13 +1040,20 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           }),
         });
         let docRes = await createReplyDoc(activeSid);
+        if (!isCurrentOpen()) return;
         if (docRes.status === 404) {
           console.warn('[reply-debug] draft session rejected; retrying in a fresh email chat', activeSid);
+          if (!isCurrentOpen()) return;
           activeSid = await _createEmailChat(data, { forceNew: true });
-          if (activeSid) docRes = await createReplyDoc(activeSid);
+          if (!isCurrentOpen()) return;
+          if (activeSid) {
+            docRes = await createReplyDoc(activeSid);
+            if (!isCurrentOpen()) return;
+          }
         }
         if (!docRes.ok) {
           const errText = await docRes.text();
+          if (!isCurrentOpen()) return;
           console.error('[reply-debug] POST /api/document failed', docRes.status, errText);
           // uiModule isn't statically imported here — use the dynamic
           // import pattern the rest of this file uses. (Previously this
@@ -1028,10 +1063,12 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           return;
         }
         const doc = await docRes.json();
+        if (!isCurrentOpen()) return;
         if (doc.id) {
           const wasOpen = _docModule.isPanelOpen();
           if (!wasOpen) _docModule.openPanel();
           await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+          if (!isCurrentOpen()) return;
           // Use the doc dict from the POST directly — avoids a 404 race
           // when the GET fires before the new row is visible to the read
           // connection (or when caching is interfering). loadDocument's
@@ -1040,12 +1077,14 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
             _docModule.injectFreshDoc(doc);
           } else {
             await _docModule.loadDocument(doc.id);
+            if (!isCurrentOpen()) return;
           }
           _bringEmailReplyDraftToFrontOnMobile();
         }
       }
     }
   } catch (e) {
+    if (!isCurrentOpen()) return;
     console.error('Failed to open email:', e);
     // Surface the failure so a silent throw in the reply flow doesn't
     // look like "nothing happened". Dynamic import — uiModule isn't a

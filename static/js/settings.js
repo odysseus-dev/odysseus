@@ -3031,12 +3031,14 @@ async function initEmailAccountsSettings() {
       const body = {
         name: el('eaf-name').value.trim() || el('eaf-from').value.trim(),
         from_address: el('eaf-from').value.trim(),
+        display_name: el('eaf-display-name').value.trim(),
         imap_host: el('eaf-imap-host').value.trim(),
         imap_port: parseInt(el('eaf-imap-port').value) || 993,
         imap_user: el('eaf-imap-user').value.trim(),
         imap_starttls: el('eaf-imap-starttls').checked,
         smtp_host: el('eaf-smtp-host').value.trim(),
         smtp_port: parseInt(el('eaf-smtp-port').value) || 587,
+        smtp_security: el('eaf-smtp-security').value,
         smtp_user: el('eaf-imap-user').value.trim(),
       };
       if (!body.name) { el('eaf-msg').textContent = 'Enter a Name or Email first'; el('eaf-msg').style.color = 'var(--red)'; return; }
@@ -5788,29 +5790,30 @@ export function close() {
   window.history.replaceState(null, '', clean);
   const success = sp.has('email_oauth_success');
   const errMsg = sp.get('email_oauth_error') || '';
-  // Open settings → integrations after the app has initialised.
-  function _tryOpen() {
-    if (window.settingsModule && typeof window.settingsModule.open === 'function') {
-      window.settingsModule.open('integrations');
-      // Brief toast-style banner.
-      const banner = document.createElement('div');
-      banner.textContent = success
-        ? '✓ Google account connected — email is ready'
-        : `Google OAuth failed: ${errMsg || 'unknown error'}`;
-      Object.assign(banner.style, {
-        position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-        background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
-        color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
-        fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
-      });
-      document.body.appendChild(banner);
-      setTimeout(() => banner.remove(), 4000);
-    } else {
-      setTimeout(_tryOpen, 100);
-    }
+  // Open settings → integrations once the document is ready. This module owns
+  // the open() API, so it does not need to wait for a window-level alias.
+  function _showResult() {
+    open('integrations');
+    // Brief toast-style banner.
+    const banner = document.createElement('div');
+    banner.textContent = success
+      ? 'Google account connected — email is ready'
+      : `Google OAuth failed: ${errMsg || 'unknown error'}`;
+    Object.assign(banner.style, {
+      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+      background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
+      color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
+      fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+    });
+    document.body.appendChild(banner);
+    setTimeout(() => banner.remove(), 4000);
   }
-  _tryOpen();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _showResult, { once: true });
+  } else {
+    _showResult();
+  }
 })();
 
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };

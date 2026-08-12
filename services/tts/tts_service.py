@@ -2,6 +2,7 @@
 """Multi-provider TTS service — dispatches to local Kokoro, OpenAI-compatible API, or browser."""
 
 import io
+import os
 import wave
 import logging
 import hashlib
@@ -41,6 +42,11 @@ class TTSService:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._kokoro = None  # lazy-init
+        
+        try:
+            self.max_cache_bytes = int(os.getenv("ODYSSEUS_TTS_CACHE_MAX_BYTES", 500 * 1024 * 1024))
+        except ValueError:
+            self.max_cache_bytes = 500 * 1024 * 1024
 
     # ── Settings ──
 
@@ -88,6 +94,53 @@ class TTSService:
     def _put_cache(self, key: str, data: bytes):
         ext = ".mp3" if (len(data) >= 3 and (data[:3] == b'ID3' or (data[0] == 0xff and (data[1] & 0xe0) == 0xe0))) else ".wav"
         (self.cache_dir / f"{key}{ext}").write_bytes(data)
+
+        self._enforce_cache_limit()
+
+    def _enforce_cache_limit(self):
+            """Evicts oldest files if the cache exceeds the configured byte limit."""
+            if self.max_cache_bytes <= 0:
+                return
+
+            try:
+                files = []
+                total_size = 0
+
+                # Safely scan files and sum sizes, ignoring files deleted mid-scan
+                for f in self.cache_dir.iterdir():
+                    try:
+                        if f.is_file() and f.suffix.lower() in (".mp3", ".wav"):
+                            files.append(f)
+                            total_size += f.stat().st_size
+                    except OSError:
+                        continue
+
+                if total_size > self.max_cache_bytes:
+                    logger.info(
+                        f"TTS cache ({total_size} bytes) exceeded limit ({self.max_cache_bytes} bytes). Evicting oldest files."
+                    )
+
+                    # Sort files by modification time (oldest first)
+                    try:
+                        files.sort(key=lambda f: f.stat().st_mtime)
+                    except OSError as e:
+                        logger.warning(f"Failed to sort cache files by mtime: {e}")
+
+                    # Trim down to 80% of max capacity
+                    target_size = self.max_cache_bytes * 0.8
+
+                    while files and total_size > target_size:
+                        f = files.pop(0)
+                        try:
+                            size = f.stat().st_size
+                            f.unlink()
+                            total_size -= size
+                        except OSError as e:
+                            logger.warning(f"Failed to evict cache file {f}: {e}")
+                            continue
+
+            except Exception as e:
+                logger.warning(f"Error enforcing TTS cache limit: {e}", exc_info=True)
 
     def clear_cache(self):
         count = 0

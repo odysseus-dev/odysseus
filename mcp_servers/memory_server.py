@@ -17,6 +17,8 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.memory import MemoryStoreUnreadable
+
 server = Server("memory")
 
 # Late-initialized managers (set during first tool call)
@@ -28,6 +30,10 @@ _OWNER_ENV_KEYS = ("ODYSSEUS_MCP_MEMORY_OWNER", "ODYSSEUS_MEMORY_OWNER")
 _OWNER_SCOPE_ERROR = (
     "Error: Memory MCP owner is not configured for an owner-scoped memory store. "
     "Set ODYSSEUS_MCP_MEMORY_OWNER for this server or use the owner-aware native memory tool."
+)
+_UNREADABLE_STORE_ERROR = (
+    "Error: Memory store is temporarily unreadable — nothing was saved. "
+    "Repair or restore memory.json, then retry."
 )
 
 
@@ -51,9 +57,21 @@ def _owner_scoped_store(entries: list[dict]) -> bool:
     return any(_entry_owner(entry) for entry in entries if isinstance(entry, dict))
 
 
-def _scope_entries() -> tuple[str | None, list[dict], list[dict], str | None]:
-    """Return configured owner, all entries, visible entries, and optional error."""
-    entries = _memory_manager.load_all()
+def _scope_entries(for_update: bool = False) -> tuple[str | None, list[dict], list[dict], str | None]:
+    """Return configured owner, all entries, visible entries, and optional error.
+
+    ``for_update=True`` is for read-modify-write callers. They save the ``all
+    entries`` list back, so an unreadable store must be reported as an error
+    instead of degrading to ``[]`` — otherwise the save writes their one new
+    entry over the whole store (issue #5673).
+    """
+    if for_update:
+        try:
+            entries = _memory_manager.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            return None, [], [], f"{_UNREADABLE_STORE_ERROR} ({e})"
+    else:
+        entries = _memory_manager.load_all()
     owner = _configured_owner()
     if owner is None and _owner_scoped_store(entries):
         return None, entries, [], _OWNER_SCOPE_ERROR
@@ -161,7 +179,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         category = arguments.get("category", "fact")
         if not text:
             return _text_result("Error: Memory text cannot be empty")
-        owner, memories, _visible, scope_error = _scope_entries()
+        owner, memories, _visible, scope_error = _scope_entries(for_update=True)
         if scope_error:
             return _text_result(scope_error)
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
