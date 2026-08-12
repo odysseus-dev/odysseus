@@ -40,24 +40,37 @@ def generate_cache_key(data: str) -> str:
 def cleanup_cache(cache_dir: Path, cache_index: Dict[str, datetime], max_age: timedelta):
     """Remove expired cache entries and enforce LRU policy."""
     current_time = datetime.now()
-    files_in_dir = {f.name.split(".")[0]: f for f in cache_dir.glob("*.cache")}
+    files_in_dir = {f.stem: f for f in cache_dir.glob("*.cache")}
 
-    to_remove = []
-    for key, timestamp in list(cache_index.items()):
-        if current_time - timestamp > max_age or key not in files_in_dir:
-            to_remove.append(key)
-            if key in files_in_dir:
-                files_in_dir[key].unlink(missing_ok=True)
+    live_entries = []
+    for key, cache_file in list(files_in_dir.items()):
+        timestamp = cache_index.get(key)
+        if timestamp is None:
+            try:
+                timestamp = datetime.fromtimestamp(cache_file.stat().st_mtime)
+            except OSError:
+                continue
+        if current_time - timestamp > max_age:
+            try:
+                cache_file.unlink(missing_ok=True)
+                cache_metrics["evictions"] += 1
+                cache_index.pop(key, None)
+            except OSError as e:
+                logger.debug("Failed to remove expired cache file %s: %s", cache_file, e)
+        else:
+            live_entries.append((key, timestamp, cache_file))
 
-    for key in to_remove:
-        cache_index.pop(key, None)
-        cache_metrics["evictions"] += 1
-
-    if len(cache_index) > CACHE_MAX_ENTRIES:
-        sorted_items = sorted(cache_index.items(), key=lambda x: x[1])
-        excess_count = len(cache_index) - CACHE_MAX_ENTRIES
-        for key, _ in sorted_items[:excess_count]:
+    for key in list(cache_index):
+        if key not in files_in_dir:
             cache_index.pop(key, None)
-            cache_file = cache_dir / f"{key}.cache"
-            cache_file.unlink(missing_ok=True)
             cache_metrics["evictions"] += 1
+
+    if len(live_entries) > CACHE_MAX_ENTRIES:
+        excess_count = len(live_entries) - CACHE_MAX_ENTRIES
+        for key, _, cache_file in sorted(live_entries, key=lambda x: x[1])[:excess_count]:
+            try:
+                cache_file.unlink(missing_ok=True)
+                cache_metrics["evictions"] += 1
+                cache_index.pop(key, None)
+            except OSError as e:
+                logger.debug("Failed to remove excess cache file %s: %s", cache_file, e)

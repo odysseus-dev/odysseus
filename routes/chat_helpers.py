@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from core.models import ChatMessage
+from core.models import ChatMessage, get_session_manager_instance
 from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
@@ -481,6 +481,29 @@ def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, inco
     chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
 
 
+def replace_latest_user_message(sess, session_id: str, preprocessed: PreprocessedMessage) -> bool:
+    history = getattr(sess, "history", None)
+    if not history:
+        return False
+    latest = history[-1]
+    latest_role = latest.get("role") if isinstance(latest, dict) else getattr(latest, "role", None)
+    if latest_role != "user":
+        return False
+    user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
+    replacement = ChatMessage("user", preprocessed.user_content, metadata=user_meta)
+    updated = list(history)
+    updated[-1] = replacement
+    manager = get_session_manager_instance()
+    if manager and getattr(manager, "replace_messages", None):
+        if manager.replace_messages(session_id, updated):
+            return True
+        logger.warning("Failed to persist regenerated user message for session %s", session_id)
+        return False
+    history[-1] = replacement
+    sess.message_count = len(history)
+    return True
+
+
 def fire_message_event(request, webhook_manager, session_id: str, sess, message: str, compare_mode: bool = False):
     """Fire webhook and event_bus events for a new user message."""
     if webhook_manager and not compare_mode:
@@ -687,6 +710,7 @@ async def build_chat_context(
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
+    regenerate: bool = False,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -707,12 +731,23 @@ async def build_chat_context(
         allow_tool_preprocessing=allow_tool_preprocessing,
     )
 
+    raw_history = [] if incognito else (getattr(sess, "history", None) or [])
+    latest_raw = raw_history[-1] if raw_history else None
+    latest_raw_role = latest_raw.get("role") if isinstance(latest_raw, dict) else getattr(latest_raw, "role", None)
+    regenerate_reused_user = bool(
+        regenerate
+        and latest_raw_role == "user"
+    )
+
     # Add user message to history. Nobody/incognito uses a request-local
     # transcript store instead of session history so stale saved chats cannot
     # bleed into context and the turn is not persisted.
     if incognito:
         user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
+    elif regenerate_reused_user:
+        if not replace_latest_user_message(sess, session_id, preprocessed):
+            raise HTTPException(500, "Failed to update regenerated user message")
     else:
         add_user_message(sess, chat_handler, preprocessed, incognito=False)
 
@@ -808,7 +843,13 @@ async def build_chat_context(
     # Build messages. In Nobody/incognito mode, never read saved session
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
-    messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+    context_history = _incognito_messages(session_id) if incognito else sess.get_context_messages()
+    if regenerate_reused_user:
+        context_history = list(context_history)
+        context_history[-1] = {"role": "user", "content": preprocessed.user_content}
+        if preprocessed.attachment_meta:
+            context_history[-1]["metadata"] = {"attachments": preprocessed.attachment_meta}
+    messages = preface + context_history
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
