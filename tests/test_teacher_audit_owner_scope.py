@@ -21,10 +21,14 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
         return ("http://endpoint.local/v1", "teacher-model", {})
 
     async def fake_llm_call_async(url, model, messages, **kwargs):
+        seen["messages"] = messages
         return "teacher reply"
 
     monkeypatch.setattr("src.ai_interaction._resolve_model", fake_resolve_model)
-    monkeypatch.setattr("src.ai_interaction._TEACHER_SYSTEM_PROMPT", "sys", raising=False)
+    monkeypatch.setattr(
+        "src.agent_tools.model_interaction_tools._TEACHER_SYSTEM_PROMPT",
+        "sys",
+    )
     monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
 
     result = asyncio.run(
@@ -34,6 +38,7 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
     assert result == "teacher reply"
     assert seen["owner"] == "alice"
     assert seen["spec"] == "teacher-model"
+    assert seen["messages"][0] == {"role": "system", "content": "sys"}
 
 
 def test_audit_teacher_resolution_scoped_to_owner(monkeypatch):
