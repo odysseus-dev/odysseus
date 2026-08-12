@@ -44,6 +44,12 @@ from routes.chat_helpers import (
 )
 from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
 from src.image_model_ids import looks_like_image_generation_model
+from src.intent_router import (
+    IntentRoute,
+    active_constraint_disabled_tools,
+    classify_intent_route,
+    select_active_intents,
+)
 from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
@@ -141,6 +147,40 @@ _BROWSER_MCP_TOOLS = {
     "mcp__builtin_browser__browser_navigate_back",
     "mcp__builtin_browser__browser_close",
 }
+
+_TOOL_INTENT_DOMAINS = {
+    "calendar": "notes_calendar_tasks",
+    "notes": "notes_calendar_tasks",
+    "email": "email",
+    "web": "web",
+    "research": "web",
+    "ui": "ui",
+    "workspace": "files",
+    "shell": "files",
+}
+
+
+def _log_intent_route(
+    route: IntentRoute,
+    *,
+    endpoint: str,
+    deterministic_needs_tools: bool,
+    deterministic_domains: tuple[str, ...],
+    active_reason: str = "not_applied",
+) -> None:
+    """Log aggregate route output without retaining or emitting prompt text."""
+
+    if route.rollout_mode not in {"shadow", "active"}:
+        return
+    logger.info(
+        "[intent-router] endpoint=%s route=%s active_reason=%s",
+        endpoint,
+        route.log_fields(
+            deterministic_needs_tools=deterministic_needs_tools,
+            deterministic_domains=deterministic_domains,
+        ),
+        active_reason,
+    )
 
 
 def _recent_session_text(sess, limit: int = 8, max_chars: int = 2000) -> str:
@@ -628,7 +668,24 @@ def setup_chat_routes(
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
 
-        tool_policy = build_effective_tool_policy(last_user_message=message)
+        _intent_route = await classify_intent_route(message)
+        _nonstream_domains = ("web",) if use_web or use_research else ()
+        _log_intent_route(
+            _intent_route,
+            endpoint="chat",
+            deterministic_needs_tools=bool(_nonstream_domains),
+            deterministic_domains=_nonstream_domains,
+        )
+
+        _active_constraint_tools = active_constraint_disabled_tools(_intent_route)
+        _semantic_no_browse = bool(
+            _intent_route.rollout_mode == "active"
+            and "web.no_browse" in _intent_route.constraints
+        )
+        tool_policy = build_effective_tool_policy(
+            disabled_tools=_active_constraint_tools,
+            last_user_message=message,
+        )
         allow_tool_preprocessing = not tool_policy.block_all_tool_calls
 
         # Inline memory command
@@ -645,7 +702,7 @@ def setup_chat_routes(
             session_id=session,
             preset_id=preset_id,
             att_ids=att_ids,
-            use_web=use_web,
+            use_web=False if _semantic_no_browse else use_web,
             time_filter=time_filter,
             webhook_manager=webhook_manager,
             allow_tool_preprocessing=allow_tool_preprocessing,
@@ -927,6 +984,7 @@ def setup_chat_routes(
                     _workspace_agent_intent = True
                     allow_bash = "true"
                     logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
+
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
@@ -941,6 +999,46 @@ def setup_chat_routes(
         # Admins always have full privileges via get_privileges (returns
         # ADMIN_PRIVILEGES wholesale) so this is a no-op for them.
         _enforce_chat_privileges(request, sess)
+
+        _intent_route = await classify_intent_route(message)
+        _deterministic_domains = set()
+        _comparison_tool_intent = _tool_intent
+        if not _comparison_tool_intent or not _comparison_tool_intent.needs_tools:
+            _comparison_tool_intent = _classify_tool_intent(message)
+        if _comparison_tool_intent:
+            _mapped_domain = _TOOL_INTENT_DOMAINS.get(
+                _comparison_tool_intent.category
+            )
+            if _mapped_domain:
+                _deterministic_domains.add(_mapped_domain)
+        if _search_enabled or _explicit_web_intent or _explicit_browser_intent:
+            _deterministic_domains.add("web")
+        if _workspace_agent_intent:
+            _deterministic_domains.add("files")
+        _active_intents = select_active_intents(_intent_route)
+        if _active_intents.needs_tools:
+            if chat_mode == "chat":
+                chat_mode = "agent"
+                auto_escalated = True
+                logger.info(
+                    "chat→agent semantic auto-escalation: intents=%s domains=%s",
+                    [intent.name for intent in _active_intents.intents],
+                    list(_active_intents.domains),
+                )
+            if "files" in _active_intents.domains:
+                _workspace_agent_intent = True
+        _log_intent_route(
+            _intent_route,
+            endpoint="chat_stream",
+            deterministic_needs_tools=bool(_deterministic_domains),
+            deterministic_domains=tuple(sorted(_deterministic_domains)),
+            active_reason=_active_intents.reason,
+        )
+        _active_constraint_tools = active_constraint_disabled_tools(_intent_route)
+        _semantic_no_browse = bool(
+            _intent_route.rollout_mode == "active"
+            and "web.no_browse" in _intent_route.constraints
+        )
 
         # Ensure session has auth headers
         resolve_session_auth(sess, session, owner=effective_user(request))
@@ -968,6 +1066,7 @@ def setup_chat_routes(
             use_rag = "false"
             search_context = None
         pre_context_tool_policy = build_effective_tool_policy(
+            disabled_tools=_active_constraint_tools,
             last_user_message=message,
         )
         allow_tool_preprocessing = not pre_context_tool_policy.block_all_tool_calls
@@ -979,7 +1078,7 @@ def setup_chat_routes(
             session_id=session,
             preset_id=preset_id,
             att_ids=att_ids,
-            use_web=use_web,
+            use_web=False if _semantic_no_browse else use_web,
             use_rag=use_rag,
             time_filter=time_filter,
             incognito=incognito,
@@ -1210,6 +1309,10 @@ def setup_chat_routes(
         if plan_mode:
             from src.tool_security import plan_mode_disabled_tools
             disabled_tools.update(plan_mode_disabled_tools())
+
+        disabled_tools.update(_active_constraint_tools)
+        if _semantic_no_browse:
+            disabled_tools.update(_BROWSER_MCP_TOOLS)
 
         tool_policy = build_effective_tool_policy(
             disabled_tools=disabled_tools,
@@ -1686,11 +1789,11 @@ def setup_chat_routes(
                     _max_rounds = max(1, min(_max_rounds, 200))
 
                     _forced_tools = None
-                    if _search_enabled:
+                    if _search_enabled and not _semantic_no_browse:
                         _forced_tools = set(WEB_TOOL_NAMES)
                         if _explicit_browser_intent:
                             _forced_tools |= set(_BROWSER_MCP_TOOLS)
-                    elif _explicit_browser_intent:
+                    elif _explicit_browser_intent and not _semantic_no_browse:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
 
                     async for chunk in stream_agent_loop(
@@ -1716,6 +1819,7 @@ def setup_chat_routes(
                         workspace=workspace or None,
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
+                        intent_route=_intent_route,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

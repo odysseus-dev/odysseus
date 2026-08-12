@@ -127,6 +127,111 @@ def test_workspace_auto_escalation_keeps_shell_tools():
     assert "if auto_escalated and not _workspace_agent_intent:" in source
 
 
+def test_each_chat_request_path_classifies_once_for_shadow_observation():
+    """Both valid prompt paths should produce one reusable semantic route."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    request_paths = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name in {"chat_endpoint", "chat_stream"}
+    }
+
+    assert set(request_paths) == {"chat_endpoint", "chat_stream"}
+    for name, function in request_paths.items():
+        calls = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "classify_intent_route"
+        ]
+        assert len(calls) == 1, f"{name} must classify each request exactly once"
+
+
+def test_chat_stream_reuses_request_route_in_agent_loop():
+    """The request boundary owns inference; the agent loop receives its result."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    chat_stream_func = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream"
+    )
+    agent_calls = [
+        node
+        for node in ast.walk(chat_stream_func)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "stream_agent_loop"
+    ]
+
+    assert len(agent_calls) == 1
+    route_keyword = next(
+        keyword for keyword in agent_calls[0].keywords if keyword.arg == "intent_route"
+    )
+    assert isinstance(route_keyword.value, ast.Name)
+    assert route_keyword.value.id == "_intent_route"
+
+
+def test_active_no_browse_constraint_blocks_and_never_forces_web_tools():
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+
+    assert '"web.no_browse" in _intent_route.constraints' in source
+    assert "disabled_tools.update(_BROWSER_MCP_TOOLS)" in source
+    assert "_search_enabled and not _semantic_no_browse" in source
+    assert "_explicit_browser_intent and not _semantic_no_browse" in source
+
+
+def test_active_no_browse_constraint_prevents_context_time_web_access():
+    """Both request paths must apply the constraint before building context."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    request_paths = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name in {"chat_endpoint", "chat_stream"}
+    }
+
+    assert set(request_paths) == {"chat_endpoint", "chat_stream"}
+    for name, function in request_paths.items():
+        context_calls = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_chat_context"
+        ]
+        assert len(context_calls) == 1
+        use_web = next(
+            keyword.value
+            for keyword in context_calls[0].keywords
+            if keyword.arg == "use_web"
+        )
+        assert ast.unparse(use_web) == (
+            "False if _semantic_no_browse else use_web"
+        ), f"{name} must suppress preprocessing-time web access"
+
+        policy_calls = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_effective_tool_policy"
+        ]
+        assert any(
+            any(
+                keyword.arg == "disabled_tools"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "_active_constraint_tools"
+                for keyword in call.keywords
+            )
+            for call in policy_calls
+        ), f"{name} must apply active constraints to its tool policy"
+
+
 # ── Functional tests of the disabled-tools logic ───────────────
 
 
