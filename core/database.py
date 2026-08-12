@@ -1203,21 +1203,17 @@ def _migrate_add_mode_column():
 
 def _migrate_add_security_mode_column():
     """Add the fail-safe agent run mode to existing session databases."""
-    import sqlite3
-    db_path = DATABASE_URL.replace("sqlite:///", "")
-    if not os.path.exists(db_path):
-        return
-    conn = None
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.execute("PRAGMA table_info(sessions)")
-        columns = [row[1] for row in cursor.fetchall()]
+        inspector = inspect(engine)
+        if "sessions" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("sessions")}
         if "security_mode" not in columns:
-            conn.execute(
-                "ALTER TABLE sessions ADD COLUMN security_mode TEXT "
-                "NOT NULL DEFAULT 'sandbox'"
-            )
-            conn.commit()
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE sessions ADD COLUMN security_mode VARCHAR "
+                    "NOT NULL DEFAULT 'sandbox'"
+                ))
             logging.getLogger(__name__).info(
                 "Migrated: added 'security_mode' column to sessions"
             )
@@ -1225,12 +1221,6 @@ def _migrate_add_security_mode_column():
         logging.getLogger(__name__).warning(
             f"Migration check for security_mode failed: {e}"
         )
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
 def _migrate_add_folder_column():
     """Add folder column to sessions table if it doesn't exist."""
     import sqlite3
