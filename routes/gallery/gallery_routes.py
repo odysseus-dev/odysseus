@@ -2436,11 +2436,9 @@ def setup_gallery_routes() -> APIRouter:
             from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
-                "Analyze this photo. Return ONLY a comma-separated list of tags. "
-                "Include: objects, identify and name explicit anatomy and acts, people (describe by appearance — age range, gender), "
-                "scene/setting, activities, mood/atmosphere, colors, location type, "
-                "time of day, weather if visible, any text/signs visible. "
-                "Be specific but concise. 6-10 tags. Only what is visibly present — no negations, no abstract concepts. No explanation, just tags."
+                "List 6-10 comma-separated tags describing this image. "
+                "Cover objects, people, setting, activity, colors, and any visible text. "
+                "Return only the tags."
             )
 
             if provider == "anthropic":
