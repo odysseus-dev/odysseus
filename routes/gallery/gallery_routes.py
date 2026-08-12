@@ -32,26 +32,6 @@ logger = logging.getLogger(__name__)
 _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
 
-def _reasoning_as_caption(reasoning: str) -> str:
-    """Salvage a caption from a thinking model's reasoning block.
-
-    Reasoning is written as working notes — bullets, "Input:", "Task:",
-    self-corrections. Strip the scaffolding and keep the prose sentences so
-    a deployment with only a thinking model still gets a usable description.
-    """
-    lines = []
-    for raw in (reasoning or "").splitlines():
-        line = raw.strip().lstrip("*-").strip()
-        if not line:
-            continue
-        low = line.lower()
-        if low.startswith(("input:", "task:", "goal:", "plan:", "step ", "wait", "let me", "actually")):
-            continue
-        if line.endswith(":") and len(line) < 40:
-            continue
-        lines.append(line)
-    return " ".join(lines).strip()
-
 def _b64_to_pil_image(image_b64: str, *, mode: str = "RGBA"):
     if not image_b64:
         raise HTTPException(400, "Missing image")
@@ -2378,11 +2358,18 @@ def setup_gallery_routes() -> APIRouter:
                     content = msg.get("content", "") or ""
                     # Thinking models put the answer in `reasoning` and leave
                     # content empty when they run out of budget mid-thought.
+                    # Salvaging that reasoning as a caption used to be the
+                    # fallback here, but it's raw model scaffolding — numbered
+                    # planning lists, "let me re-check", markdown headers —
+                    # not something worth writing into a caption field
+                    # unfiltered. Surface a clear, actionable error instead.
                     if not content.strip() and msg.get("reasoning"):
                         logger.warning(
-                            "ocr: %s returned empty content with reasoning present "
-                            "— use a non-thinking model or raise max_tokens", model_name)
-                        content = _reasoning_as_caption(msg.get("reasoning", ""))
+                            "ocr: %s spent its budget on reasoning and "
+                            "returned empty content", model_name)
+                        return {"error": "This vision model spent its whole budget "
+                                "thinking instead of answering. Try again, or switch "
+                                "to a different vision model in Settings → Vision."}
 
             caption = (content or "").strip()
             if not caption:
@@ -2491,12 +2478,17 @@ def setup_gallery_routes() -> APIRouter:
                     content = msg.get("content", "") or ""
                     # Thinking models put the answer in `reasoning` and leave
                     # content empty when they spend the whole budget there —
-                    # same failure mode as the OCR path, salvage the same way.
+                    # same failure mode as the OCR path. Salvaging that
+                    # reasoning as tags used to be the fallback here, but
+                    # it's raw model scaffolding, not a clean tag list.
+                    # Surface a clear, actionable error instead.
                     if not content.strip() and msg.get("reasoning"):
                         logger.warning(
-                            "ai_tag: %s returned empty content with reasoning present "
-                            "— use a non-thinking model or raise max_tokens", model_name)
-                        content = _reasoning_as_caption(msg.get("reasoning", ""))
+                            "ai_tag: %s spent its budget on reasoning and "
+                            "returned empty content", model_name)
+                        return {"error": "This vision model spent its whole budget "
+                                "thinking instead of answering. Try again, or switch "
+                                "to a different vision model in Settings → Vision."}
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]
