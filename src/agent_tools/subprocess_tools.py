@@ -17,6 +17,7 @@ from src.execution_sandbox import (
     sandbox_command,
     sandbox_python_executable,
 )
+from src.agent_run_policy import ExecutionProfile
 from src.process_execution import (
     FULL_ACCESS_WARNING,
     ProcessExecutionMode,
@@ -34,6 +35,30 @@ TMUX_CAPTURE_LINES = 2000
 _TMUX_ENV_SCRUBBER = "/usr/bin/env"
 _TMUX_LOCKS: dict[str, asyncio.Lock] = {}
 _TMUX_OWNED_SESSIONS: set[str] = set()
+
+
+def _execution_profile_value(value: object) -> str:
+    if isinstance(value, ExecutionProfile):
+        return value.value
+    return str(value or ExecutionProfile.WORKSPACE_SANDBOX.value)
+
+
+def _execution_mode_for_context(ctx: dict) -> tuple[ProcessExecutionMode, str]:
+    profile = ctx.get("execution_profile")
+    if profile is None:
+        mode = configured_process_execution_mode()
+        return mode, (
+            ExecutionProfile.HOST_FULL_ACCESS.value
+            if mode is ProcessExecutionMode.FULL_ACCESS
+            else ExecutionProfile.WORKSPACE_SANDBOX.value
+        )
+    profile_value = _execution_profile_value(profile)
+    mode = (
+        ProcessExecutionMode.FULL_ACCESS
+        if profile_value == ExecutionProfile.HOST_FULL_ACCESS.value
+        else ProcessExecutionMode.SANDBOX
+    )
+    return mode, profile_value
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
@@ -528,15 +553,53 @@ class BashTool:
             "network_profile", SandboxNetworkProfile.NETWORKLESS
         )
         workspace = agent_cwd()
-        execution_mode = configured_process_execution_mode()
+        execution_mode, execution_profile = _execution_mode_for_context(ctx)
 
         if execution_mode is ProcessExecutionMode.FULL_ACCESS:
             if IS_WINDOWS:
-                return blocked_process_result(
-                    "bash",
-                    execution_mode,
-                    "Full Access with retained network isolation requires Linux and Bubblewrap.",
+                try:
+                    proc = await _create_bash_subprocess(
+                        content,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=None,
+                        cwd=workspace,
+                    )
+                except (OSError, RuntimeError, SandboxUnavailable) as exc:
+                    return {
+                        "error": f"bash: {exc}",
+                        "exit_code": 1,
+                        "blocked": True,
+                        "execution_mode": execution_mode.value,
+                    }
+                stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                    proc,
+                    timeout=DEFAULT_BASH_TIMEOUT,
+                    progress_cb=progress_cb,
                 )
+                if timed_out:
+                    return {
+                        "error": (
+                            f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — "
+                            "process killed"
+                        ),
+                        "exit_code": 124,
+                        "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                        "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                        "execution_mode": execution_mode.value,
+                    }
+                output = stdout.rstrip()
+                err = stderr.rstrip()
+                if err:
+                    output = (
+                        (output + "\nSTDERR: " + err).strip()
+                        if output
+                        else "STDERR: " + err
+                    )
+                return {
+                    "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+                    "exit_code": rc or 0,
+                }
             capability = process_capability().full_access
             if not capability.supports(network_profile):
                 return blocked_process_result(
@@ -732,15 +795,56 @@ class PythonTool:
             "network_profile", SandboxNetworkProfile.NETWORKLESS
         )
         workspace = agent_cwd()
-        execution_mode = configured_process_execution_mode()
+        execution_mode, execution_profile = _execution_mode_for_context(ctx)
 
         if execution_mode is ProcessExecutionMode.FULL_ACCESS:
             if IS_WINDOWS:
-                return blocked_process_result(
-                    "python",
-                    execution_mode,
-                    "Full Access with retained network isolation requires Linux and Bubblewrap.",
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable,
+                        "-I",
+                        "-c",
+                        content,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=None,
+                        cwd=workspace,
+                    )
+                except (OSError, RuntimeError, SandboxUnavailable) as exc:
+                    return {
+                        "error": f"python: {exc}",
+                        "exit_code": 1,
+                        "blocked": True,
+                        "execution_mode": execution_mode.value,
+                    }
+                stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                    proc,
+                    timeout=DEFAULT_PYTHON_TIMEOUT,
+                    progress_cb=progress_cb,
                 )
+                if timed_out:
+                    return {
+                        "error": (
+                            f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — "
+                            "process killed"
+                        ),
+                        "exit_code": 124,
+                        "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                        "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                        "execution_mode": execution_mode.value,
+                    }
+                output = stdout.rstrip()
+                err = stderr.rstrip()
+                if err:
+                    output = (
+                        (output + "\nSTDERR: " + err).strip()
+                        if output
+                        else "STDERR: " + err
+                    )
+                return {
+                    "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+                    "exit_code": rc or 0,
+                }
             capability = process_capability().full_access
             if not capability.supports(network_profile):
                 return blocked_process_result(
