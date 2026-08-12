@@ -1094,6 +1094,35 @@ def _unalias_poe_tool_name(name: str, url: str) -> str:
     return _POE_TOOL_ALIASES_REVERSE.get(name, name)
 
 
+def _alias_poe_messages(messages: List[Dict], url: str) -> List[Dict]:
+    """Rename tool references in message history to match Poe-aliased declarations."""
+    if not messages or not _is_poe_endpoint(url):
+        return messages
+    out = []
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "assistant" and msg.get("tool_calls"):
+            msg = {**msg}
+            new_tcs = []
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function") or {}
+                alias = _POE_TOOL_ALIASES.get(fn.get("name"))
+                if alias:
+                    tc = {**tc, "function": {**fn, "name": alias}}
+                new_tcs.append(tc)
+            msg["tool_calls"] = new_tcs
+            out.append(msg)
+
+        elif role == "tool" and msg.get("name") in _POE_TOOL_ALIASES:
+            out.append({**msg, "name": _POE_TOOL_ALIASES[msg["name"]]})
+
+        else:
+            out.append(msg)
+
+    return out
+
+
 # gpt-oss (harmony) ships BUILT-IN tools named `python` and `browser`, invoked
 # with the raw body as the argument (`to=python` + bare source), while custom
 # functions use `to=functions.NAME` + JSON. A tool we expose under a built-in's
@@ -2331,6 +2360,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload["tools"] = aliased
         elif tool_choice_none:
             payload["tool_choice"] = "none"
+        payload["messages"] = _alias_poe_messages(payload["messages"], url)
         # Mistral thinking-capable models — send reasoning_effort so Mistral
         # activates thinking mode and returns structured reasoning_content.
         # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
