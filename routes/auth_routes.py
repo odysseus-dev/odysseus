@@ -345,9 +345,61 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # docs, email accounts, tasks, etc.
         try:
             from sqlalchemy import func
-            from core.database import Base, SessionLocal
+            from core.database import (
+                Base,
+                EmailAccount,
+                SessionLocal,
+                lock_email_account_owner_mutations,
+            )
             db = SessionLocal()
             try:
+                # Email-account defaults are protected by per-owner mutex rows.
+                # A rename crosses two owner partitions, so lock both in the
+                # shared helper's canonical order before inspecting either.
+                lock_email_account_owner_mutations(
+                    db, old_username, new_username
+                )
+
+                source_default_ids = [
+                    row[0]
+                    for row in (
+                        db.query(EmailAccount.id)
+                        .filter(
+                            func.lower(EmailAccount.owner) == old_username,
+                            EmailAccount.is_default == True,  # noqa: E712
+                        )
+                        .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
+                        .all()
+                    )
+                ]
+                destination_default_ids = [
+                    row[0]
+                    for row in (
+                        db.query(EmailAccount.id)
+                        .filter(
+                            func.lower(EmailAccount.owner) == new_username,
+                            EmailAccount.is_default == True,  # noqa: E712
+                        )
+                        .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
+                        .all()
+                    )
+                ]
+                if destination_default_ids:
+                    clear_default_ids = (
+                        destination_default_ids[1:] + source_default_ids
+                    )
+                else:
+                    clear_default_ids = source_default_ids[1:]
+                if clear_default_ids:
+                    (
+                        db.query(EmailAccount)
+                        .filter(EmailAccount.id.in_(clear_default_ids))
+                        .update(
+                            {EmailAccount.is_default: False},
+                            synchronize_session=False,
+                        )
+                    )
+
                 for mapper in Base.registry.mappers:
                     model = mapper.class_
                     if not hasattr(model, "owner"):

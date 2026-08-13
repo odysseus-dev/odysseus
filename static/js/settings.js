@@ -451,7 +451,7 @@ async function initDefaultChat() {
   var verbositySel = el('set-defaultVerbositySelect');
   var controlsMsg = el('set-defaultControlsMsg');
   var _endpoints = [];
-  var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
+  var _fallbacks = []; // Hidden legacy DOM hook; stored values are not loaded or saved.
 
   function enabledEndpoints() {
     return _endpoints.filter(function(e) { return e.is_enabled; });
@@ -575,7 +575,6 @@ async function initDefaultChat() {
 
   async function saveDefault() {
     try {
-      var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

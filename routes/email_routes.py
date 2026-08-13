@@ -45,6 +45,7 @@ from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTE
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
+    _account_visible_to_owner,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
@@ -193,6 +194,64 @@ def _coerce_port(value, default):
         return int(value), None
     except (TypeError, ValueError):
         return None, f"Invalid port {value!r}; must be a whole number"
+
+
+def _lock_email_account_owner_mutation(db, *owners: str) -> None:
+    """Delegate account/default serialization to the shared DB primitive."""
+    from core.database import lock_email_account_owner_mutations
+
+    lock_email_account_owner_mutations(db, *owners)
+
+
+def _email_account_owner_scope(query, owner: str):
+    """Restrict a query to one normalized EmailAccount owner partition."""
+    from core.database import EmailAccount
+    from sqlalchemy import or_
+
+    if owner:
+        return query.filter(EmailAccount.owner == owner)
+    return query.filter(or_(EmailAccount.owner == None, EmailAccount.owner == ""))  # noqa: E711
+
+
+def _discover_email_account_mutation_scope(account_id: str, owner: str) -> str:
+    """Read the initial lock key and fail closed before a mutation session."""
+    from core.database import EmailAccount, SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.get(EmailAccount, account_id)
+        if row is None or (owner and not _account_visible_to_owner(row, owner)):
+            raise HTTPException(404, "Account not found")
+        return row.owner or ""
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Account-owner mutation check failed: %s", exc)
+        raise HTTPException(503, "Account check failed")
+    finally:
+        db.close()
+
+
+def _lock_and_reload_email_account(db, account_id: str, owner: str, scope: str):
+    """Lock, reload, and revalidate an account, retrying if its owner moved."""
+    from core.database import EmailAccount
+
+    owner_scopes = {scope or ""}
+    while True:
+        _lock_email_account_owner_mutation(db, *owner_scopes)
+        row = db.get(EmailAccount, account_id, populate_existing=True)
+        if row is None or (owner and not _account_visible_to_owner(row, owner)):
+            raise HTTPException(404, "Account not found")
+
+        current_scope = row.owner or ""
+        if current_scope in owner_scopes or db.get_bind().dialect.name == "sqlite":
+            return row
+
+        # The account changed owner after discovery but before lock acquisition.
+        # Release the partial lock set and reacquire all observed scopes in the
+        # shared helper's canonical order, then validate from the database again.
+        db.rollback()
+        owner_scopes.add(current_scope)
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -5268,9 +5327,9 @@ def setup_email_routes():
             # Build a candidate chain so a stale session-stored API key
             # (the most common cause of "authentication failed" here)
             # doesn't kill AI Reply outright — fall through to the
-            # user's Utility / Default endpoints AND their configured
-            # fallback chains. Dedupe by url+model so we don't retry
-            # the same broken endpoint.
+            # user's Utility / Default endpoints and the active Utility
+            # fallback chain. The retired default-fallback hook stays empty.
+            # Dedupe by url+model so we don't retry the same broken endpoint.
             from src.llm_core import llm_call_async_with_fallback
             from src.endpoint_resolver import (
                 resolve_utility_fallback_candidates,
@@ -5299,7 +5358,7 @@ def setup_email_routes():
                 _add(_d_url, _d_model, _d_headers)
             except Exception:
                 pass
-            # Configured fallback chains last.
+            # Active Utility fallbacks, then the retired default hook.
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
                 _add(*cand)
             for cand in resolve_chat_fallback_candidates(owner=owner) or []:
@@ -5487,9 +5546,9 @@ def setup_email_routes():
         import uuid as _uuid
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             q = db.query(EmailAccount).filter(EmailAccount.is_default == True)  # noqa: E712
-            if owner:
-                q = q.filter(EmailAccount.owner == owner)
+            q = _email_account_owner_scope(q, owner)
             row = q.first()
             if row is None:
                 row = EmailAccount(id=_uuid.uuid4().hex, owner=owner, name="Default", is_default=True, enabled=True)
@@ -5515,8 +5574,7 @@ def setup_email_routes():
             if data.get("smtp_password"):
                 row.smtp_password = _enc(data["smtp_password"])
             clear_q = db.query(EmailAccount).filter(EmailAccount.id != row.id)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            clear_q = _email_account_owner_scope(clear_q, owner)
             clear_q.update({EmailAccount.is_default: False})
             db.commit()
         finally:
@@ -5611,6 +5669,7 @@ def setup_email_routes():
             return {"ok": False, "error": port_err}
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             row = EmailAccount(
                 id=_uuid.uuid4().hex,
                 name=name,
@@ -5637,9 +5696,7 @@ def setup_email_routes():
             # the one-default invariant — but scope it to THIS user's accounts,
             # otherwise creating a default would clear every other user's
             # default flag too.
-            scope_q = db.query(EmailAccount)
-            if owner:
-                scope_q = scope_q.filter(EmailAccount.owner == owner)
+            scope_q = _email_account_owner_scope(db.query(EmailAccount), owner)
             existing_count = scope_q.count()
             if row.is_default or existing_count == 0:
                 scope_q.update({EmailAccount.is_default: False})
@@ -5690,28 +5747,39 @@ def setup_email_routes():
 
     @router.delete("/accounts/{account_id}")
     async def delete_email_account(account_id: str, owner: str = Depends(require_user)):
-        _assert_owns_account(account_id, owner)
+        initial_scope = _discover_email_account_mutation_scope(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
-            row = db.get(EmailAccount, account_id)
-            if not row:
-                return {"ok": False, "error": "Account not found"}
+            row = _lock_and_reload_email_account(
+                db, account_id, owner, initial_scope
+            )
+            row_scope = row.owner or ""
             was_default = bool(row.is_default)
             db.delete(row)
-            db.commit()
+            # Flush the removal before staging a replacement default.  The
+            # partial unique index is checked statement-by-statement, and the
+            # ORM is otherwise free to UPDATE the promoted row before DELETE.
+            db.flush()
             # If the deleted row was default, promote the next-oldest enabled
             # row owned by THIS user. Without the owner filter we'd promote
             # another user's account and the deleter would silently inherit
             # it as their default.
             if was_default:
-                promote_q = db.query(EmailAccount).filter(EmailAccount.enabled == True)  # noqa: E712
-                if owner:
-                    promote_q = promote_q.filter(EmailAccount.owner == owner)
-                promote = promote_q.order_by(EmailAccount.created_at.asc()).first()
+                promote_q = db.query(EmailAccount).filter(
+                    EmailAccount.id != account_id,
+                    EmailAccount.enabled == True,  # noqa: E712
+                )
+                promote_q = _email_account_owner_scope(promote_q, row_scope)
+                promote = promote_q.order_by(
+                    EmailAccount.created_at.asc(), EmailAccount.id.asc()
+                ).first()
                 if promote:
                     promote.is_default = True
-                    db.commit()
+            # Deletion and any replacement promotion are one durable state
+            # transition, so another worker can never observe or race the old
+            # split-commit gap.
+            db.commit()
             return {"ok": True}
         finally:
             db.close()
@@ -5924,18 +5992,18 @@ def setup_email_routes():
 
     @router.post("/accounts/{account_id}/set-default")
     async def set_default_account(account_id: str, owner: str = Depends(require_user)):
-        _assert_owns_account(account_id, owner)
+        initial_scope = _discover_email_account_mutation_scope(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
-            row = db.get(EmailAccount, account_id)
-            if not row:
-                return {"ok": False, "error": "Account not found"}
-            # SECURITY: scope the "clear other defaults" sweep to this user's
-            # accounts so we don't unset another user's default flag.
-            clear_q = db.query(EmailAccount)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            row = _lock_and_reload_email_account(
+                db, account_id, owner, initial_scope
+            )
+            # Scope the sweep to the target row's normalized owner partition;
+            # this also handles visible legacy NULL/empty-owner accounts.
+            clear_q = _email_account_owner_scope(
+                db.query(EmailAccount), row.owner or ""
+            )
             clear_q.update({EmailAccount.is_default: False})
             row.is_default = True
             db.commit()
@@ -5954,7 +6022,7 @@ def setup_email_routes():
             raise HTTPException(400, "GOOGLE_OAUTH_CLIENT_ID not set — add it to .env")
         redirect_uri = (
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
-            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
         state = make_oauth_state(account_id, owner)
         params = urllib.parse.urlencode({
@@ -5991,7 +6059,7 @@ def setup_email_routes():
         client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
         redirect_uri = (
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
-            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
         import httpx as _httpx
         try:
