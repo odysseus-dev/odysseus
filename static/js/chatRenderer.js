@@ -924,6 +924,7 @@ export function getImageCost(model, quality, size) {
 const _COST_KEY = 'ody-session-cost';
 const _COST_RUNS_KEY = 'ody-session-cost-runs';
 const _MAX_COST_RUNS_PER_SESSION = 256;
+const _COST_LEDGER_LOCK = 'odysseus-session-cost-ledger';
 
 /** Return the accumulated cost for the current (or given) session. */
 export function getSessionCost(sessionId) {
@@ -990,40 +991,73 @@ export function recordSessionMetricsCost(metrics, sessionId, selectedEndpointUrl
   const runId = typeof metrics._costRecordId === 'string'
     ? metrics._costRecordId.trim()
     : '';
-  if (metrics._costRecorded && !runId) return cost;
-  metrics._costRecorded = true;
-  if (runId) {
-    try {
-      const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
-      const sessionRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
-        ? runCosts[sid]
-        : {};
-      // Assigning by detached-run identity is replay-idempotent even when a
-      // refresh produces a fresh metrics object or two tabs race to write it.
-      sessionRuns[runId] = cost;
-      const entries = Object.entries(sessionRuns);
-      if (entries.length > _MAX_COST_RUNS_PER_SESSION) {
-        const overflow = entries.slice(0, entries.length - _MAX_COST_RUNS_PER_SESSION);
+  if ((metrics._costRecorded || metrics._costRecordPending) && !runId) return cost;
+  // Recorded is only set once the write actually runs; pending covers the
+  // window while the write waits on the cross-tab lock, so a replay in that
+  // window cannot double-add and a tab closed mid-queue never claims recorded.
+  metrics._costRecordPending = true;
+  const writeCost = () => {
+    if (runId) {
+      try {
+        const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+        const sessionRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
+          ? runCosts[sid]
+          : {};
+        // Assigning by detached-run identity is replay-idempotent even when a
+        // refresh produces a fresh metrics object. The Web Lock around this
+        // read/modify/write also keeps distinct runs from two tabs from
+        // overwriting one another's stale snapshot.
+        sessionRuns[runId] = cost;
+        const entries = Object.entries(sessionRuns);
+        if (entries.length > _MAX_COST_RUNS_PER_SESSION) {
+          const overflow = entries.slice(0, entries.length - _MAX_COST_RUNS_PER_SESSION);
+          const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
+          costs[sid] = (costs[sid] || 0) + overflow.reduce(
+            (total, entry) => total + (Number(entry[1]) || 0),
+            0,
+          );
+          overflow.forEach(([oldRunId]) => delete sessionRuns[oldRunId]);
+          localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+        }
+        runCosts[sid] = sessionRuns;
+        localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
+      } catch (_e) { /* ignore */ }
+    } else {
+      try {
         const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        costs[sid] = (costs[sid] || 0) + overflow.reduce(
-          (total, entry) => total + (Number(entry[1]) || 0),
-          0,
-        );
-        overflow.forEach(([oldRunId]) => delete sessionRuns[oldRunId]);
+        costs[sid] = (costs[sid] || 0) + cost;
         localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+      } catch (_e) { /* ignore */ }
+    }
+    metrics._costRecorded = true;
+    metrics._costRecordPending = false;
+    const currentSid = window.sessionModule && window.sessionModule.getCurrentSessionId();
+    if (currentSid === sid) updateSessionCostUI();
+  };
+
+  let writeStarted = false;
+  const guardedWrite = () => {
+    writeStarted = true;
+    writeCost();
+  };
+  try {
+    if (
+      typeof navigator !== 'undefined'
+      && navigator.locks
+      && typeof navigator.locks.request === 'function'
+    ) {
+      const pendingWrite = navigator.locks.request(_COST_LEDGER_LOCK, guardedWrite);
+      if (pendingWrite && typeof pendingWrite.catch === 'function') {
+        pendingWrite.catch(() => {
+          if (!writeStarted) guardedWrite();
+        });
       }
-      runCosts[sid] = sessionRuns;
-      localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
-    } catch (_e) { /* ignore */ }
-  } else {
-    try {
-      const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-      costs[sid] = (costs[sid] || 0) + cost;
-      localStorage.setItem(_COST_KEY, JSON.stringify(costs));
-    } catch (_e) { /* ignore */ }
+    } else {
+      guardedWrite();
+    }
+  } catch (_e) {
+    if (!writeStarted) guardedWrite();
   }
-  const currentSid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-  if (currentSid === sid) updateSessionCostUI();
   return cost;
 }
 

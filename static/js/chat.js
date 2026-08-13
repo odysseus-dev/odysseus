@@ -38,6 +38,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
+  const RUN_ID_ABORT_GRACE_MS = 2000; // timeout waits this long for a run-id header before hard-aborting
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
@@ -592,6 +593,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
   const _terminalSavedStreams = new Set(); // sessionId -> canonical terminal event seen by active reader
   const _streamRunIds = new Map();      // sessionId -> opaque identity of the exact detached run
+  const _pendingRunStops = new Map();   // sessionId -> AbortController waiting for the run identity header
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
@@ -604,6 +606,32 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
            _resumingStreams.has(sessionId);
   }
 
+  function _getForegroundStreamState() {
+    try {
+      const sid = sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+      return sid ? (_activeStreams.get(sid) || null) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _syncForegroundStreamGlobals() {
+    const active = _getForegroundStreamState();
+    isStreaming = !!active;
+    currentAbort = active ? active.abortCtrl : null;
+    currentHolder = active ? active.holder : null;
+    _setForegroundChatBusy(!!active || !!_sendInFlight);
+    return active;
+  }
+
+  function _touchStreamActivity(sessionId) {
+    const now = Date.now();
+    _lastReaderActivity = now;
+    const active = sessionId ? _activeStreams.get(sessionId) : null;
+    if (active) active.lastActivity = now;
+    return now;
+  }
+
   /** Stable cost identity for one logical metrics segment within a run. */
   function _metricsCostRecordId(runId, event) {
     if (!runId) return '';
@@ -611,16 +639,31 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   }
 
   /** Stop only the exact detached run whose identity this browser observed. */
-  function _stopExactRun(sessionId) {
+  function _stopExactRun(sessionId, abortCtrl = null) {
     if (!sessionId) return false;
     const runId = _streamRunIds.get(sessionId);
-    if (!runId) return false;
+    if (!runId) {
+      if (abortCtrl || !_pendingRunStops.has(sessionId)) {
+        _pendingRunStops.set(sessionId, abortCtrl);
+      }
+      return false;
+    }
     fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-Odysseus-Run-Id': runId },
     }).catch(() => {});
     return true;
+  }
+
+  function _rememberStreamRunId(sessionId, runId) {
+    if (!sessionId || !runId) return;
+    _streamRunIds.set(sessionId, runId);
+    if (!_pendingRunStops.has(sessionId)) return;
+    const pendingAbort = _pendingRunStops.get(sessionId);
+    _pendingRunStops.delete(sessionId);
+    _stopExactRun(sessionId);
+    if (pendingAbort && !pendingAbort.signal.aborted) pendingAbort.abort();
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -1371,6 +1414,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     _streamSessionId = streamSessionId;
     _terminalSavedStreams.delete(streamSessionId);
     _streamRunIds.delete(streamSessionId);
+    _pendingRunStops.delete(streamSessionId);
     const streamQuery = msg;
     _touchStreamActivity(streamSessionId);
 
@@ -1773,8 +1817,22 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         if (!abortCtrl.signal.aborted) {
           timedOut = true;
           abortCtrl._reason = 'timeout';
-          try { _stopExactRun(streamSessionId); } catch (_) {}
-          abortCtrl.abort();
+          let abortNow = true;
+          try {
+            abortNow = _streamRunIds.has(streamSessionId)
+              ? _stopExactRun(streamSessionId)
+              : _stopExactRun(streamSessionId, abortCtrl);
+          } catch (_) {}
+          if (abortNow) {
+            abortCtrl.abort();
+          } else {
+            // The Stop is queued on the run-id header, but a request this
+            // stalled may never send one. Hard-abort after a short grace so
+            // the timeout still guarantees cancellation.
+            setTimeout(() => {
+              if (!abortCtrl.signal.aborted) abortCtrl.abort();
+            }, RUN_ID_ABORT_GRACE_MS);
+          }
         }
       }, timeoutMs);
       clearResponseTimeout = () => {
@@ -1924,7 +1982,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         return;
       }
       const streamRunId = res.headers.get('X-Odysseus-Run-Id') || '';
-      if (streamRunId) _streamRunIds.set(streamSessionId, streamRunId);
+      if (streamRunId) _rememberStreamRunId(streamSessionId, streamRunId);
 
       // Mark the chat log busy while streaming so screen readers wait for the
       // settled response instead of announcing every token. Cleared in finally.
@@ -3804,7 +3862,9 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         throw _streamTerminalError;
       }
       if (!_streamSawDone) {
-        throw new Error('Stream closed before completion');
+        if (!_canonicalTerminalSaved) {
+          throw new Error('Stream closed before completion');
+        }
       }
 
       // The final foreground render below is authoritative. Cancel any delayed
@@ -4101,6 +4161,15 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       } // end if (!_isBgFinal)
 
     } catch (err) {
+      // If a Stop or timeout was waiting for an identity header and the POST
+      // failed before producing one, keep this on the cancellation path. There
+      // is no safe headerless server cancel to send, but it must not be turned
+      // into an automatic recovery attempt either.
+      if (_pendingRunStops.has(streamSessionId) && abortCtrl && !abortCtrl.signal.aborted) {
+        _pendingRunStops.delete(streamSessionId);
+        abortCtrl._reason = 'user-stop';
+        abortCtrl.abort();
+      }
       // Check if this stream was running in background — needed before any
       // stop-state write, so an errored background stream can't clobber the
       // foreground session's text.
@@ -4342,6 +4411,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       clearFirstTokenWaitTimers();
       _activeStreams.delete(streamSessionId);
       if (_streamSessionId === streamSessionId) _streamSessionId = null;
+      _pendingRunStops.delete(streamSessionId);
       _syncForegroundStreamGlobals();
       // Streaming done — let screen readers announce the settled response.
       const _chatLogDone = document.getElementById('chat-history');
@@ -4454,19 +4524,24 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   export function abortCurrentRequest(stopServer = false) {
     const active = _getForegroundStreamState();
     const abortCtrl = active ? active.abortCtrl : currentAbort;
-    if (abortCtrl) {
-      abortCtrl.abort();
-      // Don't set to null here - let catch block handle it
-    }
+    let abortNow = true;
     if (stopServer) {
       try {
         const _sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
           || _streamSessionId
           || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
-          _stopExactRun(_sid);
+          // Before response headers arrive there is no safe server-side stop
+          // identity yet. Keep the POST alive just long enough to receive that
+          // opaque id, then _rememberStreamRunId sends the exact Stop and aborts
+          // this reader. Never fall back to a headerless session-wide cancel.
+          abortNow = _stopExactRun(_sid, abortCtrl);
         }
       } catch (_) {}
+    }
+    if (abortCtrl && abortNow) {
+      abortCtrl.abort();
+      // Don't set to null here - let catch block handle it
     }
   }
 

@@ -57,6 +57,15 @@ def _publish(run: _Run, ev: str) -> None:
             pass
 
 
+def _wake_run_subscribers(run: _Run) -> None:
+    """Close subscribers even when the drain task never reached its body."""
+    for q in list(run.subscribers):
+        try:
+            q.put_nowait((None, None))
+        except Exception:
+            pass
+
+
 def _schedule_evict(session_id: str, expected_run: Optional[_Run] = None) -> None:
     """(Re)arm a grace-period eviction for a terminal run with no subscribers.
     Identity-checked so a run that gets replaced/reused is never evicted by a
@@ -114,11 +123,7 @@ async def _drain(session_id: str, run: _Run, agen: AsyncGenerator[str, None],
         if subscribers_woken:
             return
         subscribers_woken = True
-        for q in list(run.subscribers):
-            try:
-                q.put_nowait((None, None))
-            except Exception:
-                pass
+        _wake_run_subscribers(run)
 
     # If this run replaced an in-flight one (rapid double-send), wait for that
     # one to fully finish first. Its CancelledError handler calls aclose(), which
@@ -174,6 +179,14 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
     prev_task: Optional[asyncio.Task] = None
     if prev:
         if prev.task and not prev.task.done():
+            # A task cancelled before its first instruction never enters
+            # _drain(), so its except/finally blocks cannot update status or
+            # wake a response already bound to this exact run. Terminalize it
+            # synchronously before cancelling; _drain's cleanup is idempotent
+            # when the task had already started.
+            if prev.status == "running":
+                prev.status = "stopped"
+                _wake_run_subscribers(prev)
             prev.task.cancel()
             prev_task = prev.task   # new run awaits this before it starts writing
         if prev.evict_task and not prev.evict_task.done():
