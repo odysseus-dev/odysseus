@@ -8,6 +8,7 @@ from src.endpoint_resolver import (
     resolve_fallback_entries,
     resolve_fallback_entries_with_descriptors,
     resolve_route_descriptor,
+    resolve_route_descriptor_by_id,
 )
 
 _DEFAULT_FALLBACK_ENTRY_RESOLVER = resolve_fallback_entries
@@ -77,7 +78,6 @@ def resolve_foreground_model_policy(
     entries = prefs.get(FOREGROUND_FALLBACK_LIST_KEY)
     if not isinstance(entries, list) or not entries:
         return ForegroundModelPolicy()
-    entries = entries[:MAX_FOREGROUND_FALLBACKS]
     if allowed_models is not None:
         allowed = frozenset(allowed_models)
         entries = [
@@ -90,6 +90,7 @@ def resolve_foreground_model_policy(
         ]
         if not entries:
             return ForegroundModelPolicy()
+    entries = entries[:MAX_FOREGROUND_FALLBACKS]
 
     if resolve_fallback_entries is not _DEFAULT_FALLBACK_ENTRY_RESOLVER:
         # Preserve the long-standing resolver seam used by downstream tests and
@@ -99,18 +100,28 @@ def resolve_foreground_model_policy(
             owner=owner,
             require_exact_model=True,
         )
-        resolved_routes = [
-            (
-                candidate,
-                {
-                    "endpoint_id": entries[index].get("endpoint_id"),
-                    "endpoint_label": entries[index].get("endpoint_id") or "Fallback route",
-                    "endpoint_cost_tracked": endpoint_cost_tracked(candidate[0]),
-                },
+        resolved_routes = []
+        remaining_entries = list(entries)
+        for candidate in compatibility_candidates:
+            matching_index = next(
+                (
+                    index for index, entry in enumerate(remaining_entries)
+                    if isinstance(entry, dict)
+                    and entry.get("model") == candidate[1]
+                ),
+                None,
             )
-            for index, candidate in enumerate(compatibility_candidates)
-            if index < len(entries)
-        ]
+            matching_entry = (
+                remaining_entries.pop(matching_index)
+                if matching_index is not None
+                else {}
+            )
+            descriptor = {
+                "endpoint_id": matching_entry.get("endpoint_id"),
+                "endpoint_label": matching_entry.get("endpoint_id") or "Fallback route",
+                "endpoint_cost_tracked": endpoint_cost_tracked(candidate[0]),
+            }
+            resolved_routes.append((candidate, descriptor))
     else:
         resolved_routes = resolve_fallback_entries_with_descriptors(
             entries,
@@ -160,11 +171,22 @@ def build_foreground_route_descriptors(
     headers: Optional[Dict[str, Any]] = None,
     owner: Optional[str] = None,
     policy: Optional[ForegroundModelPolicy] = None,
+    selected_endpoint_id: Optional[str] = None,
 ) -> list:
     """Build safe route metadata parallel to foreground candidates."""
 
     policy = policy or resolve_foreground_model_policy(owner)
-    selected = resolve_route_descriptor(endpoint_url, model, headers or {}, owner=owner)
+    selected = None
+    if selected_endpoint_id:
+        selected = resolve_route_descriptor_by_id(
+            selected_endpoint_id,
+            endpoint_url,
+            model,
+            headers or {},
+            owner=owner,
+        )
+    if selected is None:
+        selected = resolve_route_descriptor(endpoint_url, model, headers or {}, owner=owner)
     primary = (endpoint_url, model, headers or {})
     candidates = [primary]
     descriptors = [selected]

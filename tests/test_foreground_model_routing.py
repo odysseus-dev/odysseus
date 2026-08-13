@@ -254,13 +254,18 @@ async def test_chat_stream_route_keeps_selected_model_strict_with_legacy_data(mo
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "agent"])
-async def test_chat_stream_rejects_empty_selected_endpoint_before_fallback(monkeypatch, mode):
+@pytest.mark.parametrize("endpoint_url", ["", None])
+async def test_chat_stream_rejects_missing_selected_endpoint_before_fallback(
+    monkeypatch,
+    mode,
+    endpoint_url,
+):
     captured = {}
     endpoint = _chat_stream_endpoint(
         monkeypatch,
         mode,
         captured,
-        endpoint_url="",
+        endpoint_url=endpoint_url,
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1014,8 +1019,12 @@ async def test_nonstream_chat_is_strict_by_default_and_reports_selected_route(mo
 
 
 @pytest.mark.asyncio
-async def test_nonstream_chat_rejects_empty_selected_endpoint_before_fallback(monkeypatch):
-    endpoint, saved = _chat_endpoint(monkeypatch, endpoint_url="")
+@pytest.mark.parametrize("endpoint_url", ["", None])
+async def test_nonstream_chat_rejects_missing_selected_endpoint_before_fallback(
+    monkeypatch,
+    endpoint_url,
+):
+    endpoint, saved = _chat_endpoint(monkeypatch, endpoint_url=endpoint_url)
 
     with pytest.raises(HTTPException) as exc:
         await endpoint(
@@ -1471,6 +1480,124 @@ def test_candidate_builder_appends_only_policy_authorized_fallbacks():
     ]
 
 
+def test_selected_endpoint_id_wins_over_route_equality_scan(monkeypatch):
+    selected = {
+        "endpoint_id": "account-two",
+        "endpoint_label": "Account two",
+        "endpoint_cost_tracked": True,
+    }
+    seen = []
+
+    def exact_id_descriptor(endpoint_id, url, model, headers, owner=None):
+        seen.append((endpoint_id, url, model, headers, owner))
+        return selected
+
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "resolve_route_descriptor_by_id",
+        exact_id_descriptor,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "resolve_route_descriptor",
+        lambda *args, **kwargs: {
+            "endpoint_id": "account-one",
+            "endpoint_label": "Account one",
+            "endpoint_cost_tracked": True,
+        },
+    )
+
+    descriptors = foreground_model_routing.build_foreground_route_descriptors(
+        "https://provider.example/v1/chat/completions",
+        "same-model",
+        {"Authorization": "Bearer shared-key"},
+        owner="alice",
+        policy=ForegroundModelPolicy(),
+        selected_endpoint_id="account-two",
+    )
+
+    assert descriptors == [selected]
+    assert seen == [(
+        "account-two",
+        "https://provider.example/v1/chat/completions",
+        "same-model",
+        {"Authorization": "Bearer shared-key"},
+        "alice",
+    )]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_threads_form_endpoint_id_to_descriptor_builder(monkeypatch):
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "chat", captured)
+    seen = []
+
+    def fake_descriptors(*args, selected_endpoint_id=None, **kwargs):
+        seen.append(selected_endpoint_id)
+        return [{
+            "endpoint_id": selected_endpoint_id,
+            "endpoint_label": "Selected endpoint",
+            "endpoint_cost_tracked": True,
+        }]
+
+    monkeypatch.setattr(
+        chat_routes,
+        "build_foreground_route_descriptors",
+        fake_descriptors,
+    )
+    request = _RouteRequest("chat")
+    request._form["selected_endpoint_id"] = "account-two"
+
+    response = await endpoint(request)
+    async for _chunk in response.body_iterator:
+        pass
+
+    assert seen == ["account-two"]
+
+
+@pytest.mark.asyncio
+async def test_nonstream_chat_threads_request_endpoint_id_to_descriptor_builder(
+    monkeypatch,
+):
+    seen = []
+
+    def fake_descriptors(*args, selected_endpoint_id=None, **kwargs):
+        seen.append(selected_endpoint_id)
+        return [{
+            "endpoint_id": selected_endpoint_id,
+            "endpoint_label": "Selected endpoint",
+            "endpoint_cost_tracked": True,
+        }]
+
+    async def fake_call(url, model, messages, **kwargs):
+        return "selected answer"
+
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "_load_policy_preferences",
+        lambda owner: {},
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "build_foreground_route_descriptors",
+        fake_descriptors,
+    )
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+    endpoint, _saved = _chat_endpoint(monkeypatch)
+
+    await endpoint(
+        _RouteRequest("chat"),
+        ChatRequest(
+            message="hello",
+            session="session-1",
+            selected_endpoint_id="account-two",
+        ),
+    )
+
+    assert seen == ["account-two"]
+
+
 def test_strict_policy_builds_only_the_selected_chat_candidate():
     candidates = build_foreground_model_candidates(
         "https://selected.example/v1",
@@ -1550,6 +1677,75 @@ def test_foreground_policy_resolves_ordered_owner_scoped_entries(monkeypatch):
         "owner": "alice",
         "require_exact_model": True,
     }
+
+
+def test_foreground_policy_filters_allowed_models_before_maximum_slice(monkeypatch):
+    disallowed = [
+        {"endpoint_id": f"blocked-{i}", "model": f"blocked-model-{i}"}
+        for i in range(MAX_FOREGROUND_FALLBACKS)
+    ]
+    allowed_entry = {"endpoint_id": "allowed", "model": "allowed-model"}
+    seen = {}
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "_load_policy_preferences",
+        lambda owner=None: {
+            "foreground_fallback_enabled": True,
+            "foreground_model_fallbacks": [*disallowed, allowed_entry],
+        },
+    )
+
+    def fake_resolve(entries, owner=None, *, require_exact_model=False):
+        seen["entries"] = entries
+        return [("https://allowed.example/v1", "allowed-model", {})]
+
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "resolve_fallback_entries",
+        fake_resolve,
+    )
+
+    policy = resolve_foreground_model_policy(
+        "alice",
+        allowed_models={"allowed-model"},
+    )
+
+    assert policy.enabled is True
+    assert policy.fallback_candidates == (
+        ("https://allowed.example/v1", "allowed-model", {}),
+    )
+    assert seen["entries"] == [allowed_entry]
+
+
+def test_compatibility_resolver_keeps_descriptor_aligned_when_an_entry_is_skipped(
+    monkeypatch,
+):
+    entries = [
+        {"endpoint_id": "missing", "model": "missing-model"},
+        {"endpoint_id": "backup", "model": "backup-model"},
+    ]
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "_load_policy_preferences",
+        lambda owner=None: {
+            "foreground_fallback_enabled": True,
+            "foreground_model_fallbacks": entries,
+        },
+    )
+    monkeypatch.setattr(
+        foreground_model_routing,
+        "resolve_fallback_entries",
+        lambda *args, **kwargs: [
+            ("https://backup.example/v1", "backup-model", {})
+        ],
+    )
+
+    policy = resolve_foreground_model_policy("alice")
+
+    assert policy.fallback_candidates == (
+        ("https://backup.example/v1", "backup-model", {}),
+    )
+    assert policy.fallback_descriptors[0]["endpoint_id"] == "backup"
 
 
 def test_foreground_policy_loads_only_the_requested_users_preferences(monkeypatch):

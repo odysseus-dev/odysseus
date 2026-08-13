@@ -55,20 +55,13 @@ def endpoint_cost_tracked(url: str, endpoint_kind: Optional[str] = None) -> bool
         return True
     if host in {"localhost", "0.0.0.0", "host.docker.internal"} or host.endswith(".local"):
         return False
-    if "." not in host:
-        return False
     try:
         ip = ipaddress.ip_address(host)
-        local_networks = (
-            ipaddress.ip_network("10.0.0.0/8"),
-            ipaddress.ip_network("172.16.0.0/12"),
-            ipaddress.ip_network("192.168.0.0/16"),
-            ipaddress.ip_network("100.64.0.0/10"),
-        )
-        if ip.is_loopback or any(ip in network for network in local_networks):
-            return False
+        return ip.is_global
     except ValueError:
         pass
+    if "." not in host:
+        return False
     return True
 
 
@@ -576,6 +569,35 @@ def resolve_route_descriptor(
         "endpoint_label": "Selected route",
         "endpoint_cost_tracked": endpoint_cost_tracked(endpoint_url),
     }
+
+
+def resolve_route_descriptor_by_id(
+    endpoint_id: str,
+    endpoint_url: str,
+    model: str,
+    headers: Optional[Dict] = None,
+    owner: Optional[str] = None,
+) -> Optional[dict]:
+    """Resolve a selected route's identity without relying on row order.
+
+    The explicit endpoint id is still verified against the resolved runtime
+    route. This prevents stale or mismatched request metadata from being used
+    for attribution while disambiguating endpoints whose routes are otherwise
+    identical.
+    """
+
+    resolved = _resolve_endpoint_by_id_with_descriptor(
+        endpoint_id,
+        model,
+        owner=owner,
+        require_exact_model=True,
+    )
+    if not resolved:
+        return None
+    candidate, descriptor = resolved
+    expected = ((endpoint_url or "").rstrip("/"), model, headers or {})
+    actual = (candidate[0].rstrip("/"), candidate[1], candidate[2] or {})
+    return descriptor if actual == expected else None
 
 
 def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:

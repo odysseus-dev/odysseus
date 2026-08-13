@@ -3,6 +3,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import src.endpoint_resolver as endpoint_resolver
 from src.endpoint_resolver import (
     endpoint_cost_tracked,
@@ -285,6 +287,40 @@ def test_descriptor_resolution_preserves_safe_endpoint_identity(monkeypatch):
     )]
 
 
+def test_exact_id_descriptor_wins_when_routes_are_identical(monkeypatch):
+    first = _endpoint("account-one", "same-model")
+    second = _endpoint("account-two", "same-model")
+    for endpoint in (first, second):
+        endpoint.base_url = "https://provider.example/v1"
+        endpoint.api_key = "shared-key"
+    _install_resolver_fakes(monkeypatch, {}, [first, second])
+
+    import src.auth_helpers as auth_helpers
+
+    seen_owners = []
+
+    def scoped(query, model_cls, owner, *, include_shared=True):
+        seen_owners.append(owner)
+        return query
+
+    monkeypatch.setattr(auth_helpers, "owner_filter", scoped)
+    resolver = getattr(endpoint_resolver, "resolve_route_descriptor_by_id", None)
+
+    assert resolver is not None
+    assert resolver(
+        "account-two",
+        "https://provider.example/v1/chat/completions",
+        "same-model",
+        {"Authorization": "Bearer shared-key"},
+        owner="alice",
+    ) == {
+        "endpoint_id": "account-two",
+        "endpoint_label": "Endpoint account-two",
+        "endpoint_cost_tracked": True,
+    }
+    assert seen_owners == ["alice"]
+
+
 def test_endpoint_cost_tracking_is_non_secret_route_classification():
     assert endpoint_cost_tracked("http://localhost:11434/v1") is False
     assert endpoint_cost_tracked("http://model-service:8000/v1") is False
@@ -293,3 +329,14 @@ def test_endpoint_cost_tracking_is_non_secret_route_classification():
     assert endpoint_cost_tracked("https://api.example.com/v1") is True
     assert endpoint_cost_tracked("http://192.168.1.20:8000/v1", "api") is True
     assert endpoint_cost_tracked("https://api.example.com/v1", "local") is False
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://[2606:4700:4700::1111]/v1", True),
+        ("http://169.254.10.20:8000/v1", False),
+    ],
+)
+def test_endpoint_cost_tracking_classifies_public_ipv6_and_link_local_ipv4(url, expected):
+    assert endpoint_cost_tracked(url) is expected

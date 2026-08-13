@@ -708,7 +708,7 @@ def setup_chat_routes(
                 400,
                 "No model selected for this chat. Open the model picker and choose one before sending.",
             )
-        if not getattr(sess, "endpoint_url", "").strip():
+        if not (getattr(sess, "endpoint_url", "") or "").strip():
             raise HTTPException(400, "Selected model endpoint is not configured")
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
@@ -778,6 +778,7 @@ def setup_chat_routes(
             sess.headers,
             owner=owner,
             policy=foreground_policy,
+            selected_endpoint_id=chat_request.selected_endpoint_id,
         )
         candidate_request_factory = None
         selected_context_length = getattr(ctx, "context_length", 0)
@@ -888,6 +889,11 @@ def setup_chat_routes(
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
+        selected_endpoint_id = str(
+            form_data.get("selected_endpoint_id")
+            or (body or {}).get("selected_endpoint_id")
+            or ""
+        ).strip()
         # Issue #3229: API callers send JSON, not FormData.  Read from the
         # JSON body as fallback so callers who send {"allow_bash": true}
         # actually get bash enabled.
@@ -1060,7 +1066,7 @@ def setup_chat_routes(
                     400,
                     "No model selected for this chat. Open the model picker and choose one before sending.",
                 )
-            if not getattr(sess, "endpoint_url", "").strip():
+            if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
             if (
                 chat_mode == "chat"
@@ -1594,6 +1600,7 @@ def setup_chat_routes(
                 sess.headers,
                 owner=_user,
                 policy=_foreground_policy,
+                selected_endpoint_id=selected_endpoint_id,
             )
             _chat_request_factory = None
             _selected_context_length = getattr(ctx, "context_length", 0)

@@ -599,6 +599,24 @@ def test_provider_explicit_status_wins_over_transient_text():
     }) == 401
 
 
+@pytest.mark.parametrize(
+    "symbolic_status",
+    ["RATE_LIMITED", "RATE_LIMIT_EXCEEDED", "RESOURCE_EXHAUSTED"],
+)
+def test_provider_symbolic_rate_limited_status_is_availability_evidence(symbolic_status):
+    assert llm_core._provider_stream_error_status({
+        "status": symbolic_status,
+        "message": "Request quota reached",
+    }) == 429
+
+
+def test_provider_unknown_symbolic_status_still_fails_closed():
+    assert llm_core._provider_stream_error_status({
+        "status": "PERMISSION_DENIED",
+        "message": "denied",
+    }) == 400
+
+
 @pytest.mark.parametrize("status", [True, 429.9, "429.0", float("inf")])
 def test_provider_malformed_status_fails_closed(status):
     assert llm_core._provider_stream_error_status({
@@ -1005,7 +1023,6 @@ def test_degenerate_stream_error_is_not_availability_evidence():
     ("error", "expected_status"),
     [
         (httpx.WriteTimeout("write timed out"), 504),
-        (httpx.PoolTimeout("pool timed out"), 504),
         (httpx.RemoteProtocolError("peer disconnected"), 502),
     ],
 )
@@ -1036,7 +1053,6 @@ def test_ambiguous_transport_failures_are_not_availability_evidence(monkeypatch,
 
 @pytest.mark.parametrize("error", [
     httpx.WriteTimeout("write timed out"),
-    httpx.PoolTimeout("pool timed out"),
     httpx.RemoteProtocolError("peer disconnected"),
 ])
 def test_nonstream_foreground_does_not_advance_on_ambiguous_transport(monkeypatch, error):
@@ -1063,7 +1079,6 @@ def test_nonstream_foreground_does_not_advance_on_ambiguous_transport(monkeypatc
 
 @pytest.mark.parametrize("error", [
     httpx.WriteTimeout("write timed out"),
-    httpx.PoolTimeout("pool timed out"),
     httpx.RemoteProtocolError("peer disconnected"),
 ])
 def test_nonstream_foreground_marks_adapter_transport_ineligible(monkeypatch, error):
@@ -1090,6 +1105,127 @@ def test_nonstream_foreground_marks_adapter_transport_ineligible(monkeypatch, er
 
     assert len(calls) == 1
     assert getattr(exc.value, "fallback_eligible", None) is False
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_models"),
+    [
+        (httpx.PoolTimeout("pool timed out"), ["selected", "backup"]),
+        (httpx.WriteTimeout("write timed out"), ["selected"]),
+    ],
+)
+def test_nonstream_foreground_advances_on_pool_timeout_but_not_write_timeout(
+    monkeypatch,
+    error,
+    expected_models,
+):
+    calls = []
+
+    async def fake_post(client, url, headers, **kwargs):
+        model = kwargs["json"]["model"]
+        calls.append(model)
+        if model == "selected":
+            raise error
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"choices": [{"message": {"content": "backup answer"}}]},
+        )
+
+    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda url: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(llm_core, "_get_cached_response", lambda key: None)
+
+    if isinstance(error, httpx.PoolTimeout):
+        response, route, actual_model = asyncio.run(
+            llm_core.llm_call_async_with_route_fallback(
+                [
+                    ("https://selected.example/v1", "selected", {}),
+                    ("https://backup.example/v1", "backup", {}),
+                ],
+                [{"role": "user", "content": "hi"}],
+                fallback_statuses={504},
+            )
+        )
+        assert response == "backup answer"
+        assert route[1] == "backup"
+        assert actual_model == "backup"
+    else:
+        with pytest.raises(Exception) as exc:
+            asyncio.run(llm_core.llm_call_async_with_route_fallback(
+                [
+                    ("https://selected.example/v1", "selected", {}),
+                    ("https://backup.example/v1", "backup", {}),
+                ],
+                [{"role": "user", "content": "hi"}],
+                fallback_statuses={504},
+            ))
+        assert getattr(exc.value, "fallback_eligible", None) is False
+
+    assert calls == expected_models
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_models"),
+    [
+        (httpx.PoolTimeout("pool timed out"), ["selected", "backup"]),
+        (httpx.WriteTimeout("write timed out"), ["selected"]),
+    ],
+)
+def test_stream_foreground_advances_on_pool_timeout_but_not_write_timeout(
+    monkeypatch,
+    error,
+    expected_models,
+):
+    calls = []
+
+    class _RouteClient:
+        def stream(self, method, url, **kwargs):
+            model = kwargs["json"]["model"]
+            calls.append(model)
+            if model == "selected":
+                class _FailureContext:
+                    async def __aenter__(self):
+                        raise error
+
+                    async def __aexit__(self, *args):
+                        return False
+
+                return _FailureContext()
+            return _ProviderStreamContext([
+                'data: {"choices":[{"delta":{"content":"backup answer"}}]}',
+                "data: [DONE]",
+            ])
+
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _RouteClient())
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda url: False)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *args, **kwargs: None)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *args, **kwargs: None)
+
+    async def run():
+        return [
+            chunk
+            async for chunk in llm_core.stream_llm_with_fallback(
+                [
+                    ("https://selected.example/v1", "selected", {}),
+                    ("https://backup.example/v1", "backup", {}),
+                ],
+                [{"role": "user", "content": "hi"}],
+                fallback_statuses={504},
+                fallback_on_empty=False,
+            )
+        ]
+
+    chunks = asyncio.run(run())
+
+    assert calls == expected_models
+    if isinstance(error, httpx.PoolTimeout):
+        assert any('"delta": "backup answer"' in chunk for chunk in chunks)
+        assert any('"type": "fallback"' in chunk for chunk in chunks)
+    else:
+        assert not any('"delta": "backup answer"' in chunk for chunk in chunks)
+        assert chunks[0].startswith("event: error")
 
 
 @pytest.mark.parametrize(

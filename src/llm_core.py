@@ -2490,7 +2490,18 @@ async def llm_call_async(
             if attempt >= max_retries:
                 raise HTTPException(504, f"POST {target_url} timed out after {max_retries} attempts")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
-        except (httpx.WriteTimeout, httpx.PoolTimeout) as e:
+        except httpx.PoolTimeout as e:
+            duration = time.time() - start
+            logger.warning(f"LLM async connection pool timed out after {duration:.2f}s: {e}")
+            if availability_only_transport:
+                raise HTTPException(
+                    504,
+                    f"POST {target_url} could not acquire an upstream connection",
+                )
+            if attempt >= max_retries:
+                raise HTTPException(504, f"POST {target_url} timed out after {max_retries} attempts")
+            await asyncio.sleep(LLMConfig.RETRY_DELAY)
+        except httpx.WriteTimeout as e:
             duration = time.time() - start
             logger.warning(f"LLM async upstream timeout after {duration:.2f}s: {e}")
             if availability_only_transport:
@@ -2775,7 +2786,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
-        except (httpx.WriteTimeout, httpx.PoolTimeout):
+        except httpx.PoolTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Connection pool timeout", "status": 504})}\n\n'
+        except httpx.WriteTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Upstream timeout", "status": 504, "fallback_eligible": False})}\n\n'
         except httpx.ProtocolError:
             yield f'event: error\ndata: {json.dumps({"error": "Upstream protocol error", "status": 502, "fallback_eligible": False})}\n\n'
@@ -2867,7 +2880,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
-        except (httpx.WriteTimeout, httpx.PoolTimeout):
+        except httpx.PoolTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Connection pool timeout", "status": 504})}\n\n'
+        except httpx.WriteTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Upstream timeout", "status": 504, "fallback_eligible": False})}\n\n'
         except httpx.ProtocolError:
             yield f'event: error\ndata: {json.dumps({"error": "Upstream protocol error", "status": 502, "fallback_eligible": False})}\n\n'
@@ -3018,7 +3033,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
-        except (httpx.WriteTimeout, httpx.PoolTimeout):
+        except httpx.PoolTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Connection pool timeout", "status": 504})}\n\n'
+        except httpx.WriteTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Upstream timeout", "status": 504, "fallback_eligible": False})}\n\n'
         except httpx.ProtocolError:
             yield f'event: error\ndata: {json.dumps({"error": "Upstream protocol error", "status": 502, "fallback_eligible": False})}\n\n'
@@ -3332,7 +3349,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
     except httpx.ReadTimeout:
         yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
-    except (httpx.WriteTimeout, httpx.PoolTimeout):
+    except httpx.PoolTimeout:
+        yield f'event: error\ndata: {json.dumps({"error": "Connection pool timeout", "status": 504})}\n\n'
+    except httpx.WriteTimeout:
         yield f'event: error\ndata: {json.dumps({"error": "Upstream timeout", "status": 504, "fallback_eligible": False})}\n\n'
     except httpx.ProtocolError:
         yield f'event: error\ndata: {json.dumps({"error": "Upstream protocol error", "status": 502, "fallback_eligible": False})}\n\n'
@@ -3411,6 +3430,16 @@ def _request_factory_error_chunk(error: Exception, status: Optional[int]) -> str
     return f'event: error\ndata: {json.dumps(payload)}\n\n'
 
 
+# Symbolic-only rate-limit statuses providers emit without a numeric code.
+# RESOURCE_EXHAUSTED is the gRPC/Google symbol for 429; the other two appear
+# in OpenAI-compatible proxies. Any other symbolic status still fails closed.
+_SYMBOLIC_RATE_LIMIT_STATUSES = frozenset({
+    "RATE_LIMITED",
+    "RATE_LIMIT_EXCEEDED",
+    "RESOURCE_EXHAUSTED",
+})
+
+
 def _provider_stream_error_status(error, *, default: int = 400) -> int:
     """Classify structured provider stream errors without making them eligible by default.
 
@@ -3435,6 +3464,12 @@ def _provider_stream_error_status(error, *, default: int = 400) -> int:
             # marker heuristics below; it is not itself an explicit status.
             if key != "code":
                 saw_explicit_status = True
+            if (
+                key == "status"
+                and isinstance(value, str)
+                and value.strip().upper() in _SYMBOLIC_RATE_LIMIT_STATUSES
+            ):
+                return 429
             status = _normalize_http_status(value)
             if status is not None:
                 return status
