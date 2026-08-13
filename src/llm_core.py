@@ -279,6 +279,54 @@ def _stream_delta_event(text: str, *, thinking: bool = False) -> str:
 _DEGENERATE_WORD_RE = re.compile(r"[A-Za-z0-9_\u0370-\u03ff\u0400-\u04ff]+")
 
 
+def _ordinary_only_nonstream_enabled(model: str) -> bool:
+    """Return whether *model* is explicitly allowlisted for non-stream mode."""
+    configured = os.getenv("ODYSSEUS_NONSTREAM_ORDINARY_ONLY_MODELS", "")
+    allowed = {
+        item.strip().casefold()
+        for item in configured.split(",")
+        if item.strip()
+    }
+    return bool(model and model.strip().casefold() in allowed)
+
+
+def _ordinary_only_nonstream_token_budget(max_tokens: int) -> int:
+    """Apply a small, bounded output budget to compatibility-mode requests."""
+    configured = os.getenv("ODYSSEUS_NONSTREAM_ORDINARY_ONLY_MAX_TOKENS", "64")
+    try:
+        budget = int(configured)
+    except (TypeError, ValueError):
+        budget = 64
+    budget = max(1, min(budget, 4096))
+    if max_tokens and max_tokens > 0:
+        return min(max_tokens, budget)
+    return budget
+
+
+def _malformed_output_event(reason: str, **metadata: int) -> str:
+    """Build a machine-readable error without replaying model-controlled text."""
+    message = "Model returned malformed repetitive output. Retrying may help."
+    payload = {
+        "status": 502,
+        "text": message,
+        "error": message,
+        "code": "malformed_output",
+        "reason": reason,
+    }
+    payload.update(metadata)
+    return f"event: error\ndata: {json.dumps(payload)}\n\n"
+
+
+def _looks_like_reserved_delimiter_output(text: str) -> bool:
+    """Detect a serialized special-token delimiter without naming any token."""
+    if not isinstance(text, str):
+        return False
+    value = text.strip()
+    opening = chr(0x3C) + chr(0x7C)
+    closing = chr(0x7C) + chr(0x3E)
+    return value.startswith(opening) and closing in value[len(opening):]
+
+
 class _DegenerateStreamGuard:
     """Detect local-model token collapse before it floods the UI.
 
@@ -294,11 +342,38 @@ class _DegenerateStreamGuard:
         self.same_run = 0
         self.recent_tokens: List[str] = []
         self.total_chars = 0
+        self.last_visible_codepoint: Optional[int] = None
+        self.visible_codepoint_run = 0
 
     def check(self, text: str) -> Optional[str]:
         if not text:
             return None
         self.total_chars += len(text)
+        for char in text:
+            if char.isspace():
+                self.last_visible_codepoint = None
+                self.visible_codepoint_run = 0
+                continue
+            codepoint = ord(char)
+            if codepoint == self.last_visible_codepoint:
+                self.visible_codepoint_run += 1
+            else:
+                self.last_visible_codepoint = codepoint
+                self.visible_codepoint_run = 1
+            if self.visible_codepoint_run >= 16:
+                logger.warning(
+                    "[degenerate-stream] aborting model_hash=%s reason=%s run_length=%d codepoint=%d",
+                    hashlib.sha256(self.model.encode("utf-8", errors="replace")).hexdigest()[:12],
+                    "single_codepoint_run",
+                    self.visible_codepoint_run,
+                    codepoint,
+                )
+                return _malformed_output_event(
+                    "single_codepoint_run",
+                    run_length=self.visible_codepoint_run,
+                    codepoint=codepoint,
+                    char_count=self.total_chars,
+                )
         tokens = [t.lower() for t in _DEGENERATE_WORD_RE.findall(text) if len(t) >= 2]
         if not tokens:
             return None
@@ -313,13 +388,16 @@ class _DegenerateStreamGuard:
             self.recent_tokens = self.recent_tokens[-96:]
 
         reason = None
+        metadata: Dict[str, int] = {}
         if self.same_run >= 28 and self.total_chars >= 100:
-            reason = f"repeated '{self.last_token}' {self.same_run} times"
+            reason = "same_token_run"
+            metadata = {"run_length": self.same_run, "char_count": self.total_chars}
         elif len(self.recent_tokens) >= 72:
             top = max(set(self.recent_tokens), key=self.recent_tokens.count)
             count = self.recent_tokens.count(top)
             if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78:
-                reason = f"repeated '{top}' {count}/{len(self.recent_tokens)} recent tokens"
+                reason = "dominant_recent_token"
+                metadata = {"token_count": count, "window_size": len(self.recent_tokens)}
         if not reason and len(self.recent_tokens) >= 80:
             # Phrase loops are common on some local quantized MLX/MoE models:
             # "Also be a software developer mode?" repeated forever will not
@@ -331,17 +409,19 @@ class _DegenerateStreamGuard:
                 top_gram = max(set(grams), key=grams.count)
                 gram_count = grams.count(top_gram)
                 if gram_count >= 10:
-                    reason = f"repeated phrase '{' '.join(top_gram)}' {gram_count} times"
+                    reason = "repeated_token_phrase"
+                    metadata = {"phrase_count": gram_count, "window_size": len(self.recent_tokens)}
 
         if not reason:
             return None
 
-        logger.warning("[degenerate-stream] aborting model=%s reason=%s", self.model, reason)
-        message = (
-            f"Stopped generation: {self.model} started repeating tokens "
-            f"({reason}). Try a different model or lower temperature."
+        logger.warning(
+            "[degenerate-stream] aborting model_hash=%s reason=%s metadata=%s",
+            hashlib.sha256(self.model.encode("utf-8", errors="replace")).hexdigest()[:12],
+            reason,
+            metadata,
         )
-        return f'event: error\ndata: {json.dumps({"status": 502, "text": message, "error": message})}\n\n'
+        return _malformed_output_event(reason, **metadata)
 
 
 def _model_activity_key(url: str, model: str) -> str:
@@ -2273,6 +2353,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = _normalize_openai_chat_url(url)
+        ordinary_only_nonstream = _ordinary_only_nonstream_enabled(model)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -2286,6 +2367,11 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        if ordinary_only_nonstream:
+            payload["stream"] = False
+            payload.pop("stream_options", None)
+            tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
+            payload[tok_key] = _ordinary_only_nonstream_token_budget(max_tokens)
         if tools:
             payload["tools"] = _alias_harmony_tools(tools, model)
         elif tool_choice_none:
@@ -2598,6 +2684,85 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     try:
         client = _get_http_client()
         h = await apply_kimi_code_headers_async(client, h, target_url)
+        if ordinary_only_nonstream:
+            response = await client.post(
+                target_url,
+                json=payload,
+                headers=h,
+                timeout=stream_timeout,
+            )
+            _clear_host_dead(target_url)
+            if response.status_code != 200:
+                message = f"Upstream request failed with status {response.status_code}."
+                yield f'event: error\ndata: {json.dumps({"status": response.status_code, "text": message, "error": message})}\n\n'
+                return
+
+            try:
+                body = response.json()
+            except (TypeError, ValueError, json.JSONDecodeError):
+                message = "Upstream returned an invalid structured response."
+                yield f'event: error\ndata: {json.dumps({"status": 502, "text": message, "error": message, "code": "invalid_upstream_response"})}\n\n'
+                return
+
+            choices = body.get("choices") if isinstance(body, dict) else None
+            choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+            message_obj = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+            content = message_obj.get("content")
+            content = content if isinstance(content, str) else ""
+            tool_calls = message_obj.get("tool_calls")
+            tool_calls = tool_calls if isinstance(tool_calls, list) else []
+            finish_reason = choice.get("finish_reason")
+
+            if content:
+                malformed = (
+                    _malformed_output_event("reserved_delimiter")
+                    if _looks_like_reserved_delimiter_output(content)
+                    else degenerate_guard.check(content)
+                )
+                if malformed:
+                    yield malformed
+                    return
+                content = _strip_visible_chat_template_artifacts(content)
+                if content:
+                    yield _stream_delta_event(content)
+
+            normalized_calls = []
+            for index, tool_call in enumerate(tool_calls):
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function")
+                function = function if isinstance(function, dict) else {}
+                normalized_calls.append({
+                    "id": tool_call.get("id") or f"call_{index}",
+                    "name": function.get("name") or "",
+                    "arguments": function.get("arguments") or "{}",
+                })
+            if normalized_calls:
+                yield f'data: {json.dumps({"type": "tool_calls", "calls": normalized_calls})}\n\n'
+
+            usage = body.get("usage") if isinstance(body, dict) else None
+            if isinstance(usage, dict):
+                usage_data = {
+                    "input_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                }
+                yield f'data: {json.dumps({"type": "usage", "data": usage_data})}\n\n'
+
+            if finish_reason == "length" and content:
+                logger.info(
+                    "[ordinary-only-nonstream] output truncated chars=%d sha256=%s",
+                    len(content),
+                    hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest(),
+                )
+                yield f'data: {json.dumps({"type": "output_truncated", "reason": "length"})}\n\n'
+            elif not content and not normalized_calls:
+                message = "Model returned no ordinary response content."
+                yield f'event: error\ndata: {json.dumps({"status": 502, "text": message, "error": message, "code": "missing_ordinary_content"})}\n\n'
+                return
+
+            yield "data: [DONE]\n\n"
+            return
+
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
             _clear_host_dead(target_url)
             if r.status_code != 200:

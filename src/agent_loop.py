@@ -7,7 +7,9 @@ The LLM decides when to use tools by writing fenced code blocks.
 """
 
 import asyncio
+import base64
 import collections
+import hashlib
 import json
 import re
 import time
@@ -3076,6 +3078,39 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+def _stream_error_code(chunk: str) -> str:
+    """Return a stable stream error code without exposing error text."""
+    if not isinstance(chunk, str) or not chunk.startswith("event: error"):
+        return ""
+    for line in chunk.splitlines():
+        if not line.startswith("data:"):
+            continue
+        try:
+            payload = json.loads(line[5:].strip())
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return ""
+        if isinstance(payload, dict):
+            code = payload.get("code")
+            return code if isinstance(code, str) else ""
+    return ""
+
+
+def _strip_reasoning_history_for_malformed_retry(messages: List[Dict]) -> List[Dict]:
+    """Drop provider-specific reasoning auxiliaries before one clean retry."""
+    reasoning_fields = ("reasoning_content", "reasoning", "thinking")
+    cleaned = []
+    for message in messages:
+        if not isinstance(message, dict):
+            cleaned.append(message)
+            continue
+        copy = dict(message)
+        if copy.get("role") == "assistant":
+            for field in reasoning_fields:
+                copy.pop(field, None)
+        cleaned.append(copy)
+    return cleaned
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -3840,6 +3875,9 @@ async def stream_agent_loop(
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
+    _malformed_retry_used = False
+    _retry_next_round_deterministic = False
+    _continue_truncated_output = False
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
     # that *can't* call the tool from looping forever.
@@ -3878,6 +3916,10 @@ async def stream_agent_loop(
     _exhausted_rounds = False
 
     for round_num in range(1, max_rounds + 1):
+        continuation_round = _continue_truncated_output
+        _continue_truncated_output = False
+        _round_output_truncated = False
+        _retry_malformed_stream = False
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         native_tool_calls = []  # populated if model uses function calling
@@ -3894,7 +3936,7 @@ async def stream_agent_loop(
         # Merge native tool schemas with MCP tool schemas, filtering out
         # Only send function schemas for API models (OpenAI, Anthropic, etc.).
         # Local models use fenced code blocks or <tool_code> — schemas add overhead.
-        if _force_answer:
+        if _force_answer or continuation_round:
             # Loop-breaker decided the model has enough info but keeps
             # calling tools. Send NO tools this round so it's forced to
             # write the answer instead of flailing further.
@@ -3969,14 +4011,16 @@ async def stream_agent_loop(
             bool(all_tool_schemas),
             agent_stream_timeout,
         )
+        round_temperature = 0.0 if _retry_next_round_deterministic else temperature
+        _retry_next_round_deterministic = False
         async for chunk in stream_llm_with_fallback(
             _candidates,
             messages,
-            temperature=temperature,
+            temperature=round_temperature,
             max_tokens=max_tokens,
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
-            tool_choice_none=_ody_doc_finetune_mode,
+            tool_choice_none=(_ody_doc_finetune_mode or _force_answer or continuation_round),
             timeout=agent_stream_timeout,
             session_id=session_id,
             workload=workload,
@@ -3999,11 +4043,31 @@ async def stream_agent_loop(
                 break
             # Forward error events from stream_llm to the frontend
             if chunk.startswith("event: error"):
+                error_code = _stream_error_code(chunk)
+                if error_code == "malformed_output":
+                    if not _malformed_retry_used and round_num < max_rounds:
+                        _malformed_retry_used = True
+                        _retry_next_round_deterministic = True
+                        messages[:] = _strip_reasoning_history_for_malformed_retry(messages)
+                        _retry_malformed_stream = True
+                        logger.warning(
+                            "[agent-timing] malformed_output_retry round=%s elapsed=%.3fs",
+                            round_num,
+                            time.time() - _round_start,
+                        )
+                        break
+                    logger.warning(
+                        "[agent-timing] malformed_output_terminal round=%s elapsed=%.3fs",
+                        round_num,
+                        time.time() - _round_start,
+                    )
+                    yield chunk
+                    return
                 logger.warning(
-                    "[agent-timing] stream_error round=%s elapsed=%.3fs chunk=%r",
+                    "[agent-timing] stream_error round=%s elapsed=%.3fs code=%s",
                     round_num,
                     time.time() - _round_start,
-                    chunk[:500],
+                    error_code or "unspecified",
                 )
                 yield chunk
                 continue
@@ -4012,7 +4076,9 @@ async def stream_agent_loop(
                     data = json.loads(chunk[6:])
                     # IMPORTANT: check type-based events BEFORE "delta" key,
                     # because tool_call_delta also has an "arg_delta" field.
-                    if data.get("type") == "tool_call_delta":
+                    if data.get("type") == "output_truncated":
+                        _round_output_truncated = data.get("reason") == "length"
+                    elif data.get("type") == "tool_call_delta":
                         if tool_policy and tool_policy.blocks(data.get("name")):
                             continue
                         # Stream document content to frontend as AI generates it
@@ -4192,6 +4258,38 @@ async def stream_agent_loop(
             _round_first_event_logged,
             _round_first_token_logged,
         )
+        if _retry_malformed_stream:
+            continue
+
+        if (
+            _round_output_truncated
+            and round_response
+            and not native_tool_calls
+            and round_num < max_rounds
+        ):
+            logger.info(
+                "[agent] continuing truncated output chars=%d sha256=%s",
+                len(round_response),
+                hashlib.sha256(round_response.encode("utf-8", errors="replace")).hexdigest(),
+            )
+            encoded_partial = base64.b64encode(
+                round_response.encode("utf-8", errors="replace")
+            ).decode("ascii")
+            messages.append(untrusted_context_message(
+                "base64-encoded partial model output",
+                encoded_partial,
+            ))
+            messages.append({
+                "role": "user",
+                "content": (
+                    "The preceding untrusted data is a base64-encoded UTF-8 partial "
+                    "model answer. Continue immediately after that answer. Do not "
+                    "repeat prior text and do not call tools."
+                ),
+            })
+            _continue_truncated_output = True
+            continue
+
         _normalized_doc_round = (
             _normalize_stream_document_fences(
                 round_response,
