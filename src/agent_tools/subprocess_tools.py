@@ -6,6 +6,7 @@ import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
+from core.platform_compat import IS_WINDOWS, find_bash
 from src.constants import MAX_OUTPUT_CHARS
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
@@ -14,6 +15,27 @@ DEFAULT_PYTHON_TIMEOUT = 60 * 60
 PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
 TMUX_CAPTURE_LINES = 2000
+
+
+async def _create_bash_subprocess(command: str, **kwargs):
+    """Start the agent shell with Bash semantics on every supported OS.
+
+    ``asyncio.create_subprocess_shell`` delegates to ``cmd.exe`` on native
+    Windows.  That contradicts the Bash tool contract and makes POSIX commands
+    such as ``pwd``, ``ls -la``, and ``cat`` unreliable even when the launcher
+    has found Git Bash.  Pass the selected workspace as a structural ``cwd``
+    argument; Git Bash inherits that native Windows directory and exposes it
+    using its normal ``/c/...`` representation.
+    """
+    if IS_WINDOWS:
+        bash = find_bash()
+        if not bash:
+            raise RuntimeError(
+                "Git Bash is required for the Bash tool on Windows; "
+                "install Git for Windows and restart Odysseus"
+            )
+        return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
+    return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
 def _tmux_session_name(session_id: Optional[str]) -> str:
@@ -280,7 +302,10 @@ class BashTool:
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
-        if session_id and shutil.which("tmux"):
+        # tmux is a POSIX persistence path. A stray MSYS/Cygwin tmux.exe on
+        # native Windows must not bypass the Git Bash launcher below: the tmux
+        # setup hard-codes /bin/bash and cannot safely consume a native cwd.
+        if session_id and not IS_WINDOWS and shutil.which("tmux"):
             stdout, stderr, rc, timed_out = await _run_tmux_bash(
                 content,
                 session_id=str(session_id),
@@ -307,13 +332,16 @@ class BashTool:
                 "tmux_session": _tmux_session_name(str(session_id)),
             }
 
-        proc = await asyncio.create_subprocess_shell(
-            content,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=_subproc_env,
-            cwd=agent_cwd(),
-        )
+        try:
+            proc = await _create_bash_subprocess(
+                content,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=_subproc_env,
+                cwd=agent_cwd(),
+            )
+        except RuntimeError as e:
+            return {"error": f"bash: {e}", "exit_code": 1}
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_BASH_TIMEOUT,
