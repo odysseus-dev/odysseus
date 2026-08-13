@@ -27,3 +27,5 @@ def test_default_model_save_does_not_rewrite_legacy_fallbacks():
 
     assert "settings.default_model_fallbacks" not in default_chat_source
     assert "default_model_fallbacks:" not in default_chat_source
+    assert "default_reasoning_effort:" in default_chat_source
+    assert "default_verbosity:" in default_chat_source

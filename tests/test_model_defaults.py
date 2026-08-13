@@ -175,6 +175,8 @@ def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
         "default_model_fallbacks": [
             {"endpoint_id": "fallback-ep", "model": "fallback-model"}
         ],
+        "default_reasoning_effort": "max",
+        "default_verbosity": "high",
         "share_defaults_with_users": True,
     })
     monkeypatch.setattr(model_routes, "_load_settings", lambda: guarded_settings)
@@ -200,3 +202,5 @@ def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
 
     assert test_data["endpoint_id"] == "global-ep-123"
     assert test_data["model"] == "qwen-3.6"
+    assert test_data["default_reasoning_effort"] == "max"
+    assert test_data["default_verbosity"] == "high"

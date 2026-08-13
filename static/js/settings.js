@@ -559,11 +559,6 @@ async function initDefaultChat() {
     var settings = await res.json();
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
-    _fallbacks = Array.isArray(settings.default_model_fallbacks)
-      ? settings.default_model_fallbacks.map(function(f) {
-          return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
-        })
-      : [];
     if (reasoningSel) reasoningSel.value = normalizeReasoningDefault(settings.default_reasoning_effort);
     if (verbositySel) verbositySel.value = normalizeVerbosityDefault(settings.default_verbosity);
     publishControlDefaults();
@@ -580,7 +575,6 @@ async function initDefaultChat() {
         body: JSON.stringify({
           default_endpoint_id: epSel.value,
           default_model: modelSel.value,
-          default_model_fallbacks: clean,
           default_reasoning_effort: currentControlDefaults().reasoning_effort,
           default_verbosity: currentControlDefaults().verbosity
         })

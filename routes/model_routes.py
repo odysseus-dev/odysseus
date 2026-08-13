@@ -2438,7 +2438,6 @@ def setup_model_routes(model_discovery):
             _user_prefs = _load_for_user(_user) or {}
             ep_id = (_user_prefs.get("default_endpoint_id") or "").strip()
             model = (_user_prefs.get("default_model") or "").strip()
-            _fallbacks = _user_prefs.get("default_model_fallbacks") or []
             default_reasoning_effort = (_user_prefs.get("default_reasoning_effort") or "").strip()
             default_verbosity = (_user_prefs.get("default_verbosity") or "").strip()
             # If user has no personal default, fall back to global default
@@ -2449,8 +2448,6 @@ def setup_model_routes(model_discovery):
                     ep_id = settings.get("default_endpoint_id", "")
                 if not model:
                     model = settings.get("default_model", "")
-                if not _fallbacks:
-                    _fallbacks = settings.get("default_model_fallbacks") or []
                 if not default_reasoning_effort:
                     default_reasoning_effort = (settings.get("default_reasoning_effort") or "").strip()
                 if not default_verbosity:
@@ -2458,7 +2455,6 @@ def setup_model_routes(model_discovery):
         else:
             ep_id = settings.get("default_endpoint_id", "")
             model = settings.get("default_model", "")
-            _fallbacks = settings.get("default_model_fallbacks") or []
             default_reasoning_effort = (settings.get("default_reasoning_effort") or "").strip()
             default_verbosity = (settings.get("default_verbosity") or "").strip()
 
