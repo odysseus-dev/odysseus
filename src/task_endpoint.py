@@ -32,7 +32,7 @@ def resolve_task_candidates(
     2. Utility endpoint/model
     3. Default endpoint/model
     4. Utility fallback chain
-    5. Default fallback chain
+    5. Retired default-fallback compatibility hook (currently empty)
     """
     candidates = []
 
