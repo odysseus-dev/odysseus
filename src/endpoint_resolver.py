@@ -443,28 +443,14 @@ def resolve_endpoint_by_id(
 
 
 def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
-    """Build the configured default-chat fallback chain as a list of
-    (chat_url, model, headers) tuples, skipping any that can't resolve.
+    """Compatibility shim for the retired default-chat fallback chain."""
 
-    The primary model is NOT included — callers prepend their session's
-    current (url, model, headers) so per-session model overrides are honored.
-    """
-    return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
+    del owner
+    return []
 
 
 def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     """Configured fallback chain for the Utility model (`utility_model_fallbacks`)."""
-    try:
-        from src.settings import get_user_setting, load_settings
-        settings = load_settings()
-        utility_ep = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
-        if not utility_ep:
-            utility_chain = get_user_setting("utility_model_fallbacks", owner or "", settings.get("utility_model_fallbacks") or []) or []
-            if utility_chain:
-                return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
-            return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
-    except Exception:
-        pass
     return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
 
 
