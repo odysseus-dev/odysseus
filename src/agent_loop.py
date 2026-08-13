@@ -3369,6 +3369,14 @@ async def stream_agent_loop(
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
     _ody_qwen_finetune_model = _is_odysseus_qwen_model(model)
+    if _ody_qwen_finetune_model:
+        try:
+            temperature = min(
+                float(temperature if temperature is not None else 0.2),
+                0.2,
+            )
+        except (TypeError, ValueError):
+            temperature = 0.2
     _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
     _intent = _classify_agent_request(messages, _last_user)
     _low_signal_turn = bool(_intent.get("low_signal"))
@@ -3922,16 +3930,41 @@ async def stream_agent_loop(
             is_ody
             and not _runtime_skill_tools
             and not doc_mode
-            and ("notes_calendar_tasks" in _intent_domains or _looks_like_notes_turn(_last_user))
-            and _looks_like_notes_turn(_last_user)
+            and (
+                "notes_calendar_tasks" in _intent_domains
+                or _looks_like_notes_turn(_last_user)
+                or (
+                    _looks_like_notes_calendar_followup(_last_user)
+                    and _minimal_recent_notes_tool_context_message(messages) is not None
+                )
+            )
             and "files" not in _intent_domains
             and not guide_only
         )
-        return is_ody, doc_mode, notes_mode, doc_mode and _prompt_active_document is None
+        general_no_tool_mode = (
+            is_ody
+            and not _runtime_skill_tools
+            and not doc_mode
+            and not notes_mode
+            and not guide_only
+        )
+        return (
+            is_ody,
+            doc_mode,
+            notes_mode,
+            doc_mode and _prompt_active_document is None,
+            general_no_tool_mode,
+        )
 
     def _route_relevant_tools(candidate_model: str):
         route_tools = None if _base_relevant_tools is None else set(_base_relevant_tools)
-        _is_ody, doc_mode, notes_mode, _stream_create = _route_finetune_modes(candidate_model)
+        (
+            _is_ody,
+            doc_mode,
+            notes_mode,
+            _stream_create,
+            general_no_tool_mode,
+        ) = _route_finetune_modes(candidate_model)
         if doc_mode and route_tools is not None:
             if _prompt_active_document is not None:
                 route_tools = {
@@ -3941,7 +3974,12 @@ async def stream_agent_loop(
             else:
                 route_tools = {"create_document", "ask_user", "update_plan"}
         elif notes_mode and route_tools is not None:
-            route_tools = {"manage_notes", "ask_user", "update_plan"}
+            route_tools = {
+                "manage_notes", "manage_calendar", "manage_tasks",
+                "ask_user", "update_plan",
+            }
+        elif general_no_tool_mode:
+            route_tools = set()
         return route_tools
 
     (
@@ -3949,12 +3987,17 @@ async def stream_agent_loop(
         _ody_doc_finetune_mode,
         _ody_notes_finetune_mode,
         _ody_doc_stream_create_mode,
+        _ody_general_no_tool_mode,
     ) = _route_finetune_modes(model)
     _relevant_tools = _route_relevant_tools(model)
     if _ody_doc_finetune_mode and _relevant_tools is not None:
         logger.info("[agent-intent] odysseus doc finetune tool clamp=%s", sorted(_relevant_tools))
     elif _ody_notes_finetune_mode and _relevant_tools is not None:
+        disabled_tools.difference_update({
+            "manage_notes", "manage_calendar", "manage_tasks",
+        })
         logger.info("[agent-intent] odysseus notes finetune tool clamp=%s", sorted(_relevant_tools))
+    elif _ody_general_no_tool_mode:
         try:
             from src.tool_policy import known_tool_names
             disabled_tools.update(known_tool_names())
@@ -4084,7 +4127,13 @@ async def stream_agent_loop(
                 persist=False,
                 compaction_state=compaction_state,
             )
-        is_ody, doc_mode, notes_mode, stream_create_mode = _route_finetune_modes(candidate_model)
+        (
+            is_ody,
+            doc_mode,
+            notes_mode,
+            stream_create_mode,
+            _general_no_tool_mode,
+        ) = _route_finetune_modes(candidate_model)
         route_tools = _route_relevant_tools(candidate_model)
         is_api, is_native_ollama, is_ollama_compat = _agent_route_tool_mode(
             candidate_url,
@@ -4106,6 +4155,7 @@ async def stream_agent_loop(
             suppress_local_context=guide_only,
             suppress_skills=_low_signal_turn,
             active_email=active_email,
+            workspace=workspace,
         )
         if doc_mode and not plan_mode and not approved_plan and not guide_only:
             route_messages = _minimal_odysseus_doc_messages(
@@ -5723,7 +5773,13 @@ async def stream_agent_loop(
                 "model": _round_actual_model,
                 "endpoint_id": _round_actual_endpoint_id,
                 "endpoint_label": _round_actual_endpoint_label,
-                "tool": block.tool_type,
+                "tool": _resolved_tool_event_name({
+                    "tool": block.tool_type,
+                    "desc": desc,
+                    "command": cmd_display,
+                    "output": output_text,
+                }),
+                "desc": desc,
                 "command": cmd_display,
                 "output": output_text,
                 "exit_code": result.get("exit_code"),
