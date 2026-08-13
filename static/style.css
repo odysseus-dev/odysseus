@@ -7433,6 +7433,8 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       }
       /* Anchor those modals to the top so the full height is usable,
          but shift below the iOS status bar / dynamic island. */
+      #memory-modal,
+      #settings-modal,
       #cookbook-modal,
       #calendar-modal,
       #email-lib-modal,
