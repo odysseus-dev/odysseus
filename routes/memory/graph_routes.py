@@ -75,6 +75,21 @@ def _neuron_state(text: str) -> str:
     return best
 
 
+def _node_type(category: str) -> str:
+    """Classify a memory entry into the graph's node tiers.
+
+    - core    — persona / identity / delivery: what the agent is becoming.
+    - skill   — reusable knowledge / capability modules.
+    - external — store facts, projects, preferences: recallable content.
+    """
+    cat = (category or "").lower()
+    if cat in ("persona", "identity", "delivery", "agent", "self"):
+        return "core"
+    if cat in ("skill", "skill_knowledge", "module", "tool", "capability", "knowledge"):
+        return "skill"
+    return "external"
+
+
 def build_brain_snapshot(
     entries: List[Dict],
     embeddings=None,
@@ -104,10 +119,14 @@ def build_brain_snapshot(
                 for e in entries if e.get("category") == "identity"]
 
     # association graph (bounded)
-    nodes = [{"id": e.get("id"), "label": e.get("text", "")[:28],
-              "category": e.get("category", "fact"),
-              "neuron": _neuron_state(e.get("text", ""))}
-             for e in entries]
+    nodes = [{
+        "id": e.get("id"),
+        "label": e.get("text", "")[:28],
+        "category": e.get("category", "fact"),
+        "neuron": _neuron_state(e.get("text", "")),
+        "type": _node_type(e.get("category", "fact")),
+        "length": len(e.get("text", "")),
+    } for e in entries]
     by_id = {e.get("id"): e for e in entries}
     links = {e.get("id"): [] for e in entries}
     for e in entries:

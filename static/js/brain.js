@@ -1,163 +1,274 @@
 // brain.js — the Brain view renderer.
 //
-// Renders a living overview of the memory system: a brain silhouette in the
-// background, with memory data points positioned and linked through the
-// neuron network. Persona and identity nodes are highlighted to show how
-// that layer is forming. Pure SVG, monochrome, CSS-variable driven — matches
-// Odysseus's visual language (the memory modal is already labelled "Brain").
+// Renders the memory system as an interactive node-link graph:
 //
-// On open: fetch /api/memory-brain/overview (on-request, per-turn state) and draw.
+//   - nodes   core     (persona / identity — what the agent is becoming)
+//             skill    (reusable knowledge / capability modules)
+//             external (store facts, projects, preferences)
+//   - node size tracks stored content length (longer entry = larger node)
+//   - edges are the precomputed association graph — dense hubs of things the
+//     store actually links at recall, not a flat web
+//
+// Interaction (focus+context):
+//   - wheel / drag to zoom & pan
+//   - click a node to focus it: its neighbours light up and the connecting
+//     edges draw as blue threads; everything else recedes to a grey wireframe
+//   - click empty space to reset
+//
+// Pure SVG, monochrome, CSS-variable driven — matches Odysseus's visual
+// language. No dependencies.
+//
+// On open: fetch /api/memory-brain/overview (on-request, per-turn state).
 
-// Top-view brain silhouette: two cerebral hemispheres with gyri undulations
-// along the outer edge, separated by a visible longitudinal fissure down the
-// middle. `s` mirrors the hemisphere (+1 right, -1 left) so both lobes are
-// symmetric. Each lobe is inset from the centre line (MIN_DX) so the fissure
-// reads as a real gap instead of the two lobes merging into one blob.
-const MIN_DX = 0.16
-function brainHemisphere(cx, cy, r, s) {
-  const X = (dx) => cx + r * dx * s
-  const Y = (dy) => cy + r * dy
-  return `
-    M ${X(MIN_DX)} ${Y(-1.15)}
-    C ${X(0.7)} ${Y(-1.35)}, ${X(1.0)} ${Y(-1.2)}, ${X(1.05)} ${Y(-0.85)}
-    C ${X(1.08)} ${Y(-0.6)}, ${X(1.35)} ${Y(-0.55)}, ${X(1.32)} ${Y(-0.25)}
-    C ${X(1.3)} ${Y(-0.05)}, ${X(1.15)} ${Y(-0.1)}, ${X(1.18)} ${Y(0.15)}
-    C ${X(1.2)} ${Y(0.35)}, ${X(1.42)} ${Y(0.42)}, ${X(1.28)} ${Y(0.68)}
-    C ${X(1.18)} ${Y(0.9)}, ${X(0.95)} ${Y(1.1)}, ${X(0.6)} ${Y(1.15)}
-    C ${X(0.32)} ${Y(1.2)}, ${X(0.05)} ${Y(1.05)}, ${X(MIN_DX)} ${Y(1.0)}
-    Z`
+const NS = 'http://www.w3.org/2000/svg'
+
+const TYPE_COLORS = {
+  core: 'var(--color-accent)',
+  skill: 'var(--color-brand-blue)',
+  external: 'var(--fg)',
+}
+const THREAD = 'var(--color-brand-blue)'
+
+// ---- tiny force simulation -------------------------------------------------
+// Repulsion between every pair + spring attraction along the association
+// edges. Associations are precomputed at write time, so settled clusters
+// mirror the store's real recall hubs (denser here = linked at recall).
+
+function simulate(nodes, edges, w, h, iterations = 220) {
+  const n = nodes.length
+  const pos = nodes.map((nd, i) => {
+    const ang = (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2
+    const rad = Math.min(w, h) * 0.32
+    return { x: w / 2 + rad * Math.cos(ang), y: h / 2 + rad * Math.sin(ang), vx: 0, vy: 0 }
+  })
+  const adj = edges.map(e => {
+    const ia = nodes.findIndex(x => String(x.id) === String(e.a))
+    const ib = nodes.findIndex(x => String(x.id) === String(e.b))
+    return { ia, ib, s: e.s }
+  })
+  const radius = nodes.map(n => nodeRadius(n))
+  const REP = 9000, SPRING = 0.02, DAMP = 0.86, CENTER = 0.012
+
+  for (let it = 0; it < iterations; it++) {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = pos[i].x - pos[j].x
+        const dy = pos[i].y - pos[j].y
+        const d2 = dx * dx + dy * dy + 0.01
+        const minD = radius[i] + radius[j] + 8
+        const f = REP / d2
+        const fx = (dx / Math.sqrt(d2)) * f
+        const fy = (dy / Math.sqrt(d2)) * f
+        pos[i].vx += fx; pos[i].vy += fy
+        pos[j].vx -= fx; pos[j].vy -= fy
+      }
+    }
+    for (const { ia, ib } of adj) {
+      if (ia < 0 || ib < 0) continue
+      const dx = pos[ib].x - pos[ia].x
+      const dy = pos[ib].y - pos[ia].y
+      const d = Math.sqrt(dx * dx + dy * dy) + 0.01
+      const f = SPRING * (d - 110)
+      pos[ia].vx += (dx / d) * f; pos[ia].vy += (dy / d) * f
+      pos[ib].vx -= (dx / d) * f; pos[ib].vy -= (dy / d) * f
+    }
+    for (const p of pos) {
+      p.vx *= DAMP; p.vy *= DAMP
+      p.vx += (w / 2 - p.x) * CENTER; p.vy += (h / 2 - p.y) * CENTER
+      p.x += p.vx; p.y += p.vy
+    }
+  }
+  return pos
 }
 
-function brainShape(cx, cy, r) {
-  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  g.setAttribute('opacity', '0.12')
-  for (const s of [1, -1]) {
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-    p.setAttribute('d', brainHemisphere(cx, cy, r, s))
-    p.setAttribute('fill', 'var(--fg)')
-    g.appendChild(p)
-  }
-  // longitudinal fissure between the hemispheres
-  const mid = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-  mid.setAttribute('x1', cx); mid.setAttribute('y1', cy - r * 1.15)
-  mid.setAttribute('x2', cx); mid.setAttribute('y2', cy + r * 1.0)
-  mid.setAttribute('stroke', 'var(--fg)'); mid.setAttribute('stroke-width', '1')
-  g.appendChild(mid)
-  return g
+function nodeRadius(n) {
+  return 3.5 + Math.min(10, Math.log(1 + (n.length || 24)) * 1.6)
+}
+
+function el(tag, attrs = {}) {
+  const e = document.createElementNS(NS, tag)
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v)
+  return e
 }
 
 export function loadBrain(open = false) {
-  const el = document.getElementById('assoc-graph-canvas')
-  if (!el) return
-  el.innerHTML = ''
-  const w = el.clientWidth || 480
-  const h = Math.max(el.clientHeight, 240) || 240
+  const elc = document.getElementById('assoc-graph-canvas')
+  if (!elc) return
+  elc.innerHTML = ''
+  const w = elc.clientWidth || 480
+  const h = Math.max(elc.clientHeight, 240) || 240
 
-  // --- brain silhouette (background) ---------------------------------------
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('width', w)
-  svg.setAttribute('height', h)
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
-
-  const cx = w / 2, cy = h / 2
-  const r = Math.min(w, h) / 2.8
-  const bg = brainShape(cx, cy, r)
-  svg.appendChild(bg)
-
-  const msg = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-  msg.setAttribute('x', cx); msg.setAttribute('y', cy)
-  msg.setAttribute('text-anchor', 'middle'); msg.setAttribute('font-size', '12')
-  msg.setAttribute('fill', 'var(--fg)'); msg.setAttribute('opacity', '0.7')
+  const svg = el('svg', { width: w, height: h, viewBox: `0 0 ${w} ${h}` })
+  const msg = el('text', { x: w / 2, y: h / 2, 'text-anchor': 'middle', 'font-size': '12', fill: 'var(--fg)', opacity: 0.7 })
   msg.textContent = 'Loading brain…'
   svg.appendChild(msg)
-  el.appendChild(svg)
+  elc.appendChild(svg)
 
-  // --- fetch the real state -------------------------------------------------
   fetch('/api/memory-brain/overview')
     .then(r => r.json())
-    .then(data => draw(el, svg, data, w, h, cx, cy, r))
-    .catch(() => {
-      msg.textContent = 'Brain view unavailable'
-    })
+    .then(data => draw(elc, svg, data, w, h))
+    .catch(() => { msg.textContent = 'Brain view unavailable' })
 }
 
-function draw(el, svg, data, w, h, cx, cy, r) {
-  // clear the loading message
+function draw(elc, svg, data, w, h) {
   svg.innerHTML = ''
-  // redraw background
-  svg.appendChild(brainShape(cx, cy, r))
-
   const nodes = data.associations?.nodes || []
   const edges = data.associations?.edges || []
+  const pos = simulate(nodes, edges, w, h)
+  const byId = {}
+  nodes.forEach((n, i) => { byId[n.id] = i })
 
-  // position nodes on an ellipse inside the brain, persona/identity inward
-  const isIdentity = n => data.identity?.some(i => String(i.id) === String(n.id))
-  const isPersona = n => data.persona?.some(p => String(p.id) === String(n.id))
-  const pos = {}
+  // zoom/pan state
+  let scale = 1, tx = 0, ty = 0, selected = null
+  const root = el('g')
+  svg.appendChild(root)
+
+  // edge layer (behind nodes)
+  const edgeG = el('g')
+  const edgeMap = {}
+  edges.forEach((e, i) => {
+    const ia = byId[e.a], ib = byId[e.b]
+    if (ia === undefined || ib === undefined) return
+    const line = el('line', {
+      x1: pos[ia].x, y1: pos[ia].y, x2: pos[ib].x, y2: pos[ib].y,
+      stroke: 'var(--fg)', 'stroke-width': String(Math.max(0.75, e.s * 2.5)),
+      opacity: 0.22,
+    })
+    edgeMap[i] = line
+    edgeG.appendChild(line)
+  })
+  root.appendChild(edgeG)
+
+  // node layer
+  const nodeG = el('g')
+  const nodeEls = {}
   nodes.forEach((n, i) => {
-    const ang = (i / Math.max(nodes.length, 1)) * Math.PI * 2 - Math.PI / 2
-    const rad = isIdentity(n) ? r * 0.45 : isPersona(n) ? r * 0.65 : r * 0.85
-    pos[n.id] = [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)]
-  })
+    const r = nodeRadius(n)
+    const circ = el('circle', {
+      cx: pos[i].x, cy: pos[i].y, r,
+      fill: TYPE_COLORS[n.type] || 'var(--fg)',
+      opacity: 0.7, cursor: 'pointer',
+    })
+    circ.dataset.i = i
+    nodeEls[n.id] = circ
+    nodeG.appendChild(circ)
 
-  // edges (neuron-network links)
-  const eg = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  edges.forEach(e => {
-    const [x1, y1] = pos[e.a] || []
-    const [x2, y2] = pos[e.b] || []
-    if (x1 === undefined || x2 === undefined) return
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-    line.setAttribute('x1', x1); line.setAttribute('y1', y1)
-    line.setAttribute('x2', x2); line.setAttribute('y2', y2)
-    line.setAttribute('stroke', 'var(--accent, var(--red))')
-    line.setAttribute('stroke-width', String(Math.max(0.75, e.s * 3)))
-    line.setAttribute('opacity', '0.35')
-    eg.appendChild(line)
+    const t = el('text', {
+      x: pos[i].x, y: pos[i].y + r + 10,
+      'text-anchor': 'middle', 'font-size': '9', fill: 'var(--fg)',
+      opacity: 0.75, 'pointer-events': 'none',
+    })
+    t.textContent = n.label.length > 24 ? n.label.slice(0, 23) + '…' : n.label
+    nodeG.appendChild(t)
   })
-  svg.appendChild(eg)
+  root.appendChild(nodeG)
 
-  // nodes (data points)
-  const ng = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  nodes.forEach(n => {
-    const [x, y] = pos[n.id] || []
-    if (x === undefined) return
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
-    c.setAttribute('cx', x); c.setAttribute('cy', y)
-    c.setAttribute('r', isIdentity(n) ? 5 : isPersona(n) ? 4 : 3)
-    c.setAttribute('fill', isIdentity(n) ? 'var(--accent, var(--red))'
-                 : isPersona(n) ? 'var(--fg)' : 'var(--fg)')
-    c.setAttribute('opacity', isIdentity(n) ? '1' : isPersona(n) ? '0.85' : '0.55')
-    ng.appendChild(c)
-    if (isIdentity(n) || isPersona(n)) {
-      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-      t.setAttribute('x', x + 7); t.setAttribute('y', y + 3)
-      t.setAttribute('font-size', '8'); t.setAttribute('fill', 'var(--fg)')
-      t.setAttribute('opacity', '0.8')
-      t.textContent = n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label
-      ng.appendChild(t)
-    }
-  })
-  svg.appendChild(ng)
-
-  // legend — persona / identity / association layers
-  const legend = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  const lx = 10, ly = h - 18
-  ;[
-    ['identity', 'var(--accent, var(--red))', 'identity'],
-    ['persona', 'var(--fg)', 'persona'],
-    ['neuron', 'var(--fg)', 'associations'],
-  ].forEach(([label, color, kind], i) => {
-    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
-    dot.setAttribute('cx', lx + i * 95); dot.setAttribute('cy', ly)
-    dot.setAttribute('r', kind === 'identity' ? 4 : kind === 'persona' ? 3 : 2)
-    dot.setAttribute('fill', color); dot.setAttribute('opacity', '0.8')
-    legend.appendChild(dot)
-    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-    t.setAttribute('x', lx + i * 95 + 7); t.setAttribute('y', ly + 3)
-    t.setAttribute('font-size', '9'); t.setAttribute('fill', 'var(--fg)')
-    t.setAttribute('opacity', '0.7')
+  // legend — core / skill / external + hint
+  const legend = el('g')
+  const lx = 10, ly = h - 14
+  let lxi = 0
+  for (const [label, color, r] of [
+    ['core', TYPE_COLORS.core, 4],
+    ['skill', TYPE_COLORS.skill, 3],
+    ['external', TYPE_COLORS.external, 3],
+  ]) {
+    const d = el('circle', { cx: lx + lxi * 84, cy: ly, r, fill: color, opacity: 0.8 })
+    legend.appendChild(d)
+    const t = el('text', { x: lx + lxi * 84 + 8, y: ly + 3, 'font-size': '9', fill: 'var(--fg)', opacity: 0.7 })
     t.textContent = label
     legend.appendChild(t)
-  })
+    lxi++
+  }
+  const hint = el('text', { x: w - 10, y: h - 8, 'text-anchor': 'end', 'font-size': '9', fill: 'var(--fg)', opacity: 0.45 })
+  hint.textContent = 'click a node to trace its associations · scroll to zoom'
+  legend.appendChild(hint)
   svg.appendChild(legend)
+
+  // ---- apply focus: highlight selected node + neighbours with blue threads ---
+  function focus(id) {
+    selected = id
+    const selIdx = byId[id]
+    const neigh = new Set()
+    edges.forEach((e, i) => {
+      const touches = String(e.a) === String(id) || String(e.b) === String(id)
+      if (!touches) return
+      neigh.add(String(e.a)); neigh.add(String(e.b))
+      edgeMap[i].setAttribute('stroke', THREAD)
+      edgeMap[i].setAttribute('opacity', '0.85')
+      edgeMap[i].setAttribute('stroke-width', String(Math.max(1.4, e.s * 3)))
+    })
+    nodes.forEach((n, i) => {
+      const isSel = String(n.id) === String(id)
+      const isNear = neigh.has(String(n.id))
+      const c = nodeEls[n.id]
+      if (isSel) { c.setAttribute('opacity', '1'); c.setAttribute('stroke', THREAD); c.setAttribute('stroke-width', '2') }
+      else if (isNear) { c.setAttribute('opacity', '0.95'); c.setAttribute('stroke', THREAD); c.setAttribute('stroke-width', '1.2') }
+      else { c.setAttribute('opacity', '0.08') }
+      c.style.cursor = 'pointer'
+    })
+    // dim labels of unrelated nodes, brighten related ones
+    Array.from(nodeG.children).forEach(ch => {
+      if (ch.tagName !== 'text') return
+      const idx = Number(ch.dataset ? ch.dataset.i : -1)
+      const nid = nodes[idx]?.id
+      const on = neigh.has(nid) || String(nid) === String(id)
+      ch.setAttribute('opacity', on ? '0.9' : '0.08')
+    })
+  }
+
+  function reset() {
+    selected = null
+    edges.forEach((e, i) => {
+      edgeMap[i].setAttribute('stroke', 'var(--fg)')
+      edgeMap[i].setAttribute('opacity', '0.22')
+      edgeMap[i].setAttribute('stroke-width', String(Math.max(0.75, e.s * 2.5)))
+    })
+    nodes.forEach((n, i) => {
+      const c = nodeEls[n.id]
+      c.setAttribute('opacity', '0.7')
+      c.removeAttribute('stroke'); c.removeAttribute('stroke-width')
+    })
+    Array.from(nodeG.children).forEach(ch => {
+      if (ch.tagName === 'text') ch.setAttribute('opacity', '0.75')
+    })
+  }
+
+  // ---- interaction --------------------------------------------------------
+  svg.addEventListener('click', ev => {
+    const t = ev.target
+    if (t && t.dataset && t.dataset.i !== undefined) {
+      focus(nodes[Number(t.dataset.i)].id)
+    } else {
+      reset()
+    }
+  })
+
+  svg.addEventListener('wheel', ev => {
+    ev.preventDefault()
+    const rect = svg.getBoundingClientRect()
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top
+    const k = ev.deltaY < 0 ? 1.12 : 0.89
+    scale = Math.min(8, Math.max(0.3, scale * k))
+    const wx = (mx - tx) / scale, wy = (my - ty) / scale
+    tx = mx - wx * scale; ty = my - wy * scale
+    apply()
+  }, { passive: false })
+
+  let drag = null
+  svg.addEventListener('mousedown', ev => {
+    if (ev.target !== svg && ev.target !== root) return
+    drag = { x: ev.clientX, y: ev.clientY }
+  })
+  window.addEventListener('mousemove', ev => {
+    if (!drag) return
+    tx += ev.clientX - drag.x; ty += ev.clientY - drag.y
+    drag.x = ev.clientX; drag.y = ev.clientY
+    apply()
+  })
+  window.addEventListener('mouseup', () => { drag = null })
+
+  function apply() {
+    root.setAttribute('transform', `translate(${tx} ${ty}) scale(${scale})`)
+  }
+  apply()
 }
