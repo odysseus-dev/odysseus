@@ -534,6 +534,7 @@ TOOL_SECTIONS = {
 <shell command>
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, system info, process management, etc.
+Each call starts fresh in the selected workspace. Read stdout, stderr, and exit_code, then report the actual result to the user; never stop at merely showing the tool call.
 Do NOT use bash/curl for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.
 NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
@@ -4817,10 +4818,14 @@ async def stream_agent_loop(
                 elif action == "update":
                     output_text = f'Document updated: "{title}" (v{ver})'
             elif "stdout" in result:
-                # On a bash/python timeout the result carries error + (often
-                # empty) stdout/stderr; fall back to the error so the "timed
-                # out" reason reaches the UI instead of a blank result.
-                raw = result["stdout"] or result["stderr"] or result.get("error", "")
+                # Keep both streams visible. The old fallback discarded stderr
+                # whenever stdout existed, hiding compiler diagnostics.
+                _streams = []
+                if result.get("stdout"):
+                    _streams.append(result["stdout"])
+                if result.get("stderr"):
+                    _streams.append("STDERR:\n" + result["stderr"])
+                raw = "\n".join(_streams) or result.get("error", "") or "(no output)"
                 output_text = _truncate(raw)
             elif "output" in result:
                 # bash / python canonical result: {"output": ..., "exit_code": ...}

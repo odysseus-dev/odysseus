@@ -2,9 +2,8 @@
 
 Previously agent_loop sliced tool output to a hard character limit ([:2000]
 or [:4000]) with no signal to the UI that data was lost.  Now it delegates to
-tool_utils._truncate which caps at MAX_OUTPUT_CHARS (10 000) and appends
-a ``... (truncated, N chars total)`` suffix so the frontend can show a
-truncation indicator in the tool bubble.
+tool_utils._truncate which retains the head and tail within
+MAX_OUTPUT_CHARS (10 000), with an omission indicator between them.
 """
 from src.tool_utils import _truncate, MAX_OUTPUT_CHARS
 
@@ -20,8 +19,9 @@ def test_long_output_truncated_with_indicator():
     text = "x" * (MAX_OUTPUT_CHARS + 500)
     result = _truncate(text)
     assert len(result) > MAX_OUTPUT_CHARS  # includes suffix
-    assert result.startswith("x" * MAX_OUTPUT_CHARS)
-    assert "truncated" in result
+    assert result.startswith("x" * (MAX_OUTPUT_CHARS // 2))
+    assert result.endswith("x" * (MAX_OUTPUT_CHARS // 2))
+    assert "chars omitted" in result
     assert str(len(text)) in result  # original length reported
 
 
@@ -36,7 +36,7 @@ def test_default_limit_matches_constant():
     assert MAX_OUTPUT_CHARS == 10_000
     text = "y" * 10_001
     result = _truncate(text)
-    assert "truncated" in result
+    assert "chars omitted" in result
 
 
 def test_empty_string():

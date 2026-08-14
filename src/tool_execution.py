@@ -528,7 +528,10 @@ async def _direct_fallback(
         "TERM": "xterm-256color",
         "COLUMNS": "120",
         "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
+        # Keep the user's real HOME. Bash already has full host access for an
+        # authorized user; replacing HOME only makes normal toolchains unable
+        # to find ~/.config, nvm, cargo, conda, SSH config, and credentials.
+        "ODYSSEUS_AGENT_WORKDIR": _AGENT_WORKDIR,
     }
 
     try:
@@ -984,17 +987,20 @@ def format_tool_result(description: str, result: Dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
     parts = [f"### {description}"]
 
-    if "stdout" in result:
-        if result["stdout"]:
-            parts.append(f"**stdout:**\n```\n{result['stdout']}\n```")
-        if result["stderr"]:
-            parts.append(f"**stderr:**\n```\n{result['stderr']}\n```")
-        parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
-    elif "output" in result:
-        # bash / python canonical result shape: {"output": ..., "exit_code": ...}
+    if "output" in result:
+        # Bash/Python canonical shape. Bash may also expose stdout/stderr
+        # separately to the UI, but the combined output is already bounded and
+        # avoids doubling tool-result context for the model.
         parts.append(f"```\n{result['output']}\n```")
-        if result.get("exit_code") not in (0, None):
-            parts.append(f"**exit_code:** {result['exit_code']}")
+        parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
+    elif "stdout" in result:
+        if result.get("stdout"):
+            parts.append(f"**stdout:**\n```\n{result['stdout']}\n```")
+        if result.get("stderr"):
+            parts.append(f"**stderr:**\n```\n{result['stderr']}\n```")
+        if not result.get("stdout") and not result.get("stderr") and result.get("error"):
+            parts.append(f"**error:** {result['error']}")
+        parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
     elif "content" in result:
         parts.append(f"**content ({result.get('size', '?')} chars):**\n```\n{result['content']}\n```")
     elif "response" in result:

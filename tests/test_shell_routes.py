@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from routes.shell_routes import (
+    _exec_shell,
     _find_line_break,
     _host_docker_access_enabled,
     _import_optional_dependency_for_status,
@@ -28,6 +29,22 @@ from routes.shell_routes import (
     _venv_activate_prefix,
     DOCKER_IN_CONTAINER_HINT,
 )
+
+
+@pytest.mark.asyncio
+async def test_exec_shell_uses_bash_syntax():
+    result = await _exec_shell(
+        'items=(alpha beta); printf "%s" "${items[1]}"', timeout=5
+    )
+
+    assert result == {"stdout": "beta", "stderr": "", "exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_exec_shell_zero_timeout_means_unlimited():
+    result = await _exec_shell("printf ok", timeout=0)
+
+    assert result == {"stdout": "ok", "stderr": "", "exit_code": 0}
 
 
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):

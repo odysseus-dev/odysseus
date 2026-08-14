@@ -40,13 +40,14 @@ else:
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
     git_bash_path,
+    kill_process_tree,
 )
 
 
@@ -501,9 +502,9 @@ PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 class ShellExecRequest(BaseModel):
     command: str
-    timeout: int | None = (
-        None  # optional override; 0 = no timeout (run until client disconnects)
-    )
+    timeout: int | None = Field(
+        default=None, ge=0, le=86400
+    )  # optional override; 0 = no timeout
     use_pty: bool = False  # use pseudo-TTY (for progress bars)
     use_tmux: bool = False  # run in tmux session (survives browser disconnect)
 
@@ -552,7 +553,7 @@ def _normalize_legacy_remote_tmux_exec(command: str) -> str:
 async def _create_shell(command: str, **kwargs):
     """Spawn a shell subprocess for `command`.
 
-    POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
+    POSIX: an explicit Bash executable, never the platform-dependent /bin/sh.
     Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
     the same as on Linux; fall back to cmd.exe when no bash is installed.
     Powershell commands are executed directly via cmd.exe /c to avoid quoting
@@ -567,8 +568,39 @@ async def _create_shell(command: str, **kwargs):
             return await asyncio.create_subprocess_shell(command, **kwargs)
         bash = find_bash()
         if bash:
-            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
-    return await asyncio.create_subprocess_shell(command, **kwargs)
+            kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            return await asyncio.create_subprocess_exec(
+                bash, "--noprofile", "--norc", "-c", command, **kwargs
+            )
+    bash = find_bash()
+    if not bash:
+        raise RuntimeError("Bash was not found; install bash and restart Odysseus")
+    if "preexec_fn" not in kwargs:
+        kwargs.setdefault("start_new_session", True)
+    return await asyncio.create_subprocess_exec(
+        bash, "--noprofile", "--norc", "-c", command, **kwargs
+    )
+
+
+async def _stop_shell_process(proc) -> None:
+    """Terminate a shell command and all child processes it launched."""
+    pid = getattr(proc, "pid", None)
+    if pid:
+        await asyncio.to_thread(kill_process_tree, pid)
+    else:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=3)
+    except Exception:
+        if pid:
+            await asyncio.to_thread(kill_process_tree, pid, True)
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
@@ -581,17 +613,15 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path.home()),
         )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=None if timeout == 0 else timeout
+        )
         stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
         stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
         return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
     except asyncio.TimeoutError:
         if proc:
-            try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
+            await _stop_shell_process(proc)
         return {
             "stdout": "",
             "stderr": f"Command timed out after {timeout}s",
@@ -618,7 +648,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
     flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-    proc = await asyncio.create_subprocess_shell(
+    proc = await _create_shell(
         cmd,
         stdin=slave_fd,
         stdout=slave_fd,
@@ -641,16 +671,14 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
     try:
         while not process_done.is_set():
             if deadline and loop.time() > deadline:
-                proc.kill()
-                await proc.wait()
+                await _stop_shell_process(proc)
                 yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
                 return
 
             # Check client disconnect
             if await request.is_disconnected():
-                proc.kill()
-                await proc.wait()
+                await _stop_shell_process(proc)
                 return
 
             # Read available data from PTY
@@ -1079,7 +1107,7 @@ def setup_shell_routes() -> APIRouter:
                     except asyncio.TimeoutError:
                         if await request.is_disconnected():
                             if proc:
-                                proc.kill()
+                                await _stop_shell_process(proc)
                             return
                         continue
 
@@ -1093,11 +1121,7 @@ def setup_shell_routes() -> APIRouter:
 
             except asyncio.TimeoutError:
                 if proc:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except ProcessLookupError:
-                        pass
+                    await _stop_shell_process(proc)
                 yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
             except Exception as e:

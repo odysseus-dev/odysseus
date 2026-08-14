@@ -3406,7 +3406,8 @@ import {
                   const cmd = json.command || '';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
-                    outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
+                    const openOutput = json.tool === 'bash' ? ' open' : '';
+                    outHtml = `<details class="agent-tool-output"${openOutput}><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
                   }
                   // File-write diff (write_file): show a before/after unified diff.
                   let diffHtml = '';
@@ -3441,8 +3442,10 @@ import {
                   // click again. Click handling is delegated (see init at
                   // bottom of file) so no per-node listener needed.
                   const _wasOpen = currentToolBubble.classList.contains('open');
-                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
-                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+                  const _showShellResult = json.tool === 'bash';
+                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + ((_wasOpen || _showShellResult) ? ' open' : '');
+                  const _status = ok ? 'done' : `failed${json.exit_code != null ? ` (${json.exit_code})` : ''}`;
+                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${esc(_status)}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
