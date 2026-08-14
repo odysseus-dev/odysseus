@@ -1436,6 +1436,11 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     _streamGenerations.set(streamSessionId, streamGeneration);
     const _sendState = { generation: streamGeneration, abortCtrl: null };
     _sendStates.set(streamSessionId, _sendState);
+    // The previous send's run identity dies with its ownership: a Stop after
+    // this instant must queue for THIS send, not fire against the old run.
+    // (The old send's own queued Stop still works — its flush carries the run
+    // id from its header, and its stale generation cannot repopulate this map.)
+    _streamRunIds.delete(streamSessionId);
     _streamSessionId = streamSessionId;
     _sendInFlight = false;
 
@@ -1451,7 +1456,6 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     if (_streamGenerations.get(streamSessionId) !== streamGeneration) return;
 
     _terminalSavedStreams.delete(streamSessionId);
-    _streamRunIds.delete(streamSessionId);
     const streamQuery = msg;
     _touchStreamActivity(streamSessionId);
 

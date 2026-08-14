@@ -735,6 +735,11 @@ def test_stop_during_replacement_preflight_never_borrows_old_controller():
     abort_current = _extract_source(
         _CHAT, "export function abortCurrentRequest", "// ── Stall watchdog"
     ).replace("export function", "function")
+    reservation = _extract_source(
+        _CHAT,
+        "const streamGeneration = (_streamGenerations.get(streamSessionId) || 0) + 1;",
+        "_sendInFlight = false;",
+    )
     script = f"""
       let currentAbort = null;
       let isStreaming = false;
@@ -748,15 +753,22 @@ def test_stop_during_replacement_preflight_never_borrows_old_controller():
       {state_and_stop}
       {abort_current}
       const oldCtrl = {{ signal: {{ aborted: false }}, abort() {{ this.signal.aborted = true; }} }};
-      // Replacement (generation 2) committed but has no controller yet; the
-      // registry still holds generation 1's entry.
-      _streamGenerations.set('session-1', 2);
-      _sendStates.set('session-1', {{ generation: 2, abortCtrl: null }});
-      _streamSessionId = 'session-1';
+      // Generation 1 is registered, streaming, and its run id is KNOWN — the
+      // exact window daybreak probed: a Stop right after the replacement
+      // commits must not consume the old run identity.
+      _streamGenerations.set('session-1', 1);
+      _streamRunIds.set('session-1', 'old-run');
       _activeStreams.set('session-1', {{ abortCtrl: oldCtrl, holder: null, lastActivity: 1 }});
       currentAbort = oldCtrl;
+      // Replacement (generation 2) commits via the REAL reservation block; no
+      // controller exists yet and the model-switch await has not resolved.
+      {{
+        const streamSessionId = 'session-1';
+        {reservation}
+      }}
       abortCurrentRequest(true);
       const preRegistration = {{
+        oldRunIdCleared: !_streamRunIds.has('session-1'),
         queuedForNew: _pendingRunStops.has('session-1:2'),
         queuedController: _pendingRunStops.get('session-1:2') || null,
         oldAborted: oldCtrl.signal.aborted,
@@ -780,6 +792,10 @@ def test_stop_during_replacement_preflight_never_borrows_old_controller():
 
     assert _run_node(script) == {
         "preRegistration": {
+            # The old run identity dies at reservation: the Stop queues for
+            # the NEW send instead of firing against the old run and skipping
+            # the queue entirely.
+            "oldRunIdCleared": True,
             "queuedForNew": True,
             "queuedController": None,
             "oldAborted": False,
