@@ -178,6 +178,10 @@ export function initKeyboardShortcuts(modules) {
   };
 
   document.addEventListener('keydown', (e) => {
+    // Keep all printable input out of the global shortcut dispatcher. This
+    // top-level guard also protects future shortcuts that might not use
+    // _matchesCombo directly.
+    if (_wouldInsertText(e)) return;
     const kb = window._odysseusKeybinds;
 
     if (_matchesCombo(e, kb.search)) {

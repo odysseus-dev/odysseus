@@ -67,3 +67,11 @@ def test_command_modified_shortcut_remains_available_in_composer():
         "shiftKey": False,
     }
     assert _matches(event, "ctrl+k", "TEXTAREA") is True
+
+
+def test_global_dispatcher_has_printable_input_guard():
+    source = _MODULE.read_text(encoding="utf-8")
+    dispatcher = source.split("document.addEventListener('keydown', (e) => {", 2)[2]
+    assert "if (_wouldInsertText(e)) return;" in dispatcher.split(
+        "const kb = window._odysseusKeybinds;", 1
+    )[0]

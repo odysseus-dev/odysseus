@@ -10,7 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
-import codeRunnerModule from './codeRunner.js';
+import codeRunnerModule from './codeRunner.js?v=20260813bashrun2';
 import { langIcon } from './langIcons.js';
 import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
@@ -5418,7 +5418,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     const _eventInsideElement = (e, el) => {
       if (!e || !el || typeof e.clientX !== 'number' || typeof e.clientY !== 'number') return false;
+      // Synthetic clicks report (0, 0), and display:none email buttons also
+      // have a zero rectangle there. Treating that as a hit routed the code
+      // editor's programmatic Run click into Send Email.
+      if (el.hidden || (typeof el.getClientRects === 'function' && el.getClientRects().length === 0)) return false;
       const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
       return e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
     };
 
@@ -5498,7 +5503,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
           const doc = activeDocId && docs.get(activeDocId);
-          if (doc && doc.language === 'email' && isOpen) {
+          const liveLanguage = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+          if (doc && doc.language === 'email' && liveLanguage === 'email' && isOpen) {
             e.preventDefault();
             _sendEmail();
           }
@@ -5703,7 +5709,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         // Runnable language (python / js / ts / bash …) — clicking Run is
         // a one-shot execute; clicking Code dismisses the output pane.
         if (wantRun) {
-          document.getElementById('doc-header-preview-btn')?.click();
+          runDocument();
         } else {
           const out = document.getElementById('doc-run-output');
           if (out) out.style.display = 'none';

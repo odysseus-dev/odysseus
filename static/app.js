@@ -10,9 +10,9 @@ import modelsModule from './js/models.js?v=20260715startupcalm2';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260801fix1';
+import chatModule from './js/chat.js?v=20260813bashrun2';
 import compareModule from './js/compare/index.js?v=20260723compareicon2';
-import documentModule from './js/document.js?v=20260722emailfastindex1';
+import documentModule from './js/document.js?v=20260813bashrun2';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
@@ -49,7 +49,7 @@ import groupModule from './js/group.js';
 import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260813bashrun2';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
