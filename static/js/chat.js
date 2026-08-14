@@ -1414,7 +1414,17 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     _streamSessionId = streamSessionId;
     _terminalSavedStreams.delete(streamSessionId);
     _streamRunIds.delete(streamSessionId);
+    // A Stop may still be queued against the previous POST, waiting for its
+    // run-id header. This send supersedes that request, so honor the queued
+    // cancellation by aborting the old controller outright (the server side
+    // cancels the replaced run when the new one starts) instead of silently
+    // dropping it and leaving the old POST alive.
+    const _staleStop = _pendingRunStops.get(streamSessionId);
     _pendingRunStops.delete(streamSessionId);
+    if (_staleStop && !_staleStop.signal.aborted) {
+      _staleStop._reason = 'user-stop';
+      _staleStop.abort();
+    }
     const streamQuery = msg;
     _touchStreamActivity(streamSessionId);
 
@@ -3865,6 +3875,14 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         if (!_canonicalTerminalSaved) {
           throw new Error('Stream closed before completion');
         }
+        // The backend persisted a canonical terminal record (partial output +
+        // failure metadata) before the connection died. Route through the
+        // terminal-error path so that record is reloaded; falling through to
+        // the success renderer would present the partial output as a clean
+        // completion.
+        throw createTerminalStreamError({
+          text: 'Stream closed after canonical terminal event',
+        });
       }
 
       // The final foreground render below is authoritative. Cancel any delayed
@@ -4409,13 +4427,25 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
-      _activeStreams.delete(streamSessionId);
-      if (_streamSessionId === streamSessionId) _streamSessionId = null;
-      _pendingRunStops.delete(streamSessionId);
+      // A queued Stop aborts the superseded POST asynchronously, so this
+      // cleanup can run after a replacement send has already registered for
+      // the same session. Session-keyed state then belongs to that stream:
+      // only its owner may clear it (the session id alone cannot tell the
+      // two streams apart, the abort controller identity can).
+      const _finallyRegistered = _activeStreams.get(streamSessionId);
+      const _ownsStreamState =
+        !_finallyRegistered || _finallyRegistered.abortCtrl === abortCtrl;
+      if (_ownsStreamState) {
+        _activeStreams.delete(streamSessionId);
+        if (_streamSessionId === streamSessionId) _streamSessionId = null;
+        _pendingRunStops.delete(streamSessionId);
+      }
       _syncForegroundStreamGlobals();
       // Streaming done — let screen readers announce the settled response.
-      const _chatLogDone = document.getElementById('chat-history');
-      if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
+      if (_ownsStreamState) {
+        const _chatLogDone = document.getElementById('chat-history');
+        if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
+      }
       // Always clean up research tracking regardless of background state
       _researchingStreamIds.delete(streamSessionId);
       if (_researchingStreamIds.size === 0) {
@@ -4423,11 +4453,14 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         if (_rToggleCleanup) _rToggleCleanup.classList.remove('research-running');
       }
 
-      // Only reset UI state if still on the stream's session and was never backgrounded
+      // Only reset UI state if still on the stream's session, never
+      // backgrounded, and no replacement stream owns the session now — the
+      // replacement disabled the composer for its own send, so re-enabling
+      // it here would hand input back mid-stream.
       const _isBgFinally = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
-      _terminalSavedStreams.delete(streamSessionId);
+      if (_ownsStreamState) _terminalSavedStreams.delete(streamSessionId);
 
-      if (!_isBgFinally) {
+      if (!_isBgFinally && _ownsStreamState) {
         // Reset button to idle state
         updateSubmitButton('idle', submitBtn);
 

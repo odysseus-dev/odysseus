@@ -186,7 +186,10 @@ def test_canonical_terminal_followed_by_eof_is_not_auto_recovered():
         "// The final foreground render below is authoritative.",
     )
     script = f"""
-      import {{ isRecoverableStreamError }} from {json.dumps(_STREAM_ERRORS_URI)};
+      import {{
+        createTerminalStreamError,
+        isRecoverableStreamError,
+      }} from {json.dumps(_STREAM_ERRORS_URI)};
       function runCompletionGate(canonicalTerminalSaved) {{
         let _streamTerminalError = null;
         let _streamSawDone = false;
@@ -198,6 +201,7 @@ def test_canonical_terminal_followed_by_eof_is_not_auto_recovered():
           return {{
             recovered: isRecoverableStreamError(error),
             completed: false,
+            terminal: !!error.terminalStreamError,
             message: error.message,
           }};
         }}
@@ -209,10 +213,19 @@ def test_canonical_terminal_followed_by_eof_is_not_auto_recovered():
     """
 
     assert _run_node(script) == {
-        "savedTerminal": {"recovered": False, "completed": True},
+        # A saved canonical terminal must neither auto-recover nor render as a
+        # clean success: it takes the terminal-error path, whose catch handler
+        # reloads the persisted record.
+        "savedTerminal": {
+            "recovered": False,
+            "completed": False,
+            "terminal": True,
+            "message": "Stream closed after canonical terminal event",
+        },
         "plainEof": {
             "recovered": True,
             "completed": False,
+            "terminal": False,
             "message": "Stream closed before completion",
         },
     }
@@ -334,6 +347,121 @@ def test_timeout_before_response_headers_also_waits_for_exact_run_identity():
     assert _run_node(script) == {
         "beforeHeaders": {"aborted": False, "calls": 0},
         "afterHeaders": {"aborted": True, "runId": "run-1"},
+    }
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_resend_aborts_stale_queued_stop_instead_of_dropping_it():
+    """A new send must honor a Stop still queued against the previous POST."""
+
+    state_and_stop = _extract_source(
+        _CHAT, "const _backgroundStreams", "// Sources box builder"
+    )
+    resend_reset = _extract_source(
+        _CHAT, "_streamSessionId = streamSessionId;", "const streamQuery = msg;"
+    )
+    script = f"""
+      const calls = [];
+      function _setForegroundChatBusy() {{}}
+      const window = {{}};
+      const sessionModule = {{ getCurrentSessionId() {{ return 'session-1'; }} }};
+      const fetch = async (url, options) => {{ calls.push({{ url, options }}); return {{ ok: true }}; }};
+      {state_and_stop}
+      const oldCtrl = {{
+        _reason: '',
+        signal: {{ aborted: false }},
+        abort() {{ this.signal.aborted = true; }},
+      }};
+      _stopExactRun('session-1', oldCtrl);
+      const queuedBefore = _pendingRunStops.has('session-1');
+      {{
+        const streamSessionId = 'session-1';
+        {resend_reset}
+      }}
+      console.log(JSON.stringify({{
+        queuedBefore,
+        queuedAfter: _pendingRunStops.has('session-1'),
+        oldControllerAborted: oldCtrl.signal.aborted,
+        oldControllerReason: oldCtrl._reason,
+        stopCalls: calls.length,
+      }}));
+    """
+
+    assert _run_node(script) == {
+        "queuedBefore": True,
+        "queuedAfter": False,
+        # The queued cancellation is honored by aborting the superseded POST,
+        # never silently dropped and never sent as a headerless server stop.
+        # The reason marks it a deliberate stop so the old stream's catch does
+        # not render it as an unexpected error.
+        "oldControllerAborted": True,
+        "oldControllerReason": "user-stop",
+        "stopCalls": 0,
+    }
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_superseded_stream_cleanup_leaves_replacement_registration_alone():
+    """A stale stream's finally must not clear state a replacement now owns."""
+
+    state_and_stop = _extract_source(
+        _CHAT, "const _backgroundStreams", "// Sources box builder"
+    )
+    finally_cleanup = _extract_source(
+        _CHAT,
+        "const _finallyRegistered = _activeStreams.get(streamSessionId);",
+        "// Streaming done — let screen readers announce",
+    )
+    script = f"""
+      let currentAbort = null;
+      let isStreaming = false;
+      let currentHolder = null;
+      let _sendInFlight = false;
+      function _setForegroundChatBusy() {{}}
+      const window = {{}};
+      const sessionModule = {{ getCurrentSessionId() {{ return 'session-1'; }} }};
+      {state_and_stop}
+      function runCleanup(abortCtrl) {{
+        const streamSessionId = 'session-1';
+        {finally_cleanup}
+        return _ownsStreamState;
+      }}
+      const oldCtrl = {{ signal: {{ aborted: true }}, abort() {{}} }};
+      const newCtrl = {{ signal: {{ aborted: false }}, abort() {{}} }};
+      // Superseded: a replacement stream registered for the same session
+      // while the old stream's cleanup was still queued.
+      _streamSessionId = 'session-1';
+      _activeStreams.set('session-1', {{ abortCtrl: newCtrl, holder: null, lastActivity: 1 }});
+      _pendingRunStops.set('session-1', newCtrl);
+      const supersededOwns = runCleanup(oldCtrl);
+      const afterSuperseded = {{
+        registered: _activeStreams.has('session-1'),
+        pendingKept: _pendingRunStops.has('session-1'),
+        sessionKept: _streamSessionId === 'session-1',
+      }};
+      // Owner: the registered controller cleans up normally.
+      const ownerOwns = runCleanup(newCtrl);
+      const afterOwner = {{
+        registered: _activeStreams.has('session-1'),
+        pendingKept: _pendingRunStops.has('session-1'),
+        sessionCleared: _streamSessionId === null,
+      }};
+      console.log(JSON.stringify({{ supersededOwns, afterSuperseded, ownerOwns, afterOwner }}));
+    """
+
+    assert _run_node(script) == {
+        "supersededOwns": False,
+        "afterSuperseded": {
+            "registered": True,
+            "pendingKept": True,
+            "sessionKept": True,
+        },
+        "ownerOwns": True,
+        "afterOwner": {
+            "registered": False,
+            "pendingKept": False,
+            "sessionCleared": True,
+        },
     }
 
 
