@@ -592,8 +592,9 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   const _activeStreams = new Map();     // sessionId -> { abortCtrl, holder, query, startedAt, cancelViewWork, finalizeView }
   const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
   const _terminalSavedStreams = new Set(); // sessionId -> canonical terminal event seen by active reader
-  const _streamRunIds = new Map();      // sessionId -> opaque identity of the exact detached run
-  const _pendingRunStops = new Map();   // sessionId -> AbortController waiting for the run identity header
+  const _streamRunIds = new Map();      // sessionId -> opaque identity of the current send's detached run
+  const _streamGenerations = new Map(); // sessionId -> generation of the current (latest) send
+  const _pendingRunStops = new Map();   // 'sessionId:generation' -> abortCtrl|null; Stop queued for that send while it awaits headers. Keyed per send so concurrent sends' cancellation intents never displace each other.
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
@@ -638,32 +639,52 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     return `${runId}:${event && event.teacher ? 'teacher' : 'primary'}`;
   }
 
-  /** Stop only the exact detached run whose identity this browser observed. */
-  function _stopExactRun(sessionId, abortCtrl = null) {
-    if (!sessionId) return false;
-    const runId = _streamRunIds.get(sessionId);
-    if (!runId) {
-      if (abortCtrl || !_pendingRunStops.has(sessionId)) {
-        _pendingRunStops.set(sessionId, abortCtrl);
-      }
-      return false;
-    }
+  /** POST the exact Stop for one observed run identity. */
+  function _postExactStop(sessionId, runId) {
     fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-Odysseus-Run-Id': runId },
     }).catch(() => {});
+  }
+
+  /** Stop only the exact detached run whose identity this browser observed. */
+  function _stopExactRun(sessionId, abortCtrl = null) {
+    if (!sessionId) return false;
+    const runId = _streamRunIds.get(sessionId);
+    if (!runId) {
+      // Queue against the CURRENT send's generation: its POST is the only
+      // identity channel that can name the run, so the Stop fires from that
+      // send's own header arrival even if a replacement starts meanwhile.
+      const generation = _streamGenerations.get(sessionId) || 0;
+      const pendingKey = sessionId + ':' + generation;
+      if (abortCtrl || !_pendingRunStops.has(pendingKey)) {
+        _pendingRunStops.set(pendingKey, abortCtrl);
+      }
+      return false;
+    }
+    _postExactStop(sessionId, runId);
     return true;
   }
 
-  function _rememberStreamRunId(sessionId, runId) {
+  function _rememberStreamRunId(sessionId, runId, generation) {
     if (!sessionId || !runId) return;
-    _streamRunIds.set(sessionId, runId);
-    if (!_pendingRunStops.has(sessionId)) return;
-    const pendingAbort = _pendingRunStops.get(sessionId);
-    _pendingRunStops.delete(sessionId);
-    _stopExactRun(sessionId);
-    if (pendingAbort && !pendingAbort.signal.aborted) pendingAbort.abort();
+    // A superseded send must not record its run id as the session's current
+    // identity, but it must still flush its own queued Stop: this is the only
+    // channel that can cancel that run when the replacement dies before its
+    // own POST reaches the server.
+    if (_streamGenerations.get(sessionId) === generation) {
+      _streamRunIds.set(sessionId, runId);
+    }
+    const pendingKey = sessionId + ':' + generation;
+    if (!_pendingRunStops.has(pendingKey)) return;
+    const pendingAbort = _pendingRunStops.get(pendingKey);
+    _pendingRunStops.delete(pendingKey);
+    _postExactStop(sessionId, runId);
+    if (pendingAbort && !pendingAbort.signal.aborted) {
+      pendingAbort._reason = 'user-stop';
+      pendingAbort.abort();
+    }
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -1412,19 +1433,16 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     // Capture session ID for background stream detection
     const streamSessionId = sessionModule.getCurrentSessionId();
     _streamSessionId = streamSessionId;
+    // Per-send generation: session-keyed state (run id, queued Stop, cleanup
+    // rights) belongs to the latest generation only. A queued Stop from the
+    // superseded send is deliberately left in place, tagged with ITS
+    // generation: that send's still-alive POST is the only identity channel
+    // able to name its run, so the Stop fires from its own header arrival
+    // (see _rememberStreamRunId) even if this replacement dies before fetch.
+    const streamGeneration = (_streamGenerations.get(streamSessionId) || 0) + 1;
+    _streamGenerations.set(streamSessionId, streamGeneration);
     _terminalSavedStreams.delete(streamSessionId);
     _streamRunIds.delete(streamSessionId);
-    // A Stop may still be queued against the previous POST, waiting for its
-    // run-id header. This send supersedes that request, so honor the queued
-    // cancellation by aborting the old controller outright (the server side
-    // cancels the replaced run when the new one starts) instead of silently
-    // dropping it and leaving the old POST alive.
-    const _staleStop = _pendingRunStops.get(streamSessionId);
-    _pendingRunStops.delete(streamSessionId);
-    if (_staleStop && !_staleStop.signal.aborted) {
-      _staleStop._reason = 'user-stop';
-      _staleStop.abort();
-    }
     const streamQuery = msg;
     _touchStreamActivity(streamSessionId);
 
@@ -1827,6 +1845,12 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         if (!abortCtrl.signal.aborted) {
           timedOut = true;
           abortCtrl._reason = 'timeout';
+          if (_streamGenerations.get(streamSessionId) !== streamGeneration) {
+            // Superseded send: the session's run id and Stop queue belong to
+            // the replacement now. Just kill this hung POST.
+            abortCtrl.abort();
+            return;
+          }
           let abortNow = true;
           try {
             abortNow = _streamRunIds.has(streamSessionId)
@@ -1992,7 +2016,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         return;
       }
       const streamRunId = res.headers.get('X-Odysseus-Run-Id') || '';
-      if (streamRunId) _rememberStreamRunId(streamSessionId, streamRunId);
+      if (streamRunId) _rememberStreamRunId(streamSessionId, streamRunId, streamGeneration);
 
       // Mark the chat log busy while streaming so screen readers wait for the
       // settled response instead of announcing every token. Cleared in finally.
@@ -4182,9 +4206,15 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       // If a Stop or timeout was waiting for an identity header and the POST
       // failed before producing one, keep this on the cancellation path. There
       // is no safe headerless server cancel to send, but it must not be turned
-      // into an automatic recovery attempt either.
-      if (_pendingRunStops.has(streamSessionId) && abortCtrl && !abortCtrl.signal.aborted) {
-        _pendingRunStops.delete(streamSessionId);
+      // into an automatic recovery attempt either. Only this send's own
+      // queued Stop counts; a replacement's queued Stop is not ours to spend.
+      const _pendingCatchKey = streamSessionId + ':' + streamGeneration;
+      if (
+        _pendingRunStops.has(_pendingCatchKey)
+        && abortCtrl
+        && !abortCtrl.signal.aborted
+      ) {
+        _pendingRunStops.delete(_pendingCatchKey);
         abortCtrl._reason = 'user-stop';
         abortCtrl.abort();
       }
@@ -4427,18 +4457,21 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
-      // A queued Stop aborts the superseded POST asynchronously, so this
-      // cleanup can run after a replacement send has already registered for
-      // the same session. Session-keyed state then belongs to that stream:
-      // only its owner may clear it (the session id alone cannot tell the
-      // two streams apart, the abort controller identity can).
-      const _finallyRegistered = _activeStreams.get(streamSessionId);
+      // A replacement send bumps the session's generation the moment it
+      // starts, before it registers or reaches the server, so cleanup rights
+      // are decided by generation: a superseded send may remove only what it
+      // itself owns (its stream registration by controller identity, its own
+      // generation's queued Stop) and must leave session-level state — the
+      // reader session id, research marker, UI — to the replacement.
       const _ownsStreamState =
-        !_finallyRegistered || _finallyRegistered.abortCtrl === abortCtrl;
-      if (_ownsStreamState) {
+        _streamGenerations.get(streamSessionId) === streamGeneration;
+      const _finallyRegistered = _activeStreams.get(streamSessionId);
+      if (!_finallyRegistered || _finallyRegistered.abortCtrl === abortCtrl) {
         _activeStreams.delete(streamSessionId);
+      }
+      _pendingRunStops.delete(streamSessionId + ':' + streamGeneration);
+      if (_ownsStreamState) {
         if (_streamSessionId === streamSessionId) _streamSessionId = null;
-        _pendingRunStops.delete(streamSessionId);
       }
       _syncForegroundStreamGlobals();
       // Streaming done — let screen readers announce the settled response.
@@ -4446,8 +4479,9 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         const _chatLogDone = document.getElementById('chat-history');
         if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
       }
-      // Always clean up research tracking regardless of background state
-      _researchingStreamIds.delete(streamSessionId);
+      // Research markers gate /api/research/cancel in the Stop handler, so a
+      // superseded send must not strip a replacement research run's marker.
+      if (_ownsStreamState) _researchingStreamIds.delete(streamSessionId);
       if (_researchingStreamIds.size === 0) {
         var _rToggleCleanup = document.getElementById('research-toggle-btn');
         if (_rToggleCleanup) _rToggleCleanup.classList.remove('research-running');

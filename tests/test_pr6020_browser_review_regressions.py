@@ -283,6 +283,8 @@ def test_stop_before_response_headers_waits_for_exact_run_identity():
       {state_and_stop}
       {{
         const streamSessionId = 'normal-session';
+        const streamGeneration = 1;
+        _streamGenerations.set(streamSessionId, streamGeneration);
         const res = {{ headers: {{ get(name) {{
           return name === 'X-Odysseus-Run-Id' ? 'normal-run' : null;
         }} }} }};
@@ -293,6 +295,8 @@ def test_stop_before_response_headers_waits_for_exact_run_identity():
       let beforeHeaders;
       {{
         const streamSessionId = 'session-1';
+        const streamGeneration = 1;
+        _streamGenerations.set(streamSessionId, streamGeneration);
         _stopExactRun(streamSessionId);
         beforeHeaders = calls.length;
         const res = {{ headers: {{ get(name) {{
@@ -333,7 +337,7 @@ def test_timeout_before_response_headers_also_waits_for_exact_run_identity():
       {_timeout_harness_prelude()}
       callbacks[0]();
       const beforeHeaders = {{ aborted: abortCtrl.signal.aborted, calls: calls.length }};
-      _rememberStreamRunId(streamSessionId, 'run-1');
+      _rememberStreamRunId(streamSessionId, 'run-1', streamGeneration);
       await Promise.resolve();
       console.log(JSON.stringify({{
         beforeHeaders,
@@ -351,14 +355,25 @@ def test_timeout_before_response_headers_also_waits_for_exact_run_identity():
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_resend_aborts_stale_queued_stop_instead_of_dropping_it():
-    """A new send must honor a Stop still queued against the previous POST."""
+def test_resend_preserves_queued_stop_until_old_run_identity_arrives():
+    """A replacement must not sever the superseded POST's identity channel.
+
+    The queued Stop stays generation-tagged and fires from the OLD send's own
+    header arrival, so the old run is cancelled even when the replacement dies
+    before its POST reaches the server (which is what would otherwise cancel
+    it). The old run id must not leak into the replacement's identity map.
+    """
 
     state_and_stop = _extract_source(
         _CHAT, "const _backgroundStreams", "// Sources box builder"
     )
     resend_reset = _extract_source(
         _CHAT, "_streamSessionId = streamSessionId;", "const streamQuery = msg;"
+    )
+    header_capture = _extract_source(
+        _CHAT,
+        "const streamRunId = res.headers.get('X-Odysseus-Run-Id')",
+        "// Mark the chat log busy",
     )
     script = f"""
       const calls = [];
@@ -372,44 +387,105 @@ def test_resend_aborts_stale_queued_stop_instead_of_dropping_it():
         signal: {{ aborted: false }},
         abort() {{ this.signal.aborted = true; }},
       }};
+      // Old send (generation 1) queues a Stop before its headers arrive.
+      _streamGenerations.set('session-1', 1);
+      const oldGeneration = 1;
       _stopExactRun('session-1', oldCtrl);
-      const queuedBefore = _pendingRunStops.has('session-1');
+      const queuedBefore = _pendingRunStops.has('session-1:1');
+      // Replacement send starts: bumps the generation, leaves the queued Stop.
       {{
         const streamSessionId = 'session-1';
         {resend_reset}
       }}
+      // The replacement is ALSO stopped before its headers arrive: both
+      // sends' cancellation intents must coexist, neither displacing the
+      // other (a single session-keyed slot loses the old send's Stop, and
+      // with it the only cancel for that run if this replacement dies
+      // before its own POST reaches the server).
+      const newCtrl = {{
+        _reason: '',
+        signal: {{ aborted: false }},
+        abort() {{ this.signal.aborted = true; }},
+      }};
+      _stopExactRun('session-1', newCtrl);
+      const afterResend = {{
+        oldQueuedKept: _pendingRunStops.has('session-1:1'),
+        newQueued: _pendingRunStops.has('session-1:2'),
+        oldAborted: oldCtrl.signal.aborted,
+        generation: _streamGenerations.get('session-1'),
+      }};
+      // The old POST's headers finally arrive: its queued Stop fires with its
+      // own run id, and the old controller aborts.
+      {{
+        const streamSessionId = 'session-1';
+        const streamGeneration = oldGeneration;
+        const res = {{ headers: {{ get(name) {{
+          return name === 'X-Odysseus-Run-Id' ? 'old-run' : null;
+        }} }} }};
+        {header_capture}
+      }}
+      await new Promise(resolve => setTimeout(resolve, 0));
       console.log(JSON.stringify({{
         queuedBefore,
-        queuedAfter: _pendingRunStops.has('session-1'),
-        oldControllerAborted: oldCtrl.signal.aborted,
-        oldControllerReason: oldCtrl._reason,
-        stopCalls: calls.length,
+        afterResend,
+        afterOldHeaders: {{
+          oldQueued: _pendingRunStops.has('session-1:1'),
+          newQueuedKept: _pendingRunStops.has('session-1:2'),
+          oldAborted: oldCtrl.signal.aborted,
+          oldReason: oldCtrl._reason,
+          newAborted: newCtrl.signal.aborted,
+          currentRunIdPolluted: _streamRunIds.has('session-1'),
+          stopCalls: calls.map(call => ({{
+            url: call.url,
+            runId: call.options.headers['X-Odysseus-Run-Id'],
+          }})),
+        }},
       }}));
     """
 
     assert _run_node(script) == {
         "queuedBefore": True,
-        "queuedAfter": False,
-        # The queued cancellation is honored by aborting the superseded POST,
-        # never silently dropped and never sent as a headerless server stop.
-        # The reason marks it a deliberate stop so the old stream's catch does
-        # not render it as an unexpected error.
-        "oldControllerAborted": True,
-        "oldControllerReason": "user-stop",
-        "stopCalls": 0,
+        "afterResend": {
+            "oldQueuedKept": True,
+            "newQueued": True,
+            "oldAborted": False,
+            "generation": 2,
+        },
+        "afterOldHeaders": {
+            "oldQueued": False,
+            # The replacement's own queued Stop must survive the old send's
+            # flush untouched.
+            "newQueuedKept": True,
+            "oldAborted": True,
+            "oldReason": "user-stop",
+            "newAborted": False,
+            # The stale send's run id must not become the replacement's
+            # identity, but its exact Stop must still go out.
+            "currentRunIdPolluted": False,
+            "stopCalls": [
+                {"url": "/api/chat/stop/session-1", "runId": "old-run"}
+            ],
+        },
     }
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_superseded_stream_cleanup_leaves_replacement_registration_alone():
-    """A stale stream's finally must not clear state a replacement now owns."""
+def test_superseded_stream_cleanup_leaves_replacement_state_alone():
+    """A stale send's finally must not clear state the replacement owns.
+
+    Ownership is decided by generation, which the replacement bumps at its
+    very first synchronous step — so the guard holds even in the window
+    BEFORE the replacement registers its own stream entry (where the old
+    finally still sees its own registration and controller identity alone
+    would call it the owner).
+    """
 
     state_and_stop = _extract_source(
         _CHAT, "const _backgroundStreams", "// Sources box builder"
     )
     finally_cleanup = _extract_source(
         _CHAT,
-        "const _finallyRegistered = _activeStreams.get(streamSessionId);",
+        "const _ownsStreamState =",
         "// Streaming done — let screen readers announce",
     )
     script = f"""
@@ -421,39 +497,57 @@ def test_superseded_stream_cleanup_leaves_replacement_registration_alone():
       const window = {{}};
       const sessionModule = {{ getCurrentSessionId() {{ return 'session-1'; }} }};
       {state_and_stop}
-      function runCleanup(abortCtrl) {{
+      function runCleanup(abortCtrl, streamGeneration) {{
         const streamSessionId = 'session-1';
         {finally_cleanup}
         return _ownsStreamState;
       }}
       const oldCtrl = {{ signal: {{ aborted: true }}, abort() {{}} }};
       const newCtrl = {{ signal: {{ aborted: false }}, abort() {{}} }};
-      // Superseded: a replacement stream registered for the same session
-      // while the old stream's cleanup was still queued.
+      // Pre-registration supersession: the replacement bumped the generation
+      // and set the session id, but has NOT registered its stream entry yet —
+      // the old send's own entry is still the one in the map.
+      _streamGenerations.set('session-1', 2);
       _streamSessionId = 'session-1';
-      _activeStreams.set('session-1', {{ abortCtrl: newCtrl, holder: null, lastActivity: 1 }});
-      _pendingRunStops.set('session-1', newCtrl);
-      const supersededOwns = runCleanup(oldCtrl);
-      const afterSuperseded = {{
-        registered: _activeStreams.has('session-1'),
-        pendingKept: _pendingRunStops.has('session-1'),
+      _activeStreams.set('session-1', {{ abortCtrl: oldCtrl, holder: null, lastActivity: 1 }});
+      _pendingRunStops.set('session-1:2', newCtrl);
+      const preRegOwns = runCleanup(oldCtrl, 1);
+      const afterPreReg = {{
+        ownEntryRemoved: !_activeStreams.has('session-1'),
+        replacementPendingKept: _pendingRunStops.has('session-1:2'),
         sessionKept: _streamSessionId === 'session-1',
       }};
-      // Owner: the registered controller cleans up normally.
-      const ownerOwns = runCleanup(newCtrl);
+      // Post-registration supersession: the replacement's entry is in the map.
+      _activeStreams.set('session-1', {{ abortCtrl: newCtrl, holder: null, lastActivity: 2 }});
+      const postRegOwns = runCleanup(oldCtrl, 1);
+      const afterPostReg = {{
+        replacementRegistrationKept: _activeStreams.has('session-1'),
+        replacementPendingKept: _pendingRunStops.has('session-1:2'),
+        sessionKept: _streamSessionId === 'session-1',
+      }};
+      // Owner: the current-generation send cleans up normally.
+      const ownerOwns = runCleanup(newCtrl, 2);
       const afterOwner = {{
         registered: _activeStreams.has('session-1'),
-        pendingKept: _pendingRunStops.has('session-1'),
+        pendingKept: _pendingRunStops.has('session-1:2'),
         sessionCleared: _streamSessionId === null,
       }};
-      console.log(JSON.stringify({{ supersededOwns, afterSuperseded, ownerOwns, afterOwner }}));
+      console.log(JSON.stringify({{
+        preRegOwns, afterPreReg, postRegOwns, afterPostReg, ownerOwns, afterOwner,
+      }}));
     """
 
     assert _run_node(script) == {
-        "supersededOwns": False,
-        "afterSuperseded": {
-            "registered": True,
-            "pendingKept": True,
+        "preRegOwns": False,
+        "afterPreReg": {
+            "ownEntryRemoved": True,
+            "replacementPendingKept": True,
+            "sessionKept": True,
+        },
+        "postRegOwns": False,
+        "afterPostReg": {
+            "replacementRegistrationKept": True,
+            "replacementPendingKept": True,
             "sessionKept": True,
         },
         "ownerOwns": True,
@@ -506,6 +600,8 @@ def _timeout_harness_prelude() -> str:
       const RUN_ID_ABORT_GRACE_MS = 2000;
       {state_and_stop}
       const streamSessionId = 'session-1';
+      const streamGeneration = 1;
+      _streamGenerations.set(streamSessionId, streamGeneration);
       const timeoutMs = 1;
       let timeoutId;
       let timedOut = false;
