@@ -107,4 +107,64 @@ def setup_diagnostics_routes(
         except Exception as e:
             return {"status": "error", "error": str(e), "query": query}
 
+    @router.get("/api/diagnostics/gpu")
+    async def gpu_status(request: Request) -> Dict[str, Any]:
+        """Report GPU acceleration status for embedding inference."""
+        require_admin(request)
+        import subprocess
+
+        result = {
+            "embedding_provider": "unknown",
+            "available_providers": [],
+            "gpu_detected": False,
+            "gpu_name": None,
+            "gpu_memory_total_mb": None,
+            "gpu_memory_used_mb": None,
+            "gpu_utilization_pct": None,
+            "tensorrt_available": False,
+            "cuda_available": False,
+        }
+
+        # Check ONNX Runtime providers
+        try:
+            import onnxruntime as ort
+            providers = ort.get_available_providers()
+            result["available_providers"] = providers
+            result["tensorrt_available"] = "TensorrtExecutionProvider" in providers
+            result["cuda_available"] = "CUDAExecutionProvider" in providers
+
+            try:
+                from src.embeddings import get_embedding_client
+                client = get_embedding_client()
+                if hasattr(client, "_is_gpu"):
+                    result["embedding_provider"] = f"gpu ({client._is_gpu})"
+                else:
+                    result["embedding_provider"] = f"http ({getattr(client, 'url', 'unknown')})"
+            except Exception as e:
+                result["embedding_provider"] = f"error checking: {e}"
+        except ImportError:
+            result["embedding_provider"] = "onnxruntime not installed"
+        except Exception as e:
+            result["embedding_provider"] = f"error: {e}"
+
+        # Check nvidia-smi for GPU info
+        try:
+            smi = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if smi.returncode == 0 and smi.stdout.strip():
+                parts = [p.strip() for p in smi.stdout.strip().split(",")]
+                if len(parts) >= 4:
+                    result["gpu_detected"] = True
+                    result["gpu_name"] = parts[0]
+                    result["gpu_memory_total_mb"] = int(parts[1])
+                    result["gpu_memory_used_mb"] = int(parts[2])
+                    result["gpu_utilization_pct"] = int(parts[3])
+        except Exception:
+            pass
+
+        return result
+
     return router

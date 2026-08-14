@@ -178,6 +178,36 @@ class FastEmbedClient:
             except Exception as _e:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
+        # GPU acceleration: prefer TensorRT > CUDA > CPU for ONNX inference.
+        # TensorRT generates optimized CUDA kernels for the specific model +
+        # GPU, giving 2-5x speedup over plain CUDAExecutionProvider for
+        # repeated inference (embedding generation is embarrassingly parallel).
+        # Fall back through the chain so a missing TRT build doesn't kill GPU.
+        try:
+            import onnxruntime as ort
+            available = ort.get_available_providers()
+            if "TensorrtExecutionProvider" in available:
+                kwargs["providers"] = [
+                    "TensorrtExecutionProvider",
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
+                logger.info("FastEmbed: using TensorRT GPU provider (with CUDA fallback) for ONNX inference")
+            elif "CUDAExecutionProvider" in available:
+                kwargs["providers"] = [
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
+                logger.info("FastEmbed: using CUDA GPU provider for ONNX inference")
+            else:
+                logger.info(f"FastEmbed: CUDA not available, using CPU providers: {available}")
+            self._is_gpu = any(
+                p in ("TensorrtExecutionProvider", "CUDAExecutionProvider")
+                for p in kwargs.get("providers", [])
+            )
+        except Exception as _e:
+            logger.warning(f"FastEmbed: could not query ONNX providers, defaulting to CPU: {_e}")
+            self._is_gpu = False
         self._embedding = TextEmbedding(**kwargs)
         self._dim: Optional[int] = None
         self.url = "local://fastembed"
