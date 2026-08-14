@@ -557,16 +557,204 @@ def render_fired(fired):
     return "\n\n".join(parts)
 
 
+# ----------------------------------------------------- always-on digest ------
+# The warm tier has TWO layers:
+#   1. ALWAYS-ON digest — a tiny fixed-cost set of the most important neurons
+#      injected EVERY turn regardless of keyword match. This is the "always
+#      influencing, very low cost" layer the design calls for. It never grows:
+#      a hard token cap keeps per-turn spend flat.
+#   2. Keyword-fired deep layer — the existing route() behaviour (relevant,
+#      primed, association-expanded neurons) on top of the digest.
+ALWAYS_DIGEST_TOKENS = 220   # fixed low per-turn cost of the always-on layer
+
+# Lexical stopwords for the digest's information-density gate (mirrors the
+# store's lexical logic). A neuron whose body is mostly stopwords carries no
+# signal and is not worth always-on tokens.
+_DIGEST_STOP = {
+    "the", "and", "for", "with", "that", "this", "from", "into", "when",
+    "then", "were", "have", "been", "will", "was", "are", "but", "not",
+    "you", "your", "also", "its", "his", "her", "him", "over", "under",
+    "them", "they", "there", "about", "after", "what", "which", "who",
+    "how", "why", "where", "while", "just", "more", "each", "than", "then",
+    "very", "such", "some", "only", "the", "a", "an", "of", "to", "in",
+    "on", "at", "by", "for", "as", "or", "it", "is", "be", "do", "does",
+}
+
+
+def _lexical_signal(body):
+    """Distinctive content words in a body (lowercase, >3 chars, not stop).
+    Higher = more information-dense = worth always-on tokens."""
+    words = set()
+    for w in (body or "").lower().split():
+        w = w.strip(".,;:!?()[]{}\"'")
+        if len(w) > 3 and w not in _DIGEST_STOP:
+            words.add(w)
+    return words
+
+
+def _lexical_overlap(a, b):
+    """Jaccard similarity of two neuron bodies' distinctive words (0-1).
+    Used to DEDUPE: if a candidate repeats an already-selected neuron's idea,
+    skip it — the always-on layer must not burn tokens on redundancy."""
+    wa, wb = _lexical_signal(a), _lexical_signal(b)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+_DEDUP_THRESHOLD = 0.45  # Jaccard above this = near-duplicate, skip
+
+# Universality heuristic for the always-on digest. A neuron belongs in the
+# every-turn layer only if it reads as a UNIVERSAL RULE, not a dated record.
+# Dated specifics (incident reports, one-off fixes, session notes, timestamps)
+# are contextual — they belong in the keyword-fired layer, not always-on.
+_DATE_RE = re.compile(r"\b(19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}[-/]\d{1,2}[-/](19|20)\d{2}\b")
+# Source markers that identify a dated/incidental record rather than a rule.
+_DATED_MARKERS = ("session record", "research + session", "session note",
+                  "2026-", "2025-", "fixed", "fix:", "issue:", "bug",
+                  "incident", "workaround", "cause")
+# Directive verbs/shapes that read as universal rules.
+_DIRECTIVE_MARKERS = ("never", "always", "must", "should", "shall", "do not",
+                      "use", "keep", "prefer", "when", "if", "before", "after",
+                      "the only", "required", "forbidden", "authoritative")
+
+
+def _universality(body):
+    """Score how universal a neuron body is (0-1). Higher = more rule-like.
+
+    Universal rules: terse, imperative, no dates, no incident markers.
+    Dated records: timestamps, "session record" provenance, one-off fixes.
+    """
+    low = (body or "").lower()
+    if _DATE_RE.search(body):
+        return 0.0                      # dated — never universal
+    hits = sum(1 for m in _DATED_MARKERS if m in low)
+    if hits >= 2:
+        return 0.0                      # strong incident-record signal
+    if hits == 1:
+        return 0.25
+    # Directive language present and body is terse => likely a real rule.
+    directive = sum(1 for m in _DIRECTIVE_MARKERS if m in low)
+    words = len((body or "").split())
+    base = 0.5
+    base += min(0.25, directive * 0.05)
+    # Terse beats verbose for universal rules (rules are concise; records ramble).
+    base += 0.15 if words <= 40 else (0.0 if words <= 90 else -0.2)
+    return max(0.0, min(1.0, base))
+
+
+def always_digest(max_tokens=ALWAYS_DIGEST_TOKENS):
+    """Return a compressed always-on digest: the top-priority neurons that
+    should influence every turn, capped at a fixed token cost.
+
+    Selection: importance DESC, then always_on/priority, then most-recently-
+    touched. Bodies are AAAK-summaries when available so the digest stays tiny;
+    the full body lives in the store and is fired by route() when relevant.
+    Returns [] if the store is unreachable (degrade to zero injection)."""
+    try:
+        db = _db()
+        rows = db.execute(
+            "SELECT text, slug, triggers, importance, summary, always_on, "
+            "priority, last_accessed FROM entries "
+            "WHERE kind='neuron' AND status='active' "
+            "ORDER BY always_on DESC, priority DESC, importance DESC, "
+            "last_accessed DESC"
+        ).fetchall()
+        db.close()
+    except Exception:
+        return []
+    out = []
+    used = 0
+    selected_bodies = []
+    # Prefer substantive UNIVERSAL behavioral neurons over dated records.
+    # Sort: topic priority first (operating > constitution/persona > project/
+    # human), then UNIVERSALITY (rule-like beats dated), then always_on,
+    # importance, then LEXICAL DENSITY (more distinctive content words = more
+    # signal per token — the lexical system conserves bandwidth).
+    TOPIC_ORDER = {"operating": 0, "constitution": 1, "persona": 2,
+                   "project": 3, "human": 4, "general": 5}
+    def topic_rank(slug):
+        for t, rank in TOPIC_ORDER.items():
+            if slug.startswith(t + "-") or slug == t:
+                return rank
+        return 6
+    rows = sorted(rows, key=lambda r: (
+        topic_rank(r[1]),             # slug topic
+        -_universality(r[4] or r[0] or ""),  # universality desc (rules first)
+        0 if r[5] else 1,             # always_on first
+        -(float(r[3]) if r[3] else 0.5),  # importance desc
+        -len(_lexical_signal(r[4] or r[0] or "")),  # lexical density desc
+    ))
+    for r in rows:
+        if used >= max_tokens:
+            break
+        text, slug, triggers, importance, summary, always_on, priority, last_accessed = r
+        # Skip junk fragments: no triggers OR trivial body (<12 chars) that
+        # carries no signal ("Earth.", "I find it"). They belong nowhere.
+        if not triggers or len((text or "").strip()) < 12:
+            continue
+        summ = (summary or "").strip()
+        body = summ or text
+        if not body:
+            continue
+        # UNIVERSALITY GATE: dated/incident records (universality 0) are
+        # contextual, not always-on — they fire via keyword route() instead.
+        if _universality(body) <= 0.0:
+            continue
+        # Lexical gate: no distinctive content words = stopword soup, skip.
+        if not _lexical_signal(body):
+            continue
+        # Lexical dedup: skip if this body repeats an already-selected neuron's
+        # idea (Jaccard overlap) — conserve bandwidth, don't re-inject the same
+        # concept under a different slug.
+        if any(_lexical_overlap(body, prev) >= _DEDUP_THRESHOLD
+               for prev in selected_bodies):
+            continue
+        tok = max(1, len(body) // 4)
+        # Skip oversized neurons — one that alone exceeds the digest budget
+        # belongs in the keyword-fired layer, not the always-on digest (which
+        # must stay fixed-low-cost every turn).
+        if tok > max_tokens:
+            continue
+        if out and used + tok > max_tokens:
+            continue
+        out.append({
+            "slug": slug,
+            "body": body,
+            "score": round(float(importance or 0.5), 2),
+            "tokens": tok,
+            "always": True,
+            "compressed": bool(summ),
+        })
+        selected_bodies.append(body)
+        used += tok
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["route", "list", "report", "promote-active"])
+    ap.add_argument("cmd", choices=["route", "list", "report", "promote-active", "always"])
     ap.add_argument("arg", nargs="?", default="", help="text / slug")
     ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
                     help="token budget for fired neurons (new-schema optimization)")
+    ap.add_argument("--always-tokens", type=int, default=ALWAYS_DIGEST_TOKENS,
+                    help="fixed per-turn budget for the always-on digest")
     ap.add_argument("--session", default="",
                     help="session id for ACTIVE priming (topic continuity across turns)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+
+    if args.cmd == "always":
+        dig = always_digest(max_tokens=args.always_tokens)
+        if args.json:
+            print(json.dumps({"digest": dig, "tokens": sum(f["tokens"] for f in dig)}))
+            return
+        if not dig:
+            print("always-on digest: empty (store unreachable or no active neurons)")
+            return
+        print(f"always-on digest ({sum(f['tokens'] for f in dig)} tokens):\n")
+        print(render_fired(dig))
+        return
 
     if args.cmd == "list":
         neurons = list_neurons()
