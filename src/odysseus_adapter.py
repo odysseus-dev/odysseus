@@ -20,6 +20,25 @@ Usage (in Odysseus's app.py, after components are built):
     install_memory_platform(memory_manager, memory_vector)
 
 Idempotent: safe to call once at startup.
+
+References
+----------
+The design choices below are grounded in the following papers:
+
+- Hybrid recall (BM25 + dense + RRF): Robertson & Zaragoza, "The Probabilistic
+  Relevance Framework: BM25 and Beyond" (2009)
+  https://dl.acm.org/doi/10.1561/1500000019
+- Reciprocal Rank Fusion: Cormack, Clarke & Buettcher, "Reciprocal Rank
+  Fusion outperforms Condorcet and individual Rank Learning Methods"
+  (SIGIR 2009) https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf
+- Extended Boolean retrieval: Salton, Fox & Wu, CACM 1983
+  https://dl.acm.org/doi/10.1145/182.358438
+- RRF with a single ranker: Bruch et al., "An Analysis of Fusion Functions
+  for Hybrid Retrieval" (TOIS 2023) https://arxiv.org/abs/2210.11934
+- Context budgeting: Liu et al., "Lost in the Middle: How Language Models Use
+  Long Contexts" (TACL 2023) https://arxiv.org/abs/2307.03172
+- Experiential learning: ExpeL, "LLM Agents Are Experiential Learners"
+  (AAAI 2024) https://arxiv.org/abs/2308.10144
 """
 
 from __future__ import annotations
