@@ -3,14 +3,7 @@
 // This module owns panel activation and sidebar click routing only. Individual
 // panels continue to own their data loading and side effects.
 
-export const ADMIN_TABS = new Set([
-  'services',
-  'added-models',
-  'integrations',
-  'tools',
-  'users',
-  'system',
-]);
+import { DEFAULT_SETTINGS_PANEL_ID, isAdminManagedSettingsTab } from './registry.js';
 
 const _boundModals = new WeakSet();
 
@@ -26,7 +19,7 @@ export function activateSettingsPanel(modalEl, tab) {
   return tab;
 }
 
-export function getActiveSettingsTab(modalEl, fallback = 'services') {
+export function getActiveSettingsTab(modalEl, fallback = DEFAULT_SETTINGS_PANEL_ID) {
   if (!modalEl) return fallback;
   const active = modalEl.querySelector('[data-settings-tab].active');
   return active?.dataset?.settingsTab || fallback;
@@ -48,7 +41,7 @@ export function bindSettingsNavigation(modalEl, options = {}) {
       // the tab, it owns activation/rendering and the Settings shell does not
       // perform a second local switch.
       if (
-        ADMIN_TABS.has(tab)
+        isAdminManagedSettingsTab(tab)
         && typeof openAdminTab === 'function'
         && openAdminTab(tab, button) === true
       ) {

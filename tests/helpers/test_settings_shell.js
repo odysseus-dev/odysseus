@@ -32,6 +32,7 @@ class Element {
     this.style = new Style();
     this._listeners = new Map();
     this._innerHTML = '';
+    this._textContent = '';
   }
   set id(value) { this.attributes.id = String(value); }
   get id() { return this.attributes.id || ''; }
@@ -47,6 +48,14 @@ class Element {
     }
   }
   get innerHTML() { return this._innerHTML; }
+  set textContent(value) {
+    this._textContent = String(value ?? '');
+    this.children.forEach(child => { child.parentElement = null; });
+    this.children = [];
+  }
+  get textContent() {
+    return this._textContent + this.children.map(child => child.textContent).join('');
+  }
   setAttribute(name, value) {
     const text = String(value);
     this.attributes[name] = text;
@@ -63,6 +72,23 @@ class Element {
     return child;
   }
   append(...children) { children.forEach(child => this.appendChild(child)); }
+  replaceChildren(...children) {
+    this.children.forEach(child => { child.parentElement = null; });
+    this.children = [];
+    children.forEach(child => this.appendChild(child));
+  }
+  contains(candidate) {
+    if (candidate === this) return true;
+    return descendants(this).includes(candidate);
+  }
+  getBoundingClientRect() {
+    const width = Number.parseFloat(
+      this.style.values['--settings-sidebar-width']
+        || this.style.width
+        || (this.classList.contains('settings-modal-content') ? '1040' : '220'),
+    );
+    return { width, height: 600, left: 0, right: width, top: 0, bottom: 600 };
+  }
   addEventListener(type, handler, options = {}) {
     if (!this._listeners.has(type)) this._listeners.set(type, []);
     this._listeners.get(type).push({ handler, once: !!options.once });
@@ -185,7 +211,33 @@ function buildFixture(document) {
   modal.appendChild(content);
 
   const nav = document.createElement('div');
+  nav.className = 'settings-sidebar';
   content.appendChild(nav);
+
+  const sidebarToggle = document.createElement('button');
+  sidebarToggle.id = 'settings-sidebar-toggle';
+  nav.appendChild(sidebarToggle);
+
+  const sidebarHandle = document.createElement('div');
+  sidebarHandle.id = 'settings-sidebar-resize-handle';
+  nav.appendChild(sidebarHandle);
+
+  const sidebarContent = document.createElement('div');
+  sidebarContent.className = 'settings-sidebar-content';
+  nav.appendChild(sidebarContent);
+
+  const finder = document.createElement('div');
+  sidebarContent.appendChild(finder);
+
+  const searchInput = document.createElement('input');
+  searchInput.id = 'settings-nav-search';
+  finder.appendChild(searchInput);
+
+  const searchResults = document.createElement('div');
+  searchResults.id = 'settings-nav-search-results';
+  searchResults.classList.add('hidden');
+  finder.appendChild(searchResults);
+
   const panels = document.createElement('div');
   content.appendChild(panels);
 
@@ -193,7 +245,7 @@ function buildFixture(document) {
     const button = document.createElement('button');
     button.setAttribute('data-settings-tab', id);
     if (active) button.classList.add('active');
-    nav.appendChild(button);
+    sidebarContent.appendChild(button);
     const panel = document.createElement('section');
     panel.setAttribute('data-settings-panel', id);
     if (!active) panel.classList.add('hidden');
@@ -201,17 +253,76 @@ function buildFixture(document) {
     return { button, panel };
   };
 
-  const services = makeTab('services', true);
-  const appearance = makeTab('appearance');
-  const system = makeTab('system');
+  const panelIds = [
+    'services',
+    'added-models',
+    'ai',
+    'search',
+    'integrations',
+    'email',
+    'reminders',
+    'appearance',
+    'shortcuts',
+    'account',
+    'tools',
+    'users',
+    'system',
+  ];
 
-  return { modal, header, close, content, services, appearance, system };
+  const settingsPanels = Object.fromEntries(
+    panelIds.map((id, index) => [id, makeTab(id, index === 0)]),
+  );
+
+  return {
+    modal,
+    header,
+    close,
+    content,
+    services: settingsPanels.services,
+    appearance: settingsPanels.appearance,
+    system: settingsPanels.system,
+    settingsPanels,
+    searchInput,
+    searchResults,
+    sidebar: nav,
+    sidebarToggle,
+    sidebarHandle,
+  };
 }
 
 function moduleSource(relativePath) {
-  return fs.readFileSync(path.join(__dirname, '../../static/js/settings', relativePath), 'utf8')
-    .replace(/^import\s+.*;\s*$/gm, '')
-    .replace(/\bexport\s+/g, '');
+  let source = fs.readFileSync(
+    path.join(__dirname, '../../static/js/settings', relativePath),
+    'utf8',
+  );
+
+  // The production files are real ES modules. This lightweight VM harness
+  // removes imports because dependencies are loaded into the same context,
+  // but each module still needs its own lexical scope so private const/let
+  // bindings do not collide across modules.
+  source = source.replace(/^\s*import[\s\S]*?;\s*$/gm, '');
+
+  // Preserve exported API on globalThis while keeping all non-exported
+  // bindings private inside the module block below.
+  source = source
+    .replace(
+      /\bexport\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+      'globalThis.$1 = function $1(',
+    )
+    .replace(
+      /\bexport\s+const\s+([A-Za-z_$][\w$]*)\s*=/g,
+      'globalThis.$1 =',
+    )
+    .replace(
+      /\bexport\s+let\s+([A-Za-z_$][\w$]*)\s*=/g,
+      'globalThis.$1 =',
+    )
+    .replace(
+      /\bexport\s+var\s+([A-Za-z_$][\w$]*)\s*=/g,
+      'globalThis.$1 =',
+    );
+
+  return `{\n${source}\n}`;
 }
 
 (function runTests() {
@@ -221,9 +332,15 @@ function moduleSource(relativePath) {
   const dockCalls = [];
   const removedWindowListeners = [];
 
+  const storage = new Map();
   const context = {
     console,
     document,
+    localStorage: {
+      getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+      setItem(key, value) { storage.set(key, String(value)); },
+      removeItem(key) { storage.delete(key); },
+    },
     window: {
       removeEventListener: (...args) => removedWindowListeners.push(args),
       addEventListener() {},
@@ -234,12 +351,197 @@ function moduleSource(relativePath) {
     WeakSet,
   };
   vm.createContext(context);
+  vm.runInContext(moduleSource('registry.js'), context, { filename: 'registry.js' });
+  vm.runInContext(moduleSource('search.js'), context, { filename: 'search.js' });
+  vm.runInContext(moduleSource('sidebar.js'), context, { filename: 'sidebar.js' });
   vm.runInContext(moduleSource('navigation.js'), context, { filename: 'navigation.js' });
   vm.runInContext(moduleSource('lifecycle.js'), context, { filename: 'lifecycle.js' });
   vm.runInContext(moduleSource('dom.js'), context, { filename: 'dom.js' });
 
   const results = [];
   const check = (test, pass, detail = '') => results.push({ test, pass: Boolean(pass), detail });
+
+  const registryPanelIds = vm.runInContext(
+    'SETTINGS_PANELS.map(panel => panel.id).join(",")',
+    context,
+  );
+  const registryGroupIds = vm.runInContext(
+    'SETTINGS_GROUPS.map(group => group.id).join(",")',
+    context,
+  );
+
+  check(
+    'Settings registry preserves the existing sidebar panel order',
+    registryPanelIds === [
+      'services',
+      'added-models',
+      'ai',
+      'search',
+      'integrations',
+      'email',
+      'reminders',
+      'appearance',
+      'shortcuts',
+      'account',
+      'tools',
+      'users',
+      'system',
+    ].join(','),
+  );
+
+  check(
+    'Settings registry defines the intended information-architecture groups',
+    registryGroupIds === [
+      'models',
+      'communications',
+      'experience',
+      'account',
+      'administration',
+    ].join(','),
+  );
+
+  check(
+    'Settings registry keeps services, models, integrations and admin panels on the existing admin controller',
+    ['services', 'added-models', 'integrations', 'tools', 'users', 'system']
+      .every(id => context.isAdminManagedSettingsTab(id))
+      && ['ai', 'search', 'email', 'reminders', 'appearance', 'shortcuts', 'account']
+        .every(id => !context.isAdminManagedSettingsTab(id)),
+  );
+
+  check(
+    'Settings registry distinguishes admin-only visibility from admin-controlled routing',
+    ['tools', 'users', 'system'].every(id => context.isAdminOnlySettingsTab(id))
+      && ['services', 'added-models', 'integrations']
+        .every(id => !context.isAdminOnlySettingsTab(id)),
+  );
+
+  check(
+    'Settings registry provides search metadata without owning search UI',
+    context.getSettingsPanelSearchText('appearance').includes('theme')
+      && context.getSettingsPanelSearchText('email').includes('smtp')
+      && context.getSettingsPanelSearchText('missing') === '',
+  );
+
+  check(
+    'Settings registry exposes group membership in sidebar order',
+    context.getSettingsPanelsForGroup('communications')
+      .map(panel => panel.id)
+      .join(',') === 'integrations,email,reminders',
+  );
+
+  check(
+    'Settings registry matches every production-style tab and panel in the DOM fixture',
+    context.getSettingsRegistryIssues(fixture.modal).length === 0,
+  );
+
+  check(
+    'Settings search resolves metadata terms in registry order',
+    context.searchSettingsPanels('provider', { isAdmin: true })
+      .map(panel => panel.id)
+      .join(',') === 'services,added-models,search',
+  );
+
+  check(
+    'Settings search excludes admin-only panels for non-admin users',
+    context.searchSettingsPanels('agent tools', { isAdmin: false }).length === 0
+      && context.searchSettingsPanels('agent tools', { isAdmin: true })
+        .map(panel => panel.id)
+        .join(',') === 'tools',
+  );
+
+  check(
+    'Settings search requires all query terms',
+    context.searchSettingsPanels('appearance theme', { isAdmin: false })
+      .map(panel => panel.id)
+      .join(',') === 'appearance',
+  );
+
+  let searchedPanel = null;
+  context.bindSettingsSearch(fixture.modal, {
+    isAdmin: () => false,
+    openPanel(tab) { searchedPanel = tab; },
+  });
+
+  fixture.searchInput.value = 'theme';
+  fixture.searchInput.dispatchEvent({
+    type: 'input',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'Settings finder renders matching production registry results',
+    !fixture.searchResults.classList.contains('hidden')
+      && fixture.searchResults.querySelectorAll('[data-settings-search-result]').length === 1
+      && fixture.searchResults.querySelector('[data-settings-search-result]').dataset.settingsSearchResult === 'appearance',
+  );
+
+  fixture.searchInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'Settings finder Enter opens the first result and resets the finder',
+    searchedPanel === 'appearance'
+      && fixture.searchInput.value === ''
+      && fixture.searchResults.classList.contains('hidden'),
+  );
+
+  searchedPanel = null;
+  fixture.searchInput.value = 'agent tools';
+  fixture.searchInput.dispatchEvent({
+    type: 'input',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'Settings finder does not expose admin-only results to non-admin users',
+    fixture.searchResults.querySelectorAll('[data-settings-search-result]').length === 0
+      && fixture.searchResults.textContent !== '',
+  );
+
+  fixture.searchInput.value = 'theme';
+  fixture.searchInput.dispatchEvent({
+    type: 'input',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  fixture.searchInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Escape',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'Settings finder Escape clears results without closing Settings',
+    fixture.searchInput.value === ''
+      && fixture.searchResults.classList.contains('hidden'),
+  );
+
+  context.setSettingsSidebarWidth(fixture.modal, 280);
+  check(
+    'Settings sidebar width is clamped and applied through the production controller',
+    fixture.sidebar.style.values['--settings-sidebar-width'] === '280px',
+  );
+
+  context.setSettingsSidebarCollapsed(fixture.modal, true);
+  check(
+    'Settings sidebar collapse leaves the compact navigation rail state active',
+    fixture.sidebar.classList.contains('settings-sidebar-collapsed')
+      && fixture.sidebarToggle.getAttribute('aria-label') === 'Expand settings navigation',
+  );
+
+  context.setSettingsSidebarCollapsed(fixture.modal, false, { width: 260 });
+  check(
+    'Settings sidebar expansion restores the requested expanded width',
+    !fixture.sidebar.classList.contains('settings-sidebar-collapsed')
+      && fixture.sidebar.style.values['--settings-sidebar-width'] === '260px',
+  );
 
   check('byId resolves elements through the production DOM helper', context.byId('settings-modal') === fixture.modal);
 

@@ -5,7 +5,12 @@ import uiModule from './ui.js';
 import searchModule from './search.js';
 import { byId } from './settings/dom.js';
 import {
-  ADMIN_TABS,
+  getSettingsRegistryIssues,
+  isAdminManagedSettingsTab,
+} from './settings/registry.js';
+import { bindSettingsSearch } from './settings/search.js';
+import { bindSettingsSidebar } from './settings/sidebar.js';
+import {
   activateSettingsPanel,
   getActiveSettingsTab,
   bindSettingsNavigation,
@@ -2151,6 +2156,21 @@ function initAll() {
     openAdminTab: openAdminSettingsTab,
     onPanelActivated: onSettingsPanelActivated,
   });
+
+  bindSettingsSearch(modalEl, {
+    isAdmin: () => !!window._isAdmin,
+    openPanel(tab) {
+      const button = modalEl.querySelector(`[data-settings-tab="${tab}"]`);
+      if (button) button.click();
+    },
+  });
+
+  bindSettingsSidebar(modalEl);
+
+  const registryIssues = getSettingsRegistryIssues(modalEl);
+  if (registryIssues.length) {
+    console.warn('Settings registry/DOM mismatch:', registryIssues);
+  }
 
   bindSettingsDrag(modalEl);
 
@@ -5594,11 +5614,11 @@ export function open(tab) {
 
   // Preserve existing panel-specific side effects when Settings is opened
   // directly to a tab as well as when the user navigates there.
-  const activeTab = tab || getActiveSettingsTab(modalEl, 'services');
+  const activeTab = tab || getActiveSettingsTab(modalEl);
   onSettingsPanelActivated(activeTab);
 
   // Auto-init admin data if showing an admin tab.
-  if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
+  if (isAdminManagedSettingsTab(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
 }
