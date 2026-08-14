@@ -8,6 +8,44 @@
 //
 // On open: fetch /api/memory-brain/overview (on-request, per-turn state) and draw.
 
+// Top-view brain silhouette: two cerebral hemispheres with gyri undulations
+// along the outer edge, separated by a visible longitudinal fissure down the
+// middle. `s` mirrors the hemisphere (+1 right, -1 left) so both lobes are
+// symmetric. Each lobe is inset from the centre line (MIN_DX) so the fissure
+// reads as a real gap instead of the two lobes merging into one blob.
+const MIN_DX = 0.16
+function brainHemisphere(cx, cy, r, s) {
+  const X = (dx) => cx + r * dx * s
+  const Y = (dy) => cy + r * dy
+  return `
+    M ${X(MIN_DX)} ${Y(-1.15)}
+    C ${X(0.7)} ${Y(-1.35)}, ${X(1.0)} ${Y(-1.2)}, ${X(1.05)} ${Y(-0.85)}
+    C ${X(1.08)} ${Y(-0.6)}, ${X(1.35)} ${Y(-0.55)}, ${X(1.32)} ${Y(-0.25)}
+    C ${X(1.3)} ${Y(-0.05)}, ${X(1.15)} ${Y(-0.1)}, ${X(1.18)} ${Y(0.15)}
+    C ${X(1.2)} ${Y(0.35)}, ${X(1.42)} ${Y(0.42)}, ${X(1.28)} ${Y(0.68)}
+    C ${X(1.18)} ${Y(0.9)}, ${X(0.95)} ${Y(1.1)}, ${X(0.6)} ${Y(1.15)}
+    C ${X(0.32)} ${Y(1.2)}, ${X(0.05)} ${Y(1.05)}, ${X(MIN_DX)} ${Y(1.0)}
+    Z`
+}
+
+function brainShape(cx, cy, r) {
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+  g.setAttribute('opacity', '0.12')
+  for (const s of [1, -1]) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    p.setAttribute('d', brainHemisphere(cx, cy, r, s))
+    p.setAttribute('fill', 'var(--fg)')
+    g.appendChild(p)
+  }
+  // longitudinal fissure between the hemispheres
+  const mid = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+  mid.setAttribute('x1', cx); mid.setAttribute('y1', cy - r * 1.15)
+  mid.setAttribute('x2', cx); mid.setAttribute('y2', cy + r * 1.0)
+  mid.setAttribute('stroke', 'var(--fg)'); mid.setAttribute('stroke-width', '1')
+  g.appendChild(mid)
+  return g
+}
+
 export function loadBrain(open = false) {
   const el = document.getElementById('assoc-graph-canvas')
   if (!el) return
@@ -21,26 +59,9 @@ export function loadBrain(open = false) {
   svg.setAttribute('height', h)
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
 
-  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  bg.setAttribute('opacity', '0.12')
-  // simple two-lobe brain path centred in the viewbox
   const cx = w / 2, cy = h / 2
-  const r = Math.min(w, h) / 2.6
-  const brainPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  brainPath.setAttribute('d', `
-    M ${cx - r * 1.1} ${cy - r * 0.6}
-    C ${cx - r * 1.4} ${cy - r * 1.3}, ${cx - r * 0.4} ${cy - r * 1.4}, ${cx} ${cy - r * 0.8}
-    C ${cx + r * 0.4} ${cy - r * 1.4}, ${cx + r * 1.4} ${cy - r * 1.3}, ${cx + r * 1.1} ${cy - r * 0.6}
-    C ${cx + r * 1.5} ${cy + r * 0.2}, ${cx + r * 1.2} ${cy + r * 1.1}, ${cx} ${cy + r * 1.2}
-    C ${cx - r * 1.2} ${cy + r * 1.1}, ${cx - r * 1.5} ${cy + r * 0.2}, ${cx - r * 1.1} ${cy - r * 0.6}
-    Z`)
-  brainPath.setAttribute('fill', 'var(--fg)')
-  // brain midline
-  const mid = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-  mid.setAttribute('x1', cx); mid.setAttribute('y1', cy - r * 1.2)
-  mid.setAttribute('x2', cx); mid.setAttribute('y2', cy + r * 1.1)
-  mid.setAttribute('stroke', 'var(--fg)'); mid.setAttribute('stroke-width', '1')
-  bg.appendChild(brainPath); bg.appendChild(mid)
+  const r = Math.min(w, h) / 2.8
+  const bg = brainShape(cx, cy, r)
   svg.appendChild(bg)
 
   const msg = document.createElementNS('http://www.w3.org/2000/svg', 'text')
@@ -64,19 +85,7 @@ function draw(el, svg, data, w, h, cx, cy, r) {
   // clear the loading message
   svg.innerHTML = ''
   // redraw background
-  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  bg.setAttribute('opacity', '0.12')
-  const brainPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  brainPath.setAttribute('d', `
-    M ${cx - r * 1.1} ${cy - r * 0.6}
-    C ${cx - r * 1.4} ${cy - r * 1.3}, ${cx - r * 0.4} ${cy - r * 1.4}, ${cx} ${cy - r * 0.8}
-    C ${cx + r * 0.4} ${cy - r * 1.4}, ${cx + r * 1.4} ${cy - r * 1.3}, ${cx + r * 1.1} ${cy - r * 0.6}
-    C ${cx + r * 1.5} ${cy + r * 0.2}, ${cx + r * 1.2} ${cy + r * 1.1}, ${cx} ${cy + r * 1.2}
-    C ${cx - r * 1.2} ${cy + r * 1.1}, ${cx - r * 1.5} ${cy + r * 0.2}, ${cx - r * 1.1} ${cy - r * 0.6}
-    Z`)
-  brainPath.setAttribute('fill', 'var(--fg)')
-  bg.appendChild(brainPath)
-  svg.appendChild(bg)
+  svg.appendChild(brainShape(cx, cy, r))
 
   const nodes = data.associations?.nodes || []
   const edges = data.associations?.edges || []
