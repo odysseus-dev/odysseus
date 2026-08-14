@@ -740,3 +740,34 @@ def test_upload_requires_companion_scope_and_a_resolvable_owner():
     with pytest.raises(HTTPException) as e:
         asyncio.run(upload(anon, files=[]))
     assert e.value.status_code == 403
+
+
+def test_email_ai_does_not_leak_provider_errors(monkeypatch):
+    # A provider failure must not put upstream error text (which can carry the
+    # endpoint's internal base_url) into the phone's response body.
+    import asyncio
+    import types as _types
+
+    fake_resolver = _types.ModuleType("src.endpoint_resolver")
+    fake_resolver.resolve_endpoint = lambda kind, owner=None: (
+        "http://10.0.0.9:1234/v1", "m", {}
+    )
+    fake_llm = _types.ModuleType("src.llm_core")
+
+    async def _boom(*a, **k):
+        raise RuntimeError("connect to http://10.0.0.9:1234/v1 failed: secret-ish detail")
+
+    fake_llm.llm_call_async_with_fallback = _boom
+    monkeypatch.setitem(sys.modules, "src.endpoint_resolver", fake_resolver)
+    monkeypatch.setitem(sys.modules, "src.llm_core", fake_llm)
+
+    fake_helpers = _types.ModuleType("routes.email_helpers")
+    fake_helpers._assert_owns_account = lambda account_id, owner: None
+    monkeypatch.setitem(sys.modules, "routes.email_helpers", fake_helpers)
+
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_handler("/email/summarize", "POST")(
+            _bearer("alice"), account_id="a1", subject="s", body="hello"))
+    assert e.value.status_code == 502
+    assert "10.0.0.9" not in str(e.value.detail)
+    assert "secret-ish" not in str(e.value.detail)

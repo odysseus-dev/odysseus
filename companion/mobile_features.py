@@ -912,6 +912,8 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
     # can't borrow another owner's model endpoint to run these.
 
     async def _companion_llm(owner, system, user, max_tokens):
+        import logging as _logging
+
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async_with_fallback
         url, model, headers = resolve_endpoint("utility", owner=owner)
@@ -919,15 +921,27 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
             url, model, headers = resolve_endpoint("default", owner=owner)
         if not url:
             raise HTTPException(503, "No model endpoint configured.")
-        return await llm_call_async_with_fallback(
-            [(url, model, headers)],
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.4,
-            max_tokens=max_tokens,
-        )
+        try:
+            return await llm_call_async_with_fallback(
+                [(url, model, headers)],
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.4,
+                max_tokens=max_tokens,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            # A provider failure re-raised as-is would put the upstream error
+            # text — which can carry the endpoint's internal base_url or other
+            # deployment detail — into the phone's response body. Log it server
+            # side and return a generic failure instead.
+            _logging.getLogger(__name__).error(
+                "companion email AI call failed for owner=%s: %s", owner, e
+            )
+            raise HTTPException(502, "The model endpoint could not be reached.")
 
 
     @router.post("/email/summarize")
@@ -1122,7 +1136,5 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
             except Exception:  # noqa: BLE001 - fall through to the full image
                 pass
         return FileResponse(path, media_type=mime, filename=original_name)
-
-    return router
 
     return router
