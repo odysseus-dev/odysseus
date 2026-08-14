@@ -75,3 +75,26 @@ def test_claim_audit_degrades_strong_claim():
     assert claims, "strong claim should be flagged"
     softened, _note = claim_audit.degrade(draft, "DEGRADE")
     assert softened != draft
+
+
+def test_lexical_relevance_returns_relevant():
+    """The lexical relevance function flags results relevant to the user's
+    stored context (lexical term signals) as RELEVANT."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory_platform"))
+    import research_lens
+    # force store miss so the lexical term signal drives the verdict
+    research_lens._store_has = lambda q, min_sim=0.45: (False, [])
+    r = research_lens.relevance("memory", "agent memory consolidation", "a paper")
+    assert r["verdict"] == "RELEVANT"
+    assert "consolidat" in r["terms"]
+
+
+def test_lexical_relevance_abstains():
+    """A result only topically adjacent to the query but not to the user's
+    real context is flagged low-relevance (abstention)."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory_platform"))
+    import research_lens
+    research_lens._store_has = lambda q, min_sim=0.45: (False, [])
+    r = research_lens.relevance("knitting", "the history of knitting needles", "crafts")
+    assert r["verdict"] == "LOW-RELEVANCE"
+    assert r["store_match"] is False
