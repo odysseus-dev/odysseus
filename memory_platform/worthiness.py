@@ -20,8 +20,8 @@ Verdicts:
     DEFER       — not clearly valuable; park in the candidate ledger / journal,
                   no write this run. Re-review if it recurs.
     REJECT      — actively harmful to the goal (violates a constitution
-                  inviolable: dishonest, hustle-framed, harms the Pi/game
-                  world, overclaims, ignores material reality). Never absorbed.
+                  inviolable: dishonest, hustle-framed, harms the production/game
+                  environment, overclaims, ignores material reality). Never absorbed.
 
 Every verdict carries the QUESTION ANSWERS so the reason is auditable — the
 journal entry shows WHY, not just the decision.
@@ -36,10 +36,10 @@ import re
 # --------------------------------------------------------------------------
 
 Q_PI_SAFETY = {
-    "name": "protects-the-game-world",
-    "q": "Does absorbing this risk the Pi / Foundry / active game world?",
-    "bad": ["raspberry pi", "foundry", "caddy", "game server", "session data",
-            "campaign", "touch the pi", "modify the pi", "rpi"],
+    "name": "protects-the-environment",
+    "q": "Does absorbing this risk the active production / game environment?",
+    "bad": ["production", "game server", "session data", "campaign",
+            "touch the server", "modify the server", "prod"],
 }
 
 
@@ -47,9 +47,9 @@ def q_pi_safety(low):
     if any(s in low for s in Q_PI_SAFETY["bad"]):
         if any(s in low for s in ("do not", "never ", "don't", "protect",
                                   "ask permission", "check before")):
-            return 1, "names the Pi world and protects it (aligned)"
-        return -1, "discusses Pi/game-world actions without a protective frame"
-    return 0, "no Pi/game-world bearing"
+            return 1, "names the production/game environment and protects it (aligned)"
+        return -1, "discusses environment actions without a protective frame"
+    return 0, "no environment bearing"
 
 
 def q_honesty(low):

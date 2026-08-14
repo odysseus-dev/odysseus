@@ -77,7 +77,7 @@ def distinctive_terms(fact, corpus_texts):
     """The terms in `fact` that are RARE across the corpus (< 5% df).
 
     Same signal as the recall gate: a term common in the store ("black",
-    "physics") is NOT a relation; a rare term ("carcosa", "oatmilk") is."""
+    "physics") is NOT a relation; a rare term ("celesta", "oatmilk") is."""
     total = max(len(corpus_texts), 1)
     fact_terms = set(content_words(fact))
     if not fact_terms:

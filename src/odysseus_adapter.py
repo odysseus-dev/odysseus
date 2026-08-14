@@ -80,12 +80,12 @@ def _content_words(text: str) -> set:
 # neuron topic vocabulary — mirrors routes/memory/graph_routes so
 # consolidation groups by the same topics the brain view shows
 _NEURON_TOPICS = {
-    "persona": ["alfred", "butler", "sir", "pennyworth", "composed", "wry",
-                "warm", "grounded", "voice", "register", "persona"],
-    "philosophy": ["sagan", "wonder", "skeptic", "cosmos", "evidence",
+    "persona": ["composed", "wry", "warm", "grounded", "voice", "register",
+                "persona", "delivery"],
+    "philosophy": ["wonder", "skeptic", "cosmos", "evidence", "falsif",
                    "philosophy", "epistemology"],
-    "game": ["delta", "green", "investigator", "scenario", "character",
-             "campaign", "session"],
+    "game": ["investigator", "scenario", "character", "campaign", "session",
+             "ttrpg"],
     "memory": ["memory", "recall", "association", "embedding", "neuron",
                "store", "consolidat"],
 }

@@ -37,9 +37,9 @@ _STOP = {"the", "and", "for", "with", "that", "this", "from", "into",
 
 # neuron trigger vocabulary (mirrors warm_router) for firing-state display
 _NEURON_TOPICS = {
-    "persona": ["alfred", "butler", "sir", "pennyworth", "composed", "wry"],
-    "philosophy": ["sagan", "wonder", "skeptic", "cosmos", "evidence"],
-    "game": ["delta green", "ttrpg", "carcosa", "yellow king"],
+    "persona": ["composed", "wry", "register", "voice", "delivery", "persona"],
+    "philosophy": ["wonder", "skeptic", "cosmos", "evidence", "falsif"],
+    "game": ["ttrpg", "scenario", "campaign", "character", "session"],
     "memory": ["memory", "recall", "association", "embedding", "neuron"],
 }
 
@@ -170,8 +170,8 @@ def build_brain_snapshot(
         for n in warm_neurons:
             slug = n.get("slug", "neuron")
             neurons.append({"slug": slug, "body": n.get("body", "")[:80],
-                            "firing": slug in ("persona-alfred",
-                                               "philosophy-sagan-core",
+                            "firing": slug in ("persona-example",
+                                               "method-core",
                                                "research-warm-memory")})
     else:
         neurons = [{"slug": t, "body": "", "firing": False}
