@@ -3382,6 +3382,11 @@ async def stream_agent_loop(
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
     _ody_qwen_finetune_model = _is_odysseus_qwen_model(model)
+    # The caller's temperature survives for non-qwen routes; the qwen cap is
+    # applied per candidate (here for the primary, in the candidate request
+    # factories for fallbacks), so neither direction of a mixed qwen/non-qwen
+    # fallback chain inherits the other's value.
+    _requested_temperature = temperature
     if _ody_qwen_finetune_model:
         temperature = _ody_qwen_temperature_cap(temperature)
     _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
@@ -3479,12 +3484,16 @@ async def stream_agent_loop(
                 else [{"role": "user", "content": _last_user}]
             )
             direct_candidate_messages[_index] = candidate_messages
-            request = {"messages": candidate_messages}
-            if candidate_is_qwen:
-                request["kwargs"] = {
-                    "temperature": _ody_qwen_temperature_cap(temperature),
-                }
-            return request
+            return {
+                "messages": candidate_messages,
+                "kwargs": {
+                    "temperature": (
+                        _ody_qwen_temperature_cap(_requested_temperature)
+                        if candidate_is_qwen
+                        else _requested_temperature
+                    ),
+                },
+            }
 
         def _direct_terminal_event(terminal_status, failure_message):
             """Build truthful partial-history metadata for direct-path failure."""
@@ -4463,17 +4472,17 @@ async def stream_agent_loop(
             candidate_tools = _tool_schemas_for_route(state)
             state["tools"] = candidate_tools
             _candidate_request_states[index] = state
-            candidate_kwargs = {
-                "tools": candidate_tools or None,
-                "tool_choice_none": state["ody_doc_finetune_mode"],
-            }
-            if _is_odysseus_qwen_model(candidate_model):
-                candidate_kwargs["temperature"] = _ody_qwen_temperature_cap(
-                    temperature
-                )
             return {
                 "messages": request_messages,
-                "kwargs": candidate_kwargs,
+                "kwargs": {
+                    "tools": candidate_tools or None,
+                    "tool_choice_none": state["ody_doc_finetune_mode"],
+                    "temperature": (
+                        _ody_qwen_temperature_cap(_requested_temperature)
+                        if _is_odysseus_qwen_model(candidate_model)
+                        else _requested_temperature
+                    ),
+                },
             }
 
         def _apply_candidate_compaction(index: int) -> bool:

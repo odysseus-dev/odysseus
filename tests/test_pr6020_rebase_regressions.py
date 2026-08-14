@@ -201,6 +201,24 @@ def test_qwen_fallback_candidate_gets_capped_temperature(monkeypatch):
     assert request["kwargs"]["temperature"] == 0.2
 
 
+def test_non_qwen_fallback_keeps_requested_temperature(monkeypatch):
+    """A qwen primary's 0.2 cap must not leak into a non-qwen fallback."""
+
+    _, stream_calls = _install_route_probe(monkeypatch)
+
+    _run_probe(
+        [{"role": "user", "content": "Add buy milk to my notes."}],
+        relevant_tools={"manage_notes"},
+        temperature=1.2,
+        fallbacks=[("https://backup.example/v1", "gpt-4o", {})],
+    )
+
+    assert stream_calls[0]["temperature"] == 0.2
+    factory = stream_calls[0]["candidate_request_factory"]
+    request = asyncio.run(factory(1, "https://backup.example/v1", "gpt-4o", {}))
+    assert request["kwargs"]["temperature"] == 1.2
+
+
 def test_qwen_notes_fallback_reenables_personal_managers(monkeypatch):
     """The answering candidate's notes mode must unblock the managers for
     execution, not just enable them in its own route schemas."""
