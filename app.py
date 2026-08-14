@@ -670,6 +670,26 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
+from routes.memory.graph_routes import setup_graph_routes
+try:
+    from warm_router import list_neurons as _warm_list
+except Exception:
+    _warm_list = None
+app.include_router(setup_graph_routes(memory_manager, memory_vector,
+                                      warm_router=_warm_list))
+# Odyssey Memory Platform adapter — attaches hybrid recall, socratic growth,
+# and the brain view to Odysseus's existing memory (additive, opt-in).
+try:
+    from src.odysseus_adapter import install_memory_platform
+    _platform = install_memory_platform(memory_manager, memory_vector)
+    # hybrid recall replaces the vector-only search path for agent memory
+    if _platform.get("hybrid_recall") is not None:
+        memory_vector._search_orig = getattr(memory_vector, "search", None)
+        memory_vector.search = _platform["hybrid_recall"].search
+except Exception as _e:
+    import logging
+    logging.getLogger("odysseus_adapter").warning(
+        "memory platform not attached: %s", _e)
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
 

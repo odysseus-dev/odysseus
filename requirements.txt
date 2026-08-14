@@ -1,4 +1,7 @@
-fastapi
+# fastapi pinned to the 0.115 line: 0.141.x/starlette 1.6.x silently drops
+# prefixed router sub-routes on include_router, breaking all /api/memory/*
+# routes. 0.115.14 + starlette 0.41.3 registers them correctly (verified).
+fastapi>=0.115,<0.116
 uvicorn
 python-multipart
 python-dotenv

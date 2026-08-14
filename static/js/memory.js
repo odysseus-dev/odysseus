@@ -1548,3 +1548,31 @@ const memoryModule = {
 
 export default memoryModule;
 window.memoryModule = memoryModule;
+
+// ===== ODYSSEUS-MEMORY-UPGRADES: Brain view (lazy-load) + association settings =====
+(function () {
+  // lazy-load the brain renderer when the Brain tab opens (like skills.js)
+  document.querySelectorAll('.memory-tab[data-memory-tab="associations"]').forEach(tab => {
+    tab.addEventListener('click', () => {
+      import('./brain.js').then(m => {
+        if (m.loadBrain) m.loadBrain(true)
+        else if (m.default?.loadBrain) m.default.loadBrain(true)
+      }).catch(() => {})
+    })
+  })
+  // settings wiring (fanout + min strength)
+  const fan = document.getElementById('assoc-fanout-input')
+  const str = document.getElementById('assoc-strength-slider')
+  const strLabel = document.getElementById('assoc-strength-label')
+  if (str && strLabel) {
+    str.addEventListener('input', () => {
+      strLabel.textContent = `\u2265 ${(Number(str.value) / 100).toFixed(2)}`
+    })
+  }
+  if (fan) {
+    fan.addEventListener('change', () => {
+      const v = Math.max(1, Math.min(12, Number(fan.value) || 6))
+      fan.value = v
+    })
+  }
+})()
