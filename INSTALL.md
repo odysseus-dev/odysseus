@@ -69,9 +69,14 @@ app.include_router(setup_graph_routes(
 ```
 
 On boot the adapter:
-- opens the platform's own hybrid store (sqlite-vec + FTS5),
-- snapshots the five core blocks into the drift ledger (immutability anchor),
-- wires the worthiness gate + claim audit,
+- opens the platform's own hybrid store (sqlite-vec + FTS5) and keeps the
+  connection open for recall,
+- snapshots the five core blocks into the drift ledger (immutability anchor)
+  and starts a background drift watchdog that re-checks them on a timer,
+- wires the **worthiness gate on intake** — every memory write is scored;
+  `REJECT` entries are refused at write time,
+- wires the **claim audit on output** — chat responses are scanned on finalize
+  and unsupported strong claims are mechanically degraded,
 - attaches hybrid recall, socratic growth, and sleep/consolidation.
 
 ### 3. Add the Brain tab to the UI
@@ -90,7 +95,8 @@ docker compose up -d --build   # or uvicorn app:app
 
 - Boot log confirms the full chain: `Odysseus memory platform attached:
   {platform_store, drift_ledger, drift_ok, worthiness, claim_audit,
-  hybrid_recall, associations, socratic, sleep, auto_sleep}`.
+  hybrid_recall, associations, socratic, sleep, auto_sleep, intake_gate,
+  drift_watchdog, output_gate}`.
 - `GET /api/memory-brain/overview` → persona, identity, association nodes,
   neurons, sleep receipts + pressure. **Verified 200** with a live store.
 - `POST /api/memory-brain/sleep` merges near-duplicates, prunes stale, promotes

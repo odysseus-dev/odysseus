@@ -705,6 +705,7 @@ app.include_router(setup_chat_routes(
     memory_vector=memory_vector,
     webhook_manager=webhook_manager,
     skills_manager=skills_manager,
+    output_auditor=((_platform or {}).get("platform") or {}).get("audit_output"),
 ))
 
 # Research (background deep-research tasks)

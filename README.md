@@ -84,9 +84,10 @@ platform to Odysseus's existing `MemoryManager` + `MemoryVectorStore`:
 
 | Adapter point | What it does |
 |---|---|
-| Platform store boot | Opens the platform's own hybrid store (sqlite-vec + FTS5) |
-| Drift ledger | Snapshots the five blocks on attach (immutability anchor) |
-| Integrity chain | Worthiness + claim-audit wired into intake/output |
+| Platform store boot | Opens the platform's own hybrid store (sqlite-vec + FTS5); the connection stays open for recall |
+| Drift ledger + watchdog | Snapshots the five blocks on attach; a background thread re-checks them on a timer |
+| Integrity chain (intake) | Worthiness gate runs on every memory write — `REJECT` entries are refused |
+| Integrity chain (output) | Claim audit runs on chat finalize — unsupported strong claims are degraded |
 | Hybrid recall | Wraps `MemoryVectorStore.search` with BM25 + RRF fusion |
 | Socratic + sleep | Additive on `MemoryManager` (new `socratic` source, consolidation) |
 | Brain view | New tab in the memory modal + `/api/memory-brain/*` |
@@ -101,12 +102,17 @@ The portability contract is env-resolved (`MEMORY_STORE_DB`, `MEMORY_MEMORY_DIR`
 - **Canary suite 5/5** — store recall + abstention + tamper-evident audit chain,
   drift detect/anchor, worthiness gate, claim-audit, socratic coherence —
   verified passing with `canary-manager.sh` (self-proving by construction).
+- **Enforced, not just attached** — the intake gate refuses `REJECT` entries
+  at write time, the output gate degrades unsupported strong claims on chat
+  finalize, and a drift watchdog thread re-checks the core blocks on a timer.
+  All verified in the running app.
 - **Platform store boots** with hybrid recall + abstention + tamper-evident
   audit chain (verified with sqlite-vec 0.1.9).
 - **Drift ledger** snapshots all five blocks and confirms `drift_ok: True`.
 - **Full adapter attach** confirmed in the running app:
   `platform_store, drift_ledger, drift_ok, worthiness, claim_audit,
-  hybrid_recall, associations, socratic, sleep, auto_sleep` — all True.
+  hybrid_recall, associations, socratic, sleep, auto_sleep, intake_gate,
+  drift_watchdog, output_gate` — all True.
 - **Blank-slate blocks** — the core blocks ship empty; a new user starts clean
   and the relationship record grows from their own interactions.
 

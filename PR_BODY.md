@@ -27,8 +27,10 @@ through hardcoding.
    operating / project) are checksummed by a **drift ledger** on attach. Any
    change must be anchored with a source directive or journaled operation;
    unexplained bulk is flagged. The constitution changes only by explicit
-   directive. Growth belongs to the harness, not the engine — a model swap
-   cannot corrupt the relationship record.
+   directive. A background **drift watchdog** re-checks the blocks on a timer,
+   so an unanchored change cannot slip in silently after boot. Growth belongs
+   to the harness, not the engine — a model swap cannot corrupt the
+   relationship record.
 
 2. **Hybrid recall** — replaces `MemoryVectorStore.search` with BM25 + dense +
    RRF fusion plus precomputed association enrichment. Measured: **11 vs 9
@@ -36,10 +38,12 @@ through hardcoding.
    latency (5.30 vs 4.95 ms). Pure vector search misses exact-term and mixed
    queries that lexical fusion catches.
 
-3. **An evidence-gated persona layer** — identity values form only on real
-   grounding: a worthiness gate on intake, evidence receipts per identity
-   claim, and a coherence check that blocks invented or contradictory identity.
-   The persona is earned from the relationship's record, not asserted.
+3. **An enforced intake gate (worthiness)** — every entry is scored by the
+   worthiness gate *before* it is written. `REJECT` entries (conspiracy,
+   grindset, stock tips, bare assertions) are refused at intake — they never
+   enter memory. `ABSORB` / `PROMOTE` pass through with the verdict journaled.
+   The gate runs on the actual memory-write path, not just as an imported
+   module.
 
 4. **Socratic growth** — a belief-revision loop. A conceded argument must
    either amend the actionable rule or record a principled hold; the coherence
@@ -47,9 +51,12 @@ through hardcoding.
    the action. The relationship's rules *revise* from better arguments,
    audited.
 
-5. **Integrity chain** — a claim audit prevents unsupported strong claims at
-   output (deterministic, no LLM); epistemic verification checks the evidence
-   method actually left its mark on responses, not just as a checkbox.
+5. **An enforced output gate (claim-audit)** — before a chat response is
+   persisted, the claim audit scans the final text for unsupported strong
+   claims (superlatives, guarantees, unqualified absolutes, comparative claims
+   without a measurable anchor) and mechanically degrades them. The gate runs
+   on the actual response path, so the agent cannot emit an unverifiable
+   "definitely best / 100% works" claim.
 
 6. **Sleeping / consolidation** — consolidation runs *when the store needs
    it*, not on a schedule. A **pressure gauge** measures how much the store
@@ -156,10 +163,19 @@ The architecture is research-grounded:
   audit chain, drift detect/anchor, worthiness gate, claim-audit, socratic
   coherence. `canary-manager.sh` asserts every check actually ran (self-proving
   by construction; no silent skips).
-- **App boots** with the full platform attached; the boot log confirms the
-  complete chain (`platform_store`, `drift_ledger`, `drift_ok`, `worthiness`,
-  `claim_audit`, `hybrid_recall`, `associations`, `socratic`, `sleep`,
-  `auto_sleep` — all True).
+- **App boots** with the full platform attached AND enforced; the boot log
+  confirms the complete chain (`platform_store`, `drift_ledger`, `drift_ok`,
+  `worthiness`, `claim_audit`, `hybrid_recall`, `associations`, `socratic`,
+  `sleep`, `auto_sleep`, `intake_gate`, `drift_watchdog`, `output_gate` — all
+  True).
+- **Intake gate enforced**: a `REJECT` entry (e.g. a conspiracy claim) is
+  refused at write time and never enters memory; a value entry passes as
+  `PROMOTE`. Verified against the adapter's hooked write path.
+- **Output gate enforced**: a draft with "definitely... 100%..." is flagged
+  and mechanically degraded before persistence. Verified against
+  `audit_output()`.
+- **Drift watchdog running**: a real daemon thread re-checks the five blocks
+  on a timer (verified active); unanchored change is logged.
 - **`GET /api/memory-brain/overview` → 200** against the live store: persona,
   identity, association nodes, neurons, sleep receipts + pressure.
 - **Platform store boots** with hybrid recall + abstention + a tamper-evident

@@ -49,6 +49,7 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -599,6 +600,7 @@ def install_memory_platform(memory_manager, memory_vector,
         sys.path.insert(0, _PKG)
 
     # ---- 1. boot the platform's own store (hybrid, tamper-evident) --------
+    # The connection is KEPT OPEN and used for recall — not boot-and-close.
     try:
         import memory_env as penv
         import memory_store as pstore
@@ -607,15 +609,13 @@ def install_memory_platform(memory_manager, memory_vector,
         pdb = pstore.connect()
         pstats = pstore.stats(pdb)
         platform["store"] = pstore
+        platform["store_db"] = pdb
         platform["store_stats"] = pstats
         attached["platform_store"] = True
-        try:
-            pdb.close()
-        except Exception:
-            pass
     except Exception as e:
         logger.warning("platform store not booted: %s", e)
         platform["store"] = None
+        platform["store_db"] = None
 
     # ---- 2. drift ledger snapshot (the immutability anchor) ---------------
     try:
@@ -686,11 +686,33 @@ def install_memory_platform(memory_manager, memory_vector,
         # value of decoupling consolidation from online inference — the hook
         # only *evaluates pressure* every N writes (cheap, no-op below the
         # threshold) and sleeps only when the store actually needs it.
+        #
+        # This hook ALSO enforces the worthiness gate on intake: every entry
+        # is scored before it is stored. REJECT is refused (returns the veto
+        # note instead of writing); ABSORB/PROMOTE pass through with the
+        # verdict journaled. If worthiness is unavailable the write still
+        # proceeds (never block memory on a missing module).
+        _worth = platform.get("worthiness")
         try:
             _orig_add = memory_manager.add_entry
             _sleep_counter = [0]
             def _hooked_add(text, source="user", category="fact", owner=None):
+                gate = None
+                if _worth is not None:
+                    try:
+                        verdict, score, answers, vetoed = _worth.assess(text, target=category)
+                        gate = {"verdict": verdict, "score": score,
+                                "vetoed": vetoed}
+                        if verdict == "REJECT":
+                            # refused at intake — never enters memory
+                            logger.info("worthiness REJECT at intake: %.60r", text)
+                            return {"id": None, "text": text,
+                                    "rejected": True, "gate": gate}
+                    except Exception as e:
+                        logger.warning("worthiness gate error: %s", e)
+                        gate = {"verdict": "ABSORB", "error": str(e)}
                 entry = _orig_add(text, source=source, category=category, owner=owner)
+                entry["gate"] = gate
                 _sleep_counter[0] += 1
                 if _sleep_counter[0] >= SleepEngine.WRITE_CHECK_INTERVAL:
                     _sleep_counter[0] = 0
@@ -701,11 +723,72 @@ def install_memory_platform(memory_manager, memory_vector,
                 return entry
             memory_manager.add_entry = _hooked_add
             attached["auto_sleep"] = True
+            attached["intake_gate"] = True
         except Exception:
             attached["auto_sleep"] = False
+            attached["intake_gate"] = False
     else:
         socratic = None
         sleep = None
+
+    # ---- 6. periodic drift protection (not just a boot snapshot) -----------
+    # A background thread re-checks the five core blocks every DRIFT_CHECK_SEC;
+    # a change that was never anchored/journaled is logged so it cannot slip
+    # in silently. Daemon so it never blocks shutdown.
+    _dledger = platform.get("drift_ledger")
+    if _dledger is not None:
+        try:
+            DRIFT_CHECK_SEC = int(os.environ.get("MEMORY_DRIFT_CHECK_SEC", "900"))
+            def _drift_watchdog():
+                while True:
+                    time.sleep(DRIFT_CHECK_SEC)
+                    try:
+                        code = _dledger.check(strict=False, autofix=True)
+                        ok = code == 0 if not isinstance(code, dict) \
+                            else bool(code.get("healthy"))
+                        if not ok:
+                            logger.warning("DRIFT-WATCHDOG: core block drift "
+                                           "detected (unanchored change)")
+                    except Exception as e:
+                        logger.warning("drift watchdog error: %s", e)
+            _th = threading.Thread(target=_drift_watchdog, daemon=True,
+                                   name="memory-drift-watchdog")
+            _th.start()
+            attached["drift_watchdog"] = True
+        except Exception:
+            attached["drift_watchdog"] = False
+
+    # ---- 7. claim-audit output gate ----------------------------------------
+    # The chat response path calls this before returning the final text; any
+    # unsupported strong claim is mechanically degraded (no self-correction).
+    _ca = platform.get("claim_audit")
+    if _ca is not None:
+        try:
+            def audit_output(text):
+                """Scan a draft response; degrade unsupported strong claims."""
+                if not text:
+                    return text, []
+                try:
+                    claims = _ca.scan(text)
+                except Exception:
+                    claims = []
+                if not claims:
+                    return text, []
+                softened = text
+                for c in claims:
+                    try:
+                        degraded, note = _ca.degrade(c.get("claim", ""),
+                                                     "DEGRADE")
+                        if degraded and degraded != c.get("claim", ""):
+                            softened = softened.replace(c.get("claim", ""),
+                                                        degraded)
+                    except Exception:
+                        continue
+                return softened, claims
+            platform["audit_output"] = audit_output
+            attached["output_gate"] = True
+        except Exception:
+            attached["output_gate"] = False
 
     logger.info("Odysseus memory platform attached: %s", attached)
     return {
