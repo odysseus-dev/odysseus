@@ -22,7 +22,6 @@ import html
 import json
 import re
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -232,8 +231,15 @@ def research_owns(research_handler, session_id: str, owner) -> bool:
     entry = research_handler._active_tasks.get(session_id)
     if entry is not None:
         return entry.get("owner", "") == owner
-    path = Path("data/deep_research") / f"{session_id}.json"
-    if not path.exists():
+    # Resolve the on-disk report through research_handler's own helper rather
+    # than joining the path here: it is the single source of truth for the
+    # session-id shape AND it re-resolves the result and asserts containment
+    # under the research data dir. Building the path locally duplicated that
+    # rule (and dropped the containment check), so the two could drift.
+    from src.research_handler import _research_json_path
+
+    path = _research_json_path(session_id)
+    if path is None or not path.exists():
         return False
     try:
         return json.loads(path.read_text(encoding="utf-8")).get("owner") == owner
@@ -928,8 +934,10 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
                 raise HTTPException(404, "No research result available")
             result = research_handler.get_result(session_id)
             if result is None:
-                p = Path("data/deep_research") / f"{session_id}.json"
-                if p.exists():
+                from src.research_handler import _research_json_path
+
+                p = _research_json_path(session_id)
+                if p is not None and p.exists():
                     try:
                         d = json.loads(p.read_text(encoding="utf-8"))
                     except Exception:

@@ -207,3 +207,37 @@ def test_research_routes_present_and_verbs_correct():
     assert "/api/companion/research/active" in paths
     assert set(_route(router, "/research/start").methods) == {"POST"}
     assert set(_route(router, "/research/active").methods) == {"GET"}
+
+
+# --- research_owns resolves the report path through the canonical helper ----
+# It used to join "data/deep_research"/<session_id>.json itself, duplicating the
+# session-id rule and dropping research_handler's resolve()+containment check.
+# The routes validate the id first, but a public helper must not depend on its
+# callers doing that — these pin the guard to the helper itself.
+
+@pytest.mark.parametrize("evil", [
+    "../../etc/passwd",
+    "..%2f..%2fetc%2fpasswd",
+    "a/../../secret",
+    "sess\x00.json",
+    "sess.json/../../../etc/hosts",
+])
+def test_research_owns_refuses_traversal_ids(evil):
+    # No file lookup should even be attempted for a malformed id -> False.
+    assert research_owns(_FakeResearch(), evil, "alice") is False
+
+
+def test_research_owns_uses_the_canonical_path_helper(monkeypatch):
+    # The id must be resolved through research_handler's helper (single source
+    # of truth for shape + containment), not joined locally.
+    import src.research_handler as rh
+
+    seen = []
+
+    def _spy(session_id):
+        seen.append(session_id)
+        return None
+
+    monkeypatch.setattr(rh, "_research_json_path", _spy)
+    assert research_owns(_FakeResearch(), "rp-not-in-memory", "alice") is False
+    assert seen == ["rp-not-in-memory"]
