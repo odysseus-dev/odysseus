@@ -182,6 +182,90 @@ def test_odysseus_qwen_temperature_is_capped_for_agent_requests(monkeypatch):
     assert stream_calls[0]["temperature"] == 0.2
 
 
+def test_qwen_fallback_candidate_gets_capped_temperature(monkeypatch):
+    """A non-qwen primary must not leak its temperature into a qwen fallback."""
+
+    _, stream_calls = _install_route_probe(monkeypatch)
+
+    _run_probe(
+        [{"role": "user", "content": "Explain the CAP theorem."}],
+        model="gpt-4o",
+        relevant_tools={"bash"},
+        temperature=1.2,
+        fallbacks=[("https://qwen.example/v1", ODY_QWEN, {})],
+    )
+
+    assert stream_calls[0]["temperature"] == 1.2
+    factory = stream_calls[0]["candidate_request_factory"]
+    request = asyncio.run(factory(1, "https://qwen.example/v1", ODY_QWEN, {}))
+    assert request["kwargs"]["temperature"] == 0.2
+
+
+def test_qwen_notes_fallback_reenables_personal_managers(monkeypatch):
+    """The answering candidate's notes mode must unblock the managers for
+    execution, not just enable them in its own route schemas."""
+
+    _install_route_probe(monkeypatch)
+    stream_round = 0
+    resolve_round = 0
+    seen_exec = {}
+
+    async def fake_stream(_candidates, _messages, **kwargs):
+        nonlocal stream_round
+        stream_round += 1
+        if stream_round == 1:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "fallback",
+                        "answered_by": ODY_QWEN,
+                        "candidate_index": 1,
+                    }
+                )
+                + "\n\n"
+            )
+            yield 'data: {"delta": "Adding the note."}\n\n'
+        else:
+            yield 'data: {"delta": "Done."}\n\n'
+        yield "data: [DONE]\n\n"
+
+    def fake_resolve(*args, **kwargs):
+        nonlocal resolve_round
+        resolve_round += 1
+        if resolve_round == 1:
+            return ([agent_loop.ToolBlock("manage_notes", "{}")], False, [])
+        return ([], False, [])
+
+    async def fake_execute(block, *args, **kwargs):
+        # Execution is the consumer daybreak's probe showed rejecting the
+        # managers: it receives the shared disabled_tools set, not the
+        # answering route's own tool state.
+        seen_exec["disabled_tools"] = set(kwargs.get("disabled_tools") or [])
+        return ("manage_notes: saved", {"output": "noted", "exit_code": 0})
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+    monkeypatch.setattr(agent_loop, "_resolve_tool_blocks", fake_resolve)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", fake_execute)
+
+    _collect(
+        agent_loop.stream_agent_loop(
+            "https://api.example/v1",
+            "gpt-4o",
+            [{"role": "user", "content": "Add buy milk to my notes."}],
+            max_rounds=2,
+            relevant_tools={"manage_notes", "manage_calendar", "manage_tasks", "bash"},
+            disabled_tools={"manage_notes", "manage_calendar", "manage_tasks"},
+            fallbacks=[("https://qwen.example/v1", ODY_QWEN, {})],
+            _is_teacher_run=True,
+        )
+    )
+
+    assert seen_exec["disabled_tools"].isdisjoint(
+        {"manage_notes", "manage_calendar", "manage_tasks"}
+    )
+
+
 def test_persisted_mcp_tool_event_keeps_description_and_resolved_name(monkeypatch):
     _install_route_probe(monkeypatch)
     stream_round = 0

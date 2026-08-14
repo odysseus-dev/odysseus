@@ -2151,6 +2151,19 @@ def _is_odysseus_qwen_model(model: str) -> bool:
     return (model or "").lower().startswith("odysseus-qwen3")
 
 
+def _ody_qwen_temperature_cap(temperature):
+    """Force-cap odysseus-qwen3 sampling; the finetune destabilizes above 0.2.
+
+    Applied per route, not just to the selected model: a non-qwen primary can
+    fall back to a qwen candidate, which must not inherit the caller's
+    temperature.
+    """
+    try:
+        return min(float(temperature if temperature is not None else 0.2), 0.2)
+    except (TypeError, ValueError):
+        return 0.2
+
+
 def _build_system_prompt(
     messages: List[Dict],
     model: str,
@@ -3370,13 +3383,7 @@ async def stream_agent_loop(
     _last_user = _extract_last_user_message(messages)
     _ody_qwen_finetune_model = _is_odysseus_qwen_model(model)
     if _ody_qwen_finetune_model:
-        try:
-            temperature = min(
-                float(temperature if temperature is not None else 0.2),
-                0.2,
-            )
-        except (TypeError, ValueError):
-            temperature = 0.2
+        temperature = _ody_qwen_temperature_cap(temperature)
     _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
     _intent = _classify_agent_request(messages, _last_user)
     _low_signal_turn = bool(_intent.get("low_signal"))
@@ -3465,13 +3472,19 @@ async def stream_agent_loop(
         direct_has_real_usage = False
 
         def _direct_candidate_request(_index, _url, candidate_model, _headers):
+            candidate_is_qwen = _is_odysseus_qwen_model(candidate_model)
             candidate_messages = (
                 _minimal_odysseus_general_messages(messages, include_memory=True)
-                if _is_odysseus_qwen_model(candidate_model)
+                if candidate_is_qwen
                 else [{"role": "user", "content": _last_user}]
             )
             direct_candidate_messages[_index] = candidate_messages
-            return {"messages": candidate_messages}
+            request = {"messages": candidate_messages}
+            if candidate_is_qwen:
+                request["kwargs"] = {
+                    "temperature": _ody_qwen_temperature_cap(temperature),
+                }
+            return request
 
         def _direct_terminal_event(terminal_status, failure_message):
             """Build truthful partial-history metadata for direct-path failure."""
@@ -4450,12 +4463,17 @@ async def stream_agent_loop(
             candidate_tools = _tool_schemas_for_route(state)
             state["tools"] = candidate_tools
             _candidate_request_states[index] = state
+            candidate_kwargs = {
+                "tools": candidate_tools or None,
+                "tool_choice_none": state["ody_doc_finetune_mode"],
+            }
+            if _is_odysseus_qwen_model(candidate_model):
+                candidate_kwargs["temperature"] = _ody_qwen_temperature_cap(
+                    temperature
+                )
             return {
                 "messages": request_messages,
-                "kwargs": {
-                    "tools": candidate_tools or None,
-                    "tool_choice_none": state["ody_doc_finetune_mode"],
-                },
+                "kwargs": candidate_kwargs,
             }
 
         def _apply_candidate_compaction(index: int) -> bool:
@@ -4768,6 +4786,14 @@ async def stream_agent_loop(
                             _ody_doc_finetune_mode = answering_state["ody_doc_finetune_mode"]
                             _ody_notes_finetune_mode = answering_state["ody_notes_finetune_mode"]
                             _ody_doc_stream_create_mode = answering_state["ody_doc_stream_create_mode"]
+                            if _ody_notes_finetune_mode:
+                                # Mirror the primary-route clamp: the answering
+                                # candidate's notes mode must re-enable the
+                                # personal managers in the shared execution
+                                # blocklist, or its tool calls are rejected.
+                                disabled_tools.difference_update({
+                                    "manage_notes", "manage_calendar", "manage_tasks",
+                                })
                             data["pinned_for_run"] = True
                         if _apply_candidate_compaction(candidate_index):
                             yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
