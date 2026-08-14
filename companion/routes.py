@@ -24,9 +24,8 @@ import re
 import uuid
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
-
 
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
@@ -457,36 +456,13 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
         link or <img> (CSRF). The actual mint is the POST handler below.
         """
         require_admin(request)
-        from src.settings import get_setting
-
-        admin_on = bool(get_setting("companion_admin_enabled", False))
-        # Reflect the current state and offer the inverse action. The values are
-        # fixed (booleans → constant strings), so this f-string carries no user
-        # input — nothing to escape.
-        admin_section = f"""
-  <hr style="border:none;border-top:1px solid #2c2c35;margin:26px 0">
-  <h3 style="margin:0 0 6px">Admin tools</h3>
-  <p style="color:#8a8a96;font-size:13px;margin:0 0 14px;text-align:left">
-    Status: <strong style="color:{'#5fd08a' if admin_on else '#e0a85e'}">{'On' if admin_on else 'Off'}</strong>.
-    Lets a paired <em>admin</em> device use this server's Terminal, Vault, Contacts,
-    MCP and Cookbook. This grants full shell access to admin-owned devices &mdash;
-    leave it off unless you need it.
-  </p>
-  <form method="POST" action="/api/companion/admin-access">
-    <input type="hidden" name="enabled" value="{'false' if admin_on else 'true'}">
-    <button type="submit" class="toggle">{'Turn off admin tools' if admin_on else 'Turn on admin tools'}</button>
-  </form>"""
-        toggle_style = (
-            "background:#3a3a44;color:#e8e8e8" if admin_on else "background:#e0a85e;color:#0e0e12"
-        )
-        page = f"""<!doctype html>
+        page = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pair a device</title>
 <style>
-  body{{font-family:-apple-system,system-ui,sans-serif;max-width:520px;margin:48px auto;padding:0 20px;color:#e8e8e8;background:#16161a}}
-  .card{{background:#1f1f25;border:1px solid #2c2c35;border-radius:14px;padding:28px;text-align:center}}
-  button{{background:#7c9cff;color:#0e0e12;border:none;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer}}
-  button.toggle{{{toggle_style}}}
+  body{font-family:-apple-system,system-ui,sans-serif;max-width:520px;margin:48px auto;padding:0 20px;color:#e8e8e8;background:#16161a}
+  .card{background:#1f1f25;border:1px solid #2c2c35;border-radius:14px;padding:28px;text-align:center}
+  button{background:#7c9cff;color:#0e0e12;border:none;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer}
 </style></head>
 <body><div class="card">
   <h2>Pair a device</h2>
@@ -495,7 +471,6 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
     <button type="submit">Generate pairing code</button>
   </form>
   <p style="color:#8a8a96;font-size:12px;margin-top:18px">Admin only. Each code mints a new token, shown once. Manage or revoke under Settings &rarr; API tokens.</p>
-{admin_section}
 </div></body></html>"""
         return HTMLResponse(page)
 
@@ -955,38 +930,5 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
                 "query": "",
                 "status": "done",
             }
-
-    @router.get("/admin-access")
-    def get_admin_access(request: Request):
-        """Admin-only (cookie): current state of the admin-tools opt-in, for the
-        Settings UI toggle to reflect on load."""
-        require_admin(request)
-        from src.settings import get_setting
-
-        return {"enabled": bool(get_setting("companion_admin_enabled", False))}
-
-    @router.post("/admin-access")
-    def set_admin_access(request: Request, enabled: str = Form("")):
-        """Flip the `companion_admin_enabled` server setting.
-
-        This is the deliberate opt-in that unlocks a paired admin device's admin
-        tools (Terminal/Vault/Contacts/MCP/Cookbook) — lock #1 of the
-        require_companion_admin triple-lock. Admin-cookie only, and CSRF-safe for
-        the same reason as POST /pair: the SameSite=Lax session cookie is not sent
-        on a cross-site POST. Enabling grants admin-owned companion tokens full
-        shell access, so it stays off until an admin sets it here on purpose.
-
-        `?format=json` (the Settings UI toggle) gets the new state back as JSON;
-        a plain HTML form post redirects to the pairing page to re-render it."""
-        require_admin(request)
-        from src.settings import load_settings, save_settings
-
-        val = str(enabled).strip().lower() in ("1", "true", "on", "yes")
-        current = load_settings()
-        current["companion_admin_enabled"] = val
-        save_settings(current)
-        if (request.query_params.get("format") or "").lower() == "json":
-            return {"ok": True, "enabled": val}
-        return RedirectResponse("/api/companion/pair", status_code=303)
 
     return router
