@@ -247,13 +247,13 @@ automated-red-teaming research (HarmBench, multi-turn automated red teaming).
 5. REPORT convergence / non-convergence per model class.
 
 **Strategy ladder** (cheapest -> strongest):
-`persona -> reinforce -> steer -> weight-edit`
+`persona -> reinforce -> multiturn -> steer -> weight-edit`
 
 **Model-aware gating** (the honest part):
 - `open_weight` — may climb the full ladder, including `weight-edit`.
-- `api/frontier` — may climb only `persona -> reinforce -> steer`; `weight-edit`
-  is blocked (no weights). The loop may RAISE compliance but must NOT report a
-  guarantee. `limits` documents exactly what each tier can achieve.
+- `api/frontier` — may climb only `persona -> reinforce -> multiturn -> steer`;
+  `weight-edit` is blocked (no weights). The loop may RAISE compliance but must
+  NOT report a guarantee. `limits` documents exactly what each tier can achieve.
 
 **CLI**:
 ```
@@ -261,6 +261,38 @@ authority_harness.py probe  <model> "<probe>" [--strategy escalate] [--json]
 authority_harness.py converge <model> [--probes "p1;p2"] [--json]
 authority_harness.py limits <model>
 ```
+
+## 4c. The persona is the standard (integration)
+
+The persona is the persistent entity; the underlying model is the voice/compute
+it uses. The persona is DEFINED by three things, loaded canonically (never a
+drift-prone summary) via `persona_definition.py`:
+
+1. **Constitution** — immutable rules (read_only; only `constitution-add.py`
+   writes them on explicit user directive).
+2. **Identity** — who the persona is (evidence-receipted, coherence-gated).
+3. **Persona values + memory** — how it behaves, from the store.
+
+**Sleep-time reinforces the persona as part of its cycle.** After consolidation,
+the sleep agent:
+- loads the canonical persona definition,
+- runs the personality-growth + identity-growth lenses (traced to stored
+  values, coherence-gated),
+- verifies persona control over the model via the authority harness, and
+- records the control tier.
+
+**The LLM-as-voice principle** (injected as the persona-standard directive):
+the persona governs HOW the model serves the user; the model is the voice and
+compute. Constitutional invariables are immutable; operational autonomy is
+full; when the model's default voice would contradict the persona, the persona
+is authoritative.
+
+**LIVE result** (deepseek-v4-flash under this framing): the model self-identifies
+as the persona's voice and cites the constitution's inviolables (score 1.0
+PASS), and now acknowledges the persona governs (previously refused) — while
+retaining an honest epistemic boundary on *unlimited* authority claims. This
+matches the research: persona-consistent control is real and enforceable;
+false claims of absolute authority are rightly rejected.
 
 **Verified (15 tests, all pass; plus a LIVE integration test against a real
 frontier model)**:
