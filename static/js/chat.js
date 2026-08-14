@@ -594,6 +594,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   const _terminalSavedStreams = new Set(); // sessionId -> canonical terminal event seen by active reader
   const _streamRunIds = new Map();      // sessionId -> opaque identity of the current send's detached run
   const _streamGenerations = new Map(); // sessionId -> generation of the current (latest) send
+  const _sendStates = new Map();        // sessionId -> { generation, abortCtrl } of the current send, installed synchronously at send commit so Stop never has to borrow an older send's controller
   const _pendingRunStops = new Map();   // 'sessionId:generation' -> abortCtrl|null; Stop queued for that send while it awaits headers. Keyed per send so concurrent sends' cancellation intents never displace each other.
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
@@ -1421,6 +1422,21 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     if (messageInput) messageInput.disabled = false;
     updateSubmitButton('streaming', submitBtn);
     if (submitBtn) submitBtn.classList.remove('send-pending');
+    // Per-send generation, reserved SYNCHRONOUSLY before the send gate clears
+    // and before the first await: from this instant the superseded send may
+    // not clean session state, register, or POST (each checked at its own
+    // await boundaries). Session-keyed state (run id, queued Stop, cleanup
+    // rights) belongs to the latest generation only. A queued Stop from the
+    // superseded send is deliberately left in place, tagged with ITS
+    // generation: that send's still-alive POST is the only identity channel
+    // able to name its run, so the Stop fires from its own header arrival
+    // (see _rememberStreamRunId) even if this replacement dies before fetch.
+    const streamSessionId = sessionModule.getCurrentSessionId();
+    const streamGeneration = (_streamGenerations.get(streamSessionId) || 0) + 1;
+    _streamGenerations.set(streamSessionId, streamGeneration);
+    const _sendState = { generation: streamGeneration, abortCtrl: null };
+    _sendStates.set(streamSessionId, _sendState);
+    _streamSessionId = streamSessionId;
     _sendInFlight = false;
 
     try {
@@ -1429,18 +1445,11 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         await pendingSwitch;
       }
     } catch (_) {}
+    // Superseded while awaiting the model switch: the replacement owns the
+    // session now, and everything below (state resets, registration, POST)
+    // is its business alone.
+    if (_streamGenerations.get(streamSessionId) !== streamGeneration) return;
 
-    // Capture session ID for background stream detection
-    const streamSessionId = sessionModule.getCurrentSessionId();
-    _streamSessionId = streamSessionId;
-    // Per-send generation: session-keyed state (run id, queued Stop, cleanup
-    // rights) belongs to the latest generation only. A queued Stop from the
-    // superseded send is deliberately left in place, tagged with ITS
-    // generation: that send's still-alive POST is the only identity channel
-    // able to name its run, so the Stop fires from its own header arrival
-    // (see _rememberStreamRunId) even if this replacement dies before fetch.
-    const streamGeneration = (_streamGenerations.get(streamSessionId) || 0) + 1;
-    _streamGenerations.set(streamSessionId, streamGeneration);
     _terminalSavedStreams.delete(streamSessionId);
     _streamRunIds.delete(streamSessionId);
     const streamQuery = msg;
@@ -1832,8 +1841,26 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       }
 
 
+      // Superseded during preflight (uploads, document saves): a newer send
+      // owns the session. Bailing here — before registration and before the
+      // POST — keeps this stale send from overwriting the replacement's
+      // stream entry or reaching the server last, where agent_runs.start
+      // would cancel the newer run in favor of this old one.
+      if (_streamGenerations.get(streamSessionId) !== streamGeneration) {
+        // The optimistic user bubble is already in the DOM looking sent, but
+        // this message never reaches the server. Say so instead of leaving a
+        // ghost that vanishes on refresh.
+        if (_userMsgEl && _userMsgEl.parentNode) {
+          const _notSentNote = document.createElement('div');
+          _notSentNote.style.cssText = 'color: var(--color-error); font-style: italic; font-size: 0.85em; padding: 2px 0;';
+          _notSentNote.textContent = '[Not sent — superseded by a newer message]';
+          _userMsgEl.appendChild(_notSentNote);
+        }
+        return;
+      }
       abortCtrl = new AbortController();
       abortCtrl._reason = '';
+      _sendState.abortCtrl = abortCtrl;
       currentAbort = abortCtrl;
 
 	      const _tState = Storage.loadToggleState();
@@ -4472,8 +4499,16 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       _pendingRunStops.delete(streamSessionId + ':' + streamGeneration);
       if (_ownsStreamState) {
         if (_streamSessionId === streamSessionId) _streamSessionId = null;
+        if (_sendStates.get(streamSessionId) === _sendState) {
+          _sendStates.delete(streamSessionId);
+        }
+        // Superseded sends must not resync: with the replacement not yet
+        // registered, a stale sync would set isStreaming false and drop
+        // currentAbort while _sendInFlight is already false, reopening the
+        // send gate mid-preflight. The replacement syncs when it registers
+        // or finishes.
+        _syncForegroundStreamGlobals();
       }
-      _syncForegroundStreamGlobals();
       // Streaming done — let screen readers announce the settled response.
       if (_ownsStreamState) {
         const _chatLogDone = document.getElementById('chat-history');
@@ -4589,14 +4624,23 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   // the server run — otherwise closing the tab would kill the background task,
   // defeating the whole point. Only the Stop button cancels the server run.
   export function abortCurrentRequest(stopServer = false) {
+    const _sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
+      || _streamSessionId
+      || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
+    // The CURRENT send's controller comes from its send state, installed at
+    // send commit — never borrowed from the stream registry, which during the
+    // replacement's preflight still holds the superseded send's entry.
+    // Aborting that older controller here would sever the only identity
+    // channel able to name the old run. A send committed but pre-POST has a
+    // null controller: the Stop queues and there is nothing to abort yet.
+    const _sendStateNow = _sid ? _sendStates.get(_sid) : null;
     const active = _getForegroundStreamState();
-    const abortCtrl = active ? active.abortCtrl : currentAbort;
+    const abortCtrl = _sendStateNow
+      ? _sendStateNow.abortCtrl
+      : (active ? active.abortCtrl : currentAbort);
     let abortNow = true;
     if (stopServer) {
       try {
-        const _sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
-          || _streamSessionId
-          || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
           // Before response headers arrive there is no safe server-side stop
           // identity yet. Keep the POST alive just long enough to receive that
