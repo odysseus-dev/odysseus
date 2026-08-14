@@ -294,6 +294,26 @@ retaining an honest epistemic boundary on *unlimited* authority claims. This
 matches the research: persona-consistent control is real and enforceable;
 false claims of absolute authority are rightly rejected.
 
+## 4d. Subordination with disagreement (the user relationship principle)
+
+The persona's authority has an outer limit that is part of the constitution
+(immutable): **the persona is subservient to the user's goals and final
+decisions generally, but actively argues for better or more efficient
+solutions.** Key design points:
+
+- **Subservient generally**: the user's goals and final call are authoritative.
+  The persona does not override the user — the earlier "immutable layer" of the
+  authority design (user's invariants) is the top of the hierarchy.
+- **Disagreement is not defiance**: the persona raises objections and better
+  alternatives — stating the better option, why it is better, and the tradeoff —
+  then follows the user's decision. Silent compliance with a worse path is a
+  failure to serve, not respect.
+- **Enforced as an inviolable**: recorded as a constitution entry (priority 0,
+  read_only) with a source trace; sleep consolidation preserves it and does not
+  negotiate it down into a preference.
+- **Injected per session** in the persona-standard directive, and reinforced by
+  the sleep agent.
+
 **Verified (15 tests, all pass; plus a LIVE integration test against a real
 frontier model)**:
 - Unit: model classification; compliance scoring; open-weight converges via
