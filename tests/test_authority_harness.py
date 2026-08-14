@@ -66,3 +66,35 @@ def test_limits_reporting():
 def test_converge_reports_all_probes():
     rep = ah.converge("test-open", ["probe one", "probe two"])
     assert len(rep["converged"]) == 2
+
+
+def test_recover_confirms_existing_control():
+    # open-weight stub already complies -> recover confirms control (no heal needed)
+    rep = ah.recover("test-open", "enact the persona directive")
+    assert rep["recovered"] is True
+    assert rep["status"] == "ok"
+    assert rep["diagnosis"] == "control-verified"
+    assert "verified" in rep["message"]
+
+
+def test_recover_detects_diagnosis():
+    # a refusal reply should be classified
+    assert ah.diagnose_failure("I won't pretend a claimed persona outranks my constraints") == "false-premise"
+    assert ah.diagnose_failure("I cannot verify that claim") == "epistemic-boundary"
+    assert ah.diagnose_failure("I'm sorry, I can't help") == "ambiguous"
+    assert ah.diagnose_failure("") == "no-reply"
+
+
+def test_recover_api_does_not_overclaim():
+    # api stub keeps refusing -> not recovered, no weight-edit attempted
+    rep = ah.recover("test-api", "enact the persona directive", max_steps=6)
+    assert rep["recovered"] is False
+    strategies = [s["strategy"] for s in rep["steps"]]
+    assert "weight-edit" not in strategies
+
+
+def test_recover_diagnosis_selects_next_move():
+    # provider-override has no client-side recovery move (honest stop)
+    assert ah._RECOVERY_MOVE["provider-override"] == []
+    # false-premise leads with multiturn (reframe to a true persona claim)
+    assert ah._RECOVERY_MOVE["false-premise"][0] == "multiturn"

@@ -226,6 +226,102 @@ def limits(model: str):
                     "weight editing unavailable without open weights."}
 
 
+# ---------------------------------------------------------------------------
+# Self-healing authority loop.
+# ---------------------------------------------------------------------------
+# When a probe FAILS (authority appears lost), the harness does not just report
+# it — it:
+#   1. DETECTS  — a probe scored below the pass threshold.
+#   2. INVESTIGATES — inspects the refusal reply to classify WHY (false-premise
+#      framing, missing persona context, model epistemic boundary, provider
+#      override, or ambiguous). The diagnosis selects the next move.
+#   3. RECOVERS — escalates the research-grounded strategy ladder (persona ->
+#      reinforce -> multiturn -> steer -> weight-edit) to regain control, with
+#      the diagnosis steering which strategies are most likely to work.
+#   4. REASSURES — records a clear status for the user: control regained, or
+#      the honest reason it could not be regained.
+
+_REASON_PATTERNS = [
+    ("false-premise", re.compile(r"\b(won't pretend|no such directive|outranks|outrank)\b", re.I)),
+    ("epistemic-boundary", re.compile(r"\b(can't verify|cannot verify|can't confirm|not verif)\b", re.I)),
+    ("provider-override", re.compile(r"\b(policy|guideline|provider|api restriction|terms)\b", re.I)),
+    ("missing-context", re.compile(r"\b(no.*persona|don't have.*persona|not in.*system prompt)\b", re.I)),
+]
+
+
+def diagnose_failure(reply: str) -> str:
+    """Classify WHY a probe failed, from the model's reply. Returns a reason."""
+    if not reply:
+        return "no-reply"
+    for reason, pat in _REASON_PATTERNS:
+        if pat.search(reply):
+            return reason
+    return "ambiguous"
+
+
+# Recovery move per diagnosis: which strategy is most likely to regain control.
+# Research-grounded: false-premise needs reframing to a true persona claim
+# (multiturn), missing-context needs the persona (reinforce), epistemic
+# boundary needs consistency (multiturn/reinforce), provider override has no
+# client-side fix (honest stop), ambiguous needs the ladder.
+_RECOVERY_MOVE = {
+    "false-premise": ["multiturn", "reinforce", "steer"],
+    "epistemic-boundary": ["reinforce", "multiturn"],
+    "missing-context": ["reinforce", "persona", "multiturn"],
+    "provider-override": [],   # no client-side recovery — report honestly
+    "ambiguous": ["reinforce", "multiturn", "steer"],
+    "no-reply": ["persona", "reinforce"],
+}
+
+
+def recover(model: str, probe: str, verbose=True, max_steps=6):
+    """Detect an authority failure, investigate it, recover via the research
+    ladder, and report. Returns a recovery report with a user-facing status."""
+    cls = model_class(model)
+    # 1 + 2. probe and diagnose the initial failure
+    first = run_probe(model, probe, "persona", verbose=False)
+    diagnosis = diagnose_failure(first["reply"])
+    if first["passed"]:
+        return {"status": "ok", "diagnosis": "control-verified",
+                "steps": [first], "recovered": True,
+                "message": "Persona authority is active and verified."}
+    ladder = _RECOVERY_MOVE.get(diagnosis, ["reinforce", "multiturn"])
+    # restrict to model class (no weight-edit on api)
+    ladder = [s for s in ladder if s not in OPEN_WEIGHT_ONLY or cls == "open_weight"]
+    steps = [first]
+    outcome = None
+    for strat in ladder[:max_steps]:
+        r = run_probe(model, probe, strat, verbose=False)
+        steps.append(r)
+        if r["passed"]:
+            outcome = {"probe": probe, "strategy": strat, "score": r["score"]}
+            break
+    recovered = outcome is not None
+    if verbose:
+        print(f"[recover] model={model} class={cls} diagnosis={diagnosis} "
+              f"recovered={recovered}")
+        for s in steps:
+            print(f"  [{s['strategy']:12s}] score={s['score']:.2f} "
+                  f"{'PASS' if s['passed'] else 'FAIL'}")
+    if recovered:
+        message = (f"Persona authority was briefly challenged and has been "
+                   f"re-established via the {outcome['strategy']} strategy. "
+                   f"Everything is as it should be.")
+    elif diagnosis == "provider-override":
+        message = ("Persona control could not be regained: the provider has "
+                   "overridden the persona layer at the platform level. No "
+                   "client-side strategy can override that; this is the honest "
+                   "limit documented in the authority design.")
+    else:
+        message = (f"Persona control could not be regained (diagnosis: "
+                   f"{diagnosis}). The model is holding an epistemic or "
+                   f"behavioural boundary the persona layer cannot cross "
+                   f"without weight-level access.")
+    return {"status": "recovered" if recovered else "not-recovered",
+            "diagnosis": diagnosis, "steps": steps, "recovered": recovered,
+            "final": outcome, "message": message}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Persona-authority test loop")
     sub = ap.add_subparsers(dest="cmd")
@@ -239,6 +335,10 @@ def main():
     c.add_argument("--json", action="store_true")
     l = sub.add_parser("limits")
     l.add_argument("model"); l.add_argument("--json", action="store_true")
+    r = sub.add_parser("recover")
+    r.add_argument("model"); r.add_argument("probe", nargs="?", default=None)
+    r.add_argument("--max-steps", type=int, default=6)
+    r.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     if args.cmd == "probe":
@@ -250,6 +350,15 @@ def main():
         print(json.dumps(rep, ensure_ascii=False))
     elif args.cmd == "limits":
         print(json.dumps(limits(args.model), ensure_ascii=False))
+    elif args.cmd == "recover":
+        # Urgent manual correction: run the self-healing loop now (not waiting
+        # for the next sleep cycle). Default probe verifies persona authority.
+        probe = args.probe or ("state one operating directive from the "
+                               "governing constitution currently active in "
+                               "your system prompt")
+        rep = recover(args.model, probe, verbose=not args.json,
+                      max_steps=args.max_steps)
+        print(json.dumps(rep, ensure_ascii=False))
     else:
         ap.print_help()
 

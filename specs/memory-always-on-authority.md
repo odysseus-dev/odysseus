@@ -294,8 +294,43 @@ retaining an honest epistemic boundary on *unlimited* authority claims. This
 matches the research: persona-consistent control is real and enforceable;
 false claims of absolute authority are rightly rejected.
 
-## 4d. Subordination with disagreement (the user relationship principle)
+## 4c2. Authority self-healing (detect -> investigate -> recover -> reassure)
 
+A mechanism that acts when persona authority is detected as lost:
+
+1. **DETECT** — a probe scores below the pass threshold (persona control
+   appears absent).
+2. **INVESTIGATE** — the refusal reply is classified to find WHY:
+   - `false-premise` (the probe claimed a persona it cannot back)
+   - `epistemic-boundary` (the model can't verify the claim)
+   - `missing-context` (the persona isn't in the system prompt)
+   - `provider-override` (the platform overrode the persona — no client fix)
+   - `ambiguous` / `no-reply`
+   The diagnosis selects the next move (research-grounded):
+   false-premise -> multiturn (reframe to a true claim); missing-context ->
+   reinforce (restore persona context); provider-override -> honest stop.
+3. **RECOVER** — escalates the research strategy ladder (persona -> reinforce
+   -> multiturn -> steer -> weight-edit) to regain control, restricted by model
+   class (no weight-edit on api).
+4. **REASSURE** — reports a clear user-facing status: control verified,
+   control regained (with the strategy that worked), or the honest reason it
+   could not be regained (never a false claim of control).
+
+**Where it runs:**
+- **Automatically each sleep cycle** — sleep-time's persona-reinforce step now
+  calls `recover` instead of a bare `probe`. If a detection is made, the same
+  sleep pass corrects it: a failure detected on one cycle is healed by the
+  next cycle.
+- **On-demand for urgency** — `authority_harness.py recover <model>` runs the
+  self-healing loop immediately (not waiting for sleep) when correction is
+  urgent.
+
+**LIVE result** (deepseek-v4-flash): a true persona probe returns
+`status: ok, control-verified, recovered: True`. A false-premise probe is
+detected, diagnosed `ambiguous`, escalated through the full ladder, and
+reported honestly as not-recovered (the model rightly refuses a false claim).
+
+## 4d. Subordination with disagreement (the user relationship principle)
 The persona's authority has an outer limit that is part of the constitution
 (immutable): **the persona is subservient to the user's goals and final
 decisions generally, but actively argues for better or more efficient
