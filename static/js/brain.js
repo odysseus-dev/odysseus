@@ -1,13 +1,20 @@
 // brain.js — the Brain view renderer.
 //
-// Renders the memory system as an interactive node-link graph:
+// A faithful map of how the memory system actually operates. It does not
+// invent structure — it renders what the store really holds:
 //
-//   - nodes   core     (persona / identity — what the agent is becoming)
-//             skill    (reusable knowledge / capability modules)
-//             external (store facts, projects, preferences)
+//   - every node is a real stored memory entry, labelled with its content
+//   - nodes are grouped by the neuron cluster they belong to (persona /
+//     philosophy / game / memory) — that grouping is computed by the same
+//     classifier the store uses, so the sections are how the network really
+//     connects stored memory, not a drawing choice
+//   - node fill shows the entry's tier: core (persona/identity), skill
+//     (knowledge modules), external (store facts/projects/preferences)
 //   - node size tracks stored content length (longer entry = larger node)
-//   - edges are the precomputed association graph — dense hubs of things the
-//     store actually links at recall, not a flat web
+//   - edges are the precomputed association graph — two memories are joined
+//     only where the store actually links them at recall (cosine >= threshold)
+//   - a status strip shows what the system is doing: which neurons are
+//     firing, and the consolidation pressure
 //
 // Interaction (focus+context):
 //   - wheel / drag to zoom & pan
@@ -28,67 +35,85 @@ const TYPE_COLORS = {
   external: 'var(--fg)',
 }
 const THREAD = 'var(--color-brand-blue)'
+// neuron sections — a fixed display order so the map is stable
+const NEURON_ORDER = ['persona', 'philosophy', 'game', 'memory']
 
-// ---- tiny force simulation -------------------------------------------------
-// Repulsion between every pair + spring attraction along the association
-// edges. Associations are precomputed at write time, so settled clusters
-// mirror the store's real recall hubs (denser here = linked at recall).
-
-function simulate(nodes, edges, w, h, iterations = 220) {
-  const n = nodes.length
-  const pos = nodes.map((nd, i) => {
-    const ang = (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2
-    const rad = Math.min(w, h) * 0.32
-    return { x: w / 2 + rad * Math.cos(ang), y: h / 2 + rad * Math.sin(ang), vx: 0, vy: 0 }
-  })
-  const adj = edges.map(e => {
-    const ia = nodes.findIndex(x => String(x.id) === String(e.a))
-    const ib = nodes.findIndex(x => String(x.id) === String(e.b))
-    return { ia, ib, s: e.s }
-  })
-  const radius = nodes.map(n => nodeRadius(n))
-  const REP = 9000, SPRING = 0.02, DAMP = 0.86, CENTER = 0.012
-
-  for (let it = 0; it < iterations; it++) {
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const dx = pos[i].x - pos[j].x
-        const dy = pos[i].y - pos[j].y
-        const d2 = dx * dx + dy * dy + 0.01
-        const minD = radius[i] + radius[j] + 8
-        const f = REP / d2
-        const fx = (dx / Math.sqrt(d2)) * f
-        const fy = (dy / Math.sqrt(d2)) * f
-        pos[i].vx += fx; pos[i].vy += fy
-        pos[j].vx -= fx; pos[j].vy -= fy
-      }
-    }
-    for (const { ia, ib } of adj) {
-      if (ia < 0 || ib < 0) continue
-      const dx = pos[ib].x - pos[ia].x
-      const dy = pos[ib].y - pos[ia].y
-      const d = Math.sqrt(dx * dx + dy * dy) + 0.01
-      const f = SPRING * (d - 110)
-      pos[ia].vx += (dx / d) * f; pos[ia].vy += (dy / d) * f
-      pos[ib].vx -= (dx / d) * f; pos[ib].vy -= (dy / d) * f
-    }
-    for (const p of pos) {
-      p.vx *= DAMP; p.vy *= DAMP
-      p.vx += (w / 2 - p.x) * CENTER; p.vy += (h / 2 - p.y) * CENTER
-      p.x += p.vx; p.y += p.vy
-    }
-  }
-  return pos
+function el(tag, attrs = {}) {
+  const e = document.createElementNS(NS, tag)
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v)
+  return e
 }
 
 function nodeRadius(n) {
   return 3.5 + Math.min(10, Math.log(1 + (n.length || 24)) * 1.6)
 }
 
-function el(tag, attrs = {}) {
-  const e = document.createElementNS(NS, tag)
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v)
-  return e
+// ---- layout ---------------------------------------------------------------
+// Group nodes by neuron into labelled sections, then run a small force
+// simulation within each section (repulsion + spring along associations).
+// The sections are the neuron clusters; the edges are real store links.
+
+function layout(nodes, edges, w, h) {
+  const byId = {}
+  nodes.forEach((n, i) => { byId[n.id] = i })
+
+  // cluster nodes by neuron
+  const clusters = {}
+  for (const n of nodes) {
+    const neu = n.neuron || 'memory'
+    ;(clusters[neu] = clusters[neu] || []).push(n)
+  }
+  const order = [...NEURON_ORDER, ...Object.keys(clusters).filter(k => !NEURON_ORDER.includes(k))]
+  const present = order.filter(k => clusters[k])
+
+  // place section centres across the canvas
+  const sections = {}
+  const cols = Math.ceil(Math.sqrt(present.length))
+  const rows = Math.ceil(present.length / cols)
+  const cellW = w / cols, cellH = h / (rows + 1.2)
+  present.forEach((k, i) => {
+    const cx = cellW * (0.5 + (i % cols))
+    const cy = cellH * (0.6 + Math.floor(i / cols))
+    sections[k] = { cx, cy, nodes: clusters[k], r: Math.min(cellW, cellH) * 0.42 }
+  })
+
+  // per-section inner layout: nodes on a ring around the section centre,
+  // then relax with repulsion so they don't overlap
+  const pos = {}
+  const radius = nodes.map(n => nodeRadius(n))
+  for (const n of nodes) {
+    const sec = sections[n.neuron || 'memory']
+    const idx = sec.nodes.findIndex(x => x.id === n.id)
+    const ang = (idx / Math.max(sec.nodes.length, 1)) * Math.PI * 2 - Math.PI / 2
+    const rad = sec.r * 0.75
+    pos[n.id] = { x: sec.cx + rad * Math.cos(ang), y: sec.cy + rad * Math.sin(ang), vx: 0, vy: 0 }
+  }
+
+  // relax within each section
+  for (let it = 0; it < 60; it++) {
+    for (const k of present) {
+      const ids = clusters[k].map(n => n.id)
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          const a = pos[ids[i]], b = pos[ids[j]]
+          const dx = a.x - b.x, dy = a.y - b.y
+          const d2 = dx * dx + dy * dy + 0.01
+          const minD = radius[byId[ids[i]]] + radius[byId[ids[j]]] + 6
+          const f = 600 / d2
+          const fx = (dx / Math.sqrt(d2)) * f, fy = (dy / Math.sqrt(d2)) * f
+          a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy
+        }
+      }
+      for (const id of ids) {
+        const p = pos[id], sec = sections[k]
+        const dx = sec.cx - p.x, dy = sec.cy - p.y
+        p.vx += dx * 0.02; p.vy += dy * 0.02
+        p.vx *= 0.85; p.vy *= 0.85
+        p.x += p.vx; p.y += p.vy
+      }
+    }
+  }
+  return { pos, sections, order: present }
 }
 
 export function loadBrain(open = false) {
@@ -114,23 +139,44 @@ function draw(elc, svg, data, w, h) {
   svg.innerHTML = ''
   const nodes = data.associations?.nodes || []
   const edges = data.associations?.edges || []
-  const pos = simulate(nodes, edges, w, h)
+  const { pos, sections, order } = layout(nodes, edges, w, h)
   const byId = {}
   nodes.forEach((n, i) => { byId[n.id] = i })
 
-  // zoom/pan state
   let scale = 1, tx = 0, ty = 0, selected = null
   const root = el('g')
   svg.appendChild(root)
 
-  // edge layer (behind nodes)
+  // ---- neuron sections (how the network groups stored memory) ------------
+  const secG = el('g')
+  for (const k of order) {
+    const sec = sections[k]
+    const pad = 10
+    const box = el('rect', {
+      x: sec.cx - sec.r - pad, y: sec.cy - sec.r - pad,
+      width: sec.r * 2 + pad * 2, height: sec.r * 2 + pad * 2,
+      rx: 10, fill: 'none', stroke: 'var(--border)', 'stroke-width': '1',
+      'stroke-dasharray': '3 3', opacity: 0.6,
+    })
+    secG.appendChild(box)
+    const lab = el('text', {
+      x: sec.cx, y: sec.cy - sec.r - pad + 12,
+      'text-anchor': 'middle', 'font-size': '10', fill: 'var(--fg)',
+      opacity: 0.85, 'font-weight': '600',
+    })
+    lab.textContent = `${k} neuron`
+    secG.appendChild(lab)
+  }
+  root.appendChild(secG)
+
+  // ---- edge layer (association links) ------------------------------------
   const edgeG = el('g')
   const edgeMap = {}
   edges.forEach((e, i) => {
     const ia = byId[e.a], ib = byId[e.b]
     if (ia === undefined || ib === undefined) return
     const line = el('line', {
-      x1: pos[ia].x, y1: pos[ia].y, x2: pos[ib].x, y2: pos[ib].y,
+      x1: pos[e.a].x, y1: pos[e.a].y, x2: pos[e.b].x, y2: pos[e.b].y,
       stroke: 'var(--fg)', 'stroke-width': String(Math.max(0.75, e.s * 2.5)),
       opacity: 0.22,
     })
@@ -138,32 +184,42 @@ function draw(elc, svg, data, w, h) {
     edgeG.appendChild(line)
   })
   root.appendChild(edgeG)
+  // map edges by their endpoint ids so focus can find them without relying
+  // on array indices (robust even if some edges reference missing nodes)
+  const edgeByNode = {}
+  edges.forEach((e, i) => {
+    if (!edgeMap[i]) return
+    ;(edgeByNode[String(e.a)] = edgeByNode[String(e.a)] || []).push(i)
+    ;(edgeByNode[String(e.b)] = edgeByNode[String(e.b)] || []).push(i)
+  })
 
-  // node layer
+  // ---- node layer (every node is a real memory, labelled) ----------------
   const nodeG = el('g')
   const nodeEls = {}
   nodes.forEach((n, i) => {
     const r = nodeRadius(n)
     const circ = el('circle', {
-      cx: pos[i].x, cy: pos[i].y, r,
+      cx: pos[n.id].x, cy: pos[n.id].y, r,
       fill: TYPE_COLORS[n.type] || 'var(--fg)',
-      opacity: 0.7, cursor: 'pointer',
+      opacity: 0.75, cursor: 'pointer',
     })
     circ.dataset.i = i
     nodeEls[n.id] = circ
     nodeG.appendChild(circ)
 
+    // label every node with what it represents
     const t = el('text', {
-      x: pos[i].x, y: pos[i].y + r + 10,
-      'text-anchor': 'middle', 'font-size': '9', fill: 'var(--fg)',
-      opacity: 0.75, 'pointer-events': 'none',
+      x: pos[n.id].x, y: pos[n.id].y + r + 10,
+      'text-anchor': 'middle', 'font-size': '8', fill: 'var(--fg)',
+      opacity: 0.8, 'pointer-events': 'none',
     })
-    t.textContent = n.label.length > 24 ? n.label.slice(0, 23) + '…' : n.label
+    t.textContent = n.label.length > 28 ? n.label.slice(0, 27) + '…' : n.label
+    t.dataset.i = i
     nodeG.appendChild(t)
   })
   root.appendChild(nodeG)
 
-  // legend — core / skill / external + hint
+  // ---- legend: tiers + what the system is doing --------------------------
   const legend = el('g')
   const lx = 10, ly = h - 14
   let lxi = 0
@@ -172,26 +228,36 @@ function draw(elc, svg, data, w, h) {
     ['skill', TYPE_COLORS.skill, 3],
     ['external', TYPE_COLORS.external, 3],
   ]) {
-    const d = el('circle', { cx: lx + lxi * 84, cy: ly, r, fill: color, opacity: 0.8 })
+    const d = el('circle', { cx: lx + lxi * 84, cy: ly, r, fill: color, opacity: 0.85 })
     legend.appendChild(d)
     const t = el('text', { x: lx + lxi * 84 + 8, y: ly + 3, 'font-size': '9', fill: 'var(--fg)', opacity: 0.7 })
     t.textContent = label
     legend.appendChild(t)
     lxi++
   }
-  const hint = el('text', { x: w - 10, y: h - 8, 'text-anchor': 'end', 'font-size': '9', fill: 'var(--fg)', opacity: 0.45 })
-  hint.textContent = 'click a node to trace its associations · scroll to zoom'
-  legend.appendChild(hint)
+
+  // status strip: what the system is doing — firing neurons + pressure
+  const firing = (data.neurons || []).filter(n => n.firing).map(n => n.slug)
+  const statusBits = []
+  if (firing.length) statusBits.push(`firing: ${firing.join(', ')}`)
+  if (data.sleep?.pressure?.score != null) {
+    statusBits.push(`pressure ${Math.round(data.sleep.pressure.score * 100)}%`)
+  }
+  if (!statusBits.length) statusBits.push('idle')
+  const status = el('text', {
+    x: w - 10, y: h - 8, 'text-anchor': 'end', 'font-size': '9',
+    fill: 'var(--fg)', opacity: 0.5,
+  })
+  status.textContent = `click a node to trace its associations · scroll to zoom · ${statusBits.join(' · ')}`
+  legend.appendChild(status)
   svg.appendChild(legend)
 
-  // ---- apply focus: highlight selected node + neighbours with blue threads ---
+  // ---- focus: highlight selected node + its real neighbours ---------------
   function focus(id) {
     selected = id
-    const selIdx = byId[id]
     const neigh = new Set()
-    edges.forEach((e, i) => {
-      const touches = String(e.a) === String(id) || String(e.b) === String(id)
-      if (!touches) return
+    ;(edgeByNode[String(id)] || []).forEach(i => {
+      const e = edges[i]
       neigh.add(String(e.a)); neigh.add(String(e.b))
       edgeMap[i].setAttribute('stroke', THREAD)
       edgeMap[i].setAttribute('opacity', '0.85')
@@ -206,13 +272,12 @@ function draw(elc, svg, data, w, h) {
       else { c.setAttribute('opacity', '0.08') }
       c.style.cursor = 'pointer'
     })
-    // dim labels of unrelated nodes, brighten related ones
     Array.from(nodeG.children).forEach(ch => {
       if (ch.tagName !== 'text') return
       const idx = Number(ch.dataset ? ch.dataset.i : -1)
       const nid = nodes[idx]?.id
       const on = neigh.has(nid) || String(nid) === String(id)
-      ch.setAttribute('opacity', on ? '0.9' : '0.08')
+      ch.setAttribute('opacity', on ? '0.95' : '0.08')
     })
   }
 
@@ -225,11 +290,11 @@ function draw(elc, svg, data, w, h) {
     })
     nodes.forEach((n, i) => {
       const c = nodeEls[n.id]
-      c.setAttribute('opacity', '0.7')
+      c.setAttribute('opacity', '0.75')
       c.removeAttribute('stroke'); c.removeAttribute('stroke-width')
     })
     Array.from(nodeG.children).forEach(ch => {
-      if (ch.tagName === 'text') ch.setAttribute('opacity', '0.75')
+      if (ch.tagName === 'text') ch.setAttribute('opacity', '0.8')
     })
   }
 
