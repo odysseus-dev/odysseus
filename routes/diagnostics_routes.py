@@ -169,6 +169,8 @@ def setup_diagnostics_routes(
         except Exception:
             pass
         if not result["gpu_detected"]:
+            # AMD: rocm-smi is the vendor tool (ROCm 6.x/7.x). MIGraphX is the
+            # current AMD ORT provider; ROCm EP is legacy (removed in ORT 1.23).
             try:
                 import subprocess
                 rsmi = subprocess.run(

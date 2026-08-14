@@ -116,8 +116,24 @@ def test_gpu_provider_selection_nvidia_cuda_only():
         "CUDAExecutionProvider", "CPUExecutionProvider"]
 
 
-def test_gpu_provider_selection_amd_rocm():
-    """AMD hosts use ROCm."""
+def test_gpu_provider_selection_amd_migraphx():
+    """AMD hosts use MIGraphX (the current provider, ORT >= 1.23)."""
+    provs = ["CPUExecutionProvider", "MIGraphXExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "MIGraphXExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_amd_prefers_migraphx_over_legacy_rocm():
+    """When both AMD providers are present, MIGraphX wins over legacy ROCm."""
+    provs = ["CPUExecutionProvider", "ROCmExecutionProvider",
+             "MIGraphXExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "MIGraphXExecutionProvider", "ROCmExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_amd_legacy_rocm():
+    """Older AMD installs (ORT < 1.23) still use ROCmExecutionProvider."""
     provs = ["CPUExecutionProvider", "ROCmExecutionProvider"]
     assert select_gpu_providers(provs) == [
         "ROCmExecutionProvider", "CPUExecutionProvider"]

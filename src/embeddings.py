@@ -132,8 +132,9 @@ class EmbeddingClient:
 _GPU_PRIORITY = [
     "TensorrtExecutionProvider",   # NVIDIA, optimized
     "CUDAExecutionProvider",       # NVIDIA
-    "MIGraphXExecutionProvider",   # AMD
-    "ROCmExecutionProvider",       # AMD
+    "MIGraphXExecutionProvider",   # AMD, current (ROCm >= 6.x, ORT >= 1.23)
+    "ROCmExecutionProvider",       # AMD, legacy (removed from ORT as of 1.23;
+                                   #   kept for older ROCm/ORT installs)
     "CoreMLExecutionProvider",     # Apple Silicon
     "DirectMLExecutionProvider",   # Windows, any vendor GPU
     "OpenVINOExecutionProvider",   # Intel
