@@ -417,3 +417,75 @@ def _install_write_db(db, monkeypatch):
     m = _DBStub("core.database")
     m.SessionLocal = lambda: db
     monkeypatch.setitem(sys.modules, "core.database", m)
+
+
+# --- memory WRITES land in the store the READS come from --------------------
+# Regression guard for a real split-brain: the reads were moved onto the live
+# MemoryManager (memory.json) while the writes still went to the ORM `Memory`
+# table, so a memory created on the phone was written somewhere nothing reads —
+# invisible in both the mobile list and the web UI, and undeletable. These
+# exercise the REAL MemoryManager over a tmp dir, so the two paths must agree.
+
+def _memory_route(mm, path_suffix, method):
+    router = setup_companion_routes(memory_manager=mm)
+    for r in router.routes:
+        if getattr(r, "path", "").endswith(path_suffix) and method in getattr(r, "methods", set()):
+            return r.endpoint
+    raise AssertionError(f"{method} {path_suffix} route not found")
+
+
+def _real_manager(tmp_path):
+    from src.memory import MemoryManager
+    return MemoryManager(str(tmp_path))
+
+
+def test_created_memory_is_visible_to_the_reader(tmp_path):
+    mm = _real_manager(tmp_path)
+    req = _req(api_token=True, owner="alice", scopes=_paired_scopes())
+
+    created = _memory_route(mm, "/memory", "POST")(req, text="ship it", category="goal")
+    assert created["text"] == "ship it" and created["category"] == "goal"
+
+    # the SAME manager the app reads through must now return it
+    listed = _memory_route(mm, "/memory", "GET")(req)["items"]
+    assert [(m["id"], m["text"]) for m in listed] == [(created["id"], "ship it")]
+
+
+def test_created_memory_is_owner_scoped_and_deletable(tmp_path):
+    mm = _real_manager(tmp_path)
+    alice = _req(api_token=True, owner="alice", scopes=_paired_scopes())
+    bob = _req(api_token=True, owner="bob", scopes=_paired_scopes())
+
+    created = _memory_route(mm, "/memory", "POST")(alice, text="alice only", category="fact")
+
+    # bob neither sees it nor can delete it (404, not 403 — no existence probe)
+    assert _memory_route(mm, "/memory", "GET")(bob)["items"] == []
+    with pytest.raises(HTTPException) as exc:
+        _memory_route(mm, "/memory/{memory_id}", "DELETE")(bob, created["id"])
+    assert exc.value.status_code == 404
+    assert len(_memory_route(mm, "/memory", "GET")(alice)["items"]) == 1
+
+    # the owner can, and the read reflects it
+    assert _memory_route(mm, "/memory/{memory_id}", "DELETE")(alice, created["id"]) == {"ok": True}
+    assert _memory_route(mm, "/memory", "GET")(alice)["items"] == []
+
+
+def test_unreadable_store_refuses_to_rewrite(tmp_path):
+    # A transient read failure must not be mistaken for an empty store and
+    # persisted over every existing memory (issue #5673) — 503, no write.
+    from src.memory import MemoryStoreUnreadable
+
+    mm = _real_manager(tmp_path)
+    req = _req(api_token=True, owner="alice", scopes=_paired_scopes())
+    _memory_route(mm, "/memory", "POST")(req, text="precious", category="fact")
+
+    def _boom():
+        raise MemoryStoreUnreadable("corrupt")
+
+    mm.load_all_for_update = _boom
+    with pytest.raises(HTTPException) as exc:
+        _memory_route(mm, "/memory", "POST")(req, text="new", category="fact")
+    assert exc.value.status_code == 503
+
+    mm2 = _real_manager(tmp_path)
+    assert [m["text"] for m in mm2.load(owner="alice")] == ["precious"]

@@ -21,7 +21,6 @@ import asyncio
 import html
 import json
 import re
-import time
 import uuid
 from pathlib import Path
 
@@ -135,6 +134,24 @@ def _default_memory_manager():
     from src.memory import MemoryManager
     from src.constants import DATA_DIR
     return MemoryManager(DATA_DIR)
+
+
+def _load_memory_for_update(mm):
+    """Load the whole memory store for a read-modify-write cycle.
+
+    Mirrors ``routes.memory.memory_routes._load_for_update``: a transient read
+    failure must not look like an empty store, or the caller appends to ``[]``
+    and atomically persists that over every existing memory (issue #5673).
+    Surface it as a 503 and change nothing.
+    """
+    from src.memory import MemoryStoreUnreadable
+
+    try:
+        return mm.load_all_for_update()
+    except MemoryStoreUnreadable:
+        raise HTTPException(
+            503, "Memory store is temporarily unreadable — no changes were made."
+        )
 
 
 def require_companion_scope(request: Request) -> None:
@@ -729,8 +746,14 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
 
     @router.post("/memory")
     def add_memory(request: Request, text: str = Form(...), category: str = Form("fact")):
-        """Create a memory owned by the caller. Writes the same `memories` table
-        GET /memory reads, so it appears in the mobile list immediately."""
+        """Create a memory owned by the caller.
+
+        Writes through the active ``MemoryManager`` (memory.json) — the same
+        store GET /memory reads and the app itself persists to — so a memory
+        added from the phone shows up in the mobile list and the web UI alike.
+        (The ORM ``Memory`` table is not the live store; writing there would
+        create a row nothing ever reads.)
+        """
         require_companion_scope(request)
         owner = writer_owner(request)
         text = (text or "").strip()
@@ -738,36 +761,31 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
             raise HTTPException(400, "empty memory")
         cat = category if category in _MEMORY_CATEGORIES else "fact"
 
-        from core.database import SessionLocal, Memory
-        db = SessionLocal()
-        try:
-            row = Memory(
-                id=str(uuid.uuid4()), text=text, category=cat,
-                source="mobile", owner=owner, timestamp=int(time.time()),
-            )
-            db.add(row)
-            db.commit()
-            db.refresh(row)
-            return {"id": row.id, "text": row.text, "category": row.category}
-        finally:
-            db.close()
+        mm = memory_manager or _default_memory_manager()
+        entry = mm.add_entry(text, source="mobile", category=cat, owner=owner)
+        all_mem = _load_memory_for_update(mm)
+        all_mem.append(entry)
+        mm.save(all_mem)
+        return {"id": entry["id"], "text": entry["text"], "category": entry["category"]}
 
     @router.delete("/memory/{memory_id}")
     def delete_memory(request: Request, memory_id: str):
-        """Delete one of the caller's memories."""
+        """Delete one of the caller's memories.
+
+        Same store as GET/POST /memory. Ownership is EXACT (a legacy ownerless
+        entry is not "yours"), and a miss 404s rather than 403s so the caller
+        can't probe for the existence of someone else's memory.
+        """
         require_companion_scope(request)
         owner = writer_owner(request)
-        from core.database import SessionLocal, Memory
-        db = SessionLocal()
-        try:
-            row = db.query(Memory).filter(Memory.id == memory_id).first()
-            if not row or row.owner != owner:
-                raise HTTPException(404, "Memory not found")
-            db.delete(row)
-            db.commit()
-            return {"ok": True}
-        finally:
-            db.close()
+
+        mm = memory_manager or _default_memory_manager()
+        all_mem = _load_memory_for_update(mm)
+        target = next((m for m in all_mem if m.get("id") == memory_id), None)
+        if not target or target.get("owner") != owner:
+            raise HTTPException(404, "Memory not found")
+        mm.save([m for m in all_mem if m.get("id") != memory_id])
+        return {"ok": True}
 
 
     # ------------------------------------------------------------------
