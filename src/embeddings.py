@@ -148,8 +148,45 @@ def select_gpu_providers(available_providers):
     Vendor-agnostic: returns [chosen_gpu, ...other_gpu_fallbacks, CPU] where
     chosen_gpu is the highest-priority GPU provider available, or ["CPU"]
     when no GPU provider exists. Pure function — unit-testable without a GPU.
+
+    An optional EMBEDDING_GPU_PROVIDER env override allows an operator to
+    force a specific provider (or "cpu" to disable GPU entirely):
+      - unset / "auto"  -> auto-detect the best provider
+      - "cpu"           -> never use a GPU
+      - "nvidia"        -> NVIDIA TensorRT/CUDA
+      - "amd"           -> AMD MIGraphX (or legacy ROCm)
+      - a provider name -> exactly that provider (must be available)
     """
+    import os as _os
+    override = (_os.environ.get("EMBEDDING_GPU_PROVIDER") or "auto").strip().lower()
     available = set(available_providers)
+    if override in ("cpu", "none", "off", "false", "0"):
+        return ["CPUExecutionProvider"]
+    if override == "nvidia":
+        chosen = next((p for p in ("TensorrtExecutionProvider",
+                                   "CUDAExecutionProvider")
+                       if p in available), None)
+        if chosen:
+            fallbacks = [p for p in _GPU_PRIORITY
+                         if p in available and p != chosen]
+            return [chosen] + fallbacks + ["CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    if override == "amd":
+        chosen = next((p for p in ("MIGraphXExecutionProvider",
+                                   "ROCmExecutionProvider")
+                       if p in available), None)
+        if chosen:
+            fallbacks = [p for p in _GPU_PRIORITY
+                         if p in available and p != chosen]
+            return [chosen] + fallbacks + ["CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    if override != "auto":
+        # explicit provider name — only use it if the host actually has it
+        if override in available:
+            return [override] + [p for p in _GPU_PRIORITY
+                                 if p in available and p != override] \
+                   + ["CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
     chosen = next((p for p in _GPU_PRIORITY if p in available), None)
     if chosen is None:
         return ["CPUExecutionProvider"]

@@ -118,12 +118,14 @@ def setup_diagnostics_routes(
             "available_providers": [],
             "gpu_detected": False,
             "gpu_provider": None,
+            "gpu_override": "auto",
             "gpu_name": None,
             "gpu_vendor": None,
             "gpu_memory_total_mb": None,
             "gpu_memory_used_mb": None,
             "gpu_utilization_pct": None,
         }
+        result["gpu_override"] = os.environ.get("EMBEDDING_GPU_PROVIDER", "auto")
 
         # Check ONNX Runtime providers (vendor-agnostic — any GPU provider)
         try:

@@ -157,3 +157,39 @@ def test_gpu_provider_selection_no_gpu_cpu_only():
     """GPU-less hosts degrade to CPU only — never crash."""
     assert select_gpu_providers(["CPUExecutionProvider"]) == [
         "CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_force_cpu(monkeypatch):
+    """EMBEDDING_GPU_PROVIDER=cpu disables GPU even when available."""
+    monkeypatch.setenv("EMBEDDING_GPU_PROVIDER", "cpu")
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider",
+             "TensorrtExecutionProvider"]
+    assert select_gpu_providers(provs) == ["CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_force_nvidia(monkeypatch):
+    """EMBEDDING_GPU_PROVIDER=nvidia picks NVIDIA over any other GPU."""
+    monkeypatch.setenv("EMBEDDING_GPU_PROVIDER", "nvidia")
+    provs = ["CPUExecutionProvider", "MIGraphXExecutionProvider",
+             "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CUDAExecutionProvider", "MIGraphXExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_force_amd(monkeypatch):
+    """EMBEDDING_GPU_PROVIDER=amd picks AMD even when NVIDIA is available."""
+    monkeypatch.setenv("EMBEDDING_GPU_PROVIDER", "amd")
+    provs = ["CPUExecutionProvider", "MIGraphXExecutionProvider",
+             "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "MIGraphXExecutionProvider", "CUDAExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_auto_is_default(monkeypatch):
+    """Auto (default) picks the best provider; override unset behaves the same."""
+    monkeypatch.delenv("EMBEDDING_GPU_PROVIDER", raising=False)
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CUDAExecutionProvider", "CPUExecutionProvider"]
