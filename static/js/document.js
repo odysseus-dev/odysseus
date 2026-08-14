@@ -5910,6 +5910,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           closePanel('down');
           return;
         }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+          if (['javascript', 'js', 'python', 'py', 'bash', 'sh', 'shell', 'zsh'].includes(lang)) {
+            e.preventDefault();
+            e.stopPropagation();
+            runDocument();
+            return;
+          }
+        }
         if (e.key === 'Tab') {
           e.preventDefault();
           document.execCommand('insertText', false, '\t');
@@ -7011,7 +7020,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // Create a new blank document, reusing the current/last session or
   // auto-creating one. Same flow as the tab-bar "+" — the single entry point
   // the sidebar Library "+" should use too.
-  export async function newDocument() {
+  export async function newDocument(options = {}) {
     let sessionId = docs.get(activeDocId)?.sessionId
       || _lastSessionId
       || (sessionModule && sessionModule.getCurrentSessionId());
@@ -7019,10 +7028,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       try { sessionId = await _autoCreateSession(); }
       catch (e) { console.error('Failed to auto-create session for document:', e); return; }
     }
-    await createDocument(sessionId);
+    await createDocument(sessionId, options);
   }
 
-  export async function createDocument(sessionId) {
+  /** Open an exact server-side Bash script in the existing code editor. */
+  export async function newBashDocument() {
+    await newDocument({
+      title: 'Bash script',
+      content: '#!/usr/bin/env bash\n\n',
+      language: 'bash',
+    });
+  }
+
+  export async function createDocument(sessionId, options = {}) {
     if (_creatingDoc) return;
     _creatingDoc = true;
     // If the panel was in empty-state, the user may type into the editor
@@ -7036,9 +7054,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         credentials: 'same-origin',
         body: JSON.stringify({
           session_id: sessionId,
-          title: '',
-          content: '',
-          language: 'markdown',
+          title: String(options.title || ''),
+          content: String(options.content || ''),
+          language: String(options.language || 'markdown'),
         }),
       });
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
@@ -11168,6 +11186,7 @@ const documentModule = {
   swapSide,
   createDocument,
   newDocument,
+  newBashDocument,
   loadDocument,
   injectFreshDoc,
   replaceEmailReplyBody,

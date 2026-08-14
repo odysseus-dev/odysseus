@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.agent_tools import subprocess_tools
+from src.constants import MAX_BASH_COMMAND_CHARS
 from src.tool_execution import format_tool_result
 
 
@@ -89,3 +90,24 @@ async def test_large_output_without_newlines_is_bounded(monkeypatch, tmp_path):
     assert result["exit_code"] == 0
     assert "chars omitted" in result["stdout"]
     assert result["stdout"].endswith("FINAL-TAIL")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "message"),
+    [
+        (" \n\t", "No command provided"),
+        ("printf ok\x00ignored", "NUL byte"),
+        ("x" * (MAX_BASH_COMMAND_CHARS + 1), "too large"),
+    ],
+)
+async def test_invalid_bash_programs_fail_before_spawn(command, message, monkeypatch):
+    async def should_not_spawn(*_args, **_kwargs):
+        raise AssertionError("invalid command reached process creation")
+
+    monkeypatch.setattr(subprocess_tools, "_create_bash_subprocess", should_not_spawn)
+    result = await subprocess_tools.BashTool().execute(command, {})
+
+    assert result["exit_code"] == 1
+    assert message in result["output"]
+    assert result["stderr"] == result["error"]

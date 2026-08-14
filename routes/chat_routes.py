@@ -788,8 +788,6 @@ def setup_chat_routes(
             chat_mode = "agent"
             auto_escalated = True
             _workspace_agent_intent = _tool_intent.category in {"shell", "workspace"}
-            if _workspace_agent_intent:
-                allow_bash = "true"
             logger.info(
                 "chat→agent auto-escalation: category=%s reason=%s",
                 _tool_intent.category,
@@ -925,7 +923,6 @@ def setup_chat_routes(
                     chat_mode = "agent"
                     auto_escalated = True
                     _workspace_agent_intent = True
-                    allow_bash = "true"
                     logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))

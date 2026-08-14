@@ -74,6 +74,8 @@ These are open, acknowledged, and contributor help is welcome:
 
 1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal.
 
+   Current mitigations are explicit and deliberately do not claim confinement: shell execution is admin-only, the per-turn Shell toggle is authoritative, workspace selection changes Bash's starting directory but not its reach, browser shell endpoints reject cross-site requests, and command size/output/time/process cleanup are bounded. The Bash-script editor uses the same admin-gated endpoint and runs only after a user presses Run.
+
 2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
 
 3. **`src/search/` partial consolidation.** `src.search.core` and `src.search.providers` correctly alias `services.search` via `sys.modules` replacement. `analytics`, `cache`, `content`, `query`, and `ranking` are still independent copies that can drift. The SSRF regression tests in `tests/test_webhook_ssrf_resilience.py` test `src.webhook_manager` directly (separate from search), so the safety net there is intact. See #1058.

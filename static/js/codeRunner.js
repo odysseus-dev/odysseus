@@ -1,6 +1,7 @@
 // static/js/codeRunner.js
 
 import * as uiModule from './ui.js';
+import workspaceModule from './workspace.js';
 
 /**
  * In-browser code runner for Python (Pyodide), JavaScript, and HTML
@@ -310,44 +311,44 @@ try {
  */
 export async function runServer(code, panel, lang) {
   showLoading(panel, 'Running on server...');
-  // Base64-encode the script so newlines survive the shell quoting intact.
-  // JSON.stringify turns \n into literal \\n which python3 -c sees as backslash-n;
-  // base64 avoids every quoting/escaping pitfall.
-  const b64 = btoa(unescape(encodeURIComponent(code)));
-  var command;
+  var command = code;
   if (lang === 'python' || lang === 'py') {
+    // Python needs a transport wrapper because this is a Bash endpoint. Bash
+    // scripts are sent directly as the exact `bash -c` program.
+    const b64 = btoa(unescape(encodeURIComponent(code)));
     command = `python3 -c "import base64; exec(base64.b64decode('${b64}').decode('utf-8'))"`;
-  } else {
-    command = `python3 -c "import base64, subprocess, sys; sys.exit(subprocess.run(['bash','-c',base64.b64decode('${b64}').decode('utf-8')]).returncode)"`;
   }
   try {
     var res = await fetch('/api/shell/exec', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: command }),
+      body: JSON.stringify({
+        command: command,
+        workspace: workspaceModule?.getWorkspace?.() || null,
+        timeout: 120,
+        legacy_tmux_compat: false,
+      }),
     });
-    var data = await res.json();
-    panel.innerHTML = '';
-    if (data.stderr && data.stderr.trim()) {
-      showOutput(panel, data.stderr, true);
-      if (data.stdout && data.stdout.trim()) {
-        var stdoutEl = document.createElement('pre');
-        stdoutEl.className = 'code-runner-pre';
-        stdoutEl.textContent = data.stdout;
-        panel.appendChild(stdoutEl);
-      }
-    } else if (data.stdout && data.stdout.trim()) {
-      showOutput(panel, data.stdout, false);
-    } else {
-      showOutput(panel, '(no output)' + (data.exit_code ? ' — exit code ' + data.exit_code : ''), !data.exit_code ? false : true);
+    var data;
+    try { data = await res.json(); }
+    catch (_) { data = {}; }
+    if (!res.ok) {
+      const detail = data.detail || data.stderr || `HTTP ${res.status}`;
+      showOutput(panel, `Execution refused: ${detail}`, true);
+      addCloseBtn(panel);
+      return;
     }
-    if (data.exit_code && data.exit_code !== 0) {
-      var exitEl = document.createElement('div');
-      exitEl.style.cssText = 'font-size:0.75rem;opacity:0.5;padding:2px 8px;';
-      exitEl.textContent = 'Exit code: ' + data.exit_code;
-      panel.appendChild(exitEl);
-    }
+
+    const stdout = String(data.stdout || '').trimEnd();
+    const stderr = String(data.stderr || '').trimEnd();
+    const exitCode = Number.isInteger(data.exit_code) ? data.exit_code : -1;
+    const sections = [];
+    if (stdout) sections.push(stdout);
+    if (stderr) sections.push(`STDERR:\n${stderr}`);
+    if (!sections.length) sections.push('(no output)');
+    sections.push(`Exit code: ${exitCode}`);
+    showOutput(panel, sections.join('\n\n'), exitCode !== 0);
   } catch (e) {
     showOutput(panel, 'Execution failed: ' + e.message, true);
   }

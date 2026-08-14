@@ -31,11 +31,12 @@ from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
 
-# Persistent working directory for agent subprocesses.
+# Default working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
 # (/app/data) and the local data directory for manual installs.
-# Using this as cwd and HOME prevents the agent from silently creating files
-# in ephemeral container layers that are lost on the next rebuild.
+# Using this as cwd prevents the agent from silently creating files in
+# ephemeral container layers that are lost on the next rebuild. It is not a
+# shell sandbox; Bash retains the app process user's host and network access.
 _AGENT_WORKDIR = DATA_DIR
 
 
@@ -232,19 +233,17 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Active workspace (per-turn, context-local)
 # ---------------------------------------------------------------------------
-# Set ONCE in execute_tool_block from the request's `workspace`. The path
-# resolvers (_resolve_tool_path / _resolve_search_root) and the subprocess cwd
-# helper (agent_cwd) read it from here, so confinement is enforced in a single
-# place: any tool that resolves paths through these helpers is confined
-# automatically and cannot accidentally bypass the workspace. contextvars are
-# task-local, so concurrent turns don't leak into each other.
+# Set ONCE in execute_tool_block from the request's `workspace`. File-tool path
+# resolvers enforce confinement from this value; agent_cwd only chooses where
+# subprocesses start. Bash is not confined and can traverse outside that cwd.
+# contextvars are task-local, so concurrent turns don't leak into each other.
 _active_workspace: contextvars.ContextVar = contextvars.ContextVar(
     "agent_active_workspace", default=None
 )
 
 
 def get_active_workspace() -> Optional[str]:
-    """The folder the agent is confined to this turn, or None."""
+    """The active file-tool root and subprocess starting cwd, or None."""
     return _active_workspace.get()
 
 
@@ -581,9 +580,9 @@ async def execute_tool_block(
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
-    Thin wrapper: bind the per-turn workspace (so the path resolvers + subprocess
-    cwd confine to it) for the duration of this call, then delegate. Reset on the
-    way out so the binding never leaks to the next tool call.
+    Thin wrapper: bind the per-turn workspace for file-tool confinement and as
+    the subprocess starting cwd, then delegate. Bash itself is not sandboxed.
+    Reset on the way out so the binding never leaks to the next tool call.
     """
     token = _active_workspace.set(workspace or None)
     try:
@@ -713,6 +712,22 @@ async def _execute_tool_block_impl(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    # Validate before either the foreground or detached Bash path creates a
+    # process/file. This is a size/transport guard, not a command allowlist.
+    if tool == "bash":
+        from src.shell_security import validate_bash_command
+        try:
+            content = validate_bash_command(content)
+        except ValueError as e:
+            message = f"bash: {e}"
+            return "bash: invalid command", {
+                "error": message,
+                "output": message,
+                "stdout": "",
+                "stderr": message,
+                "exit_code": 1,
+            }
 
 
     # Background execution: a `bash` block whose first line is the `#!bg`

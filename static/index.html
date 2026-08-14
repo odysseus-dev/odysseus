@@ -1161,9 +1161,15 @@
             </svg>
           </button>
           <!-- Shell commands (terminal) -->
-          <button type="button" class="input-icon-btn" title="Shell access — run commands in the selected workspace" id="bash-toggle-btn" data-mode-tool="true" aria-label="Shell access" aria-pressed="false">
+          <button type="button" class="input-icon-btn" title="Allow the AI to run Bash as the app user (not sandboxed)" id="bash-toggle-btn" data-mode-tool="true" aria-label="Shell access" aria-pressed="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </button>
+          <!-- Exact Bash script editor/runner (admin-only backend) -->
+          <button type="button" class="input-icon-btn" title="Write and run an exact Bash script (Ctrl+Enter to run; not sandboxed)" id="bash-script-btn" data-mode-tool="true" aria-label="New Bash script" style="display:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 13 7 15 9 17"/><line x1="12" y1="17" x2="16" y2="17"/>
             </svg>
           </button>
           <!-- Workspace indicator (hidden until a folder is set) -->
@@ -1939,6 +1945,11 @@
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
                 <span class="vis-label">Shell</span>
                 <input type="checkbox" checked data-ui-key="bash-toggle-btn"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 13 7 15 9 17"/></svg></span>
+                <span class="vis-label">Bash Script <span class="vis-hint">Exact runner</span></span>
+                <input type="checkbox" checked data-ui-key="bash-script-btn"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>

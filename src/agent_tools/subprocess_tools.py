@@ -8,6 +8,7 @@ import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
 from core.platform_compat import IS_WINDOWS, find_bash, kill_process_tree
 from src.constants import MAX_OUTPUT_CHARS
+from src.shell_security import validate_bash_command
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
@@ -185,6 +186,17 @@ class BashTool:
         from src.tool_execution import agent_cwd, _truncate
         if isinstance(content, dict):
             content = str(content.get("command") or content.get("cmd") or content.get("code") or "")
+        try:
+            content = validate_bash_command(content)
+        except ValueError as e:
+            message = f"bash: {e}"
+            return {
+                "error": message,
+                "output": message,
+                "stdout": "",
+                "stderr": message,
+                "exit_code": 1,
+            }
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
         try:
@@ -196,14 +208,32 @@ class BashTool:
                 cwd=agent_cwd(),
             )
         except RuntimeError as e:
-            return {"error": f"bash: {e}", "exit_code": 1}
+            message = f"bash: {e}"
+            return {
+                "error": message,
+                "output": message,
+                "stdout": "",
+                "stderr": message,
+                "exit_code": 1,
+            }
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_BASH_TIMEOUT,
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            message = f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed"
+            streams = stdout.rstrip()
+            if stderr.rstrip():
+                streams = (streams + "\nSTDERR: " + stderr.rstrip()).strip()
+            output = (streams + "\n" + message).strip()
+            return {
+                "error": message,
+                "output": _truncate(output, MAX_OUTPUT_CHARS),
+                "exit_code": 124,
+                "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+            }
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:

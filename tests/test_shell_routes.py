@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from routes.shell_routes import (
+    ShellExecRequest,
     _exec_shell,
     _find_line_break,
     _host_docker_access_enabled,
@@ -23,12 +24,17 @@ from routes.shell_routes import (
     _package_pip_update_status,
     _package_probe_script,
     _package_status_note,
+    _prepare_shell_temp_dir,
     _prepend_user_install_bins_to_path,
     _reject_cross_site,
+    _resolve_shell_cwd,
     _ssh_base_argv,
     _venv_activate_prefix,
     DOCKER_IN_CONTAINER_HINT,
+    setup_shell_routes,
 )
+from src.constants import MAX_BASH_COMMAND_CHARS
+from src.shell_security import validate_bash_command
 
 
 @pytest.mark.asyncio
@@ -45,6 +51,127 @@ async def test_exec_shell_zero_timeout_means_unlimited():
     result = await _exec_shell("printf ok", timeout=0)
 
     assert result == {"stdout": "ok", "stderr": "", "exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_exec_shell_accepts_compound_bash_commands():
+    result = await _exec_shell("printf first && printf second", timeout=5)
+
+    assert result == {"stdout": "firstsecond", "stderr": "", "exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_exec_shell_bounds_long_lines_while_reading():
+    result = await _exec_shell(
+        "printf 'x%.0s' {1..300000}; printf FINAL-TAIL", timeout=5
+    )
+
+    assert result["exit_code"] == 0
+    assert "bytes omitted" in result["stdout"]
+    assert result["stdout"].endswith("FINAL-TAIL")
+
+
+def test_shell_request_bounds_command_size():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ShellExecRequest(command="x" * (MAX_BASH_COMMAND_CHARS + 1))
+
+
+@pytest.mark.parametrize("command", ["", "  \n", "printf ok\x00ignored"])
+def test_shell_command_validation_rejects_transport_hazards(command):
+    with pytest.raises(ValueError):
+        validate_bash_command(command)
+
+
+def test_shell_workspace_is_only_a_validated_starting_directory(tmp_path):
+    assert _resolve_shell_cwd(str(tmp_path)) == str(tmp_path.resolve())
+
+
+def test_shell_workspace_rejects_filesystem_root():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _resolve_shell_cwd(Path(Path.home().anchor).as_posix())
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX temporary-directory permissions")
+def test_shell_temp_directory_is_private(tmp_path, monkeypatch):
+    shell_dir = tmp_path / "shell"
+    monkeypatch.setattr("routes.shell_routes.TMUX_LOG_DIR", shell_dir)
+
+    _prepare_shell_temp_dir()
+
+    assert shell_dir.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX no-follow directory check")
+def test_shell_temp_directory_rejects_symlink(tmp_path, monkeypatch):
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    shell_dir = tmp_path / "shell"
+    shell_dir.symlink_to(real_dir, target_is_directory=True)
+    monkeypatch.setattr("routes.shell_routes.TMUX_LOG_DIR", shell_dir)
+
+    with pytest.raises(RuntimeError, match="Unsafe shell temporary directory"):
+        _prepare_shell_temp_dir()
+
+
+def test_shell_rce_endpoints_apply_cross_site_guard():
+    source = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(
+        encoding="utf-8"
+    )
+    exec_body = source.split("async def shell_exec", 1)[1].split(
+        "async def shell_stream", 1
+    )[0]
+    stream_body = source.split("async def shell_stream", 1)[1].split(
+        "def _os_id_from_release", 1
+    )[0]
+    assert "_require_admin(request)" in exec_body
+    assert "_reject_cross_site(request)" in exec_body
+    assert "_require_admin(request)" in stream_body
+    assert "_reject_cross_site(request)" in stream_body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/shell/exec", "/api/shell/stream"])
+async def test_shell_rce_endpoints_reject_cross_site_before_execution(path):
+    from fastapi import HTTPException
+
+    router = setup_shell_routes()
+    endpoint = next(route.endpoint for route in router.routes if route.path == path)
+    auth = SimpleNamespace(is_admin=lambda user: user == "admin")
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=auth)),
+        state=SimpleNamespace(current_user="admin"),
+        headers={"sec-fetch-site": "cross-site"},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint(request, ShellExecRequest(command="printf should-not-run"))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_rejects_non_admin_even_with_valid_command():
+    from fastapi import HTTPException
+
+    router = setup_shell_routes()
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/api/shell/exec"
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(auth_manager=SimpleNamespace(is_admin=lambda _user: False))
+        ),
+        state=SimpleNamespace(current_user="regular-user"),
+        headers={"sec-fetch-site": "same-origin"},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint(request, ShellExecRequest(command="printf should-not-run"))
+    assert exc.value.status_code == 403
 
 
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
