@@ -48,6 +48,7 @@ import logging
 import math
 import os
 import re
+import sys
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -569,16 +570,94 @@ class SleepEngine:
 
 def install_memory_platform(memory_manager, memory_vector,
                             memory_store_path: str = "") -> Dict[str, Any]:
-    """Attach the full platform to Odysseus's existing memory (additive).
+    """Attach the FULL immutable memory platform to Odysseus (additive).
 
-    Returns a summary of what was attached. Idempotent.
+    The platform is the `memory_platform/` package — a complete, self-contained
+    agent-memory OS. This adapter is the integration layer:
+
+      - platform store  boots the platform's own hybrid store (dense + BM25 +
+                         RRF with abstention and a tamper-evident audit chain)
+      - drift ledger    records a snapshot of the five core blocks on attach —
+                         the immutability anchor. Any later change must be
+                         journaled/anchored; unexplained bulk is drift.
+      - integrity chain worthiness gate on intake (what may enter memory) +
+                         claim audit (no unsupported strong claims at output)
+      - hybrid recall   wraps MemoryVectorStore.search with BM25 + RRF fusion
+      - socratic        belief-revision as a memory source
+      - sleep           consolidation with a pressure gauge + auto-trigger
+      - brain           the on-request graph of how memory actually connects
+
+    Nothing is replaced. Each layer attaches only if the underlying piece
+    exists. Idempotent: safe to call once at startup.
     """
     attached = {}
+    _PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "memory_platform")
+    _PKG = os.path.abspath(_PKG)
+    platform = {}
+    if os.path.isdir(_PKG) and _PKG not in sys.path:
+        sys.path.insert(0, _PKG)
+
+    # ---- 1. boot the platform's own store (hybrid, tamper-evident) --------
+    try:
+        import memory_env as penv
+        import memory_store as pstore
+        if memory_store_path:
+            os.environ["MEMORY_STORE_DB"] = memory_store_path
+        pdb = pstore.connect()
+        pstats = pstore.stats(pdb)
+        platform["store"] = pstore
+        platform["store_stats"] = pstats
+        attached["platform_store"] = True
+        try:
+            pdb.close()
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning("platform store not booted: %s", e)
+        platform["store"] = None
+
+    # ---- 2. drift ledger snapshot (the immutability anchor) ---------------
+    try:
+        from memory_platform import _bridge
+        dledger = _bridge.load("drift-ledger")
+        snap = dledger.snapshot()
+        platform["drift_ledger"] = dledger
+        platform["drift_snapshot"] = snap
+        attached["drift_ledger"] = True
+        try:
+            check = dledger.check(strict=False, autofix=True)
+            platform["drift_check"] = check
+            # check() returns an exit code int (0 = healthy) or a dict
+            if isinstance(check, dict):
+                attached["drift_ok"] = bool(check.get("healthy"))
+            else:
+                attached["drift_ok"] = (check == 0)
+        except Exception:
+            attached["drift_ok"] = None
+    except Exception as e:
+        logger.warning("drift ledger not attached: %s", e)
+        platform["drift_ledger"] = None
+
+    # ---- 3. integrity chain: worthiness gate + claim audit ---------------
+    try:
+        import worthiness as worth
+        platform["worthiness"] = worth
+        attached["worthiness"] = True
+    except Exception:
+        platform["worthiness"] = None
+    try:
+        import claim_audit as ca
+        platform["claim_audit"] = ca
+        attached["claim_audit"] = True
+    except Exception:
+        platform["claim_audit"] = None
+
+    # ---- 4. hybrid recall over Odysseus's vector store --------------------
     embed_fn = None
     if memory_vector is not None and hasattr(memory_vector, "_embed"):
         embed_fn = memory_vector._embed
         hybrid = HybridRecall(memory_vector, embed_fn)
-        # seed the association graph from the current store
         try:
             if memory_manager is not None:
                 hybrid.rebuild_graph(memory_manager.load())
@@ -589,6 +668,7 @@ def install_memory_platform(memory_manager, memory_vector,
     else:
         hybrid = None
 
+    # ---- 5. socratic + sleep over Odysseus's memory manager ----------------
     if memory_manager is not None:
         socratic = SocraticMemory(memory_manager)
         attached["socratic"] = True
@@ -633,5 +713,6 @@ def install_memory_platform(memory_manager, memory_vector,
         "hybrid_recall": hybrid,
         "socratic": socratic,
         "sleep": sleep,
+        "platform": platform,
         "brain": True,  # routes/memory/graph_routes.py registers /api/memory/brain
     }

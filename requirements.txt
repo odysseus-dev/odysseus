@@ -21,6 +21,10 @@ numpy
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
 fastembed
+# sqlite-vec: dense vector search inside SQLite for the memory platform's
+# hybrid recall (dense + BM25 fused by RRF). Used on the memory-platform
+# core path; the platform's canary suite requires it for full functionality.
+sqlite-vec>=0.1.9
 youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
