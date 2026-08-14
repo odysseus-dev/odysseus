@@ -117,27 +117,29 @@ def setup_diagnostics_routes(
             "embedding_provider": "unknown",
             "available_providers": [],
             "gpu_detected": False,
+            "gpu_provider": None,
             "gpu_name": None,
+            "gpu_vendor": None,
             "gpu_memory_total_mb": None,
             "gpu_memory_used_mb": None,
             "gpu_utilization_pct": None,
-            "tensorrt_available": False,
-            "cuda_available": False,
         }
 
-        # Check ONNX Runtime providers
+        # Check ONNX Runtime providers (vendor-agnostic — any GPU provider)
         try:
             import onnxruntime as ort
             providers = ort.get_available_providers()
             result["available_providers"] = providers
-            result["tensorrt_available"] = "TensorrtExecutionProvider" in providers
-            result["cuda_available"] = "CUDAExecutionProvider" in providers
 
             try:
                 from src.embeddings import get_embedding_client
                 client = get_embedding_client()
                 if hasattr(client, "_is_gpu"):
-                    result["embedding_provider"] = f"gpu ({client._is_gpu})"
+                    result["gpu_provider"] = getattr(client, "_gpu_provider", None)
+                    result["embedding_provider"] = (
+                        f"gpu ({client._gpu_provider})" if client._is_gpu
+                        else "cpu"
+                    )
                 else:
                     result["embedding_provider"] = f"http ({getattr(client, 'url', 'unknown')})"
             except Exception as e:
@@ -147,8 +149,9 @@ def setup_diagnostics_routes(
         except Exception as e:
             result["embedding_provider"] = f"error: {e}"
 
-        # Check nvidia-smi for GPU info
+        # Check GPU state via vendor-neutral tools (nvidia-smi / rocm-smi)
         try:
+            import subprocess
             smi = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
                  "--format=csv,noheader,nounits"],
@@ -159,11 +162,25 @@ def setup_diagnostics_routes(
                 if len(parts) >= 4:
                     result["gpu_detected"] = True
                     result["gpu_name"] = parts[0]
+                    result["gpu_vendor"] = "nvidia"
                     result["gpu_memory_total_mb"] = int(parts[1])
                     result["gpu_memory_used_mb"] = int(parts[2])
                     result["gpu_utilization_pct"] = int(parts[3])
         except Exception:
             pass
+        if not result["gpu_detected"]:
+            try:
+                import subprocess
+                rsmi = subprocess.run(
+                    ["rocm-smi", "--showmeminfo", "vram", "--json"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if rsmi.returncode == 0 and rsmi.stdout.strip():
+                    result["gpu_detected"] = True
+                    result["gpu_vendor"] = "amd"
+                    result["gpu_name"] = "AMD GPU (rocm-smi)"
+            except Exception:
+                pass
 
         return result
 

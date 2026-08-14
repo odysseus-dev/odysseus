@@ -178,36 +178,54 @@ class FastEmbedClient:
             except Exception as _e:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
-        # GPU acceleration: prefer TensorRT > CUDA > CPU for ONNX inference.
-        # TensorRT generates optimized CUDA kernels for the specific model +
-        # GPU, giving 2-5x speedup over plain CUDAExecutionProvider for
-        # repeated inference (embedding generation is embarrassingly parallel).
-        # Fall back through the chain so a missing TRT build doesn't kill GPU.
+        # GPU acceleration — VENDOR-AGNOSTIC provider selection. Instead of
+        # hardcoding one vendor (NVIDIA), we define a priority-ordered chain
+        # across every hardware family ONNX Runtime supports, then pick the
+        # highest-priority provider that is actually AVAILABLE on this host:
+        #   NVIDIA      : TensorRT > CUDA
+        #   AMD         : ROCm > MIGraphX
+        #   Apple       : CoreML
+        #   Windows GPU : DirectML
+        #   Intel       : OpenVINO > DNNL
+        #   fallback    : CPU (always present)
+        # This keeps the code general — it accelerates whichever GPU the
+        # machine has and degrades gracefully to CPU on machines with none.
+        _GPU_PRIORITY = [
+            "TensorrtExecutionProvider",   # NVIDIA, optimized
+            "CUDAExecutionProvider",       # NVIDIA
+            "MIGraphXExecutionProvider",   # AMD
+            "ROCmExecutionProvider",       # AMD
+            "CoreMLExecutionProvider",     # Apple Silicon
+            "DirectMLExecutionProvider",   # Windows, any vendor GPU
+            "OpenVINOExecutionProvider",   # Intel
+            "DnnlExecutionProvider",       # Intel
+        ]
         try:
             import onnxruntime as ort
-            available = ort.get_available_providers()
-            if "TensorrtExecutionProvider" in available:
-                kwargs["providers"] = [
-                    "TensorrtExecutionProvider",
-                    "CUDAExecutionProvider",
-                    "CPUExecutionProvider",
-                ]
-                logger.info("FastEmbed: using TensorRT GPU provider (with CUDA fallback) for ONNX inference")
-            elif "CUDAExecutionProvider" in available:
-                kwargs["providers"] = [
-                    "CUDAExecutionProvider",
-                    "CPUExecutionProvider",
-                ]
-                logger.info("FastEmbed: using CUDA GPU provider for ONNX inference")
+            available = set(ort.get_available_providers())
+            # pick the highest-priority provider this host can actually run
+            chosen = next((p for p in _GPU_PRIORITY if p in available), None)
+            if chosen:
+                # GPU path: chosen provider first, then the OTHER GPU providers
+                # this host supports as fallbacks, then CPU last. This keeps
+                # NVIDIA robust (TensorRT -> CUDA -> CPU) and AMD/Apple/Intel
+                # working through their own chains.
+                fallbacks = [p for p in _GPU_PRIORITY
+                             if p in available and p != chosen]
+                kwargs["providers"] = [chosen] + fallbacks + ["CPUExecutionProvider"]
+                logger.info("FastEmbed: using %s (fallbacks %s) for ONNX inference",
+                            chosen, fallbacks or ["CPU"])
             else:
-                logger.info(f"FastEmbed: CUDA not available, using CPU providers: {available}")
-            self._is_gpu = any(
-                p in ("TensorrtExecutionProvider", "CUDAExecutionProvider")
-                for p in kwargs.get("providers", [])
-            )
+                logger.info(
+                    "FastEmbed: no GPU provider available (%s); using CPU",
+                    sorted(available),
+                )
+            self._is_gpu = chosen is not None
+            self._gpu_provider = chosen
         except Exception as _e:
             logger.warning(f"FastEmbed: could not query ONNX providers, defaulting to CPU: {_e}")
             self._is_gpu = False
+            self._gpu_provider = None
         self._embedding = TextEmbedding(**kwargs)
         self._dim: Optional[int] = None
         self.url = "local://fastembed"
