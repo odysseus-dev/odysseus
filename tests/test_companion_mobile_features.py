@@ -200,7 +200,12 @@ _MODELS = {
     "CalendarCal": _model("CalendarCal", ["id", "owner"]),
     "CalendarEvent": _model("CalendarEvent", ["calendar_id", "status", "dtstart", "dtend"]),
     "EmailAccount": _model("EmailAccount", ["id", "owner"]),
-    "GalleryImage": _model("GalleryImage", ["id", "is_active", "owner", "taken_at"]),
+    "GalleryImage": _model("GalleryImage", ["id", "is_active", "owner", "taken_at", "favorite"]),
+    "ScheduledTask": _model(
+        "ScheduledTask",
+        ["id", "owner", "status", "trigger_type", "next_run", "schedule",
+         "scheduled_time", "scheduled_day", "scheduled_date", "cron_expression"],
+    ),
 }
 
 
@@ -233,9 +238,16 @@ class _Query:
 class _DB:
     def __init__(self, rows_by_model):
         self._rows = rows_by_model
+        self.committed = False
 
     def query(self, model):
         return _Query(self._rows.get(model.__name__, []))
+
+    def add(self, row):
+        pass
+
+    def commit(self):
+        self.committed = True
 
     def close(self):
         pass
@@ -604,3 +616,127 @@ def test_email_send_null_owner_403(db, monkeypatch):
         _route("/api/companion/email/send", "POST")(
             _req(owner=None), account_id="a", to="x@y.test", subject="", body="")
     assert e.value.status_code == 403 and calls == []  # never reached the ownership check
+# --- write tier: task control + gallery favorite ownership ------------------
+
+def _task(id="t1", owner="alice", status="active", trigger_type="event"):
+    return SimpleNamespace(
+        id=id, owner=owner, status=status, trigger_type=trigger_type,
+        next_run=None, schedule=None, scheduled_time=None, scheduled_day=None,
+        scheduled_date=None, cron_expression=None,
+    )
+
+
+def test_task_pause_rejects_scopeless_token(monkeypatch):
+    _install_db(monkeypatch, ScheduledTask=[_task()])
+    req = _request(api_token=True, api_token_owner="alice", api_token_scopes=[])
+    with pytest.raises(HTTPException) as e:
+        _handler("/tasks/{task_id}/pause", "POST")(req, task_id="t1")
+    assert e.value.status_code == 403
+
+
+def test_task_pause_sets_status_for_owner(monkeypatch):
+    task = _task(status="active")
+    _install_db(monkeypatch, ScheduledTask=[task])
+    out = _handler("/tasks/{task_id}/pause", "POST")(_bearer("alice"), task_id="t1")
+    assert out == {"ok": True, "status": "paused"}
+    assert task.status == "paused"
+
+
+def test_task_pause_cross_owner_is_404(monkeypatch):
+    _install_db(monkeypatch, ScheduledTask=[_task(owner="bob")])
+    with pytest.raises(HTTPException) as e:
+        _handler("/tasks/{task_id}/pause", "POST")(_bearer("alice"), task_id="t1")
+    assert e.value.status_code == 404
+
+
+def test_task_pause_legacy_null_owner_is_404(monkeypatch):
+    # Control is strict: even a legacy null-owner (shared-readable) task can't be
+    # mutated by a named caller.
+    _install_db(monkeypatch, ScheduledTask=[_task(owner=None)])
+    with pytest.raises(HTTPException) as e:
+        _handler("/tasks/{task_id}/pause", "POST")(_bearer("alice"), task_id="t1")
+    assert e.value.status_code == 404
+
+
+def test_task_resume_reactivates_and_reports_owner(monkeypatch):
+    task = _task(status="paused", trigger_type="event")  # event → no compute_next_run
+    _install_db(monkeypatch, ScheduledTask=[task])
+    out = _handler("/tasks/{task_id}/resume", "POST")(_bearer("alice"), task_id="t1")
+    assert out["ok"] is True and out["status"] == "active"
+    assert task.status == "active"
+
+
+def test_task_run_without_scheduler_is_503(monkeypatch):
+    # The default router is built with no scheduler; a scoped, owning caller still
+    # gets a clean 503 rather than a crash.
+    import asyncio
+    _install_db(monkeypatch, ScheduledTask=[_task()])
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_handler("/tasks/{task_id}/run", "POST")(_bearer("alice"), task_id="t1"))
+    assert e.value.status_code == 503
+
+
+def test_gallery_favorite_toggles_for_owner(monkeypatch):
+    img = SimpleNamespace(id="i1", owner="alice", favorite=False)
+    _install_db(monkeypatch, GalleryImage=[img])
+    out = _handler("/gallery/image/{image_id}/favorite", "POST")(_bearer("alice"), image_id="i1")
+    assert out == {"ok": True, "favorite": True}
+    assert img.favorite is True
+
+
+def test_gallery_favorite_cross_owner_is_404(monkeypatch):
+    _install_db(monkeypatch, GalleryImage=[SimpleNamespace(id="i1", owner="bob", favorite=False)])
+    with pytest.raises(HTTPException) as e:
+        _handler("/gallery/image/{image_id}/favorite", "POST")(_bearer("alice"), image_id="i1")
+    assert e.value.status_code == 404
+
+
+def test_gallery_favorite_rejects_scopeless_token(monkeypatch):
+    _install_db(monkeypatch, GalleryImage=[SimpleNamespace(id="i1", owner="alice", favorite=False)])
+    req = _request(api_token=True, api_token_owner="alice", api_token_scopes=[])
+    with pytest.raises(HTTPException) as e:
+        _handler("/gallery/image/{image_id}/favorite", "POST")(req, image_id="i1")
+    assert e.value.status_code == 403
+
+
+def test_email_summarize_rejects_scopeless_token(monkeypatch):
+    req = _request(api_token=True, api_token_owner="alice", api_token_scopes=[])
+    import asyncio
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_handler("/email/summarize", "POST")(req, account_id="a1", subject="s", body="b"))
+    assert e.value.status_code == 403
+
+
+def test_ported_write_endpoints_are_registered():
+    paths = {(r.path, m) for r in setup_mobile_companion_routes().routes for m in (r.methods or set())}
+    for p, m in [
+        ("/api/companion/tasks/{task_id}/pause", "POST"),
+        ("/api/companion/tasks/{task_id}/resume", "POST"),
+        ("/api/companion/tasks/{task_id}/run", "POST"),
+        ("/api/companion/tasks/{task_id}/stop", "POST"),
+        ("/api/companion/gallery/image/{image_id}/favorite", "POST"),
+        ("/api/companion/email/summarize", "POST"),
+        ("/api/companion/email/ai-reply", "POST"),
+        ("/api/companion/upload", "POST"),
+        ("/api/companion/upload/{file_id}", "GET"),
+    ]:
+        assert (p, m) in paths, f"missing {m} {p}"
+
+
+def test_upload_requires_companion_scope_and_a_resolvable_owner():
+    import asyncio
+    # scope-less bearer -> 403 before anything touches the upload handler
+    req = _request(api_token=True, api_token_owner="alice", api_token_scopes=[])
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_handler("/upload", "POST")(req, files=[]))
+    assert e.value.status_code == 403
+
+    # scoped but owner-less bearer -> 403, never a null-owner ("shared") upload.
+    # Needs a non-None upload_handler, else the 503 guard short-circuits first.
+    router = setup_mobile_companion_routes(upload_handler=object())
+    upload = next(r.endpoint for r in router.routes
+                  if r.path == "/api/companion/upload" and "POST" in (r.methods or set()))
+    anon = _request(api_token=True, api_token_owner=None, api_token_scopes=["companion"])
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(upload(anon, files=[]))
+    assert e.value.status_code == 403

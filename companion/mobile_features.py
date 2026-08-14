@@ -21,7 +21,7 @@ inherit an admin account's capabilities; anything of that class belongs behind
 its own opt-in, discussed on its own terms, not bundled into this bridge.
 """
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from src.auth_helpers import get_current_user
 
@@ -104,7 +104,7 @@ def has_companion_scope(request: Request) -> bool:
     return "companion" in scopes or "chat" in scopes
 
 
-def setup_mobile_companion_routes() -> APIRouter:
+def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> APIRouter:
     """Additive router with the mobile-only companion feature endpoints."""
     router = APIRouter(prefix="/api/companion", tags=["companion-mobile"])
 
@@ -779,5 +779,350 @@ def setup_mobile_companion_routes() -> APIRouter:
         if md is None:
             raise HTTPException(404, "Skill source unavailable")
         return {"name": match.get("name"), "markdown": md}
+
+
+    # ---- Task controls ----------------------------------------------------
+
+    def _owned_task(db, task_id, owner):
+        from core.database import ScheduledTask
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+        # Strict: the task must be the caller's own — not missing, not another
+        # owner's, not a legacy null-owner shared row. Non-owner gets 404, never
+        # confirming the task exists.
+        if not task or task.owner != owner:
+            raise HTTPException(404, "Task not found")
+        return task
+
+    @router.post("/tasks/{task_id}/pause")
+    def task_pause(request: Request, task_id: str):
+        """Pause one of the caller's own scheduled tasks. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to control tasks.")
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            task = _owned_task(db, task_id, owner)
+            task.status = "paused"
+            db.commit()
+            return {"ok": True, "status": "paused"}
+        finally:
+            db.close()
+
+
+    @router.post("/tasks/{task_id}/resume")
+    def task_resume(request: Request, task_id: str):
+        """Resume one of the caller's own tasks, recomputing its next run for
+        schedule-triggered tasks (else next_run stays stale). Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to control tasks.")
+        from core.database import SessionLocal
+        from src.task_scheduler import compute_next_run
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            task = _owned_task(db, task_id, owner)
+            task.status = "active"
+            if (task.trigger_type or "schedule") == "schedule":
+                task.next_run = compute_next_run(
+                    task.schedule, task.scheduled_time,
+                    task.scheduled_day, task.scheduled_date,
+                    cron_expression=task.cron_expression,
+                )
+            db.commit()
+            return {
+                "ok": True,
+                "status": "active",
+                "next_run": task.next_run.isoformat() + "Z" if task.next_run else None,
+            }
+        finally:
+            db.close()
+
+
+    @router.post("/tasks/{task_id}/run")
+    async def task_run(request: Request, task_id: str, force: bool = False):
+        """Run one of the caller's own tasks now. Ownership is asserted before the
+        scheduler is asked to dispatch it. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to control tasks.")
+        if task_scheduler is None:
+            raise HTTPException(503, "Task execution is unavailable.")
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            _owned_task(db, task_id, owner)
+        finally:
+            db.close()
+        started = await task_scheduler.run_task_now(task_id, force=force)
+        if not started:
+            raise HTTPException(409, "Task is already running")
+        return {"ok": True, "status": "running"}
+
+
+    @router.post("/tasks/{task_id}/stop")
+    async def task_stop(request: Request, task_id: str):
+        """Stop a currently-running task the caller owns. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to control tasks.")
+        if task_scheduler is None:
+            raise HTTPException(503, "Task execution is unavailable.")
+        from core.database import SessionLocal
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            _owned_task(db, task_id, owner)
+        finally:
+            db.close()
+        stopped = await task_scheduler.stop_task(task_id)
+        if not stopped:
+            raise HTTPException(404, "Task is not running")
+        return {"ok": True, "status": "stopped"}
+
+    # ---- Gallery favorite toggle ------------------------------------------
+
+    @router.post("/gallery/image/{image_id}/favorite")
+    def gallery_favorite(request: Request, image_id: str):
+        """Toggle the favorite flag on one of the caller's own images. Strict
+        ownership: cross-owner OR legacy null-owner → 404. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to edit the gallery.")
+        from core.database import SessionLocal, GalleryImage
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
+            if not img or img.owner != owner:
+                raise HTTPException(404, "Image not found")
+            img.favorite = not img.favorite
+            db.commit()
+            return {"ok": True, "favorite": img.favorite}
+        finally:
+            db.close()
+
+    # ---- Email AI (summarize + draft reply) -------------------------------
+    # The phone already has the message body from GET /email/message, so it posts
+    # the text back rather than us re-opening IMAP. Ownership of the named account
+    # is still asserted before any per-owner endpoint/key is resolved, so a caller
+    # can't borrow another owner's model endpoint to run these.
+
+    async def _companion_llm(owner, system, user, max_tokens):
+        from src.endpoint_resolver import resolve_endpoint
+        from src.llm_core import llm_call_async_with_fallback
+        url, model, headers = resolve_endpoint("utility", owner=owner)
+        if not url:
+            url, model, headers = resolve_endpoint("default", owner=owner)
+        if not url:
+            raise HTTPException(503, "No model endpoint configured.")
+        return await llm_call_async_with_fallback(
+            [(url, model, headers)],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.4,
+            max_tokens=max_tokens,
+        )
+
+
+    @router.post("/email/summarize")
+    async def email_summarize(
+        request: Request,
+        account_id: str = Form(...),
+        subject: str = Form(""),
+        body: str = Form(...),
+    ):
+        """Summarize a message the caller supplies, using the owner's own model
+        endpoint. Account ownership is asserted first. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to summarize email.")
+        from routes.email_helpers import _assert_owns_account
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Could not resolve an owner for this token.")
+        _assert_owns_account(account_id, owner)
+        if not (body or "").strip():
+            raise HTTPException(400, "Nothing to summarize.")
+        summary = await _companion_llm(
+            owner,
+            "You summarize emails into 2-4 concise bullet points. Output only the bullets.",
+            f"Subject: {subject}\n\n{body[:12000]}",
+            400,
+        )
+        return {"summary": (summary or "").strip()}
+
+
+    @router.post("/email/ai-reply")
+    async def email_ai_reply(
+        request: Request,
+        account_id: str = Form(...),
+        original_body: str = Form(...),
+        subject: str = Form(""),
+        tone: str = Form("professional"),
+    ):
+        """Draft a reply to a message the caller supplies, using the owner's own
+        model endpoint. Account ownership is asserted first. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to draft replies.")
+        from routes.email_helpers import _assert_owns_account
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Could not resolve an owner for this token.")
+        _assert_owns_account(account_id, owner)
+        if not (original_body or "").strip():
+            raise HTTPException(400, "No email body to reply to.")
+        safe_tone = (tone or "professional").strip()[:40]
+        reply = await _companion_llm(
+            owner,
+            f"You draft {safe_tone} email replies. Output only the reply body — no subject line, no preamble.",
+            f"Subject: {subject}\n\nReply to this email:\n\n{original_body[:12000]}",
+            1024,
+        )
+        return {"reply": (reply or "").strip()}
+
+
+    @router.post("/upload")
+    async def companion_upload(request: Request, files: list[UploadFile] = File(...)):
+        """Owner-attributed attachment upload for the paired phone. Returns the
+        stock {"files": [{id, name, mime, size, hash, uploaded_at, width, height,
+        is_duplicate}]} shape; the client passes the returned ids into
+        /api/chat_stream's `attachments`."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to upload attachments.")
+        if upload_handler is None:
+            raise HTTPException(503, "Upload handler unavailable.")
+        owner = token_owner(request)
+        if not owner:
+            # A bearer token whose owner can't be resolved must not write a
+            # null-owner ("shared") upload — fail closed rather than mis-attribute.
+            raise HTTPException(403, "Could not resolve an owner for this token.")
+        if not files:
+            raise HTTPException(400, "No files uploaded")
+
+        import logging as _logging
+        import time as _time
+        from src.upload_handler import count_recent_uploads
+
+        client_ip = request.client.host if request.client else "unknown"
+        # Mirror the stock route's concurrency guard: count genuine recent upload
+        # events, not the number of files in this batch (issue #1346).
+        recent_uploads = count_recent_uploads(
+            upload_handler.upload_rate_log.get(client_ip, []), _time.time()
+        )
+        if recent_uploads >= upload_handler.max_concurrent_uploads:
+            raise HTTPException(
+                429,
+                f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded",
+            )
+
+        out = []
+        for u in files:
+            try:
+                meta = upload_handler.save_upload(u, client_ip, owner=owner)
+                out.append({
+                    "id": meta["id"],
+                    "name": meta["name"],
+                    "mime": meta["mime"],
+                    "size": meta["size"],
+                    "hash": meta["hash"],
+                    "uploaded_at": meta["uploaded_at"],
+                    "width": meta.get("width"),
+                    "height": meta.get("height"),
+                    "is_duplicate": meta.get("is_duplicate", False),
+                })
+            except HTTPException:
+                raise
+            except Exception as e:  # noqa: BLE001 - mirror stock: skip a bad file, keep the rest
+                _logging.getLogger(__name__).error(
+                    "companion upload failed for %s: %s", getattr(u, "filename", "?"), e
+                )
+                continue
+
+        if not out:
+            raise HTTPException(500, "All file uploads failed")
+        return {"files": out}
+
+
+    @router.get("/upload/{file_id}")
+    def companion_upload_file(request: Request, file_id: str, thumb: int = 0):
+        """Serve an attachment the caller owns. ?thumb=1 returns a cached <=320px
+        JPEG for previews. 404 (never 403) for a missing OR cross-owner file, so a
+        non-owner can't confirm a file's existence. Mirrors the stock GET
+        /api/upload/{id} serve but scopes ownership to the REAL token owner
+        (token_owner) rather than get_current_user, so the phone's own uploads
+        (owned by the real user, not "api") are reachable on history reload."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to read attachments.")
+        if upload_handler is None or not upload_handler.validate_upload_id(file_id):
+            raise HTTPException(400, "Invalid file ID")
+
+        import json as _json
+        import mimetypes as _mt
+        import os
+
+        from fastapi.responses import FileResponse
+        from src.constants import UPLOAD_DIR
+
+        path = os.path.join(UPLOAD_DIR, file_id)
+        if not os.path.exists(path):
+            for root, _dirs, names in os.walk(UPLOAD_DIR):
+                if file_id in names:
+                    path = os.path.join(root, file_id)
+                    break
+            else:
+                raise HTTPException(404, "File not found")
+        if not upload_handler.inside_base_dir(path):
+            raise HTTPException(404, "File not found")
+
+        # Owner check from uploads.json, scoped to the REAL token owner. A file
+        # with no metadata entry has an UNPROVABLE owner — deny it (404) rather
+        # than treating a missing record as a shared/null-owner row, which would
+        # make an orphaned file world-readable to any paired caller. This matches
+        # the stock route's fail-closed posture for an unknown owner.
+        owner = token_owner(request)
+        info = None
+        uploads_db = os.path.join(UPLOAD_DIR, "uploads.json")
+        if os.path.exists(uploads_db):
+            try:
+                with open(uploads_db, encoding="utf-8") as f:
+                    db = _json.load(f)
+                info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
+            except Exception:  # noqa: BLE001 - a corrupt index must not leak files
+                info = None
+        if info is None or not owner_can_see(info.get("owner"), owner):
+            raise HTTPException(404, "File not found")
+
+        original_name = (info or {}).get("name", file_id)
+        mime = _mt.guess_type(path)[0] or "application/octet-stream"
+        if thumb and mime.startswith("image/"):
+            try:
+                from PIL import Image, ImageOps
+
+                thumb_dir = os.path.join(UPLOAD_DIR, ".thumbs")
+                os.makedirs(thumb_dir, exist_ok=True)
+                thumb_path = os.path.join(thumb_dir, file_id + ".jpg")
+                if (not os.path.exists(thumb_path)
+                        or os.path.getmtime(thumb_path) < os.path.getmtime(path)):
+                    im = Image.open(path)
+                    # iPhone/camera JPEGs encode rotation in EXIF; bake it into the
+                    # pixels before thumbnailing or the preview comes out sideways.
+                    im = ImageOps.exif_transpose(im)
+                    im.thumbnail((320, 320))
+                    if im.mode not in ("RGB", "L"):
+                        im = im.convert("RGB")
+                    im.save(thumb_path, "JPEG", quality=80)
+                return FileResponse(thumb_path, media_type="image/jpeg")
+            except Exception:  # noqa: BLE001 - fall through to the full image
+                pass
+        return FileResponse(path, media_type=mime, filename=original_name)
+
+    return router
 
     return router

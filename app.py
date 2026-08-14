@@ -877,7 +877,7 @@ app.include_router(setup_companion_routes(memory_manager=memory_manager, researc
 # module — it never imports companion.routes, so it works regardless of the
 # companion bridge's state.
 from companion.mobile_features import setup_mobile_companion_routes
-app.include_router(setup_mobile_companion_routes())
+app.include_router(setup_mobile_companion_routes(upload_handler, task_scheduler))
 # Route owner-bearing lifecycle events to paired phones via Expo push. Hook the
 # event bus directly (the producer path), so push does not depend on the
 # outbound-webhook layer to fire.
