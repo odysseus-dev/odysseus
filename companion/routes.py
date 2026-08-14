@@ -74,7 +74,11 @@ def require_models_scope(request: Request) -> None:
     if isinstance(scopes, str):
         scopes = [scope.strip() for scope in scopes.split(",")]
     scope_set = {str(scope).strip() for scope in scopes if str(scope).strip()}
-    if _pairing.COMPANION_SCOPE not in scope_set:
+    # The CHAT capability specifically — not COMPANION_SCOPE, which is the
+    # comma-separated pairing grant ("chat,companion") and never appears as a
+    # single element of a stored scope list. Comparing against it would 403
+    # every paired device on model discovery.
+    if _pairing.CHAT_SCOPE not in scope_set:
         raise HTTPException(403, "API token requires chat scope")
 
 

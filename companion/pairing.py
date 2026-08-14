@@ -23,6 +23,16 @@ PAIRING_VERSION = 1
 # 403 on those endpoints even though it owns the data. Comma-separated; the
 # auth middleware splits this into a scope list.
 COMPANION_SCOPE = "chat,companion"
+# The individual capabilities COMPANION_SCOPE grants. Gates must check ONE of
+# these, never COMPANION_SCOPE itself: that is a comma-separated grant string,
+# and a stored scope list never contains it as a single element.
+CHAT_SCOPE = "chat"
+DATA_SCOPE = "companion"
+
+
+def granted_scopes() -> list[str]:
+    """COMPANION_SCOPE as the scope list the auth middleware actually stores."""
+    return [s.strip() for s in COMPANION_SCOPE.split(",") if s.strip()]
 
 
 def default_port() -> int:

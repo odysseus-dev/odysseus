@@ -383,3 +383,37 @@ def test_pair_page_offers_admin_tools_toggle(monkeypatch):
     body = _route("/pair", "GET")(_fake_pair_request()).body.decode()
     assert 'action="/api/companion/admin-access"' in body
     assert "Turn on admin tools" in body  # currently off → offers to enable
+
+
+# --- the minted grant must actually clear the gates it is minted for --------
+# COMPANION_SCOPE is a comma-separated GRANT ("chat,companion"); the auth
+# middleware splits it into a scope list. A gate that compares the whole grant
+# string against that list matches nothing, so every paired device would 403.
+# These pin the grant to the capability constants the gates check.
+
+def test_granted_scopes_expands_the_pairing_grant():
+    assert P.granted_scopes() == ["chat", "companion"]
+    assert P.CHAT_SCOPE in P.granted_scopes()
+    assert P.DATA_SCOPE in P.granted_scopes()
+
+
+def test_paired_token_can_list_models():
+    # Regression: require_models_scope compared against COMPANION_SCOPE itself,
+    # which is never a single element of a stored scope list -> a freshly paired
+    # phone got 403 on /api/companion/models and could not finish pairing.
+    req = SimpleNamespace(state=SimpleNamespace(
+        api_token=True, api_token_owner="alice", api_token_scopes=P.granted_scopes()))
+    R.require_models_scope(req)  # must not raise
+
+    # the comma-string form the middleware may hand back is accepted too
+    req_raw = SimpleNamespace(state=SimpleNamespace(
+        api_token=True, api_token_owner="alice", api_token_scopes=P.COMPANION_SCOPE))
+    R.require_models_scope(req_raw)
+
+
+def test_token_without_chat_scope_still_cannot_list_models():
+    req = SimpleNamespace(state=SimpleNamespace(
+        api_token=True, api_token_owner="alice", api_token_scopes=["companion"]))
+    with pytest.raises(HTTPException) as exc:
+        R.require_models_scope(req)
+    assert exc.value.status_code == 403
