@@ -1575,11 +1575,22 @@ window.memoryModule = memoryModule;
       fan.value = v
     })
   }
-  // ---- sleep / consolidation ledger ---------------------------------------
+  // ---- sleep / consolidation ledger + pressure gauge ----------------------
   function fmtTs(ts) {
     if (!ts) return ''
     const d = new Date(ts * 1000)
     return d.toISOString().slice(0, 16).replace('T', ' ')
+  }
+  function renderPressure(p) {
+    const bar = document.getElementById('sleep-pressure-bar')
+    const label = document.getElementById('sleep-pressure-label')
+    if (!bar || !label || !p || typeof p.score !== 'number') return
+    const pct = Math.round(p.score * 100)
+    bar.style.width = `${pct}%`
+    const colors = ['var(--color-save-green)', 'var(--color-warning)', 'var(--color-danger)']
+    bar.style.background = colors[p.score > 0.75 ? 2 : p.score > 0.5 ? 1 : 0]
+    label.textContent = `${pct}%`
+    label.title = `consolidation pressure — size ${p.components?.size} · dup ${p.components?.duplication} · crowding ${p.components?.crowding} · stale ${p.components?.staleness} · churn ${p.components?.churn}`
   }
   function renderLedger(receipts) {
     const box = document.getElementById('sleep-ledger')
@@ -1614,6 +1625,14 @@ window.memoryModule = memoryModule;
       const res = await fetch('/api/memory-brain/overview')
       const data = await res.json()
       renderLedger(data.sleep?.receipts || [])
+      renderPressure(data.sleep?.pressure)
+    } catch (_) { /* brain view may be unavailable */ }
+  }
+  async function refreshPressure() {
+    try {
+      const res = await fetch('/api/memory-brain/pressure')
+      const data = await res.json()
+      renderPressure(data)
     } catch (_) { /* brain view may be unavailable */ }
   }
   const sleepBtn = document.getElementById('sleep-run-btn')

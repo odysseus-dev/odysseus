@@ -223,11 +223,29 @@ def setup_graph_routes(memory_manager, memory_vector, warm_router=None,
             try:
                 snapshot["sleep"] = {
                     "receipts": sleep_engine.receipts(limit=15),
+                    "pressure": sleep_engine.pressure(),
                     "available": True,
                 }
             except Exception:
-                snapshot["sleep"] = {"receipts": [], "available": False}
+                snapshot["sleep"] = {"receipts": [], "pressure": None,
+                                     "available": False}
         return snapshot
+
+    @router.get("/pressure")
+    def get_pressure() -> Dict[str, Any]:
+        """The consolidation-pressure gauge (read-only).
+
+        A 0..1 score of how much the store is outgrowing its recall budget,
+        with the components (size / duplication / crowding / staleness /
+        churn) and whether the store should sleep. The Brain tab renders
+        this as a pressure gauge.
+        """
+        if sleep_engine is None:
+            return {"available": False, "score": None}
+        try:
+            return {"available": True, **sleep_engine.pressure()}
+        except Exception as e:
+            return {"available": False, "score": None, "note": str(e)}
 
     @router.post("/sleep")
     def run_sleep() -> Dict[str, Any]:

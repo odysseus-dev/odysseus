@@ -76,6 +76,31 @@ def _content_words(text: str) -> set:
             if w not in _STOP}
 
 
+# neuron topic vocabulary — mirrors routes/memory/graph_routes so
+# consolidation groups by the same topics the brain view shows
+_NEURON_TOPICS = {
+    "persona": ["alfred", "butler", "sir", "pennyworth", "composed", "wry",
+                "warm", "grounded", "voice", "register", "persona"],
+    "philosophy": ["sagan", "wonder", "skeptic", "cosmos", "evidence",
+                   "philosophy", "epistemology"],
+    "game": ["delta", "green", "investigator", "scenario", "character",
+             "campaign", "session"],
+    "memory": ["memory", "recall", "association", "embedding", "neuron",
+               "store", "consolidat"],
+}
+
+
+def _neuron_state(text: str) -> str:
+    """Which neuron cluster a memory belongs to (mirrors the brain view)."""
+    low = (text or "").lower()
+    best, best_hits = "memory", 0
+    for topic, terms in _NEURON_TOPICS.items():
+        hits = sum(1 for t in terms if t in low)
+        if hits > best_hits:
+            best, best_hits = topic, hits
+    return best
+
+
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -268,7 +293,13 @@ class SleepEngine:
     MERGE_MIN_JACCARD = 0.72
     # promote: a high-use entry gets a recency-mark so recall ranks it higher
     PROMOTE_MIN_USES = 5
-    # a stale high-use entry is kept but demoted below that use threshold
+    # pressure: consolidation fires when the store outgrows its recall budget
+    PRESSURE_THRESHOLD = 0.55
+    SIZE_TARGET = 300        # entries at/below this contribute ~0 size pressure
+    SIZE_HARD_CAP = 800      # at this size, size pressure saturates to 1.0
+    CHURN_WINDOW_SEC = 86400 # churn counts entries added in this window
+    # auto-sleep checks pressure every N write hooks (cheap, throttled)
+    WRITE_CHECK_INTERVAL = 25
 
     def __init__(self, memory_manager, memory_store_path: str = "",
                  sleep_ledger: str = ""):
@@ -309,6 +340,123 @@ class SleepEngine:
         inter = len(wa & wb)
         return inter / max(len(wa), len(wb))
 
+    def pressure(self, entries: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        """Measure how much the store is outgrowing its recall budget.
+
+        A memory accumulates during "waking" use; consolidation pressure
+        builds until the store needs to sleep. Returns a 0..1 score plus
+        the individual components so the brain view can show a gauge:
+
+          - size        entries vs. healthy target (fixed recall budget)
+          - duplication near-duplicate pairs (merge candidates), counted
+                        within their neuron topic — duplication in a
+                        different topic is not a merge candidate
+          - crowding    resident-core entries competing for the fixed
+                        recall budget (this is the context-sensitivity
+                        signal: the more high-use memories there are, the
+                        less room recall has to surface anything else)
+          - staleness   unused entries past the age threshold
+          - churn       new entries piled up since the last sleep
+
+        `pressure()['should_sleep']` is True once the score crosses the
+        threshold — the natural trigger for automatic consolidation.
+        """
+        if entries is None:
+            try:
+                entries = self._mm.load()
+            except Exception:
+                entries = []
+        n = len(entries)
+        if not n:
+            return {"score": 0.0, "should_sleep": False, "components": {
+                "size": 0.0, "duplication": 0.0, "crowding": 0.0,
+                "staleness": 0.0, "churn": 0.0}}
+
+        now = int(time.time())
+        last_at = 0
+        for r in reversed(self._ledger):
+            if isinstance(r, dict) and r.get("at"):
+                last_at = int(r["at"])
+                break
+
+        # size pressure (recall budget is fixed; more entries compete for it)
+        size = 0.0
+        if n >= self.SIZE_HARD_CAP:
+            size = 1.0
+        elif n > self.SIZE_TARGET:
+            size = (n - self.SIZE_TARGET) / (self.SIZE_HARD_CAP - self.SIZE_TARGET)
+
+        # duplication pressure (sampled, topic-aware — LightMem groups by
+        # topic before consolidating, so only same-topic overlaps count)
+        dup = 0.0
+        window = min(n, 120)
+        if window >= 2:
+            pool = entries[-window:]
+            by_topic = {}
+            for e in pool:
+                by_topic.setdefault(_neuron_state(e.get("text", "")), []).append(e)
+            hits = 0
+            for topic, group in by_topic.items():
+                if len(group) < 2:
+                    continue
+                for i in range(len(group)):
+                    for j in range(i + 1, len(group)):
+                        if self._jaccard_words(group[i].get("text", ""),
+                                               group[j].get("text", "")) >= self.MERGE_MIN_JACCARD:
+                            hits += 1
+            dup = min(1.0, hits / max(1, window))
+
+        # crowding pressure (MemOS: memory is a schedulable resource; high-use
+        # resident-core entries compete for the fixed recall budget)
+        budget = getattr(self, "RECALL_BUDGET", 8)
+        core = sum(1 for e in entries if int(e.get("uses", 0) or 0) >= self.PROMOTE_MIN_USES)
+        crowding = min(1.0, core / max(1, budget * 2))
+
+        # staleness pressure (unused entries past the age threshold)
+        stale = sum(1 for e in entries
+                    if int(e.get("uses", 0) or 0) == 0
+                    and e.get("timestamp")
+                    and (now - int(e["timestamp"])) / 86400.0 > self.PRUNE_AGE_DAYS)
+        stale = min(1.0, stale / max(1, n))
+
+        # churn pressure (new entries since the last sleep)
+        churned = 0
+        if last_at:
+            churned = sum(1 for e in entries
+                          if e.get("timestamp") and int(e["timestamp"]) > last_at)
+        churn = min(1.0, churned / max(1, n))
+
+        score = min(1.0, 0.30 * size + 0.25 * dup + 0.20 * crowding
+                    + 0.15 * stale + 0.10 * churn)
+        return {
+            "score": round(score, 3),
+            "should_sleep": score >= self.PRESSURE_THRESHOLD,
+            "entries": n,
+            "last_sleep_at": last_at or None,
+            "components": {
+                "size": round(size, 3),
+                "duplication": round(dup, 3),
+                "crowding": round(crowding, 3),
+                "staleness": round(stale, 3),
+                "churn": round(churn, 3),
+            },
+        }
+
+    def maybe_sleep(self, entries: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        """Evaluate pressure and sleep if the store needs it.
+
+        This is the automatic trigger — call it on a throttled write hook
+        (every N entries added) and at startup. It is a no-op when pressure
+        is below the threshold, so normal operation stays cheap.
+        """
+        p = self.pressure(entries)
+        if not p["should_sleep"]:
+            return {"ran": False, "reason": "pressure below threshold",
+                    "pressure": p, "receipt": None}
+        result = self.sleep()
+        result["pressure"] = p
+        return result
+
     def sleep(self) -> Dict[str, Any]:
         """Run one consolidation pass and write a receipt."""
         try:
@@ -323,31 +471,52 @@ class SleepEngine:
 
         merged, pruned, promoted = [], [], []
         keep = []
+        kept_ids = set()
 
-        # ---- merge near-duplicates -----------------------------------------
-        for i, e in enumerate(entries):
-            if e.get("id") in {x.get("id") for x in keep}:
-                continue
-            dup = None
-            for j in range(i + 1, len(entries)):
-                o = entries[j]
-                if o.get("id") in {x.get("id") for x in keep}:
+        # ---- merge near-duplicates (topic-aware, fusing) -------------------
+        # LightMem: consolidate within topic groups, not across the whole
+        # store — two memories in different topics are not merge candidates.
+        # MemOS: a merge *fuses* — the winner inherits the loser's source and
+        # category, not just its use count, so provenance survives the merge.
+        by_topic = {}
+        for e in entries:
+            by_topic.setdefault(_neuron_state(e.get("text", "")), []).append(e)
+
+        for topic, group in by_topic.items():
+            for e in group:
+                if e.get("id") in kept_ids:
                     continue
-                if self._jaccard_words(e.get("text", ""), o.get("text", "")) >= self.MERGE_MIN_JACCARD:
-                    dup = o
-                    break
-            if dup is not None:
-                # keep the longer / more-used of the two
-                winner = e if (len(e.get("text", "")) >= len(dup.get("text", ""))
-                               or e.get("uses", 0) >= dup.get("uses", 0)) else dup
-                loser = dup if winner is e else e
-                winner["uses"] = int(winner.get("uses", 0) or 0) + int(loser.get("uses", 0) or 0)
-                merged.append({"kept": winner.get("id"),
-                               "dropped": loser.get("id"),
-                               "text": winner.get("text", "")[:80]})
-                keep.append(winner)
-            else:
-                keep.append(e)
+                dup = None
+                for o in group:
+                    if o.get("id") in kept_ids or o.get("id") == e.get("id"):
+                        continue
+                    if self._jaccard_words(e.get("text", ""), o.get("text", "")) >= self.MERGE_MIN_JACCARD:
+                        dup = o
+                        break
+                if dup is not None:
+                    # keep the longer / more-used of the two
+                    winner = e if (len(e.get("text", "")) >= len(dup.get("text", ""))
+                                   or e.get("uses", 0) >= dup.get("uses", 0)) else dup
+                    loser = dup if winner is e else e
+                    winner["uses"] = int(winner.get("uses", 0) or 0) + int(loser.get("uses", 0) or 0)
+                    # fuse: carry the loser's provenance into the winner
+                    if not winner.get("source"):
+                        winner["source"] = loser.get("source", "unknown")
+                    if not winner.get("category"):
+                        winner["category"] = loser.get("category", "fact")
+                    winner["fused_from"] = loser.get("id")
+                    merged.append({"kept": winner.get("id"),
+                                   "dropped": loser.get("id"),
+                                   "topic": topic,
+                                   "text": winner.get("text", "")[:80]})
+                    keep.append(winner)
+                    # both are now consumed: the loser must not be re-selected
+                    # as a duplicate by a later entry in the group
+                    kept_ids.add(winner.get("id"))
+                    kept_ids.add(loser.get("id"))
+                else:
+                    keep.append(e)
+                    kept_ids.add(e.get("id"))
 
         # ---- prune stale, never-used entries -------------------------------
         final = []
@@ -433,6 +602,27 @@ def install_memory_platform(memory_manager, memory_vector,
             attached["sleep_receipts"] = len(sleep.receipts())
         except Exception:
             pass
+        # automatic consolidation: throttled write hook. LightMem shows the
+        # value of decoupling consolidation from online inference — the hook
+        # only *evaluates pressure* every N writes (cheap, no-op below the
+        # threshold) and sleeps only when the store actually needs it.
+        try:
+            _orig_add = memory_manager.add_entry
+            _sleep_counter = [0]
+            def _hooked_add(text, source="user", category="fact", owner=None):
+                entry = _orig_add(text, source=source, category=category, owner=owner)
+                _sleep_counter[0] += 1
+                if _sleep_counter[0] >= SleepEngine.WRITE_CHECK_INTERVAL:
+                    _sleep_counter[0] = 0
+                    try:
+                        sleep.maybe_sleep()
+                    except Exception:
+                        pass
+                return entry
+            memory_manager.add_entry = _hooked_add
+            attached["auto_sleep"] = True
+        except Exception:
+            attached["auto_sleep"] = False
     else:
         socratic = None
         sleep = None

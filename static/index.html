@@ -508,6 +508,12 @@
               <button type="button" id="sleep-run-btn" class="btn btn-sm" style="flex-shrink:0">Consolidate now</button>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">When the memory sleeps it merges near-duplicates, prunes stale unused entries, and promotes what is used — then records a receipt of exactly what changed. Memory growth stays auditable.</span>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+              <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden;position:relative">
+                <div id="sleep-pressure-bar" style="height:100%;width:0%;background:var(--color-save-green,#4ade80);border-radius:4px;transition:width .4s ease"></div>
+              </div>
+              <span id="sleep-pressure-label" class="admin-toggle-sub" style="margin:0;min-width:52px;text-align:right;font-variant-numeric:tabular-nums">0%</span>
+            </div>
             <div id="sleep-ledger" style="margin-top:10px;max-height:180px;overflow-y:auto;font-family:var(--font-mono,Fira Code,monospace);font-size:11px;line-height:1.5;opacity:0.85"></div>
           </div>
         </div>
