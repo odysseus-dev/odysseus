@@ -1548,3 +1548,115 @@ const memoryModule = {
 
 export default memoryModule;
 window.memoryModule = memoryModule;
+
+// ===== ODYSSEUS-MEMORY-UPGRADES: Brain view (lazy-load) + association settings =====
+(function () {
+  // lazy-load the brain renderer when the Brain tab opens (like skills.js)
+  document.querySelectorAll('.memory-tab[data-memory-tab="associations"]').forEach(tab => {
+    tab.addEventListener('click', () => {
+      import('./brain.js').then(m => {
+        if (m.loadBrain) m.loadBrain(true)
+        else if (m.default?.loadBrain) m.default.loadBrain(true)
+      }).catch(() => {})
+    })
+  })
+  // settings wiring (fanout + min strength)
+  const fan = document.getElementById('assoc-fanout-input')
+  const str = document.getElementById('assoc-strength-slider')
+  const strLabel = document.getElementById('assoc-strength-label')
+  if (str && strLabel) {
+    str.addEventListener('input', () => {
+      strLabel.textContent = `\u2265 ${(Number(str.value) / 100).toFixed(2)}`
+    })
+  }
+  if (fan) {
+    fan.addEventListener('change', () => {
+      const v = Math.max(1, Math.min(12, Number(fan.value) || 6))
+      fan.value = v
+    })
+  }
+  // ---- sleep / consolidation ledger + pressure gauge ----------------------
+  function fmtTs(ts) {
+    if (!ts) return ''
+    const d = new Date(ts * 1000)
+    return d.toISOString().slice(0, 16).replace('T', ' ')
+  }
+  function renderPressure(p) {
+    const bar = document.getElementById('sleep-pressure-bar')
+    const label = document.getElementById('sleep-pressure-label')
+    if (!bar || !label || !p || typeof p.score !== 'number') return
+    const pct = Math.round(p.score * 100)
+    bar.style.width = `${pct}%`
+    const colors = ['var(--color-save-green)', 'var(--color-warning)', 'var(--color-danger)']
+    bar.style.background = colors[p.score > 0.75 ? 2 : p.score > 0.5 ? 1 : 0]
+    label.textContent = `${pct}%`
+    label.title = `consolidation pressure — size ${p.components?.size} · dup ${p.components?.duplication} · crowding ${p.components?.crowding} · stale ${p.components?.staleness} · churn ${p.components?.churn}`
+  }
+  function renderLedger(receipts) {
+    const box = document.getElementById('sleep-ledger')
+    if (!box) return
+    if (!receipts || !receipts.length) {
+      box.textContent = 'No consolidation runs yet.'
+      return
+    }
+    box.textContent = ''
+    receipts.forEach(r => {
+      const line = document.createElement('div')
+      const when = fmtTs(r.at)
+      const bits = []
+      if (r.merged) bits.push(`${r.merged} merged`)
+      if (r.pruned) bits.push(`${r.pruned} pruned`)
+      if (r.promoted) bits.push(`${r.promoted} promoted`)
+      line.textContent = `[${when}] ${bits.join(' · ') || 'no change'} (${r.entries_before} → ${r.entries_after})`
+      line.style.opacity = '0.8'
+      box.appendChild(line)
+      if ((r.detail && r.detail.merged) && r.detail.merged.length) {
+        r.detail.merged.slice(0, 2).forEach(m => {
+          const sub = document.createElement('div')
+          sub.textContent = `   ↳ merged "${(m.text || '').slice(0, 48)}"`
+          sub.style.opacity = '0.45'
+          box.appendChild(sub)
+        })
+      }
+    })
+  }
+  async function loadSleepLedger() {
+    try {
+      const res = await fetch('/api/memory-brain/overview')
+      const data = await res.json()
+      renderLedger(data.sleep?.receipts || [])
+      renderPressure(data.sleep?.pressure)
+    } catch (_) { /* brain view may be unavailable */ }
+  }
+  async function refreshPressure() {
+    try {
+      const res = await fetch('/api/memory-brain/pressure')
+      const data = await res.json()
+      renderPressure(data)
+    } catch (_) { /* brain view may be unavailable */ }
+  }
+  const sleepBtn = document.getElementById('sleep-run-btn')
+  if (sleepBtn) {
+    sleepBtn.addEventListener('click', async () => {
+      sleepBtn.disabled = true
+      sleepBtn.textContent = 'Consolidating…'
+      try {
+        const res = await fetch('/api/memory-brain/sleep', { method: 'POST' })
+        const data = await res.json()
+        await loadSleepLedger()
+        // refresh the graph after consolidation so it reflects the new store
+        import('./brain.js').then(m => {
+          if (m.loadBrain) m.loadBrain(true)
+          else if (m.default?.loadBrain) m.default.loadBrain(true)
+        }).catch(() => {})
+      } catch (_) { /* best-effort */ }
+      sleepBtn.disabled = false
+      sleepBtn.textContent = 'Consolidate now'
+    })
+  }
+  // load the ledger when the Brain tab opens too
+  document.querySelectorAll('.memory-tab[data-memory-tab="associations"]').forEach(tab => {
+    tab.addEventListener('click', () => loadSleepLedger())
+  })
+  loadSleepLedger()
+})()

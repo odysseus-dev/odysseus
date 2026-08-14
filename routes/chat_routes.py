@@ -584,6 +584,7 @@ def setup_chat_routes(
     memory_vector=None,
     webhook_manager=None,
     skills_manager=None,
+    output_auditor=None,
 ) -> APIRouter:
     router = APIRouter(tags=["chat"])
 
@@ -2026,6 +2027,16 @@ def setup_chat_routes(
                         # rewrite is just the rewritten text, not its scratchpad.
                         from src.research_utils import strip_thinking
                         full_response = strip_thinking(full_response).strip() or full_response
+                        # Memory-platform output gate: degrade unsupported
+                        # strong claims before the text is persisted (no-op if
+                        # no auditor is attached).
+                        if output_auditor is not None and full_response:
+                            try:
+                                _audited, _claims = output_auditor(full_response)
+                                if _claims:
+                                    full_response = _audited
+                            except Exception:
+                                pass
                         if full_response:
                             for msg in reversed(sess.history):
                                 if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \

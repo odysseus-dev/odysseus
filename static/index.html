@@ -316,6 +316,8 @@
           <button class="memory-tab active" data-memory-tab="browse"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Memories <span id="memory-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button class="memory-tab" data-memory-tab="skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Skills <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button class="memory-tab" data-memory-tab="add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add</button>
+          <button class="memory-tab" data-memory-tab="associations"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="12" r="3"/><circle cx="6" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="11"/><line x1="8.5" y1="16.5" x2="15.5" y2="13"/></svg>Brain</button>
+
           <button class="memory-tab" data-memory-tab="settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
         </div>
         <!-- ── Browse tab ── -->
@@ -473,6 +475,49 @@
               <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Auto-extract memories</h2>
               <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-memory-toggle" checked /><span class="admin-slider"></span></label>
             </div>
+        <!-- ODYSSEUS-MEMORY-UPGRADES: Brain view (system-state overview) + settings -->
+        <div class="memory-tab-panel hidden" data-memory-panel="associations">
+          <div class="admin-card" style="display:flex;flex-direction:column;min-height:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Brain</h2>
+              <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="assoc-graph-toggle" checked /><span class="admin-slider"></span></label>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px">A living overview: where the persona and identity are forming, how memories link through the neuron network, and what's firing. Updated on request — it never runs in the recall path.</span>
+            <div id="assoc-graph-canvas" style="flex:1;min-height:240px;margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;background:var(--panel, var(--bg))"></div>
+          </div>
+          <div class="admin-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></svg>Association settings</h2>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Control how aggressively memories link in the brain view. Lower fanout = smaller, sharper network.</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
+              <span class="admin-toggle-sub" style="margin:0">Max links per memory</span>
+              <input type="number" id="assoc-fanout-input" min="1" max="12" step="1" value="6" aria-label="Max associations per memory" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums" />
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
+              <span class="admin-toggle-sub" style="margin:0">Min link strength</span>
+              <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <span id="assoc-strength-label" class="admin-toggle-sub" style="margin:0;min-width:42px;text-align:right;font-variant-numeric:tabular-nums">&ge; 0.30</span>
+                <input type="range" id="assoc-strength-slider" class="preset-range" min="10" max="60" step="5" value="30" style="width:120px;margin:0" />
+              </span>
+            </div>
+          </div>
+          <div class="admin-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Sleep &amp; consolidation</h2>
+              <button type="button" id="sleep-run-btn" class="btn btn-sm" style="flex-shrink:0">Consolidate now</button>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">When the memory sleeps it merges near-duplicates, prunes stale unused entries, and promotes what is used — then records a receipt of exactly what changed. Memory growth stays auditable.</span>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+              <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden;position:relative">
+                <div id="sleep-pressure-bar" style="height:100%;width:0%;background:var(--color-save-green,#4ade80);border-radius:4px;transition:width .4s ease"></div>
+              </div>
+              <span id="sleep-pressure-label" class="admin-toggle-sub" style="margin:0;min-width:52px;text-align:right;font-variant-numeric:tabular-nums">0%</span>
+            </div>
+            <div id="sleep-ledger" style="margin-top:10px;max-height:180px;overflow-y:auto;font-family:var(--font-mono,Fira Code,monospace);font-size:11px;line-height:1.5;opacity:0.85"></div>
+          </div>
+        </div>
+
             <span class="admin-toggle-sub" style="display:block;margin-top:6px">Automatically extract memories from conversations.</span>
           </div>
           <div class="admin-card">
