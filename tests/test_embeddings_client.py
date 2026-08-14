@@ -93,3 +93,51 @@ def test_embedding_retry_path_preserves_api_key_header():
 
     assert vecs.tolist() == [[1.0, 0.0]]
     assert seen_headers == [{"Authorization": "Bearer secret-key"}]
+
+
+# ---------------------------------------------------------------- GPU providers
+
+from src.embeddings import select_gpu_providers
+
+
+def test_gpu_provider_selection_nvidia_tensorrt_first():
+    """NVIDIA hosts with TensorRT get the optimized path, CUDA fallback, CPU last."""
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider",
+             "TensorrtExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "TensorrtExecutionProvider", "CUDAExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_nvidia_cuda_only():
+    """NVIDIA hosts without TensorRT fall back to CUDA, then CPU."""
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_amd_rocm():
+    """AMD hosts use ROCm."""
+    provs = ["CPUExecutionProvider", "ROCmExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "ROCmExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_apple_coreml():
+    """Apple Silicon uses CoreML."""
+    provs = ["CPUExecutionProvider", "CoreMLExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CoreMLExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_windows_directml():
+    """Windows with any GPU uses DirectML."""
+    provs = ["CPUExecutionProvider", "DirectMLExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "DirectMLExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_no_gpu_cpu_only():
+    """GPU-less hosts degrade to CPU only — never crash."""
+    assert select_gpu_providers(["CPUExecutionProvider"]) == [
+        "CPUExecutionProvider"]
