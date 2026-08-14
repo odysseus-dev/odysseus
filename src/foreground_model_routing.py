@@ -100,6 +100,11 @@ def resolve_foreground_model_policy(
             owner=owner,
             require_exact_model=True,
         )
+        # Known limitation of this test-only seam: alignment matches on model
+        # alone, so when two entries share a model and the resolver skips the
+        # first, the surviving candidate inherits the skipped entry's
+        # endpoint_id. Production uses the descriptor-aware branch below,
+        # which is unaffected.
         resolved_routes = []
         remaining_entries = list(entries)
         for candidate in compatibility_candidates:

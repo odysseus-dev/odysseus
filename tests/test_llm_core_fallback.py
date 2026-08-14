@@ -617,6 +617,16 @@ def test_provider_unknown_symbolic_status_still_fails_closed():
     }) == 400
 
 
+def test_provider_numeric_code_wins_over_symbolic_rate_limit_status():
+    # Google-style payloads pair a symbolic status with a numeric code; the
+    # numeric truth must surface instead of advancing fallback on the symbol.
+    assert llm_core._provider_stream_error_status({
+        "status": "RATE_LIMITED",
+        "code": 401,
+        "message": "bad key",
+    }) == 401
+
+
 @pytest.mark.parametrize("status", [True, 429.9, "429.0", float("inf")])
 def test_provider_malformed_status_fails_closed(status):
     assert llm_core._provider_stream_error_status({

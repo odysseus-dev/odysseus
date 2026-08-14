@@ -3453,6 +3453,7 @@ def _provider_stream_error_status(error, *, default: int = 400) -> int:
         # A structured numeric status is authoritative. Text heuristics are
         # only a fallback for providers that omit it.
         saw_explicit_status = False
+        symbolic_rate_limited = False
         for key in ("status", "status_code", "http_status", "code"):
             if key not in error:
                 continue
@@ -3469,10 +3470,16 @@ def _provider_stream_error_status(error, *, default: int = 400) -> int:
                 and isinstance(value, str)
                 and value.strip().upper() in _SYMBOLIC_RATE_LIMIT_STATUSES
             ):
-                return 429
+                # Only availability evidence when no numeric status follows:
+                # a payload pairing a symbolic status with e.g. code=401 must
+                # surface the numeric truth, not advance fallback.
+                symbolic_rate_limited = True
+                continue
             status = _normalize_http_status(value)
             if status is not None:
                 return status
+        if symbolic_rate_limited:
+            return 429
         if saw_explicit_status:
             return default
         marker = " ".join(str(error.get(key) or "") for key in ("type", "code", "message")).lower()
