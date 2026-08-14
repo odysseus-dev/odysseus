@@ -43,10 +43,13 @@ The design choices below are grounded in the following papers:
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 import re
+import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 logger = logging.getLogger("odysseus_adapter")
@@ -235,6 +238,164 @@ class SocraticMemory:
         return gaps
 
 
+# ------------------------------------------------------------------- sleep
+
+class SleepEngine:
+    """Layer 4 — periodic consolidation ("sleeping") with a change ledger.
+
+    A store that only accumulates is a ledger, not a memory. Sleep runs a
+    bounded consolidation pass over the store:
+
+      - merge   near-duplicate entries (same content words, high overlap)
+      - prune   stale entries that were never used
+      - promote frequently-used entries with a recency boost (they are the
+        resident core forming)
+
+    Every sleep writes a **receipt** — a structured record of exactly what
+    changed (merged / pruned / promoted ids + counts) — appended to a JSON
+    ledger next to the store. The brain view can show the sleep history so
+    memory growth is auditable: you can see *when* the memory structure
+    changed and *what* each consolidation did.
+
+    Bounded and additive: consolidation only touches entries it can justify
+    (duplicates / zero-use staleness / usage), never rewrites content or
+    deletes anything still in use. Idempotent and safe to call at any time.
+    """
+
+    # prune: an entry this old that was never recalled
+    PRUNE_AGE_DAYS = 60
+    # merge: shared content words must reach this fraction of the shorter text
+    MERGE_MIN_JACCARD = 0.72
+    # promote: a high-use entry gets a recency-mark so recall ranks it higher
+    PROMOTE_MIN_USES = 5
+    # a stale high-use entry is kept but demoted below that use threshold
+
+    def __init__(self, memory_manager, memory_store_path: str = "",
+                 sleep_ledger: str = ""):
+        self._mm = memory_manager
+        if not sleep_ledger:
+            base = memory_store_path or os.path.dirname(
+                getattr(getattr(memory_manager, "memory_file", None), "", None) or "")
+            sleep_ledger = os.path.join(base, "memory_sleep_ledger.json")
+        self._ledger_path = sleep_ledger
+        self._ledger = self._load_ledger()
+
+    def _load_ledger(self) -> List[Dict]:
+        try:
+            if os.path.exists(self._ledger_path):
+                with open(self._ledger_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return []
+
+    def _save_ledger(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._ledger_path), exist_ok=True)
+            with open(self._ledger_path, "w", encoding="utf-8") as f:
+                json.dump(self._ledger[-50:], f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("sleep ledger not writable: %s", e)
+
+    def receipts(self, limit: int = 20) -> List[Dict]:
+        """Most recent sleep receipts (newest first)."""
+        return list(reversed(self._ledger[-limit:]))
+
+    def _jaccard_words(self, a: str, b: str) -> float:
+        wa = _content_words(a)
+        wb = _content_words(b)
+        if not wa or not wb:
+            return 0.0
+        inter = len(wa & wb)
+        return inter / max(len(wa), len(wb))
+
+    def sleep(self) -> Dict[str, Any]:
+        """Run one consolidation pass and write a receipt."""
+        try:
+            entries = self._mm.load()
+        except Exception:
+            entries = []
+        if not entries:
+            return {"ran": False, "reason": "no entries", "receipt": None}
+
+        now = int(time.time())
+        by_id = {e.get("id"): e for e in entries}
+
+        merged, pruned, promoted = [], [], []
+        keep = []
+
+        # ---- merge near-duplicates -----------------------------------------
+        for i, e in enumerate(entries):
+            if e.get("id") in {x.get("id") for x in keep}:
+                continue
+            dup = None
+            for j in range(i + 1, len(entries)):
+                o = entries[j]
+                if o.get("id") in {x.get("id") for x in keep}:
+                    continue
+                if self._jaccard_words(e.get("text", ""), o.get("text", "")) >= self.MERGE_MIN_JACCARD:
+                    dup = o
+                    break
+            if dup is not None:
+                # keep the longer / more-used of the two
+                winner = e if (len(e.get("text", "")) >= len(dup.get("text", ""))
+                               or e.get("uses", 0) >= dup.get("uses", 0)) else dup
+                loser = dup if winner is e else e
+                winner["uses"] = int(winner.get("uses", 0) or 0) + int(loser.get("uses", 0) or 0)
+                merged.append({"kept": winner.get("id"),
+                               "dropped": loser.get("id"),
+                               "text": winner.get("text", "")[:80]})
+                keep.append(winner)
+            else:
+                keep.append(e)
+
+        # ---- prune stale, never-used entries -------------------------------
+        final = []
+        for e in keep:
+            ts = int(e.get("timestamp", 0) or 0)
+            uses = int(e.get("uses", 0) or 0)
+            age_days = (now - ts) / 86400.0 if ts else 0.0
+            if uses == 0 and age_days > self.PRUNE_AGE_DAYS and e.get("source") != "core":
+                pruned.append({"id": e.get("id"), "text": e.get("text", "")[:80]})
+                continue
+            final.append(e)
+
+        # ---- promote high-use entries with a recency mark ------------------
+        for e in final:
+            uses = int(e.get("uses", 0) or 0)
+            if uses >= self.PROMOTE_MIN_USES:
+                if e.get("category") != "identity":
+                    promoted.append({"id": e.get("id"), "uses": uses,
+                                     "text": e.get("text", "")[:80]})
+                e["promoted"] = True
+
+        # ---- persist --------------------------------------------------------
+        changed = merged or pruned
+        if changed:
+            try:
+                self._mm.save(final)
+            except Exception as e:
+                logger.warning("sleep could not save consolidated store: %s", e)
+                return {"ran": False, "reason": "save failed", "receipt": None}
+
+        receipt = {
+            "id": str(uuid.uuid4()),
+            "at": now,
+            "merged": len(merged),
+            "pruned": len(pruned),
+            "promoted": len(promoted),
+            "entries_before": len(entries),
+            "entries_after": len(final),
+            "detail": {"merged": merged, "pruned": pruned, "promoted": promoted},
+        }
+        self._ledger.append(receipt)
+        self._save_ledger()
+        logger.info("sleep: %d merged, %d pruned, %d promoted (%d -> %d)",
+                    len(merged), len(pruned), len(promoted),
+                    len(entries), len(final))
+        return {"ran": True, "receipt": receipt}
+
+
 # ------------------------------------------------------------------- install
 
 def install_memory_platform(memory_manager, memory_vector,
@@ -266,13 +427,21 @@ def install_memory_platform(memory_manager, memory_vector,
             attached["coherence_gaps"] = len(socratic.coherence_audit())
         except Exception:
             pass
+        sleep = SleepEngine(memory_manager, memory_store_path)
+        attached["sleep"] = True
+        try:
+            attached["sleep_receipts"] = len(sleep.receipts())
+        except Exception:
+            pass
     else:
         socratic = None
+        sleep = None
 
     logger.info("Odysseus memory platform attached: %s", attached)
     return {
         "attached": attached,
         "hybrid_recall": hybrid,
         "socratic": socratic,
+        "sleep": sleep,
         "brain": True,  # routes/memory/graph_routes.py registers /api/memory/brain
     }

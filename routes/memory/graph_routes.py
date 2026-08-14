@@ -187,7 +187,8 @@ def build_brain_snapshot(
     }
 
 
-def setup_graph_routes(memory_manager, memory_vector, warm_router=None) -> APIRouter:
+def setup_graph_routes(memory_manager, memory_vector, warm_router=None,
+                       sleep_engine=None) -> APIRouter:
     # Distinct prefix to avoid route-registration conflicts with the existing
     # /api/memory router (which also registers @router.get("") at the base).
     router = APIRouter(prefix="/api/memory-brain", tags=["memory-brain"])
@@ -208,10 +209,39 @@ def setup_graph_routes(memory_manager, memory_vector, warm_router=None) -> APIRo
                 warm = warm_router.list_neurons()
             except Exception:
                 warm = None
+        snapshot = {}
         try:
-            return build_brain_snapshot(entries, embed, warm_neurons=warm)
+            snapshot = build_brain_snapshot(entries, embed, warm_neurons=warm)
         except Exception as e:
-            return {"persona": [], "identity": [], "associations": {"nodes": [], "edges": []},
-                    "neurons": [], "links_count": 0, "node_count": 0, "note": str(e)}
+            snapshot = {"persona": [], "identity": [],
+                        "associations": {"nodes": [], "edges": []},
+                        "neurons": [], "links_count": 0, "node_count": 0,
+                        "note": str(e)}
+        # sleep history — when the memory structure changed and what each
+        # consolidation did (diagnostic, read-only)
+        if sleep_engine is not None:
+            try:
+                snapshot["sleep"] = {
+                    "receipts": sleep_engine.receipts(limit=15),
+                    "available": True,
+                }
+            except Exception:
+                snapshot["sleep"] = {"receipts": [], "available": False}
+        return snapshot
+
+    @router.post("/sleep")
+    def run_sleep() -> Dict[str, Any]:
+        """Run one consolidation pass; returns the receipt of what changed.
+
+        Bounded and auditable: merges near-duplicates, prunes stale unused
+        entries, and promotes high-use entries — then appends a receipt to
+        the sleep ledger so memory growth is traceable.
+        """
+        if sleep_engine is None:
+            return {"ran": False, "reason": "sleep engine not attached"}
+        try:
+            return sleep_engine.sleep()
+        except Exception as e:
+            return {"ran": False, "reason": str(e), "receipt": None}
 
     return router

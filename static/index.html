@@ -502,6 +502,14 @@
               </span>
             </div>
           </div>
+          <div class="admin-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Sleep &amp; consolidation</h2>
+              <button type="button" id="sleep-run-btn" class="btn btn-sm" style="flex-shrink:0">Consolidate now</button>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">When the memory sleeps it merges near-duplicates, prunes stale unused entries, and promotes what is used — then records a receipt of exactly what changed. Memory growth stays auditable.</span>
+            <div id="sleep-ledger" style="margin-top:10px;max-height:180px;overflow-y:auto;font-family:var(--font-mono,Fira Code,monospace);font-size:11px;line-height:1.5;opacity:0.85"></div>
+          </div>
         </div>
 
             <span class="admin-toggle-sub" style="display:block;margin-top:6px">Automatically extract memories from conversations.</span>
