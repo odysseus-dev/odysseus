@@ -3390,6 +3390,19 @@ import {
 
               } else if (json.type === 'tool_output') {
                 if (_isBg) continue;
+                // Recover from an intervening render/round transition that
+                // cleared the JS pointer while the running card is still in
+                // the DOM. SSE ordering is stable, but UI re-renders and
+                // reconnects can otherwise leave a card showing only the
+                // command forever even though its result arrived.
+                if (!currentToolBubble) {
+                  const runningNodes = document.querySelectorAll(
+                    '.agent-thread.streaming .agent-thread-node.running'
+                  );
+                  currentToolBubble = runningNodes.length
+                    ? runningNodes[runningNodes.length - 1]
+                    : null;
+                }
                 // --- Update the current thread node ---
                 if (currentToolBubble) {
                   // Stop wave animation + the per-second cooking ticker

@@ -10,7 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
-import codeRunnerModule from './codeRunner.js?v=20260813bashrun2';
+import codeRunnerModule from './codeRunner.js?v=20260813bashrun3';
 import { langIcon } from './langIcons.js';
 import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';

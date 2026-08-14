@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from src.agent_loop import _bash_replays_recent_output
 from src.agent_tools import subprocess_tools
 from src.constants import MAX_BASH_COMMAND_CHARS
 from src.tool_execution import format_tool_result
@@ -76,6 +77,24 @@ def test_gui_opens_bash_output_by_default():
 
     assert "const _showShellResult = json.tool === 'bash'" in source
     assert "const openOutput = json.tool === 'bash' ? ' open' : ''" in source
+    assert "'.agent-thread.streaming .agent-thread-node.running'" in source
+
+
+def test_multiline_command_output_cannot_be_replayed_as_bash():
+    listing = (
+        "total 8\n"
+        "drwxr-xr-x 2 user user 4.0K Aug 13 12:00 .\n"
+        "-rw-r--r-- 1 user user 120 Aug 13 11:00 notes.txt"
+    )
+
+    assert _bash_replays_recent_output(listing, [listing]) is True
+    assert _bash_replays_recent_output("printf '%s\\n' notes.txt", [listing]) is False
+
+
+def test_individual_long_listing_rows_cannot_be_replayed_as_bash():
+    row = "-rw-r--r-- 1 user user 120 Aug 13 11:00 notes.txt"
+
+    assert _bash_replays_recent_output(row, [f"total 4\n{row}"]) is True
 
 
 @pytest.mark.asyncio

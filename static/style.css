@@ -2558,6 +2558,12 @@ body.bg-pattern-sparkles {
       padding: 0;
       border: 1px solid transparent;
       color: transparent;
+      /* Render command characters literally. Fira Code turns && / &&& into
+         contextual ligatures, which can make ampersands look absent even
+         though the textarea value still contains them. */
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "calt" 0, "dlig" 0;
+      font-kerning: none;
       z-index: 1;
     }
     .ghost-text-overlay .ghost-suggestion {
@@ -2576,6 +2582,9 @@ body.bg-pattern-sparkles {
       max-height: 200px;
       padding: 0;
       font-family: inherit;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "calt" 0, "dlig" 0;
+      font-kerning: none;
       transition: height 0.12s ease-out;
     }
     .chat-input-bar textarea#message::placeholder {

@@ -45,7 +45,7 @@ def test_bash_gui_module_urls_are_cache_busted_consistently():
     )
     html = (_ROOT / "static" / "index.html").read_text(encoding="utf-8")
 
-    version = "v=20260813bashrun2"
+    version = "v=20260813bashrun3"
     assert f"./js/keyboard-shortcuts.js?{version}" in app
     assert f"./js/document.js?{version}" in app
     assert f"./js/chat.js?{version}" in app
@@ -54,4 +54,4 @@ def test_bash_gui_module_urls_are_cache_busted_consistently():
     assert f'/static/js/document.js?{version}' in html
     assert f'/static/js/codeRunner.js?{version}' in html
     service_worker = (_ROOT / "static" / "sw.js").read_text(encoding="utf-8")
-    assert "odysseus-v377-bash-runner-input" in service_worker
+    assert "odysseus-v378-bash-output-safety" in service_worker

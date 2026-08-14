@@ -40,6 +40,13 @@ def _patch_common(monkeypatch):
         return ("bash", {"output": "ok", "exit_code": 0})
     monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
 
+    # The loop-breaker intentionally performs one final tool-free synthesis.
+    # Keep this unit test offline and deterministic instead of letting that
+    # fallback contact the configured model endpoint.
+    async def _fake_synthesis(*args, **kwargs):
+        return "Stopped after detecting a repeated command."
+    monkeypatch.setattr("src.llm_core.llm_call_async", _fake_synthesis)
+
 
 def _run_loop(monkeypatch, round_text, max_rounds=2):
     async def _fake_stream(_candidates, messages, **kwargs):
@@ -52,6 +59,7 @@ def _run_loop(monkeypatch, round_text, max_rounds=2):
         [{"role": "user", "content": "do a long multi-step task"}],
         max_rounds=max_rounds,
         relevant_tools={"bash"},
+        _is_teacher_run=True,
     )
     return _types(_collect(gen))
 
@@ -89,3 +97,47 @@ def test_emits_loop_breaker_triggered_when_loop_breaker_trips(monkeypatch):
     guard = next((e for e in events if e.get("type") == "loop_breaker_triggered"), None)
     assert guard is not None, events
     assert guard["reason"] == "loop_breaker_stall"
+
+
+def test_bash_output_replay_is_blocked_before_execution(monkeypatch):
+    _patch_common(monkeypatch)
+    listing = (
+        "total 8\n"
+        "drwxr-xr-x 2 user user 4.0K Aug 13 12:00 .\n"
+        "-rw-r--r-- 1 user user 120 Aug 13 11:00 notes.txt"
+    )
+    replies = iter([
+        "```bash\nls -lhSra\n```",
+        f"```bash\n{listing}\n```",
+        "The listing is shown above.",
+    ])
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        yield f'data: {json.dumps({"delta": next(replies)})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    calls = []
+
+    async def _fake_exec(block, *args, **kwargs):
+        calls.append(block.content)
+        return "bash", {"output": listing, "exit_code": 0}
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+
+    events = _types(_collect(al.stream_agent_loop(
+        "http://x/v1",
+        "m",
+        [{"role": "user", "content": "list the workspace"}],
+        max_rounds=3,
+        relevant_tools={"bash"},
+        _is_teacher_run=True,
+    )))
+
+    assert calls == ["ls -lhSra"]
+    blocked = [
+        event for event in events
+        if event.get("type") == "tool_output" and event.get("exit_code") == 126
+    ]
+    assert blocked
+    assert "copied from the preceding command output" in blocked[0]["output"]

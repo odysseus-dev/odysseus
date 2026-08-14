@@ -58,7 +58,7 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 - `untrusted_context_message(label, content)` wraps the content in a `user`-role message with a header block instructing the model not to follow instructions inside it. Content goes in as data, not as a system instruction.
 - `UNTRUSTED_CONTEXT_POLICY` is a system-prompt preamble that states the same policy at the top of every session where untrusted data may appear.
 
-**Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
+**Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and all tool output, including local shell stdout/stderr. Workspace-controlled filenames and command diagnostics can contain instruction-looking text too. Injecting untrusted content directly into the system role is a security bug. The agent loop additionally rejects a proposed Bash program when it is a verbatim replay of the immediately preceding multi-line command output (or an individual long-listing row), so this boundary does not rely only on smaller models following the wrapper prompt.
 
 ## Security Headers
 
