@@ -920,6 +920,7 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
         if not url:
             url, model, headers = resolve_endpoint("default", owner=owner)
         if not url:
+            # Raised before the call, so it is ours to surface verbatim.
             raise HTTPException(503, "No model endpoint configured.")
         try:
             return await llm_call_async_with_fallback(
@@ -931,15 +932,16 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
                 temperature=0.4,
                 max_tokens=max_tokens,
             )
-        except HTTPException:
-            raise
         except Exception as e:  # noqa: BLE001
-            # A provider failure re-raised as-is would put the upstream error
-            # text — which can carry the endpoint's internal base_url or other
-            # deployment detail — into the phone's response body. Log it server
-            # side and return a generic failure instead.
+            # EVERY failure below this line is replaced with a generic 502 —
+            # including HTTPException. The provider layer raises detail that
+            # names the deployment, e.g. HTTPException(503, "Upstream
+            # <host>:<port> marked unreachable"), and re-raising that would hand
+            # a paired phone the server's internal endpoint host. The real error
+            # is logged (exception type only, so a message carrying the failing
+            # URL or request body can't reach the log either).
             _logging.getLogger(__name__).error(
-                "companion email AI call failed for owner=%s: %s", owner, e
+                "companion email AI call failed: %s", type(e).__name__
             )
             raise HTTPException(502, "The model endpoint could not be reached.")
 

@@ -771,3 +771,35 @@ def test_email_ai_does_not_leak_provider_errors(monkeypatch):
     assert e.value.status_code == 502
     assert "10.0.0.9" not in str(e.value.detail)
     assert "secret-ish" not in str(e.value.detail)
+
+
+def test_email_ai_does_not_pass_through_upstream_host_in_httpexception(monkeypatch):
+    # The provider layer raises e.g. HTTPException(503, "Upstream <host> marked
+    # unreachable"). Re-raising that would hand a paired phone the server's
+    # internal endpoint host, so it must be replaced too — not just bare
+    # exceptions.
+    import asyncio
+    import types as _types
+
+    fake_resolver = _types.ModuleType("src.endpoint_resolver")
+    fake_resolver.resolve_endpoint = lambda kind, owner=None: ("http://internal:9/v1", "m", {})
+    fake_llm = _types.ModuleType("src.llm_core")
+
+    async def _cooldown(*a, **k):
+        raise HTTPException(503, "Upstream internal:9 marked unreachable (cooldown active)")
+
+    fake_llm.llm_call_async_with_fallback = _cooldown
+    monkeypatch.setitem(sys.modules, "src.endpoint_resolver", fake_resolver)
+    monkeypatch.setitem(sys.modules, "src.llm_core", fake_llm)
+
+    fake_helpers = _types.ModuleType("routes.email_helpers")
+    fake_helpers._assert_owns_account = lambda account_id, owner: None
+    monkeypatch.setitem(sys.modules, "routes.email_helpers", fake_helpers)
+
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_handler("/email/ai-reply", "POST")(
+            _bearer("alice"), account_id="a1", original_body="hi", subject="s",
+            tone="professional"))
+    assert e.value.status_code == 502
+    assert "internal" not in str(e.value.detail)
+    assert "Upstream" not in str(e.value.detail)
