@@ -309,6 +309,32 @@ container. Cookbook **Serve** is a separate workflow for serving downloaded
 models through Odysseus/llama.cpp, so Windows users with an existing Ollama
 install usually only need to add the endpoint in Settings.
 
+**Tool calls not firing on a manually-added Ollama `/v1` endpoint.** By
+design, a local Ollama `/v1` endpoint defaults to the conservative
+text-based (fenced-block) tool-calling path rather than native structured
+tool calls, since some locally-served models mishandle native schemas (see
+#1567). This is correct for most local setups, but if you know your specific
+model reliably supports native tool calling (check `ollama show <model>` for
+`tools` under Capabilities), you can opt that endpoint in explicitly. There
+is currently no UI control for this on manually-added endpoints (see #5192);
+the flag can still be set directly against the existing API, from a browser
+console on an authenticated admin session:
+
+```js
+fetch('/api/model-endpoints/<endpoint-id>', {
+  method: 'PATCH',
+  credentials: 'same-origin',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({supports_tools: true})
+}).then(r => r.json()).then(console.log)
+```
+
+Find `<endpoint-id>` by inspecting the `/api/model-endpoints` response (or
+your browser's network tab while Settings loads the endpoint list). Send
+`supports_tools: false` to disable native structured tool calls and force the
+conservative fenced/text path, or `supports_tools: null` to return the endpoint
+to the Auto heuristic.
+
 **Useful checks.**
 
 ```bash
@@ -470,6 +496,154 @@ Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and th
 
 Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
 `ALLOWED_ORIGINS` lists exact permitted origins for cross-origin browser/API clients; ordinary same-origin reverse-proxy access usually does not need a special CORS entry.
+
+#### Faster over the network: HTTP/2
+
+The frontend is raw ES modules with no bundler, so a page load is a few hundred
+small same-origin requests. Over HTTP/1.1 browsers typically allow only a small
+number of concurrent connections per host (commonly around six), so many of
+those requests are serialized across multiple round trips. On localhost that
+costs almost nothing. Over a LAN, VPN, or remote link it can become a major
+part of load time, especially as latency increases.
+
+HTTP/2 multiplexes them onto one connection and the serialisation disappears.
+Odysseus needs no changes for this — uvicorn keeps speaking HTTP/1.1 on
+loopback and the proxy speaks HTTP/2 to the browser. Mainstream browsers
+negotiate HTTP/2 for normal web pages over TLS; they do not use the cleartext
+h2c mode here, so browser-facing HTTP/2 requires a certificate. The
+`--ssl-certfile` route in *HTTPS + LAN/Tailscale exposure* above gives you
+HTTPS but not HTTP/2 — uvicorn does not speak it.
+
+**1. Install Caddy.** See the [install docs](https://caddyserver.com/docs/install)
+for your platform; on macOS, `brew install caddy`.
+
+**2. Write a `Caddyfile`.** Pick the block that matches how you reach the
+machine. Replace `7000` if Odysseus listens elsewhere — the macOS start script
+uses `7860`.
+
+Public domain, Caddy obtains and renews the certificate itself:
+
+```
+odysseus.example.com {
+	reverse_proxy 127.0.0.1:7000
+}
+```
+
+Tailscale, no public DNS needed — `tailscale cert` issues a browser-trusted
+certificate for a tailnet name and writes `<domain>.crt` and `<domain>.key`:
+
+```bash
+tailscale cert myhost.tailnet-name.ts.net
+```
+
+```
+myhost.tailnet-name.ts.net {
+	tls /path/to/myhost.tailnet-name.ts.net.crt /path/to/myhost.tailnet-name.ts.net.key
+	reverse_proxy 127.0.0.1:7000
+}
+```
+
+LAN with your own certificate — same shape, your own files:
+
+```
+odysseus.lan {
+	tls /path/to/cert.pem /path/to/key.pem
+	reverse_proxy 127.0.0.1:7000
+}
+```
+
+Give `tls` absolute paths: a service starts in a working directory you did not
+choose. If port 443 is already taken, append a port to the site address
+(`odysseus.example.com:8443`) and use it in the URL. That alone does not free
+port 80 — Caddy still binds it for the HTTP-to-HTTPS redirect, and fails to
+start with `listen tcp :80: bind: address already in use` if something else
+holds it. Turn the redirect off with a global block at the top of the file:
+
+```
+{
+	auto_https disable_redirects
+}
+```
+
+**3. Run it in the foreground first:**
+
+```bash
+caddy run --config ./Caddyfile
+```
+
+Once that works, run it as a service:
+
+```bash
+brew services start caddy          # macOS — reads $(brew --prefix)/etc/Caddyfile, not ./Caddyfile
+sudo systemctl enable --now caddy  # Linux, if your package installed the unit
+```
+
+Odysseus's own service is unchanged; the proxy runs alongside it. Under Docker,
+run the proxy as another container, or on the host pointing at the published
+port.
+
+**4. Point Odysseus at the new origin** in `.env`, then restart it:
+
+```bash
+SECURE_COOKIES=true
+# only if you use remote MCP servers with OAuth:
+OAUTH_REDIRECT_BASE_URL=https://odysseus.example.com
+```
+
+Gmail OAuth needs nothing here when the proxy runs on the same host: the
+redirect URI is built from the incoming request, and uvicorn rewrites the
+scheme from `X-Forwarded-Proto` for proxies it trusts — by default only
+`127.0.0.1`. A proxy in a separate container or on another machine is not
+trusted, so pin the URI there:
+
+```bash
+GOOGLE_OAUTH_REDIRECT_URI=https://odysseus.example.com/api/email/oauth/google/callback
+```
+
+(uvicorn's own `FORWARDED_ALLOW_IPS` widens that trust, but it has to be in the
+environment uvicorn starts with — `.env` is read by the app afterwards, too
+late for it to take effect.)
+
+**5. Confirm HTTP/2 is really on:**
+
+```bash
+curl -s -o /dev/null -w '%{http_version}\n' https://odysseus.example.com/
+# 2
+```
+
+The status code is not the thing to check here — a logged-out request redirects
+to the login page, so `curl -I` shows `HTTP/2 302`, and the `HTTP/2` prefix is
+the part that matters. The browser reports the same in the Network panel's
+Protocol column (`h2`); in Chrome and Firefox that column is hidden until you
+enable it by right-clicking the column headers.
+
+Three things bite when moving an existing install behind TLS:
+
+- Set `SECURE_COOKIES=true` **at the same time** you stop serving plain HTTP,
+  not before. The flag is applied to every login regardless of the scheme the
+  request arrived on, so while an HTTP entrypoint is still reachable the
+  browser will reject the `Secure` cookie there and login will appear to loop.
+- `OAUTH_REDIRECT_BASE_URL` defaults to `http://localhost:7000`. Unlike the
+  Gmail redirect URI it cannot be derived from a request — it is registered
+  with each MCP authorization server up front — so set it to the external
+  origin if you use remote MCP servers over OAuth.
+- Odysseus sends `Strict-Transport-Security` once it sees `X-Forwarded-Proto:
+  https`. HSTS applies to the whole hostname and ignores the port, so any other
+  plain-HTTP service on that same hostname becomes unreachable in browsers that
+  have visited Odysseus. Give Odysseus its own hostname, or strip the header at
+  the proxy (`header_down -Strict-Transport-Security` in Caddy).
+
+Server-sent events are not buffered by this configuration, so chat streaming
+arrives token by token; add `flush_interval -1` inside the `reverse_proxy`
+block if you want that pinned explicitly. nginx needs `proxy_buffering off;`
+for the same reason.
+
+Changing the external origin also affects state scoped to it. Service workers
+and their caches are origin-scoped, so moving to a different origin starts with
+a cold load. Cookies follow their own domain/path/security rules rather than
+being port-scoped: changing the hostname normally requires a new login, while
+changing only the scheme or port does not by itself guarantee that existing
+cookies disappear.
 
 Common internal-only ports from the default docs/compose setup:
 

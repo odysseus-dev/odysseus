@@ -3,10 +3,12 @@
 
 import os
 import secrets
+from collections.abc import Mapping
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from starlette.routing import get_route_path
 
 from src.owner_identity import INTERNAL_TOOL_USER, auth_disabled
 
@@ -17,6 +19,30 @@ from src.owner_identity import INTERNAL_TOOL_USER, auth_disabled
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
+
+
+def get_application_route_path(scope: Mapping[str, object]) -> str:
+    """Return the application-relative path used by Starlette routing.
+
+    Uvicorn prefixes ``scope["path"]`` with a configured ASGI ``root_path``;
+    Starlette removes that prefix before matching routes. Middleware policy
+    must use the same path form or a deployment prefix can change which policy
+    applies to an otherwise unchanged application route.
+    """
+    return get_route_path(scope)
+
+
+def with_asgi_root_path(scope: Mapping[str, object], path: str) -> str:
+    """Prefix an application path for a client-facing redirect target."""
+    root_path = scope.get("root_path", "")
+    if not isinstance(root_path, str) or not root_path:
+        return path
+    return f"{root_path.rstrip('/')}{path}"
+
+
+def path_is_route_or_child(path: str, prefix: str) -> bool:
+    """Return whether ``path`` is exactly ``prefix`` or below that route."""
+    return path == prefix or path.startswith(prefix + "/")
 
 
 def is_cors_preflight(method: str, headers) -> bool:

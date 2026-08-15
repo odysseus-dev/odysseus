@@ -50,6 +50,7 @@ async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
     _desc, result = await te.execute_tool_block(
         ToolBlock("edit_file", json.dumps({"path": p, "old_string": "a", "new_string": "b"})),
         owner="bob",
+        security_context=te.NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("exit_code") == 1 and "admin" in result.get("error", "").lower()
     os.unlink(p)

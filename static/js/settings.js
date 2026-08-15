@@ -445,14 +445,7 @@ async function initDefaultChat() {
   var epSel = el('set-defaultEpSelect');
   var modelSel = el('set-defaultModelSelect');
   var msg = el('set-defaultChatMsg');
-  var fbContainer = el('set-defaultFallbacks');
-  var addFbBtn = el('set-defaultAddFallback');
   var _endpoints = [];
-  var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
-
-  function enabledEndpoints() {
-    return _endpoints.filter(function(e) { return e.is_enabled; });
-  }
 
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
@@ -469,64 +462,6 @@ async function initDefaultChat() {
   function refreshEndpointOptions(selectedEndpoint, selectedModel) {
     _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
     refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
-    renderFallbacks();
-  }
-
-  // Render the fallback chain. Each row is endpoint + model + remove.
-  function renderFallbacks() {
-    fbContainer.innerHTML = '';
-    _fallbacks.forEach(function(fb, idx) {
-      var row = document.createElement('div');
-      row.className = 'settings-fallback-row';
-
-      var num = document.createElement('span');
-      num.className = 'settings-fallback-num';
-      num.textContent = (idx + 1) + '.';
-
-      var epS = document.createElement('select');
-      epS.className = 'settings-select';
-      enabledEndpoints().forEach(function(ep) {
-        var o = document.createElement('option');
-        o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
-        epS.appendChild(o);
-      });
-      var first = enabledEndpoints()[0];
-      epS.value = fb.endpoint_id || (first ? first.id : '');
-
-      var mS = document.createElement('select');
-      mS.className = 'settings-select';
-      fillModels(mS, epS.value, fb.model);
-
-      // Keep the model in sync with the values actually shown.
-      fb.endpoint_id = epS.value;
-      fb.model = mS.value;
-
-      epS.addEventListener('change', function() {
-        fb.endpoint_id = epS.value;
-        fillModels(mS, epS.value, '');
-        fb.model = mS.value;
-        saveDefault();
-      });
-      mS.addEventListener('change', function() { fb.model = mS.value; saveDefault(); });
-
-      var rm = document.createElement('button');
-      rm.type = 'button';
-      rm.className = 'settings-fallback-remove';
-      rm.title = 'Remove fallback';
-      rm.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
-      rm.addEventListener('click', function() {
-        _fallbacks.splice(idx, 1);
-        renderFallbacks();
-        saveDefault();
-      });
-
-      row.appendChild(num);
-      row.appendChild(epS);
-      row.appendChild(mS);
-      row.appendChild(rm);
-      fbContainer.appendChild(row);
-    });
   }
 
   try {
@@ -534,12 +469,6 @@ async function initDefaultChat() {
     var settings = await res.json();
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
-    _fallbacks = Array.isArray(settings.default_model_fallbacks)
-      ? settings.default_model_fallbacks.map(function(f) {
-          return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
-        })
-      : [];
-    renderFallbacks();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
@@ -547,26 +476,17 @@ async function initDefaultChat() {
 
   async function saveDefault() {
     try {
-      var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           default_endpoint_id: epSel.value,
-          default_model: modelSel.value,
-          default_model_fallbacks: clean
+          default_model: modelSel.value
         })
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
-
-  if (addFbBtn) addFbBtn.addEventListener('click', function() {
-    var first = enabledEndpoints()[0];
-    _fallbacks.push({ endpoint_id: first ? first.id : '', model: '' });
-    renderFallbacks();
-    saveDefault();
-  });
 
   _registerAiEndpointRefresh(function(endpoints) {
     _endpoints = endpoints;
@@ -2825,7 +2745,7 @@ async function initEmailAccountsSettings() {
 
   el('set-email-open-library-settings')?.addEventListener('click', async () => {
     try {
-      const mod = await import('./emailLibrary.js?v=20260722emailfastindex1');
+      const mod = await import('./emailLibrary.js?v=20260815approvalsave1');
       if (typeof mod.openEmailLibrarySettings === 'function') {
         await mod.openEmailLibrarySettings();
       }
@@ -3031,12 +2951,14 @@ async function initEmailAccountsSettings() {
       const body = {
         name: el('eaf-name').value.trim() || el('eaf-from').value.trim(),
         from_address: el('eaf-from').value.trim(),
+        display_name: el('eaf-display-name').value.trim(),
         imap_host: el('eaf-imap-host').value.trim(),
         imap_port: parseInt(el('eaf-imap-port').value) || 993,
         imap_user: el('eaf-imap-user').value.trim(),
         imap_starttls: el('eaf-imap-starttls').checked,
         smtp_host: el('eaf-smtp-host').value.trim(),
         smtp_port: parseInt(el('eaf-smtp-port').value) || 587,
+        smtp_security: el('eaf-smtp-security').value,
         smtp_user: el('eaf-imap-user').value.trim(),
       };
       if (!body.name) { el('eaf-msg').textContent = 'Enter a Name or Email first'; el('eaf-msg').style.color = 'var(--red)'; return; }
@@ -5788,29 +5710,30 @@ export function close() {
   window.history.replaceState(null, '', clean);
   const success = sp.has('email_oauth_success');
   const errMsg = sp.get('email_oauth_error') || '';
-  // Open settings → integrations after the app has initialised.
-  function _tryOpen() {
-    if (window.settingsModule && typeof window.settingsModule.open === 'function') {
-      window.settingsModule.open('integrations');
-      // Brief toast-style banner.
-      const banner = document.createElement('div');
-      banner.textContent = success
-        ? '✓ Google account connected — email is ready'
-        : `Google OAuth failed: ${errMsg || 'unknown error'}`;
-      Object.assign(banner.style, {
-        position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-        background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
-        color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
-        fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
-      });
-      document.body.appendChild(banner);
-      setTimeout(() => banner.remove(), 4000);
-    } else {
-      setTimeout(_tryOpen, 100);
-    }
+  // Open settings → integrations once the document is ready. This module owns
+  // the open() API, so it does not need to wait for a window-level alias.
+  function _showResult() {
+    open('integrations');
+    // Brief toast-style banner.
+    const banner = document.createElement('div');
+    banner.textContent = success
+      ? 'Google account connected — email is ready'
+      : `Google OAuth failed: ${errMsg || 'unknown error'}`;
+    Object.assign(banner.style, {
+      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+      background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
+      color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
+      fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+    });
+    document.body.appendChild(banner);
+    setTimeout(() => banner.remove(), 4000);
   }
-  _tryOpen();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _showResult, { once: true });
+  } else {
+    _showResult();
+  }
 })();
 
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };

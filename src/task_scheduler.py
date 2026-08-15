@@ -1884,6 +1884,7 @@ class TaskScheduler:
             pass
         full_text = ""
         tool_results = []
+        approval_pause = None
 
         # Honor per-task max_steps (defense against runaway agent loops).
         # Falls back to 20 if not set — the historical default.
@@ -1930,8 +1931,43 @@ class TaskScheduler:
                         tool_summary = data.get("stdout") or data.get("output") or data.get("result") or ""
                         if isinstance(tool_summary, str) and tool_summary.strip():
                             tool_results.append(f"[{data.get('tool', '?')}] {tool_summary[:500]}")
+                        approval = data.get("ask_user")
+                        if (
+                            isinstance(approval, dict)
+                            and approval.get("kind") == "tool_approval"
+                        ):
+                            approval_pause = {
+                                "tool": data.get("tool") or "tool",
+                                "approval_id": approval.get("approval_id"),
+                            }
+                            # Scheduled tasks have no interactive surface that
+                            # can safely resume a one-use grant. Retire the
+                            # record immediately instead of leaving it pending
+                            # and report an explicit manual-action boundary.
+                            try:
+                                from src.tool_approvals import tool_approval_store
+                                tool_approval_store.consume(
+                                    approval_pause["approval_id"],
+                                    decision="deny",
+                                    owner=task.owner,
+                                    session_id=session_id,
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Could not retire scheduled-task approval",
+                                    exc_info=True,
+                                )
+                            break
                 except (json.JSONDecodeError, KeyError):
                     pass
+
+        if approval_pause is not None:
+            return (
+                "Scheduled task paused safely: "
+                f"{approval_pause['tool']} requested an exact action after "
+                "untrusted context. That action was not executed. Run this task "
+                "interactively to inspect and approve the action."
+            )
 
         # Grace summarization — if the model exhausted rounds on tool calls
         # without producing a final text response, do one last LLM call

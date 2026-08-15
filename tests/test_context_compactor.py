@@ -63,6 +63,23 @@ class TestSelfSummaryPrompt:
 
 
 class TestTrimForContext:
+    def test_system_truncation_preserves_internal_route_metadata(self):
+        messages = [
+            {
+                "role": "system",
+                "content": "persona\n\n" + ("agent prompt " * 2000),
+                "_agent_injected": "merged_prompt",
+                "_agent_base_message": {"role": "system", "content": "persona"},
+            },
+            {"role": "user", "content": "latest"},
+        ]
+
+        trimmed = trim_for_context(messages, context_length=1024, reserve_tokens=256)
+
+        system = next(message for message in trimmed if message.get("role") == "system")
+        assert system["_agent_injected"] == "merged_prompt"
+        assert system["_agent_base_message"] == {"role": "system", "content": "persona"}
+
     def test_keeps_current_large_user_message_by_truncating(self):
         huge = "A" * 20000
         messages = [
@@ -192,6 +209,50 @@ class TestMaybeCompactFourthMessage:
         ]}
         result = self._run(messages)
         assert len(result) == 3 and result[2] is True
+
+
+@pytest.mark.asyncio
+async def test_deferred_compaction_persists_only_after_route_commit(monkeypatch):
+    updates = []
+    state = {}
+    messages = [
+        {"role": "system", "content": "system " * 100},
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "two"},
+        {"role": "user", "content": "three"},
+        {"role": "assistant", "content": "four"},
+        {"role": "user", "content": "five"},
+    ]
+
+    monkeypatch.setattr(cc, "get_context_length", lambda *args: 100)
+    monkeypatch.setattr(cc, "resolve_endpoint", lambda *args, **kwargs: (None, None, None))
+
+    async def fake_summary(*args, **kwargs):
+        return "route-specific summary"
+
+    monkeypatch.setattr(cc, "llm_call_async", fake_summary)
+    monkeypatch.setattr(
+        cc,
+        "_update_session_history",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+
+    _compacted, _context, was_compacted = await cc.maybe_compact(
+        object(),
+        "https://candidate.example/v1",
+        "candidate-model",
+        messages,
+        persist=False,
+        compaction_state=state,
+    )
+
+    assert was_compacted is True
+    assert updates == []
+    assert state["summary"] == "route-specific summary"
+    assert cc.apply_compaction_state(object(), state) is True
+    assert len(updates) == 1
+    assert cc.apply_compaction_state(object(), state) is False
+    assert len(updates) == 1
 
 
 class TestResearchPrimerPreserved:

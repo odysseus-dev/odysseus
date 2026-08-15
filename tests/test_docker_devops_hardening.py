@@ -55,6 +55,11 @@ def test_compose_files_forward_every_upload_limit_env_var():
         assert expected <= _compose_env_names(path), path.name
 
 
+def test_compose_files_forward_companion_base_url():
+    for path in COMPOSE_FILES:
+        assert "COMPANION_BASE_URL" in _compose_env_names(path), path.name
+
+
 def test_default_compose_files_do_not_mount_host_docker_socket():
     for path in COMPOSE_FILES:
         text = path.read_text(encoding="utf-8")

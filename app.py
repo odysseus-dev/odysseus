@@ -67,7 +67,13 @@ from core.constants import (
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
+from core.middleware import (
+    SecurityHeadersMiddleware,
+    get_application_route_path,
+    is_cors_preflight,
+    path_is_route_or_child,
+    with_asgi_root_path,
+)
 from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -285,7 +291,7 @@ if AUTH_ENABLED:
     def _is_auth_exempt(path: str) -> bool:
         if path in AUTH_EXEMPT_EXACT:
             return True
-        if any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+        if any(path_is_route_or_child(path, p) for p in AUTH_EXEMPT_PREFIXES):
             return True
         return any(p.match(path) for p in AUTH_EXEMPT_PATTERNS)
 
@@ -356,7 +362,7 @@ if AUTH_ENABLED:
 
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
-            path = request.url.path
+            path = get_application_route_path(request.scope)
             # A genuine CORS preflight (OPTIONS + Access-Control-Request-Method)
             # carries no credentials by design and must reach CORSMiddleware to be
             # answered. AuthMiddleware is the outermost middleware, so gating the
@@ -400,7 +406,10 @@ if AUTH_ENABLED:
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
                 if not path.startswith("/api/"):
-                    return RedirectResponse(url="/login", status_code=302)
+                    return RedirectResponse(
+                        url=with_asgi_root_path(request.scope, "/login"),
+                        status_code=302,
+                    )
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
 
             # --- Bearer token auth (API tokens for external integrations) ---
@@ -462,7 +471,10 @@ if AUTH_ENABLED:
             if not auth_manager.validate_token(token):
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-                return RedirectResponse(url="/login", status_code=302)
+                return RedirectResponse(
+                    url=with_asgi_root_path(request.scope, "/login"),
+                    status_code=302,
+                )
 
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)
@@ -631,13 +643,24 @@ app.include_router(auth_router)
 
 @app.post("/api/activity/heartbeat")
 async def activity_heartbeat():
-    from src.interactive_gate import mark_browser_activity
+    from src.interactive_gate import (
+        mark_browser_activity,
+        maybe_stop_background_tasks_for_heartbeat,
+    )
+
     await mark_browser_activity()
+
     async def _stop_background():
         try:
-            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
+            await maybe_stop_background_tasks_for_heartbeat(
+                task_scheduler.stop_background_tasks_for_foreground
+            )
         except Exception:
-            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
+            logging.getLogger("app.foreground_gate").debug(
+                "heartbeat task stop failed",
+                exc_info=True,
+            )
+
     asyncio.create_task(_stop_background())
     return {"ok": True}
 
@@ -693,7 +716,7 @@ from routes.history.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
 
 # Search
-from routes.search_routes import setup_search_routes
+from routes.search.search_routes import setup_search_routes
 app.include_router(setup_search_routes(config))
 
 # Presets
@@ -740,7 +763,7 @@ app.include_router(setup_stt_routes(stt_service))
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
-from routes.document_routes import setup_document_routes
+from routes.document.document_routes import setup_document_routes
 document_router = setup_document_routes(session_manager, upload_handler)
 app.include_router(document_router)
 
@@ -806,7 +829,7 @@ app.include_router(setup_font_routes())
 # MCP (Model Context Protocol)
 from src.mcp_manager import McpManager
 from src.agent_tools import set_mcp_manager
-from routes.mcp_routes import setup_mcp_routes
+from routes.mcp.mcp_routes import setup_mcp_routes
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
@@ -821,7 +844,7 @@ set_ai_rag_manager(rag_manager, personal_docs_mgr)
 logger.info("AI interaction tools initialized (session, memory, RAG, UI control)")
 
 # Webhooks
-from routes.webhook_routes import setup_webhook_routes
+from routes.webhook.webhook_routes import setup_webhook_routes
 app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
 
 # API Tokens
@@ -853,7 +876,7 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
-from routes.vault_routes import setup_vault_routes
+from routes.vault.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)

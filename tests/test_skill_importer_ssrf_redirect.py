@@ -6,10 +6,12 @@ path in ``services/search/content.py:_get_public_url``. Previously it used
 ``httpx``'s ``follow_redirects=True`` with the lenient guard on the *initial*
 URL only, so a ``3xx`` to an internal/metadata address was still connected to.
 
-These tests are hermetic: every host is an IP literal, so ``check_outbound_url``
-resolves them locally (``getaddrinfo`` on a numeric address does no DNS) and no
-network access is required. The HTTP layer is faked so no real request is made.
+These tests are hermetic: public and internal guard cases use IP literals, while
+the exact ``skills.sh`` case injects its validated address snapshot. The HTTP
+layer is faked, so no real DNS lookup or request is made.
 """
+import ipaddress
+
 import pytest
 
 from services.memory import skill_importer
@@ -108,10 +110,20 @@ def test_fetch_bytes_blocks_redirect_to_internal(monkeypatch, internal):
 
 def test_skills_sh_entry_blocks_redirect_to_metadata(monkeypatch):
     # The skills.sh unwrap path (user-supplied host) must also revalidate hops.
-    raw = "http://1.1.1.1/skills.sh"  # contains "skills.sh", not "github.com"
+    raw = "https://skills.sh/example/skill"
+    checked = []
+
+    def _check_hop(url):
+        checked.append(url)
+        if url == raw:
+            return [ipaddress.ip_address("1.1.1.1")]
+        raise SkillImportError("outbound URL blocked: private target")
+
+    monkeypatch.setattr(skill_importer, "_resolve_and_check_url", _check_hop)
     _install_fake_client(monkeypatch, redirect_from=raw, redirect_to=METADATA)
     with pytest.raises(SkillImportError, match="blocked"):
         parse_skill_source(raw)
+    assert checked == [raw, METADATA]
 
 
 # --- Positive: a legitimate public->public redirect is still followed --------
