@@ -99,6 +99,44 @@ def test_recent_reads_latest(iso):
     assert "second" in rec[0]["change"]
 
 
+def test_profile_consolidates_near_duplicates(iso):
+    """The ACTIVE profile merges same-guidance deltas — it shows the current
+    HOW, not every historical delta (token-efficient, nothing lost)."""
+    gd.apply(json.dumps(_delta(
+        "when asked about reliability, lead with verified tooling and test coverage", 0.85)))
+    gd.apply(json.dumps(_delta(
+        "when the user asks about reliability or trust, mention the verified tools", 0.8)))
+    prof = gd.growth_profile()
+    assert len(prof) == 1, "near-duplicate deltas must merge in the profile"
+
+
+def test_profile_keeps_distinct_guidance(iso):
+    gd.apply(json.dumps(_delta("when asked about reliability lead with verified tooling", 0.85)))
+    gd.apply(json.dumps(_delta("when reporting research prioritise recency over citations", 0.8)))
+    prof = gd.growth_profile()
+    assert len(prof) == 2, "distinct guidance stays separate"
+
+
+def test_profile_token_capped(iso):
+    for i in range(10):
+        gd.apply(json.dumps(_delta(f"behaviour delta number {i} with a longer change string", 0.9)))
+    prof = gd.growth_profile(max_tokens=60)
+    used = sum(max(1, len(d["change"]) // 4) for d in prof)
+    assert used <= 60, "profile must respect the token budget"
+
+
+def test_profile_session_independent(iso):
+    """The profile is not a per-session read-back: it reflects the current
+    guidance regardless of session boundaries (no 'last seen' pointer)."""
+    gd.apply(json.dumps(_delta("lead with verified tooling when asked about reliability", 0.9)))
+    gd.apply(json.dumps(_delta("prioritise recency and cite sources when reporting research", 0.9)))
+    # Calling profile twice must not consume or alter it (no marking-seen).
+    p1 = gd.growth_profile()
+    p2 = gd.growth_profile()
+    assert len(p1) == len(p2) == 2
+    assert [d["change"] for d in p1] == [d["change"] for d in p2]
+
+
 def test_invalid_delta_json_errors(iso):
     res = gd.apply("not json at all {{{")
     assert res["applied"] == []

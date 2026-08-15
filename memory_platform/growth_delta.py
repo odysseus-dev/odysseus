@@ -103,7 +103,7 @@ def _load_deltas():
         with open(DELTAS_FILE) as f:
             return json.load(f)
     except Exception:
-        return {"applied": [], "pending": []}
+        return {"applied": [], "pending": [], "last_read_back": None}
 
 
 def _save_deltas(d):
@@ -112,6 +112,89 @@ def _save_deltas(d):
     with open(tmp, "w") as f:
         json.dump(d, f, indent=2)
     os.replace(tmp, DELTAS_FILE)
+
+
+# ACTIVE GROWTH PROFILE (token-efficient, session-independent, nothing lost):
+# The full delta history ALWAYS persists in the store (source of truth). The
+# profile is a maintained VIEW of the persona's CURRENT operating guidance —
+# consolidated by target (delivery/operating/persona merge near-duplicates),
+# so it shows the current HOW, not every historical delta. It is NOT
+# session-anchored: sessions can be endless and it doesn't matter. A fixed
+# token budget keeps the per-turn cost stable forever; applying a delta
+# updates the profile on the same write (active, not per-session passive).
+
+PROFILE_BUDGET_TOKENS = 180   # fixed per-turn cap (like the always-on digest)
+PROFILE_ENTRY_CHARS = 120     # one-line compaction of each profile entry
+_NEAR_DUP_OVERLAP = 0.25   # same-subject deltas merge (measured: same-guidance
+                           # pairs ~0.30, distinct ~0.00 — 0.25 splits them)
+
+# Topic display order (delivery first — the HOW is the most behaviourally
+# relevant axis; the profile leads with it).
+_PROFILE_ORDER = {"delivery": 0, "operating": 1, "persona": 2}
+
+
+def _profile_key(delta):
+    """Distinctive words of a delta for near-duplicate consolidation."""
+    return {w.strip(".,;:!?()[]{}\"'").lower() for w in
+            (delta.get("change") or "").split() if len(w) > 4}
+
+
+def _near_dup(a, b):
+    """Are two deltas the same guidance (shared distinctive words)?"""
+    ka, kb = _profile_key(a), _profile_key(b)
+    if not ka or not kb:
+        return False
+    return len(ka & kb) / max(len(ka), len(kb)) >= _NEAR_DUP_OVERLAP
+
+
+def _apply_profile(delta):
+    """Merge a new delta into the profile: near-duplicates consolidate (keep
+    the most recent), distinct guidance appends. Runs on every apply — the
+    profile stays active, not per-session."""
+    state = _load_deltas()
+    profile = state.get("profile", [])
+    for i, existing in enumerate(profile):
+        if _near_dup(existing, delta):
+            profile[i] = delta  # same guidance, newer wins
+            state["profile"] = profile
+            _save_deltas(state)
+            return "merged"
+    profile.append(delta)
+    state["profile"] = profile
+    _save_deltas(state)
+    return "added"
+
+
+def growth_profile(max_tokens=PROFILE_BUDGET_TOKENS):
+    """The active growth profile: the persona's CURRENT behavioural guidance,
+    consolidated by target, capped at a fixed token budget. Session-independent
+    and token-stable — the per-turn cost never grows with session length."""
+    state = _load_deltas()
+    profile = state.get("profile") or state.get("applied", [])[-5:]
+    if not profile:
+        return []
+    # Group by target; within a target keep the most recent entries; order
+    # targets by behavioural importance (delivery first).
+    by_target = {}
+    for d in profile:
+        t = d.get("target") or "delivery"
+        by_target.setdefault(t, []).append(d)
+    ordered = []
+    for t in sorted(by_target, key=lambda t: _PROFILE_ORDER.get(t, 9)):
+        for d in by_target[t][-2:]:  # newest per target (profile stays tight)
+            ordered.append(d)
+    out = []
+    used = 0
+    for d in ordered:
+        change = (d.get("change") or "").strip().replace("\n", " ")
+        if len(change) > PROFILE_ENTRY_CHARS:
+            change = change[: PROFILE_ENTRY_CHARS - 1].rstrip() + "…"
+        tok = max(1, len(change) // 4)
+        if used + tok > max_tokens:
+            break
+        out.append({"change": change, "target": d.get("target", "delivery")})
+        used += tok
+    return out
 
 
 def _write_store(text, topic):
@@ -128,8 +211,10 @@ def _write_store(text, topic):
 
 
 def _apply_one(change, evidence, conf, target):
-    """Apply a single behavioural delta: journal it, write it to the store.
-    The single high-confidence gate is enforced by the caller."""
+    """Apply a single behavioural delta: journal it, write it to the store,
+    and merge it into the ACTIVE growth profile. The single high-confidence
+    gate is enforced by the caller. The profile updates on the same write —
+    growth is active, not a per-session read-back."""
     rec = {"change": change, "evidence": (evidence or "")[:200],
            "confidence": conf, "target": target,
            "applied_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
@@ -137,6 +222,10 @@ def _apply_one(change, evidence, conf, target):
     state["applied"].append(rec)
     _save_deltas(state)
     _write_store(change, target)
+    try:
+        _apply_profile(rec)  # active profile: near-dups merge, distinct adds
+    except Exception:
+        pass
     return rec
 
 
@@ -194,10 +283,11 @@ def recent(limit=5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["reflect", "apply", "list", "recent"])
+    ap.add_argument("cmd", choices=["reflect", "apply", "list", "recent", "profile"])
     ap.add_argument("--material", default="")
     ap.add_argument("--delta", default="", help="delta JSON for `apply`")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     if args.cmd == "reflect":
@@ -233,6 +323,13 @@ def main():
     elif args.cmd == "recent":
         for d in recent():
             print(f"- {d['change']}  (from: {d['evidence'][:80]})")
+    elif args.cmd == "profile":
+        prof = growth_profile()
+        if args.json:
+            print(json.dumps(prof, indent=2))
+            return
+        for d in prof:
+            print(f"  [{d['target']}] {d['change']}")
 
 
 if __name__ == "__main__":

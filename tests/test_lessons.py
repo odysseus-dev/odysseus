@@ -58,6 +58,7 @@ def env(tmp_path, monkeypatch):
 def _lesson():
     return dict(
         trigger="when the persona is asked about a stored rule",
+        pivot="the turn where I cited a rule without verifying it existed",
         mistake="claimed a user rule existed when it was a test fixture",
         analysis="the rule was never verified against the store before being cited",
         behaviour="verify a rule exists in the store before citing it",
@@ -88,10 +89,11 @@ def test_lesson_missing_fields_refused(env):
     always pass all four flags, so empty strings are the real-world shape; the
     guard is what refuses them.)"""
     for kwargs in [
-        {"trigger": "t", "mistake": "m", "analysis": "a", "behaviour": ""},  # no behaviour
-        {"trigger": "t", "mistake": "m", "analysis": "", "behaviour": "b"},  # no analysis
-        {"trigger": "", "mistake": "m", "analysis": "a", "behaviour": "b"},  # no trigger
-        {"trigger": "t", "mistake": "", "analysis": "a", "behaviour": "b"},  # no mistake
+        {"trigger": "t", "pivot": "p", "mistake": "m", "analysis": "a", "behaviour": ""},  # no behaviour
+        {"trigger": "t", "pivot": "p", "mistake": "m", "analysis": "", "behaviour": "b"},  # no analysis
+        {"trigger": "", "pivot": "p", "mistake": "m", "analysis": "a", "behaviour": "b"},  # no trigger
+        {"trigger": "t", "pivot": "p", "mistake": "", "analysis": "a", "behaviour": "b"},  # no mistake
+        {"trigger": "t", "mistake": "m", "analysis": "a", "behaviour": "b"},               # no pivot
     ]:
         res = lessons.record(**kwargs)
         assert res["recorded"] is False, f"expected refusal for {kwargs}"
@@ -147,7 +149,7 @@ def test_cli_record_roundtrip(env):
         [sys.executable, os.path.join(os.path.dirname(lessons.__file__), "lessons.py"),
          "record", "cli trigger lesson", "--mistake", "cli mistake",
          "--analysis", "cli analysis", "--behaviour", "cli behaviour",
-         "--json"],
+         "--pivot", "the decisive cli turn", "--json"],
         capture_output=True, text=True, timeout=60, env=os.environ.copy())
     out = json.loads(r.stdout or "{}")
     assert out.get("recorded") is True, r.stdout + r.stderr

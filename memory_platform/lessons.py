@@ -25,7 +25,7 @@ Storage: wing='lessons' chunks + growth_delta journal (single high-confidence
 gate). Retrieval: hybrid recall, wing-filtered.
 
 Usage:
-  lessons.py record "<trigger>" --mistake ".." --analysis ".." --behaviour ".." [--evidence TEXT]
+  lessons.py record "<trigger>" --mistake ".." --analysis ".." --behaviour ".." [--pivot ".."] [--evidence TEXT]
   lessons.py recall "<context>" [--limit N] [--json]
   lessons.py recent [--limit N]
 """
@@ -50,19 +50,31 @@ def _db_rw():
     return ms.connect()
 
 
-def record(trigger, mistake, analysis, behaviour, evidence="", source="session"):
+def record(trigger, mistake, analysis, behaviour, evidence="", source="session",
+           pivot=""):
     """Record a teachable moment. Stores it AND derives a behavioural delta
     so the mistake changes how the persona behaves, not just what it knows.
     Returns both outcomes (a mistake recorded but not behaviourally applied
-    would be a ledger, not a lesson)."""
+    would be a ledger, not a lesson).
+
+    PIVOT (PivoARL, 2026): the single decisive turn that went wrong. The
+    finding is that retrying the pivotal turn — not the whole task — is what
+    makes reflection pay. A lesson without its pivot is a general regret; a
+    lesson with its pivot is a surgical correction. Required for a lesson to
+    be behaviourally applied: the delta encodes the pivot as the actionable
+    change."""
     if not (trigger and mistake and analysis and behaviour):
         return {"recorded": False,
                 "error": "lesson needs trigger, mistake, analysis, behaviour"}
+    if not pivot:
+        return {"recorded": False,
+                "error": "lesson needs a PIVOT — the single decisive turn that went wrong"}
     error = None
     stored = False
     try:
         import memory_store as ms
         text = (f"[trigger] {trigger}\n"
+                f"[pivot] {pivot}\n"
                 f"[mistake] {mistake}\n"
                 f"[analysis] {analysis}\n"
                 f"[behaviour] {behaviour}\n"
@@ -131,6 +143,8 @@ def main():
     ap.add_argument("--mistake", default="")
     ap.add_argument("--analysis", default="")
     ap.add_argument("--behaviour", default="")
+    ap.add_argument("--pivot", default="",
+                    help="the single decisive turn that went wrong (required)")
     ap.add_argument("--evidence", default="")
     ap.add_argument("--limit", type=int, default=5)
     ap.add_argument("--json", action="store_true")
@@ -139,7 +153,7 @@ def main():
     if args.cmd == "record":
         trigger = " ".join(args.arg)
         res = record(trigger, args.mistake, args.analysis, args.behaviour,
-                     args.evidence)
+                     args.evidence, pivot=args.pivot)
         print(json.dumps(res, indent=2) if args.json else
               (f"recorded: {res['trigger']} (stored={res['recorded']}, "
                f"behaviour_applied={res['behaviour_applied']})"
