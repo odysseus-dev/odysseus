@@ -342,6 +342,17 @@ def add_entry(db, text, importance=0.5, topic="", entities=None,
     text = (text or "").strip()
     if not text or len(text) < 8:
         return False
+    # AUTO-TAXONOMY: if no topic was given, classify the text into the store's
+    # own wing/subcategory automatically (taxonomy.py, local embedder). The
+    # user never names a category; sorting is derived from content. Best-effort
+    # and cheap (cached embed); on any failure we fall through to an empty
+    # topic rather than block the write.
+    if not topic:
+        try:
+            import taxonomy
+            topic = taxonomy.classify(text).get("wing") or ""
+        except Exception:
+            topic = ""
     vec = _embed([text]).get(text)
     ts = now_iso()
     conf = 0.7 if confidence is None else float(confidence)
