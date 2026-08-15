@@ -8,6 +8,7 @@ open/close wiring.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +22,39 @@ _COORDINATOR_HELPER = (
     _REPO / "tests" / "helpers" / "test_settings_shell_coordinator.mjs"
 )
 _HAS_NODE = shutil.which("node") is not None
+_STYLE = _REPO / "static" / "style.css"
+
+
+def test_settings_desktop_width_targets_settings_not_cookbook():
+    source = _STYLE.read_text(encoding="utf-8")
+
+    settings_rule = re.search(
+        r"(?ms)^\.settings-modal-content\s*\{[^}]*"
+        r"width:\s*min\(1040px,\s*94vw\);[^}]*\}",
+        source,
+    )
+    cookbook_rule = re.search(
+        r"(?ms)^\.cookbook-edit-modal\s*\{[^}]*"
+        r"width:\s*min\(720px,\s*92vw\);[^}]*\}",
+        source,
+    )
+    cookbook_wrong_width = re.search(
+        r"(?ms)^\.cookbook-edit-modal\s*\{[^}]*"
+        r"width:\s*min\(1040px,\s*94vw\);[^}]*\}",
+        source,
+    )
+
+    assert settings_rule is not None, (
+        "The standalone .settings-modal-content rule must carry the "
+        "1040px/94vw desktop width"
+    )
+    assert cookbook_rule is not None, (
+        "The standalone .cookbook-edit-modal rule must retain its "
+        "720px/92vw width"
+    )
+    assert cookbook_wrong_width is None, (
+        "The Settings desktop width must not leak into Cookbook"
+    )
 
 
 def _run_node(*args: str) -> subprocess.CompletedProcess[str]:
@@ -75,6 +109,8 @@ def test_settings_shell_real_esm_coordinator():
     assert result == {
         "realEsmGraph": True,
         "initialization": True,
+        "finderBinding": True,
+        "sidebarBinding": True,
         "navigationCallback": True,
         "directOpen": True,
         "directClose": True,

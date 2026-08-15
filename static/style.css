@@ -21464,7 +21464,7 @@ body.gallery-selecting .gallery-dl-btn,
   display: flex; align-items: center; justify-content: center;
 }
 .cookbook-edit-modal {
-  width: min(1040px, 94vw);
+  width: min(720px, 92vw);
   background: var(--panel, var(--bg));
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -23600,7 +23600,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* ===== Settings Modal Layout ===== */
 .settings-modal-content {
-  width: min(720px, 92vw);
+  width: min(1040px, 94vw);
   max-height: 85vh;
   padding: 0;
   container-type: inline-size;
@@ -41394,4 +41394,3 @@ body.settings-sidebar-resize-active {
     display: none;
   }
 }
-

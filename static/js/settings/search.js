@@ -125,6 +125,10 @@ export function bindSettingsSearch(modalEl, options = {}) {
 
   input.addEventListener('input', render);
 
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) render();
+  });
+
   input.addEventListener('keydown', event => {
     const buttons = getResultButtons(resultsEl);
 

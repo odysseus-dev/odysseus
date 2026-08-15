@@ -15,6 +15,9 @@ const SETTINGS_JS = path.join(JS, 'settings.js');
 const REAL_MODULES = new Set([
   SETTINGS_JS,
   path.join(JS, 'settings/dom.js'),
+  path.join(JS, 'settings/registry.js'),
+  path.join(JS, 'settings/search.js'),
+  path.join(JS, 'settings/sidebar.js'),
   path.join(JS, 'settings/navigation.js'),
   path.join(JS, 'settings/lifecycle.js'),
 ]);
@@ -501,18 +504,96 @@ function buildFixture(document) {
   content.className = 'settings-modal-content modal-content';
   modal.appendChild(content);
 
-  const nav = document.createElement('nav');
-  const panels = document.createElement('div');
+  const sidebar = document.createElement('div');
+  sidebar.className = 'settings-sidebar';
+  content.appendChild(sidebar);
 
-  content.append(nav, panels);
+  const sidebarToggle = document.createElement('button');
+  sidebarToggle.id = 'settings-sidebar-toggle';
+  sidebar.appendChild(sidebarToggle);
+
+  const sidebarHandle = document.createElement('div');
+  sidebarHandle.id = 'settings-sidebar-resize-handle';
+  sidebar.appendChild(sidebarHandle);
+
+  const sidebarContent = document.createElement('div');
+  sidebarContent.className = 'settings-sidebar-content';
+  sidebar.appendChild(sidebarContent);
+
+  const finder = document.createElement('div');
+  finder.className = 'settings-nav-search-wrap';
+  sidebarContent.appendChild(finder);
+
+  const searchInput = document.createElement('input');
+  searchInput.id = 'settings-nav-search';
+  finder.appendChild(searchInput);
+
+  const searchResults = document.createElement('div');
+  searchResults.id = 'settings-nav-search-results';
+  searchResults.className = 'settings-nav-search-results';
+  searchResults.classList.add('hidden');
+  finder.appendChild(searchResults);
+
+  const panels = document.createElement('div');
+  panels.className = 'settings-panels';
+  content.appendChild(panels);
+
+  const panelIds = [
+    'services',
+    'added-models',
+    'ai',
+    'search',
+    'integrations',
+    'email',
+    'reminders',
+    'appearance',
+    'shortcuts',
+    'account',
+    'tools',
+    'users',
+    'system',
+  ];
+
+  const settingsPanels = {};
+
+  panelIds.forEach((name, index) => {
+    const button = document.createElement('button');
+    button.setAttribute('data-settings-tab', name);
+
+    if (index === 0) {
+      button.classList.add('active');
+    }
+
+    sidebarContent.appendChild(button);
+
+    const panel = document.createElement('section');
+    panel.setAttribute('data-settings-panel', name);
+
+    if (index !== 0) {
+      panel.classList.add('hidden');
+    }
+
+    panels.appendChild(panel);
+
+    settingsPanels[name] = {
+      button,
+      panel,
+    };
+  });
 
   return {
     modal,
     content,
-    services: makeTab(document, nav, panels, 'services', true),
-    appearance: makeTab(document, nav, panels, 'appearance'),
-    ai: makeTab(document, nav, panels, 'ai'),
-    system: makeTab(document, nav, panels, 'system'),
+    sidebar,
+    sidebarToggle,
+    sidebarHandle,
+    searchInput,
+    searchResults,
+    services: settingsPanels.services,
+    appearance: settingsPanels.appearance,
+    ai: settingsPanels.ai,
+    system: settingsPanels.system,
+    settingsPanels,
   };
 }
 
@@ -905,6 +986,43 @@ assert(
 );
 
 
+// #6040 coordinator integration: initAll() must bind the real finder and
+// sidebar controllers, not merely make their modules link successfully.
+assert(
+  (fixture.searchInput._listeners.get('input') || []).length > 0,
+  'initAll() did not bind the Settings finder',
+);
+
+assert(
+  (fixture.sidebarToggle._listeners.get('click') || []).length > 0
+    && (fixture.sidebarHandle._listeners.get('pointerdown') || []).length > 0,
+  'initAll() did not bind the Settings sidebar controls',
+);
+
+assert(
+  fixture.sidebar.style.values['--settings-sidebar-width'] === '220px',
+  'first coordinator initialization did not apply the 220px sidebar default',
+);
+
+
+// Exercise settings.js -> bindSettingsSearch() -> real registry.js.
+fixture.searchInput.value = 'theme';
+fixture.searchInput.dispatchEvent({
+  type: 'input',
+  preventDefault() {},
+  stopPropagation() {},
+});
+
+const coordinatorSearchResult = fixture.searchResults.querySelector(
+  '[data-settings-search-result]',
+);
+
+assert(
+  coordinatorSearchResult?.dataset?.settingsSearchResult === 'appearance',
+  'coordinator-bound finder did not resolve "theme" to Appearance',
+);
+
+
 // Navigation must travel through bindSettingsNavigation() installed by
 // initAll(), then invoke settings.js's coordinator callback.
 fixture.appearance.button.click();
@@ -967,6 +1085,8 @@ await new Promise(resolve => setImmediate(resolve));
 console.log(JSON.stringify({
   realEsmGraph: true,
   initialization: true,
+  finderBinding: true,
+  sidebarBinding: true,
   navigationCallback: true,
   directOpen: true,
   directClose: true,

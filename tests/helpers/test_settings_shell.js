@@ -85,7 +85,8 @@ class Element {
     const width = Number.parseFloat(
       this.style.values['--settings-sidebar-width']
         || this.style.width
-        || (this.classList.contains('settings-modal-content') ? '1040' : '220'),
+        // This is only a desktop-mode fixture (>620px), not a CSS assertion.
+        || (this.classList.contains('settings-modal-content') ? '800' : '220'),
     );
     return { width, height: 600, left: 0, right: width, top: 0, bottom: 600 };
   }
@@ -476,6 +477,35 @@ function moduleSource(relativePath) {
       && fixture.searchResults.querySelector('[data-settings-search-result]').dataset.settingsSearchResult === 'appearance',
   );
 
+  const finderOutsideTarget = document.createElement('div');
+  fixture.content.appendChild(finderOutsideTarget);
+
+  fixture.modal.dispatchEvent({
+    type: 'mousedown',
+    target: finderOutsideTarget,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'Settings finder click-away hides results while retaining the query',
+    fixture.searchInput.value === 'theme'
+      && fixture.searchResults.classList.contains('hidden'),
+  );
+
+  fixture.searchInput.dispatchEvent({
+    type: 'focus',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'Settings finder refocus restores results for an unchanged retained query',
+    fixture.searchInput.value === 'theme'
+      && !fixture.searchResults.classList.contains('hidden')
+      && fixture.searchResults.querySelectorAll('[data-settings-search-result]').length === 1,
+  );
+
   fixture.searchInput.dispatchEvent({
     type: 'keydown',
     key: 'Enter',
@@ -529,6 +559,50 @@ function moduleSource(relativePath) {
     fixture.sidebar.style.values['--settings-sidebar-width'] === '280px',
   );
 
+  const widthStorageKey = 'odysseus-settings-sidebar-width';
+
+  storage.clear();
+  const firstRunSidebar = buildFixture(document);
+  context.bindSettingsSidebar(firstRunSidebar.modal);
+  check(
+    'Settings sidebar first bind uses the declared 220px default when storage is empty',
+    firstRunSidebar.sidebar.style.values['--settings-sidebar-width'] === '220px',
+  );
+
+  storage.clear();
+  storage.set(widthStorageKey, '276');
+  const storedSidebar = buildFixture(document);
+  context.bindSettingsSidebar(storedSidebar.modal);
+  check(
+    'Settings sidebar first bind restores a valid stored width',
+    storedSidebar.sidebar.style.values['--settings-sidebar-width'] === '276px',
+  );
+
+  storage.clear();
+  storage.set(widthStorageKey, 'not-a-number');
+  const malformedSidebar = buildFixture(document);
+  context.bindSettingsSidebar(malformedSidebar.modal);
+  check(
+    'Settings sidebar first bind falls back to default for malformed storage',
+    malformedSidebar.sidebar.style.values['--settings-sidebar-width'] === '220px',
+  );
+
+  storage.clear();
+  storage.set(widthStorageKey, '10');
+  const minimumSidebar = buildFixture(document);
+  context.bindSettingsSidebar(minimumSidebar.modal);
+
+  storage.clear();
+  storage.set(widthStorageKey, '999');
+  const maximumSidebar = buildFixture(document);
+  context.bindSettingsSidebar(maximumSidebar.modal);
+
+  check(
+    'Settings sidebar first bind clamps stored widths to declared bounds',
+    minimumSidebar.sidebar.style.values['--settings-sidebar-width'] === '150px'
+      && maximumSidebar.sidebar.style.values['--settings-sidebar-width'] === '340px',
+  );
+
   context.setSettingsSidebarCollapsed(fixture.modal, true);
   check(
     'Settings sidebar collapse leaves the compact navigation rail state active',
@@ -541,6 +615,44 @@ function moduleSource(relativePath) {
     'Settings sidebar expansion restores the requested expanded width',
     !fixture.sidebar.classList.contains('settings-sidebar-collapsed')
       && fixture.sidebar.style.values['--settings-sidebar-width'] === '260px',
+  );
+
+  // Keyboard behavior must be exercised on a fixture that went through the
+  // real binding path; direct controller calls above intentionally do not bind
+  // event listeners.
+  storage.clear();
+  const keyboardSidebar = buildFixture(document);
+  context.bindSettingsSidebar(keyboardSidebar.modal);
+
+  context.setSettingsSidebarWidth(
+    keyboardSidebar.modal,
+    150,
+    { persist: false },
+  );
+
+  keyboardSidebar.sidebarHandle.dispatchEvent({
+    type: 'keydown',
+    key: 'ArrowLeft',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  check(
+    'ArrowLeft at the sidebar minimum collapses the rail instead of getting stuck at 150px',
+    keyboardSidebar.sidebar.classList.contains('settings-sidebar-collapsed'),
+  );
+
+  context.setSettingsSidebarCollapsed(
+    keyboardSidebar.modal,
+    false,
+    { width: 220, persist: false },
+  );
+
+  check(
+    'resizable Settings separator exposes its current ARIA range and value',
+    keyboardSidebar.sidebarHandle.getAttribute('aria-valuemin') === '150'
+      && keyboardSidebar.sidebarHandle.getAttribute('aria-valuemax') === '340'
+      && keyboardSidebar.sidebarHandle.getAttribute('aria-valuenow') === '220',
   );
 
   check('byId resolves elements through the production DOM helper', context.byId('settings-modal') === fixture.modal);
