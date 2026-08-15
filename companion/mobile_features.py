@@ -911,6 +911,25 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
     # is still asserted before any per-owner endpoint/key is resolved, so a caller
     # can't borrow another owner's model endpoint to run these.
 
+    def _assert_account_owned(account_id, owner):
+        """Ownership gate for the email AI actions, with a clean failure.
+
+        routes.email_helpers._assert_owns_account raises from inside an
+        `except Exception` block, so whatever it surfaces is derived from a
+        caught error. Re-raise a fresh exception carrying only the status and a
+        fixed message, so nothing about the failure can travel to the phone.
+        """
+        from routes.email_helpers import _assert_owns_account
+
+        try:
+            _assert_owns_account(account_id, owner)
+        except HTTPException as exc:
+            status = 404 if exc.status_code == 404 else 503
+            raise HTTPException(
+                status,
+                "Account not found" if status == 404 else "Account check failed",
+            ) from None
+
     async def _companion_llm(owner, system, user, max_tokens):
         import logging as _logging
 
@@ -957,12 +976,10 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
         endpoint. Account ownership is asserted first. Companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to summarize email.")
-        from routes.email_helpers import _assert_owns_account
-
         owner = token_owner(request)
         if not owner:
             raise HTTPException(403, "Could not resolve an owner for this token.")
-        _assert_owns_account(account_id, owner)
+        _assert_account_owned(account_id, owner)
         if not (body or "").strip():
             raise HTTPException(400, "Nothing to summarize.")
         summary = await _companion_llm(
@@ -986,12 +1003,10 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
         model endpoint. Account ownership is asserted first. Companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to draft replies.")
-        from routes.email_helpers import _assert_owns_account
-
         owner = token_owner(request)
         if not owner:
             raise HTTPException(403, "Could not resolve an owner for this token.")
-        _assert_owns_account(account_id, owner)
+        _assert_account_owned(account_id, owner)
         if not (original_body or "").strip():
             raise HTTPException(400, "No email body to reply to.")
         safe_tone = (tone or "professional").strip()[:40]
@@ -1086,16 +1101,23 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
         from fastapi.responses import FileResponse
         from src.constants import UPLOAD_DIR
 
-        path = os.path.join(UPLOAD_DIR, file_id)
-        if not os.path.exists(path):
-            for root, _dirs, names in os.walk(UPLOAD_DIR):
-                if file_id in names:
-                    path = os.path.join(root, file_id)
+        # Locate the file by matching the requested id against the directory
+        # listing, and build the path from the NAME THE LISTING GAVE US. The
+        # caller's string is only ever compared, so nothing caller-controlled
+        # reaches a filesystem call — a stronger guarantee than joining the raw
+        # id and validating afterwards, which depends on every future edit
+        # keeping the check in the right order.
+        path = None
+        for root, _dirs, names in os.walk(UPLOAD_DIR):
+            for name in names:
+                if name == file_id:
+                    path = os.path.join(root, name)
                     break
-            else:
-                raise HTTPException(404, "File not found")
-        if not upload_handler.inside_base_dir(path):
+            if path is not None:
+                break
+        if path is None or not upload_handler.inside_base_dir(path):
             raise HTTPException(404, "File not found")
+        stored_name = os.path.basename(path)
 
         # Owner check from uploads.json, scoped to the REAL token owner. A file
         # with no metadata entry has an UNPROVABLE owner — deny it (404) rather
@@ -1123,7 +1145,7 @@ def setup_mobile_companion_routes(upload_handler=None, task_scheduler=None) -> A
 
                 thumb_dir = os.path.join(UPLOAD_DIR, ".thumbs")
                 os.makedirs(thumb_dir, exist_ok=True)
-                thumb_path = os.path.join(thumb_dir, file_id + ".jpg")
+                thumb_path = os.path.join(thumb_dir, stored_name + ".jpg")
                 if (not os.path.exists(thumb_path)
                         or os.path.getmtime(thumb_path) < os.path.getmtime(path)):
                     im = Image.open(path)

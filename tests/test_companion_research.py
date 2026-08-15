@@ -227,17 +227,25 @@ def test_research_owns_refuses_traversal_ids(evil):
     assert research_owns(_FakeResearch(), evil, "alice") is False
 
 
-def test_research_owns_uses_the_canonical_path_helper(monkeypatch):
-    # The id must be resolved through research_handler's helper (single source
-    # of truth for shape + containment), not joined locally.
+def test_research_owns_never_lets_an_unknown_id_reach_the_filesystem(monkeypatch):
+    # Stronger than "validate then use": an id the server doesn't already know
+    # is rejected before any path helper is invoked at all.
     import src.research_handler as rh
 
     seen = []
-
-    def _spy(session_id):
-        seen.append(session_id)
-        return None
-
-    monkeypatch.setattr(rh, "_research_json_path", _spy)
+    monkeypatch.setattr(rh, "_research_json_path", lambda sid: seen.append(sid))
     assert research_owns(_FakeResearch(), "rp-not-in-memory", "alice") is False
-    assert seen == ["rp-not-in-memory"]
+    assert seen == []
+
+
+def test_research_owns_passes_the_servers_own_id_not_the_callers(monkeypatch):
+    # For a known in-flight run the value used downstream is the key read back
+    # out of the handler's own table, never the caller's string object.
+    h = _FakeResearch()
+    h._active_tasks = {"rp-1": {"owner": "alice"}}
+    caller_copy = "".join(["rp", "-", "1"])          # equal, but a distinct object
+
+    from companion.routes import canonical_research_sid
+    resolved = canonical_research_sid(h, caller_copy)
+    assert resolved == "rp-1"
+    assert resolved is next(iter(h._active_tasks))   # the server's own object

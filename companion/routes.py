@@ -219,6 +219,35 @@ class CompanionResearchStart(BaseModel):
     search_provider: str | None = None
 
 
+def canonical_research_sid(research_handler, session_id: str) -> str | None:
+    """The SERVER's own copy of a research session id, or None if unknown.
+
+    The caller's string is only ever *compared*; the value returned is read back
+    out of the in-memory task table or the research directory listing. Callers
+    then use that value for every path build and handler lookup, so no
+    caller-controlled text ever reaches the filesystem or the research handler.
+
+    This is deliberately stronger than validating the id in place: a shape check
+    still lets the caller's own bytes through, and the guarantee then depends on
+    every future call site remembering to run it first. Returning a value the
+    server already had removes that obligation entirely.
+    """
+    if not isinstance(session_id, str) or not _RESEARCH_SID_RE.fullmatch(session_id):
+        return None
+    for known in list(getattr(research_handler, "_active_tasks", {}) or {}):
+        if known == session_id:
+            return known
+    from src.research_handler import RESEARCH_DATA_DIR
+
+    try:
+        for entry in RESEARCH_DATA_DIR.iterdir():
+            if entry.suffix == ".json" and entry.stem == session_id:
+                return entry.stem
+    except OSError:
+        return None
+    return None
+
+
 def research_owns(research_handler, session_id: str, owner) -> bool:
     """Ownership gate for a research session — mirrors
     routes/research_routes._owns_in_memory so the bridge enforces the SAME rule:
@@ -227,17 +256,17 @@ def research_owns(research_handler, session_id: str, owner) -> bool:
     callers can 404 (never 403 — don't leak that someone else's run exists).
     Pure given the handler, so it's unit-testable with a fake handler.
     """
-    entry = research_handler._active_tasks.get(session_id)
+    sid = canonical_research_sid(research_handler, session_id)
+    if sid is None:
+        return False
+    entry = research_handler._active_tasks.get(sid)
     if entry is not None:
         return entry.get("owner", "") == owner
-    # Resolve the on-disk report through research_handler's own helper rather
-    # than joining the path here: it is the single source of truth for the
-    # session-id shape AND it re-resolves the result and asserts containment
-    # under the research data dir. Building the path locally duplicated that
-    # rule (and dropped the containment check), so the two could drift.
+    # `sid` came from the server's own listing, and _research_json_path re-checks
+    # the shape and asserts containment under the research dir before returning.
     from src.research_handler import _research_json_path
 
-    path = _research_json_path(session_id)
+    path = _research_json_path(sid)
     if path is None or not path.exists():
         return False
     try:
@@ -792,9 +821,16 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
                 raise HTTPException(401, "Not authenticated")
             return owner
 
-        def _validate_sid(session_id: str) -> None:
-            if not _RESEARCH_SID_RE.fullmatch(session_id):
+        def _resolve_sid(session_id: str) -> str:
+            """400 for a malformed id, 404 for one this server doesn't know,
+            else the SERVER's own copy of it. Everything downstream uses the
+            returned value, never the caller's string."""
+            if not _RESEARCH_SID_RE.fullmatch(session_id or ""):
                 raise HTTPException(400, "Invalid session ID format")
+            sid = canonical_research_sid(research_handler, session_id)
+            if sid is None:
+                raise HTTPException(404, "No research found for this session")
+            return sid
 
         @router.get("/research/active")
         def research_active(request: Request):
@@ -858,14 +894,14 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
             change and a final `{status, final:true}` when the run leaves
             running, then closes — same shape as /api/research/stream."""
             owner = _require_owner(request)
-            _validate_sid(session_id)
-            if not research_owns(research_handler, session_id, owner):
+            sid = _resolve_sid(session_id)
+            if not research_owns(research_handler, sid, owner):
                 raise HTTPException(404, "No research found for this session")
 
             async def _generate():
                 last_progress = None
                 while True:
-                    status = research_handler.get_status(session_id)
+                    status = research_handler.get_status(sid)
                     if status is None:
                         yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
                         return
@@ -876,7 +912,7 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
                         yield f"data: {json.dumps({**progress, 'status': st})}\n\n"
                     if st != "running":
                         final = {'status': st, 'final': True}
-                        task = research_handler._active_tasks.get(session_id, {})
+                        task = research_handler._active_tasks.get(sid, {})
                         if st == "error" and task.get("result"):
                             final['error'] = str(task["result"])[:500]
                         yield f"data: {json.dumps(final)}\n\n"
@@ -893,10 +929,10 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
         def research_cancel(session_id: str, request: Request):
             """Cancel one of the caller's running runs."""
             owner = _require_owner(request)
-            _validate_sid(session_id)
-            if not research_owns(research_handler, session_id, owner):
+            sid = _resolve_sid(session_id)
+            if not research_owns(research_handler, sid, owner):
                 raise HTTPException(404, "No research found for this session")
-            return {"cancelled": research_handler.cancel_research(session_id)}
+            return {"cancelled": research_handler.cancel_research(sid)}
 
         @router.post("/research/result/{session_id}")
         def research_result(session_id: str, request: Request):
@@ -904,14 +940,14 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
             re-open it). Prefers the in-memory result, falls back to the persisted
             JSON for a finished run."""
             owner = _require_owner(request)
-            _validate_sid(session_id)
-            if not research_owns(research_handler, session_id, owner):
+            sid = _resolve_sid(session_id)
+            if not research_owns(research_handler, sid, owner):
                 raise HTTPException(404, "No research result available")
-            result = research_handler.get_result(session_id)
+            result = research_handler.get_result(sid)
             if result is None:
                 from src.research_handler import _research_json_path
 
-                p = _research_json_path(session_id)
+                p = _research_json_path(sid)
                 if p is not None and p.exists():
                     try:
                         d = json.loads(p.read_text(encoding="utf-8"))
@@ -926,7 +962,7 @@ def setup_companion_routes(memory_manager=None, research_handler=None) -> APIRou
                 raise HTTPException(404, "No research result available")
             return {
                 "result": result,
-                "sources": research_handler.get_sources(session_id) or [],
+                "sources": research_handler.get_sources(sid) or [],
                 "query": "",
                 "status": "done",
             }
