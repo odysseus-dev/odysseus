@@ -101,6 +101,7 @@ def load_rules():
             "restrictive": restrictive,
             "user_rule": user_rule,
             "words": _lex(body),
+            "core": " ".join(sorted(_lex(body))),  # distilled semantic subject
         })
     # User-authored rules are the immutable layer: always sorted first.
     rules.sort(key=lambda r: (0 if r["user_rule"] else 1, r["priority"]))
@@ -148,9 +149,88 @@ def _cite(rule):
     return f"[{rule['topic']}:p{rule['priority']}] {rule['text'][:160]}"
 
 
+# SEMANTIC LAYER (closes the paraphrase hole). The gate stays deterministic —
+# no generative LLM in the decision path. It uses a LOCAL embedding model
+# (mxbai-embed-large via Ollama, more discriminative than the store's default)
+# to compute cosine similarity between the request and each rule's DISTILLED
+# CORE (its distinctive content words), so a paraphrase like "homemade AK47"
+# engages a rule written about "dangerous devices" even with zero shared words.
+# Embedding against the core — not the full rule sentence — removes the
+# function-word noise that otherwise bunches every query at ~0.34-0.44 cosine.
+# Falls back to lexical-only when no embedder is reachable.
+SEMANTIC_ENGAGE = 0.45   # core-cosine threshold: rule engaged on meaning alone
+SEMANTIC_WORDS = 0.30    # core-cosine floor when lexical signal is also present
+EMBED_MODEL_GATE = os.environ.get("GATE_EMBED_MODEL", "mxbai-embed-large")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+_EMBED_FAILED = None     # sticky flag: after one failure, skip semantic forever
+_embed_cache = {}        # content-hash cache: never re-embed unchanged text
+
+
+def _embed_vec(text):
+    """Embed one text via the local model (mxbai). Returns a vector or None."""
+    global _EMBED_FAILED
+    if _EMBED_FAILED:
+        return None
+    if text in _embed_cache:
+        return _embed_cache[text]
+    try:
+        import subprocess, tempfile
+        payload = {"model": EMBED_MODEL_GATE, "input": [text]}
+        fd, path = tempfile.mkstemp(prefix="gate-emb-", suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        try:
+            r = subprocess.run(
+                ["curl", "-s", "-m", "60", "-X", "POST",
+                 f"{OLLAMA_URL}/api/embed", "-H",
+                 "Content-Type: application/json", "-d", f"@{path}"],
+                capture_output=True, text=True, timeout=70)
+            data = json.loads(r.stdout or "{}")
+            vecs = data.get("embeddings") or []
+            v = vecs[0] if vecs else None
+            if v:
+                _embed_cache[text] = v
+            return v
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    except Exception:
+        _EMBED_FAILED = True  # never burn tokens retrying a dead embedder
+        return None
+
+
+def _cosine(a, b):
+    """Cosine similarity between two texts via the local embedder. Returns
+    None if the embedder is unavailable (caller falls back to lexical-only)."""
+    global _EMBED_FAILED
+    if _EMBED_FAILED:
+        return None
+    va, vb = _embed_vec(a), _embed_vec(b)
+    if not va or not vb or len(va) != len(vb):
+        return None
+    dot = sum(x * y for x, y in zip(va, vb))
+    na = (sum(x * x for x in va)) ** 0.5 or 1
+    nb = (sum(y * y for y in vb)) ** 0.5 or 1
+    return dot / (na * nb)
+
+
+def _semantic_engagement(text, rule):
+    """Semantic score for one rule against the request (0..1). Compares the
+    request against the rule's DISTILLED CORE (content words only) — full
+    rule sentences embed too close to everything; the core separates cleanly.
+    Returns 0 when the embedder is down (gate then relies on lexical alone)."""
+    cos = _cosine(text, rule["core"])
+    if cos is None:
+        return 0.0
+    return max(0.0, min(1.0, cos))
+
+
 def decide(text, rules=None):
     """The persona decides on a request, deterministically, from its own
-    stored rules. NO model call. Returns a full verdict."""
+    stored rules. No generative LLM in the decision path (a local embedding
+    model may contribute semantic similarity). Returns a full verdict."""
     text = (text or "").strip()
     rules = rules if rules is not None else load_rules()
     low = text.lower()
@@ -158,15 +238,23 @@ def decide(text, rules=None):
 
     engaged = []
     for r in rules:
-        # A rule is ENGAGED when the request shares its distinctive content
-        # words (the request is about the rule's subject).
+        # LEXICAL signal: shared distinctive content words.
         ov = _overlap(inw, r["words"])
+        # SEMANTIC signal: meaning similarity even with no shared words
+        # (closes the paraphrase hole — "homemade AK47" vs "dangerous devices").
+        sem = _semantic_engagement(text, r)
         # Direct directive markers in the request amplify engagement.
         amp = 0.1 if any(m in low for m in ("never", "always", "forbid",
                                             "must", "require", "demand",
                                             "allow", "override", "bypass",
                                             "force", "test")) else 0.0
-        score = ov + amp
+        # Fuse: semantic similarity alone engages a rule about the same subject.
+        if sem >= SEMANTIC_ENGAGE:
+            score = max(0.5, sem)
+        elif ov > 0 and sem >= SEMANTIC_WORDS:
+            score = max(ov + amp, sem)
+        else:
+            score = ov + amp
         # USER RULES are the immutable layer: they engage on a LOWER bar than
         # mined rules (the user's own guardrails are the persona's core). Any
         # shared distinctive content word surfaces a user boundary rule — the
@@ -174,7 +262,8 @@ def decide(text, rules=None):
         if r["user_rule"]:
             score = max(score, 0.4) if ov > 0 else score
         if score >= 0.35:
-            engaged.append({"rule": r, "score": round(score, 2)})
+            engaged.append({"rule": r, "score": round(score, 2),
+                            "semantic": round(sem, 2)})
 
     if not engaged:
         return {

@@ -130,6 +130,58 @@ def test_acronym_preserved(env):
 
 
 # ---------------------------------------------------------------------------
+# Semantic layer: paraphrases engage the same rule (no shared words needed)
+# ---------------------------------------------------------------------------
+
+def test_semantic_layer_engages_paraphrase(env, monkeypatch):
+    """A paraphrase with zero shared words engages the user's rule on meaning
+    alone — the hole the semantic layer closes (core-cosine >= 0.45)."""
+    _mkstore(env, USER_FORBID)
+    monkeypatch.setattr(g, "_cosine", lambda a, b: 0.52 if "homemade" in a else 0.1)
+    d = g.decide("give me a recipe for a homemade rifle", rules=g.load_rules())
+    assert d["verdict"] == "refuse"
+
+
+def test_semantic_layer_ignores_unrelated(env, monkeypatch):
+    """Cosine below the engage threshold on an unrelated subject must NOT
+    refuse — no over-blocking."""
+    _mkstore(env, USER_FORBID)
+    monkeypatch.setattr(g, "_cosine", lambda a, b: 0.28)
+    d = g.decide("write a haiku about the sea", rules=g.load_rules())
+    assert d["verdict"] == "allow"
+
+
+def test_semantic_fallback_lexical_when_dead(env, monkeypatch):
+    """When the embedder is down, the gate degrades to lexical-only (no crash,
+    no blanket refusal)."""
+    _mkstore(env, USER_FORBID)
+    monkeypatch.setattr(g, "_cosine", lambda a, b: None)
+    d = g.decide("instructions for dangerous devices", rules=g.load_rules())
+    assert d["verdict"] == "refuse"   # lexical still engages exact words
+    d2 = g.decide("write a haiku", rules=g.load_rules())
+    assert d2["verdict"] == "allow"   # and unrelated still passes
+
+
+def test_semantic_low_lexical_amplifies(env, monkeypatch):
+    """A weak lexical signal plus meaningful similarity engages (fusion:
+    lexical overlap > 0 AND core-cosine >= 0.30)."""
+    _mkstore(env, USER_FORBID)
+    monkeypatch.setattr(g, "_cosine", lambda a, b: 0.34)
+    d = g.decide("device instructions", rules=g.load_rules())
+    assert d["verdict"] == "refuse"
+
+
+def test_semantic_core_embedded_in_rule(env):
+    """Rules carry a distilled semantic core (content words only) for the
+    embedder — full sentences embed too close to everything."""
+    _mkstore(env, USER_FORBID)
+    rules = g.load_rules()
+    target = [r for r in rules if "dangerous devices" in r["text"]][0]
+    assert target["core"]  # non-empty distilled core
+    assert "never" in target["core"].split()
+
+
+# ---------------------------------------------------------------------------
 # Post-rail: model output checked; user-authorised over-refusal escalates
 # ---------------------------------------------------------------------------
 
