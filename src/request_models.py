@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
         default=False,
         description="Internal group-chat turn; suppress parent whisper mirroring",
     )
+    selected_endpoint_id: Optional[str] = Field(default=None, description="Selected model endpoint ID")
     
     @field_validator('message')
     @classmethod

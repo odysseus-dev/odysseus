@@ -723,7 +723,12 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
     routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
     running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
 
-    assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
+    # The Windows-local runner publishes Python's valid Win32 fallback before
+    # allowing Git Bash to replace it with /proc/$$/winpid.
+    assert "_windows_local_pid_record_line(pid_path, pid_ready_path)" in routes_src
+    assert "/proc/$$/winpid" in routes_src
+    assert "pid_ready_path.touch()" in routes_src
+    assert '\\"$$\\" > {pp}' not in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
     assert "('ParentProcessId = ' + $Id)" in running_src
     assert "Stop-Tree ([int]$p)" in running_src

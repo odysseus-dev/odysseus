@@ -1501,8 +1501,25 @@ def _migrate_assign_legacy_owner():
             with open(prefs_path, "r", encoding="utf-8") as f:
                 prefs = _json.load(f)
             if "_users" not in prefs and prefs:
-                # Flat format → nest under admin user
-                new_prefs = {"_users": {admin_user: prefs}}
+                # Flat format → nest ordinary preferences under the admin
+                # user. Foreground fallback is an explicit per-owner opt-in,
+                # so auth-disabled consent must remain inert at the flat root
+                # rather than becoming consent for the first named owner.
+                foreground_keys = {
+                    "foreground_fallback_enabled",
+                    "foreground_model_fallbacks",
+                }
+                named_prefs = {
+                    key: value
+                    for key, value in prefs.items()
+                    if key not in foreground_keys
+                }
+                new_prefs = {
+                    key: prefs[key]
+                    for key in foreground_keys
+                    if key in prefs
+                }
+                new_prefs["_users"] = {admin_user: named_prefs}
                 with open(prefs_path, "w", encoding="utf-8") as f:
                     _json.dump(new_prefs, f, indent=2)
                 logger.info(f"Migrated user_prefs.json to per-user format under '{admin_user}'")
