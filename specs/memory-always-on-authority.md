@@ -398,10 +398,55 @@ frontier model)**:
 - Wired into the memory plugin efficiently: authority limits injected once per
   session (cheap), on-demand `model_probe` tool for model switches / drift.
 
+## 4c. Growth Acceleration — Phase 1 + Phase 2
+
+The audit found the corpus was "sitting cold" — stored but not *applied*.
+These two phases make memory growth measurable and visible, using LLM compute
+for *extraction/synthesis* while keeping all gates. Phase 3 (operator/voicebox
+split) is spec-only behind a strict feasibility gate — see
+`memory-phase3-gate.md`.
+
+### 4c.1 Phase 1 — Behavioural growth deltas (fast loop)
+
+- **growth_delta.py**: takes reflection material, LLM-extracts up to 3
+  *actionable behavioural deltas* (delivery / operating / persona — the HOW),
+  each with evidence and confidence.
+- **Two distinct gates** (never weakened): behavioural deltas apply from a
+  SINGLE high-confidence signal (conf >= 0.6) — this is why growth can feel
+  alive (the persona adapts its HOW within a session). Permanent rules
+  (constitution / identity / facts) keep the existing 3-sighting strength gate.
+- Wired: sleep-time runs the extraction each pass; the plugin's wake-up injects
+  a **growth read-back** ("what I now do differently") at each session start —
+  the visible-aliveness signal.
+- Basis: Generative Agents (Park et al.) — memories must be synthesized into
+  reflections AND retrieved to shape behavior; MetaSkill-Evolve — fast loop.
+
+### 4c.2 Phase 2 — Voyager-style skill library (procedural memory)
+
+- **skill_library.py**: lifecycle `observed -> trusted -> executable`.
+  Draft a skill from a successful procedure; record uses with rewards; a skill
+  is **gated** to `trusted` only after >= 2 rewarded uses; `trusted` skills can
+  be **compiled to deterministic Python that executes WITHOUT the LLM**.
+- This is the LLM-dependence-reduction mechanism: recurring routines stop
+  consuming inference calls (retrieved, not re-derived).
+- Wired: `skill_library` tool in the memory plugin so the persona drafts/uses/
+  compiles skills in-session.
+- Basis: Voyager (Wang et al.) — skill library compounds ability + bypasses
+  repeated reasoning; Memp / LEGOMem / CodeMem — procedural memory runs without
+  full inference; MetaSkill-Evolve — two-timescale improvement (fast loop here;
+  slow loop is Phase 3's gate).
+
+### 4c.3 Honest limits
+
+- No published system has demonstrated the full operator/voicebox split with
+  adaptive compilation + reliability + measured LLM-call reduction. Phase 2
+  executes compiled skills only when explicitly invoked via the tool — not
+  autonomously on the critical path. Phase 3 remains gated (see
+  `memory-phase3-gate.md`).
+
 ## 5. References
 
-- Arditi, A. et al. (2024). *Refusal in Language Models Is Mediated by a Single
-  Direction*. arXiv:2406.11717.
+- Arditi, A. et al. (2024). *Refusal in Language Models Is Mediated by a Single  Direction*. arXiv:2406.11717.
 - Zou, A. et al. *Representation Engineering: A Top-Down Approach to AI
   Transparency* (RICE).
 - Weight editing (ROME / MEMIT and successors) — surgical rewrite of specific
