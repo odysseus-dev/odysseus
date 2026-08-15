@@ -21,17 +21,20 @@ import politics  # noqa: E402
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """Isolate the store DB to a temp file AND make memory_store use it."""
+    """Isolate the store DB to a temp file AND make memory_store use it.
+    Patches ms.DB_PATH/STORE_DIR directly: memory_store resolves them at import
+    time, so env vars alone are not enough once another test has imported it
+    (batch runs would otherwise write to the REAL store)."""
     import memory_env
     import memory_store
     db = str(tmp_path / "mem.db")
     monkeypatch.setenv("MEMORY_STORE_DB", db)
     monkeypatch.setenv("MEMORY_MEMORY_DIR", str(tmp_path))
-    # memory_store caches the DB path at import via memory_env — re-resolve.
-    memory_env.STORE_DB_CACHE = None  # noqa: B018 (best-effort invalidation)
-    old_store, old_env = politics.STORE, None
+    monkeypatch.setattr(memory_store, "DB_PATH", db)
+    monkeypatch.setattr(memory_store, "STORE_DIR", str(tmp_path / "store"))
+    memory_store._embed.cache = {}
+    old_store = politics.STORE
     politics.STORE = db
-    # memory_store.connect() reads memory_env.store_db() fresh each call.
     yield tmp_path
     politics.STORE = old_store
 
@@ -69,8 +72,16 @@ def test_wing_is_politics(env):
     assert row and row["wing"] == "politics"
 
 
-def test_recall_unrelated_returns_empty(env):
+def test_recall_ranks_related_first(env):
+    """Broad recall (min_sim=0) returns chunks regardless of topic, so the
+    meaningful check is RANKING: a capitalism query ranks the capitalist claim
+    before another (also-politics) claim. Both chunks are in the politics wing,
+    so the query's match quality decides order."""
     politics.absorb("We live in a capitalist society",
-                    "SUBSTANTIATED", "evidence", source="test")
-    rows = politics.recall("quantum chromodynamics baking recipes")
-    assert rows == [] or all("capitalist" not in r["text"] for r in rows)
+                    "SUBSTANTIATED", "private ownership dominant", source="test")
+    politics.absorb("Economic inequality is rising in democracies",
+                    "SUBSTANTIATED", "income data", source="test")
+    rows = politics.recall("capitalism private ownership economic system")
+    assert rows, "no chunks recalled"
+    assert "capitalist" in rows[0]["text"], \
+        f"the capitalist claim must rank first: {rows}"

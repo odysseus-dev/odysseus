@@ -116,7 +116,7 @@ def recent(limit=8):
         db.row_factory = sqlite3.Row
         rows = db.execute(
             "SELECT text, ingested_at FROM chunks WHERE wing=? "
-            "ORDER BY ingested_at DESC LIMIT ?", (WING, limit)).fetchall()
+            "ORDER BY ingested_at DESC, rowid DESC LIMIT ?", (WING, limit)).fetchall()
         db.close()
         return [{"text": r["text"][:220], "recorded_at": r["ingested_at"]}
                 for r in rows]

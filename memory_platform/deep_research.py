@@ -300,13 +300,20 @@ def search(query, n=10, with_abstracts=False, sources="all", since=None):
     # IMPORTANT: the lens assesses CLAIMS, not metadata. A hit with no abstract
     # carries nothing to assess — mark it UNASSESSED (included, unvetted) rather
     # than REJECT (would wrongly filter relevant papers that lack abstracts).
+    #
+    # source_type="primary": a scholarly work IS the primary source about its
+    # own system — authority-cargo is relaxed, the honesty bar remains. The
+    # full "claim" kit rejects hedged scientific prose ("cannot preserve
+    # coherence", "a critical challenge") as overclaiming, which buries valid
+    # papers; primary mode calibrates to WEAK instead.
     try:
         import research_lens as rl
         for h in hits:
             if not (h.get("abstract") or "").strip():
                 h["verdict"] = "UNASSESSED"
                 continue
-            v = rl.assess_source(h["title"], h["abstract"][:400])
+            v = rl.assess_source(h["title"], h["abstract"][:400],
+                                 source_type="primary")
             h["verdict"] = v[0] if isinstance(v, tuple) else (v or {}).get("verdict", "WEAK")
     except Exception:
         for h in hits:

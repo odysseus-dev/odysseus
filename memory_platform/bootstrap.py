@@ -67,7 +67,7 @@ def run(transcript=""):
     step("taxonomy", lambda: _run("taxonomy", ["taxonomy.py", "wings", "--json"]))
 
     # 4. SKILLS: promote anything eligible to executable.
-    step("skills", lambda: _run("skill_library", ["skill_library.py", "list", "--json"]))
+    step("skills", lambda: _run("skill_library", ["skill_library.py", "list"]))
 
     # 5. CONSOLIDATION: sleep-time pressure report (not the full cycle — that
     #    needs hours of transcripts; the report tells us if pressure is high).
