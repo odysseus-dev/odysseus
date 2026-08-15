@@ -69,6 +69,10 @@ FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(DATA_DIR
 MAX_OUTPUT_CHARS = 10_000       # cap for bash/python/web_search/web_fetch output
 MAX_READ_CHARS = 20_000         # cap for read_file / document preview
 MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
+# Bound model- and browser-supplied shell programs before they reach argv,
+# detached-job files, or output-streaming tasks. This is deliberately large
+# enough for real scripts while preventing accidental multi-megabyte requests.
+MAX_BASH_COMMAND_CHARS = 200_000
 
 # web_fetch response-size policy (#3812). MAX_OUTPUT_CHARS above only trims
 # what the agent SEES; these caps bound what the server downloads, parses,

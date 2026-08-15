@@ -22,6 +22,8 @@ from src.host_docker_access import (
     running_in_container as _running_in_container,
 )
 from src.optional_deps import prepare_optional_dependency_import
+from src.constants import MAX_BASH_COMMAND_CHARS
+from src.shell_security import validate_bash_command
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
 # on Windows, so importing them unconditionally crashed app startup there
@@ -40,13 +42,14 @@ else:
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
     git_bash_path,
+    kill_process_tree,
 )
 
 
@@ -499,13 +502,80 @@ TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
+class _BoundedByteOutput:
+    """Retain the start and end of a byte stream without buffering it all."""
+
+    def __init__(self, limit: int = MAX_OUTPUT):
+        self.limit = limit
+        self.head_limit = limit // 2
+        self.tail_limit = limit - self.head_limit
+        self.head = bytearray()
+        self.tail = bytearray()
+        self.total = 0
+
+    def append(self, chunk: bytes) -> None:
+        self.total += len(chunk)
+        remaining = chunk
+        if len(self.head) < self.head_limit:
+            take = min(self.head_limit - len(self.head), len(remaining))
+            self.head.extend(remaining[:take])
+            remaining = remaining[take:]
+        if remaining:
+            self.tail.extend(remaining)
+            if len(self.tail) > self.tail_limit:
+                del self.tail[:-self.tail_limit]
+
+    def text(self) -> str:
+        if self.total <= self.limit:
+            raw = bytes(self.head + self.tail)
+        else:
+            omitted = self.total - len(self.head) - len(self.tail)
+            raw = (
+                bytes(self.head)
+                + f"\n... ({omitted} bytes omitted) ...\n".encode()
+                + bytes(self.tail)
+            )
+        return raw.decode(errors="replace")
+
+
 class ShellExecRequest(BaseModel):
-    command: str
-    timeout: int | None = (
-        None  # optional override; 0 = no timeout (run until client disconnects)
-    )
+    command: str = Field(min_length=1, max_length=MAX_BASH_COMMAND_CHARS)
+    timeout: int | None = Field(
+        default=None, ge=0, le=86400
+    )  # optional override; 0 = no timeout
     use_pty: bool = False  # use pseudo-TTY (for progress bars)
     use_tmux: bool = False  # run in tmux session (survives browser disconnect)
+    # Starting directory only. Bash is intentionally not sandboxed there.
+    workspace: str | None = Field(default=None, max_length=4096)
+    # Old Cookbook clients need a narrow SSH/tmux rewrite. Exact script runs
+    # explicitly disable it so their program is never transformed.
+    legacy_tmux_compat: bool = True
+
+
+def _prepare_shell_temp_dir() -> None:
+    """Create the detached-shell directory without trusting a shared-temp link."""
+    TMUX_LOG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if IS_WINDOWS:
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(TMUX_LOG_DIR, flags)
+    except OSError as e:
+        raise RuntimeError(f"Unsafe shell temporary directory: {e}") from e
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.geteuid():
+            raise RuntimeError("Unsafe shell temporary directory owner")
+        os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
+
+
+def _write_private_shell_file(path: Path, content: str, *, executable: bool = False) -> None:
+    """Atomically create a random shell helper without following an existing path."""
+    with path.open("x", encoding="utf-8") as f:
+        f.write(content)
+    path.chmod(0o700 if executable else 0o600)
 
 
 _REMOTE_TMUX_PATH_PREFIX = 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; '
@@ -552,7 +622,7 @@ def _normalize_legacy_remote_tmux_exec(command: str) -> str:
 async def _create_shell(command: str, **kwargs):
     """Spawn a shell subprocess for `command`.
 
-    POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
+    POSIX: an explicit Bash executable, never the platform-dependent /bin/sh.
     Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
     the same as on Linux; fall back to cmd.exe when no bash is installed.
     Powershell commands are executed directly via cmd.exe /c to avoid quoting
@@ -567,41 +637,137 @@ async def _create_shell(command: str, **kwargs):
             return await asyncio.create_subprocess_shell(command, **kwargs)
         bash = find_bash()
         if bash:
-            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
-    return await asyncio.create_subprocess_shell(command, **kwargs)
+            kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            return await asyncio.create_subprocess_exec(
+                bash, "--noprofile", "--norc", "-c", command, **kwargs
+            )
+    bash = find_bash()
+    if not bash:
+        raise RuntimeError("Bash was not found; install bash and restart Odysseus")
+    if "preexec_fn" not in kwargs:
+        kwargs.setdefault("start_new_session", True)
+    return await asyncio.create_subprocess_exec(
+        bash, "--noprofile", "--norc", "-c", command, **kwargs
+    )
 
 
-async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
+async def _stop_shell_process(proc) -> None:
+    """Terminate a shell command and all child processes it launched."""
+    pid = getattr(proc, "pid", None)
+    if pid:
+        await asyncio.to_thread(kill_process_tree, pid)
+    else:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=3)
+    except Exception:
+        if pid:
+            await asyncio.to_thread(kill_process_tree, pid, True)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _resolve_shell_cwd(workspace: str | None) -> str:
+    """Resolve an optional selected workspace into a safe starting cwd.
+
+    This prevents invalid/root/sensitive paths from being presented as an
+    active workspace. It does not confine Bash after launch.
+    """
+    if not workspace or not workspace.strip():
+        return str(Path.home())
+    from src.tool_execution import vet_workspace
+
+    resolved = vet_workspace(workspace)
+    if not resolved:
+        raise HTTPException(400, "Invalid or unsafe workspace path")
+    return resolved
+
+
+async def _exec_shell(
+    command: str, timeout: int = EXEC_TIMEOUT, cwd: str | None = None
+) -> Dict[str, Any]:
     """Run a shell command and return stdout/stderr/exit_code."""
     proc = None
+    reader_tasks: list[asyncio.Task] = []
+    stdout_capture = _BoundedByteOutput()
+    stderr_capture = _BoundedByteOutput()
+
+    async def _read_bounded(stream, capture: _BoundedByteOutput) -> None:
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            capture.append(chunk)
+
+    async def _finish_readers() -> None:
+        if not reader_tasks:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*reader_tasks, return_exceptions=True), timeout=1
+            )
+        except asyncio.TimeoutError:
+            for task in reader_tasks:
+                task.cancel()
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+
     try:
         proc = await _create_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path.home()),
+            cwd=cwd or str(Path.home()),
         )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
-        stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
-        return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
+        reader_tasks = [
+            asyncio.create_task(_read_bounded(proc.stdout, stdout_capture)),
+            asyncio.create_task(_read_bounded(proc.stderr, stderr_capture)),
+        ]
+        await asyncio.wait_for(
+            proc.wait(), timeout=None if timeout == 0 else timeout
+        )
+        # Descendants can inherit the pipes after Bash exits. Give normal pipe
+        # EOF a brief drain window, then return the output already captured
+        # instead of hanging forever on an accidental background process.
+        await _finish_readers()
+        return {
+            "stdout": stdout_capture.text(),
+            "stderr": stderr_capture.text(),
+            "exit_code": proc.returncode,
+        }
     except asyncio.TimeoutError:
         if proc:
-            try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
+            await _stop_shell_process(proc)
+        await _finish_readers()
+        stdout = stdout_capture.text()
+        stderr = stderr_capture.text()
+        timeout_message = f"Command timed out after {timeout}s"
         return {
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout}s",
+            "stdout": stdout,
+            "stderr": (stderr + "\n" + timeout_message).strip(),
             "exit_code": -1,
         }
+    except asyncio.CancelledError:
+        if proc:
+            await _stop_shell_process(proc)
+        raise
     except Exception as e:
+        if proc and proc.returncode is None:
+            await _stop_shell_process(proc)
         return {"stdout": "", "stderr": str(e), "exit_code": -1}
+    finally:
+        for task in reader_tasks:
+            if not task.done():
+                task.cancel()
 
 
-async def _generate_pty(cmd: str, timeout: int, request: Request):
+async def _generate_pty(
+    cmd: str, timeout: int, request: Request, cwd: str | None = None
+):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
     if not PTY_SUPPORTED:
         msg = "PTY streaming is not supported on this platform"
@@ -618,12 +784,12 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
     flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-    proc = await asyncio.create_subprocess_shell(
+    proc = await _create_shell(
         cmd,
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
-        cwd=str(Path.home()),
+        cwd=cwd or str(Path.home()),
         preexec_fn=os.setsid,
     )
     os.close(slave_fd)  # parent doesn't need the slave side
@@ -641,16 +807,14 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
     try:
         while not process_done.is_set():
             if deadline and loop.time() > deadline:
-                proc.kill()
-                await proc.wait()
+                await _stop_shell_process(proc)
                 yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
                 return
 
             # Check client disconnect
             if await request.is_disconnected():
-                proc.kill()
-                await proc.wait()
+                await _stop_shell_process(proc)
                 return
 
             # Read available data from PTY
@@ -681,6 +845,12 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
                 buf = buf[idx + sep_len :]
                 if line:
                     yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
+            # A command can write an arbitrarily long line. Stream chunks
+            # instead of retaining that line in server memory until EOF.
+            if len(buf) > 65536:
+                text = buf[:65536].decode(errors="replace")
+                buf = buf[65536:]
+                yield f"data: {json.dumps({'stream': 'stdout', 'data': text})}\n\n"
 
         # Drain any remaining PTY output after process exits
         try:
@@ -712,11 +882,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         yield f"data: {json.dumps({'exit_code': proc.returncode})}\n\n"
 
     except Exception as e:
-        try:
-            proc.kill()
-            await proc.wait()
-        except ProcessLookupError:
-            pass
+        await _stop_shell_process(proc)
         yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
     finally:
@@ -742,46 +908,65 @@ def _pty_read(fd: int) -> bytes | None:
     return None  # timeout, no data yet
 
 
-async def _generate_tmux(cmd: str, request: Request):
+async def _generate_tmux(cmd: str, request: Request, cwd: str):
     """Run command in a tmux session. Streams output via a log file.
     The tmux session survives browser disconnect — user can reconnect or
     `tmux attach -t <name>` to see it live."""
-    TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
+    try:
+        _prepare_shell_temp_dir()
+    except RuntimeError as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+    session_id = f"cookbook-{uuid.uuid4().hex}"
     log_path = TMUX_LOG_DIR / f"{session_id}.log"
+    cmd_path = TMUX_LOG_DIR / f"{session_id}.cmd.sh"
+    _write_private_shell_file(cmd_path, cmd + "\n")
 
     # Write a wrapper script that runs the command, tees output, and records exit code.
     # Using a script avoids shell quoting issues with the tmux command.
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-    script_path.write_text(
+    quoted_cmd = shlex.quote(str(cmd_path))
+    quoted_log = shlex.quote(str(log_path))
+    quoted_script = shlex.quote(str(script_path))
+    _write_private_shell_file(
+        script_path,
         f"#!/bin/bash\n"
+        f"umask 077\n"
         f'ODYSSEUS_USER_SHELL="${{SHELL:-}}"\n'
         f'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then\n'
         f'  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"\n'
         f'  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi\n'
         f"fi\n"
-        f"{cmd} 2>&1 | tee '{log_path}'\n"
+        f"bash {quoted_cmd} 2>&1 | tee {quoted_log}\n"
         f"EC=${{PIPESTATUS[0]}}\n"
-        f"echo ':::EXIT_CODE:::'$EC >> '{log_path}'\n"
-        f"rm -f '{script_path}'\n"
+        f"echo ':::EXIT_CODE:::'$EC >> {quoted_log}\n"
+        f"rm -f {quoted_script} {quoted_cmd}\n"
         f"exit $EC\n",
-        encoding="utf-8",
+        executable=True,
     )
-    script_path.chmod(0o755)
     logger.info(
         "tmux wrapper script created: session=%s path=%s", session_id, script_path
     )
 
-    tmux_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(script_path))}"
-
-    proc = await asyncio.create_subprocess_shell(
-        tmux_cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tmux", "new-session", "-d", "-s", session_id, "-c", cwd,
+            str(script_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        for path in (cmd_path, script_path):
+            path.unlink(missing_ok=True)
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'tmux is not installed'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
     await proc.wait()
     if proc.returncode != 0:
         stderr = (await proc.stderr.read()).decode(errors="replace")
+        for path in (cmd_path, script_path):
+            path.unlink(missing_ok=True)
         yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to start tmux: {stderr}'})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
@@ -822,8 +1007,8 @@ async def _generate_tmux(cmd: str, request: Request):
             break
 
         # Check if tmux session is still alive
-        check = await asyncio.create_subprocess_shell(
-            f"tmux has-session -t {session_id} 2>/dev/null",
+        check = await asyncio.create_subprocess_exec(
+            "tmux", "has-session", "-t", session_id,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -858,7 +1043,7 @@ async def _generate_tmux(cmd: str, request: Request):
         pass
 
 
-async def _generate_win_detached(cmd: str, request: Request):
+async def _generate_win_detached(cmd: str, request: Request, cwd: str):
     """Windows stand-in for the tmux path (issues #84/#162).
 
     tmux doesn't exist on Windows, so we run the command in a *detached* child
@@ -867,28 +1052,35 @@ async def _generate_win_detached(cmd: str, request: Request):
     (Git Bash) for command-syntax parity; falls back to cmd.exe. There's no
     `tmux attach` equivalent, but the "keeps running if you disconnect" contract
     holds, which is the point of the feature for long Cookbook downloads."""
-    TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
+    try:
+        _prepare_shell_temp_dir()
+    except RuntimeError as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+    session_id = f"cookbook-{uuid.uuid4().hex}"
     log_path = TMUX_LOG_DIR / f"{session_id}.log"
     exit_path = TMUX_LOG_DIR / f"{session_id}.exit"
 
     bash = find_bash()
     if bash:
         script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-        script_path.write_text(
+        _write_private_shell_file(
+            script_path,
             f"{cmd} > {shlex.quote(git_bash_path(log_path))} 2>&1\n"
             f"echo $? > {shlex.quote(git_bash_path(exit_path))}\n",
-            encoding="utf-8",
+            executable=True,
         )
         argv = [bash, str(script_path)]
     else:
         script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
         # cmd.exe wrapper: run, redirect all output to the log, record exit code.
-        script_path.write_text(
+        _write_private_shell_file(
+            script_path,
             "@echo off\r\n"
             f'call {cmd} > "{log_path}" 2>&1\r\n'
             f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
-            encoding="utf-8",
+            executable=True,
         )
         argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
 
@@ -898,6 +1090,7 @@ async def _generate_win_detached(cmd: str, request: Request):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            cwd=cwd,
             **detached_popen_kwargs(),
         )
     except Exception as e:
@@ -961,17 +1154,23 @@ def setup_shell_routes() -> APIRouter:
     async def shell_exec(request: Request, req: ShellExecRequest) -> Dict[str, Any]:
         """Execute a shell command and return output. Admin only."""
         _require_admin(request)
-        cmd = req.command.strip()
-        if not cmd:
-            return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
+        _reject_cross_site(request)
+        try:
+            cmd = validate_bash_command(req.command)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cwd = _resolve_shell_cwd(req.workspace)
 
-        fixed_cmd = _normalize_legacy_remote_tmux_exec(cmd)
-        if fixed_cmd != cmd:
-            logger.info("Rewrote legacy remote tmux exec command with Homebrew PATH")
-            cmd = fixed_cmd
+        if req.legacy_tmux_compat:
+            fixed_cmd = _normalize_legacy_remote_tmux_exec(cmd)
+            if fixed_cmd != cmd:
+                logger.info("Rewrote legacy remote tmux exec command with Homebrew PATH")
+                cmd = fixed_cmd
         logger.info("User shell exec requested: length=%d", len(cmd))
         result = await _exec_shell(
-            cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT
+            cmd,
+            timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT,
+            cwd=cwd,
         )
         return result
 
@@ -979,14 +1178,12 @@ def setup_shell_routes() -> APIRouter:
     async def shell_stream(request: Request, req: ShellExecRequest):
         """Execute a shell command and stream output line-by-line via SSE. Admin only."""
         _require_admin(request)
-        cmd = req.command.strip()
-        if not cmd:
-
-            async def empty():
-                yield f"data: {json.dumps({'stream': 'stderr', 'data': 'No command provided'})}\n\n"
-                yield f"data: {json.dumps({'exit_code': 1})}\n\n"
-
-            return StreamingResponse(empty(), media_type="text/event-stream")
+        _reject_cross_site(request)
+        try:
+            cmd = validate_bash_command(req.command)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cwd = _resolve_shell_cwd(req.workspace)
 
         timeout = req.timeout if req.timeout is not None else STREAM_TIMEOUT
         use_pty = req.use_pty
@@ -1003,15 +1200,15 @@ def setup_shell_routes() -> APIRouter:
             # tmux is POSIX-only; Windows uses a detached-process + logfile tail
             # that preserves the "survives disconnect" behaviour.
             gen = (
-                _generate_win_detached(cmd, request)
+                _generate_win_detached(cmd, request, cwd)
                 if IS_WINDOWS
-                else _generate_tmux(cmd, request)
+                else _generate_tmux(cmd, request, cwd)
             )
             return StreamingResponse(gen, media_type="text/event-stream")
 
         if use_pty and not IS_WINDOWS:
             return StreamingResponse(
-                _generate_pty(cmd, timeout, request),
+                _generate_pty(cmd, timeout, request, cwd),
                 media_type="text/event-stream",
             )
         # Windows has no PTY; fall through to pipe streaming below (output still
@@ -1025,10 +1222,12 @@ def setup_shell_routes() -> APIRouter:
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=str(Path.home()),
+                    cwd=cwd,
                 )
 
-                q: asyncio.Queue = asyncio.Queue()
+                # Backpressure prevents a fast command + slow client from
+                # growing an unbounded in-memory output queue.
+                q: asyncio.Queue = asyncio.Queue(maxsize=100)
 
                 async def _reader(stream, name):
                     """Read chunks, split on \\n or \\r for progress bar support."""
@@ -1054,6 +1253,11 @@ def setup_shell_routes() -> APIRouter:
                                 buf = buf[idx + sep_len :]
                                 if line:
                                     await q.put((name, line))
+                            if len(buf) > 65536:
+                                await q.put(
+                                    (name, buf[:65536].decode(errors="replace"))
+                                )
+                                buf = buf[65536:]
                     finally:
                         await q.put((name, None))
 
@@ -1079,7 +1283,7 @@ def setup_shell_routes() -> APIRouter:
                     except asyncio.TimeoutError:
                         if await request.is_disconnected():
                             if proc:
-                                proc.kill()
+                                await _stop_shell_process(proc)
                             return
                         continue
 
@@ -1093,11 +1297,7 @@ def setup_shell_routes() -> APIRouter:
 
             except asyncio.TimeoutError:
                 if proc:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except ProcessLookupError:
-                        pass
+                    await _stop_shell_process(proc)
                 yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
             except Exception as e:

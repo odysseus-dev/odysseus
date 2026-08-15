@@ -109,11 +109,12 @@ def pid_alive(pid: Optional[int]) -> bool:
         return False
 
 
-def kill_process_tree(pid: Optional[int]) -> None:
+def kill_process_tree(pid: Optional[int], force: bool = False) -> None:
     """Terminate ``pid`` and all of its descendants.
 
     POSIX: signal the whole process group (``killpg``), falling back to a plain
-    ``kill`` if the pid isn't a group leader.
+    ``kill`` if the pid isn't a group leader. ``force=True`` uses SIGKILL after
+    a graceful termination window has elapsed.
     Windows: ``taskkill /T /F`` walks and kills the child tree (there is no
     process-group signalling).
     """
@@ -132,11 +133,12 @@ def kill_process_tree(pid: Optional[int]) -> None:
         return
     import signal
 
+    sig = signal.SIGKILL if force else signal.SIGTERM
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        os.killpg(os.getpgid(pid), sig)
     except Exception:
         try:
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, sig)
         except Exception:
             pass
 

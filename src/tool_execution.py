@@ -31,11 +31,12 @@ from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
 
-# Persistent working directory for agent subprocesses.
+# Default working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
 # (/app/data) and the local data directory for manual installs.
-# Using this as cwd and HOME prevents the agent from silently creating files
-# in ephemeral container layers that are lost on the next rebuild.
+# Using this as cwd prevents the agent from silently creating files in
+# ephemeral container layers that are lost on the next rebuild. It is not a
+# shell sandbox; Bash retains the app process user's host and network access.
 _AGENT_WORKDIR = DATA_DIR
 
 
@@ -232,19 +233,17 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Active workspace (per-turn, context-local)
 # ---------------------------------------------------------------------------
-# Set ONCE in execute_tool_block from the request's `workspace`. The path
-# resolvers (_resolve_tool_path / _resolve_search_root) and the subprocess cwd
-# helper (agent_cwd) read it from here, so confinement is enforced in a single
-# place: any tool that resolves paths through these helpers is confined
-# automatically and cannot accidentally bypass the workspace. contextvars are
-# task-local, so concurrent turns don't leak into each other.
+# Set ONCE in execute_tool_block from the request's `workspace`. File-tool path
+# resolvers enforce confinement from this value; agent_cwd only chooses where
+# subprocesses start. Bash is not confined and can traverse outside that cwd.
+# contextvars are task-local, so concurrent turns don't leak into each other.
 _active_workspace: contextvars.ContextVar = contextvars.ContextVar(
     "agent_active_workspace", default=None
 )
 
 
 def get_active_workspace() -> Optional[str]:
-    """The folder the agent is confined to this turn, or None."""
+    """The active file-tool root and subprocess starting cwd, or None."""
     return _active_workspace.get()
 
 
@@ -528,7 +527,10 @@ async def _direct_fallback(
         "TERM": "xterm-256color",
         "COLUMNS": "120",
         "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
+        # Keep the user's real HOME. Bash already has full host access for an
+        # authorized user; replacing HOME only makes normal toolchains unable
+        # to find ~/.config, nvm, cargo, conda, SSH config, and credentials.
+        "ODYSSEUS_AGENT_WORKDIR": _AGENT_WORKDIR,
     }
 
     try:
@@ -578,9 +580,9 @@ async def execute_tool_block(
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
-    Thin wrapper: bind the per-turn workspace (so the path resolvers + subprocess
-    cwd confine to it) for the duration of this call, then delegate. Reset on the
-    way out so the binding never leaks to the next tool call.
+    Thin wrapper: bind the per-turn workspace for file-tool confinement and as
+    the subprocess starting cwd, then delegate. Bash itself is not sandboxed.
+    Reset on the way out so the binding never leaks to the next tool call.
     """
     token = _active_workspace.set(workspace or None)
     try:
@@ -710,6 +712,22 @@ async def _execute_tool_block_impl(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    # Validate before either the foreground or detached Bash path creates a
+    # process/file. This is a size/transport guard, not a command allowlist.
+    if tool == "bash":
+        from src.shell_security import validate_bash_command
+        try:
+            content = validate_bash_command(content)
+        except ValueError as e:
+            message = f"bash: {e}"
+            return "bash: invalid command", {
+                "error": message,
+                "output": message,
+                "stdout": "",
+                "stderr": message,
+                "exit_code": 1,
+            }
 
 
     # Background execution: a `bash` block whose first line is the `#!bg`
@@ -984,17 +1002,20 @@ def format_tool_result(description: str, result: Dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
     parts = [f"### {description}"]
 
-    if "stdout" in result:
-        if result["stdout"]:
-            parts.append(f"**stdout:**\n```\n{result['stdout']}\n```")
-        if result["stderr"]:
-            parts.append(f"**stderr:**\n```\n{result['stderr']}\n```")
-        parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
-    elif "output" in result:
-        # bash / python canonical result shape: {"output": ..., "exit_code": ...}
+    if "output" in result:
+        # Bash/Python canonical shape. Bash may also expose stdout/stderr
+        # separately to the UI, but the combined output is already bounded and
+        # avoids doubling tool-result context for the model.
         parts.append(f"```\n{result['output']}\n```")
-        if result.get("exit_code") not in (0, None):
-            parts.append(f"**exit_code:** {result['exit_code']}")
+        parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
+    elif "stdout" in result:
+        if result.get("stdout"):
+            parts.append(f"**stdout:**\n```\n{result['stdout']}\n```")
+        if result.get("stderr"):
+            parts.append(f"**stderr:**\n```\n{result['stderr']}\n```")
+        if not result.get("stdout") and not result.get("stderr") and result.get("error"):
+            parts.append(f"**error:** {result['error']}")
+        parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
     elif "content" in result:
         parts.append(f"**content ({result.get('size', '?')} chars):**\n```\n{result['content']}\n```")
     elif "response" in result:

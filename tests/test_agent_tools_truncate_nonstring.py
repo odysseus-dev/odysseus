@@ -15,10 +15,14 @@ def test_non_string_coerced_to_string():
 
 def test_non_string_is_also_truncated():
     out = _truncate(12345, limit=3)
-    assert out.startswith("123") and "truncated" in out
+    assert out.startswith("1")
+    assert out.endswith("45")
+    assert "chars omitted" in out
 
 
 def test_string_truncation_unchanged():
     assert _truncate("hello", limit=100) == "hello"
     out = _truncate("x" * 50, limit=10)
-    assert out.startswith("x" * 10) and "truncated" in out
+    assert out.startswith("x" * 5)
+    assert out.endswith("x" * 5)
+    assert "chars omitted" in out

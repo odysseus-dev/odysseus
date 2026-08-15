@@ -257,9 +257,9 @@
        real request is discarded and the font fetched a second time. -->
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
-  <link rel="modulepreload" href="/static/app.js?v=20260808startupshell1">
-  <link rel="modulepreload" href="/static/js/chat.js?v=20260801fix1">
+  <link rel="stylesheet" href="/static/style.css?v=20260813bashrun3">
+  <link rel="modulepreload" href="/static/app.js?v=20260813bashrun3">
+  <link rel="modulepreload" href="/static/js/chat.js?v=20260813bashrun3">
   <link rel="modulepreload" href="/static/js/ui.js">
   <link rel="modulepreload" href="/static/js/sessions.js">
   <link rel="modulepreload" href="/static/js/markdown.js">
@@ -1161,9 +1161,15 @@
             </svg>
           </button>
           <!-- Shell commands (terminal) -->
-          <button type="button" class="input-icon-btn" title="Shell Access" id="bash-toggle-btn" data-mode-tool="true" aria-label="Shell access" aria-pressed="false">
+          <button type="button" class="input-icon-btn" title="Allow the AI to run Bash as the app user (not sandboxed)" id="bash-toggle-btn" data-mode-tool="true" aria-label="Shell access" aria-pressed="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </button>
+          <!-- Exact Bash script editor/runner (admin-only backend) -->
+          <button type="button" class="input-icon-btn" title="Write and run an exact Bash script (Ctrl+Enter to run; not sandboxed)" id="bash-script-btn" data-mode-tool="true" aria-label="New Bash script" style="display:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 13 7 15 9 17"/><line x1="12" y1="17" x2="16" y2="17"/>
             </svg>
           </button>
           <!-- Workspace indicator (hidden until a folder is set) -->
@@ -1934,6 +1940,11 @@
                 <input type="checkbox" checked data-ui-key="bash-toggle-btn"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 13 7 15 9 17"/></svg></span>
+                <span class="vis-label">Bash Script <span class="vis-hint">Exact runner</span></span>
+                <input type="checkbox" checked data-ui-key="bash-script-btn"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
                 <span class="vis-label">More Tools <span class="vis-hint">Overflow menu</span></span>
                 <input type="checkbox" checked data-ui-key="overflow-plus-btn"><span class="vis-switch"></span>
@@ -2532,12 +2543,12 @@
 <script type="module" src="/static/js/search.js"></script>
 <script type="module" src="/static/js/spinner.js"></script>
 <script type="module" src="/static/js/tts-ai.js"></script>
-<script type="module" src="/static/js/document.js?v=20260722emailfastindex1"></script>
+<script type="module" src="/static/js/document.js?v=20260813bashrun3"></script>
 <script type="module" src="/static/js/gallery.js?v=20260708match1"></script>
 <script type="module" src="/static/js/chatRenderer.js?v=20260722emailfastindex1"></script>
-<script type="module" src="/static/js/codeRunner.js"></script>
+<script type="module" src="/static/js/codeRunner.js?v=20260813bashrun3"></script>
 <script type="module" src="/static/js/chatStream.js?v=20260722emailfastindex1"></script>
-  <script type="module" src="/static/js/chat.js?v=20260801fix1"></script>
+  <script type="module" src="/static/js/chat.js?v=20260813bashrun3"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>
@@ -2545,7 +2556,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260723compareicon1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js?v=20260808startupshell1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20260813bashrun3"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>

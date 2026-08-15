@@ -53,7 +53,16 @@ def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     if not isinstance(text, str):
         text = "" if text is None else str(text)
     if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
+        # Command failures and stack traces are usually at the end. Preserve
+        # both ends so truncation does not discard the only useful diagnostic.
+        head_len = max(1, limit // 2)
+        tail_len = max(1, limit - head_len)
+        omitted = len(text) - head_len - tail_len
+        return (
+            text[:head_len]
+            + f"\n... ({omitted} chars omitted; {len(text)} total) ...\n"
+            + text[-tail_len:]
+        )
     return text
 
 

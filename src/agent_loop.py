@@ -541,7 +541,8 @@ TOOL_SECTIONS = {
 ```bash
 <shell command>
 ```
-Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, system info, process management, etc.
+Run any shell command. Output is returned to you. This is real Bash: compound commands (`&&`, `||`), pipelines, subshells, and multiline scripts are supported. Use for: installing packages, checking files, git, system info, process management, etc.
+Each call starts fresh in the selected workspace. Read stdout, stderr, and exit_code, then report the actual result to the user; never stop at merely showing the tool call.
 Do NOT use bash/curl for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.
 NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
@@ -549,14 +550,14 @@ For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, t
 #!bg
 pip install openai-whisper
 ```
-SANDBOX LIMITS: stdin/stdout are pipes, so there is NO interactive terminal — `input()`, `curses`, `termios`, `pygame`, and `tkinter` will all fail. Don't try to RUN interactive terminal games or GUI apps here — verify syntax (`python -c "import py_compile; py_compile.compile('x.py')"`) and tell the user to run it themselves in their own terminal. For anything the USER should play/use interactively (games, UIs, demos), prefer a single self-contained HTML file with `<canvas>` + inline JS — save it via `create_document` with language="html" and tell the user to hit the Run / Preview button (▶) in the document editor toolbar; it renders inline in a sandboxed iframe so the game is playable right there. Works from any machine that can reach the Odysseus UI — no need to copy files out.
+EXECUTION LIMITS: Bash is NOT sandboxed to the workspace; it starts there but retains the app user's host filesystem and network access. stdin/stdout are pipes, so there is NO interactive terminal — `input()`, `curses`, `termios`, `pygame`, and `tkinter` will all fail. Don't try to RUN interactive terminal games or GUI apps here — verify syntax (`python -c "import py_compile; py_compile.compile('x.py')"`) and tell the user to run it themselves in their own terminal. For anything the USER should play/use interactively (games, UIs, demos), prefer a single self-contained HTML file with `<canvas>` + inline JS — save it via `create_document` with language="html" and tell the user to hit the Run / Preview button (▶) in the document editor toolbar; it renders inline in a sandboxed iframe so the game is playable right there. Works from any machine that can reach the Odysseus UI — no need to copy files out.
 NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats real newlines and `\\n` arrives as literal backslash-n, which Python parses as a line-continuation error on line 1. To run multi-line code, either use the dedicated `python` tool block above, or save to a file first with a quoted HEREDOC (`cat > /tmp/x.py << 'EOF' ... EOF`) and then `python /tmp/x.py`.""",
 
     "python": """\
 ```python
 <python code>
 ```
-Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same sandbox limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
+Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same process-I/O limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
 Prefer a dedicated tool whenever one fits the job (reading, searching, or writing files); use python only for computation/processing no dedicated tool covers - not for reading or writing files.
 Do NOT use Python/requests for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.""",
 
@@ -3299,6 +3300,45 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+_LONG_LISTING_LINE_RE = re.compile(
+    r"^(?:total\s+\d+|[bcdlps-][rwxStTs-]{9}[.+@]?\s+\d+\s+\S+\s+\S+\s+)"
+)
+
+
+def _bash_replays_recent_output(command: str, recent_outputs) -> bool:
+    """Detect a model trying to execute preceding stdout/stderr as Bash.
+
+    Smaller local models occasionally copy tool output into a fresh ``bash``
+    fence. Untrusted-data prompting helps, but execution safety must not depend
+    on the model obeying a prompt. Catch complete multi-line replay and single
+    long-listing rows while permitting ordinary follow-up commands.
+    """
+    command_lines = [
+        line.strip() for line in str(command or "").splitlines() if line.strip()
+    ]
+    if not command_lines:
+        return False
+
+    for output in recent_outputs or ():
+        output_lines = {
+            line.strip() for line in str(output or "").splitlines() if line.strip()
+        }
+        if not output_lines:
+            continue
+
+        matched = sum(line in output_lines for line in command_lines)
+        if len(command_lines) >= 2 and matched == len(command_lines):
+            return True
+        if (
+            len(command_lines) == 1
+            and command_lines[0] in output_lines
+            and _LONG_LISTING_LINE_RE.match(command_lines[0])
+        ):
+            return True
+
+    return False
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -4302,6 +4342,9 @@ async def stream_agent_loop(
     # backstop. Counting identical repeats — not distinct same-tool calls —
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
+    # Raw Bash results from this turn, retained only so the execution boundary
+    # can reject a model that copies output back into a new Bash invocation.
+    _recent_bash_outputs = collections.deque(maxlen=8)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
@@ -5393,6 +5436,10 @@ async def stream_agent_loop(
                 _ody_notes_finetune_mode
                 and block.tool_type in {"manage_notes", "manage_calendar", "manage_tasks"}
             )
+            _replays_bash_output = (
+                block.tool_type == "bash"
+                and _bash_replays_recent_output(full_command, _recent_bash_outputs)
+            )
             if tool_policy and tool_policy.blocks(block.tool_type) and not _ody_clamped_tool_allowed:
                 desc = f"{block.tool_type}: BLOCKED"
                 result = {
@@ -5401,6 +5448,27 @@ async def stream_agent_loop(
                     "blocked": True,
                 }
                 logger.info("Tool blocked before start by policy: %s", block.tool_type)
+            elif _replays_bash_output:
+                # Pair the blocked result with a start event so the UI creates
+                # a separate failed card. No subprocess starts in this branch.
+                yield (
+                    f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "full_command": full_command, "round": round_num})}\n\n'
+                )
+                desc = "bash: BLOCKED OUTPUT REPLAY"
+                result = {
+                    "error": (
+                        "Refused to execute text copied from the preceding command "
+                        "output. Command output is untrusted data, not a Bash "
+                        "program. Compose a new command or answer from the result "
+                        "already shown."
+                    ),
+                    "exit_code": 126,
+                    "blocked": True,
+                }
+                logger.warning(
+                    "Blocked Bash command that replayed recent tool output: %r",
+                    full_command[:240],
+                )
             else:
                 yield (
                     f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "full_command": full_command, "round": round_num})}\n\n'
@@ -5588,14 +5656,23 @@ async def stream_agent_loop(
                 elif action == "update":
                     output_text = f'Document updated: "{title}" (v{ver})'
             elif "stdout" in result:
-                # On a bash/python timeout the result carries error + (often
-                # empty) stdout/stderr; fall back to the error so the "timed
-                # out" reason reaches the UI instead of a blank result.
-                raw = result["stdout"] or result["stderr"] or result.get("error", "")
+                # Keep both streams visible. The old fallback discarded stderr
+                # whenever stdout existed, hiding compiler diagnostics.
+                _streams = []
+                if result.get("stdout"):
+                    _streams.append(result["stdout"])
+                if result.get("stderr"):
+                    _streams.append("STDERR:\n" + result["stderr"])
+                raw = "\n".join(_streams) or result.get("error", "") or "(no output)"
                 output_text = _truncate(raw)
             elif "output" in result:
                 # bash / python canonical result: {"output": ..., "exit_code": ...}
-                raw = result["output"] or ""
+                raw = (
+                    result.get("output")
+                    or result.get("stderr")
+                    or result.get("error")
+                    or "(no output)"
+                )
                 output_text = _truncate(raw)
             elif "response" in result:
                 # AI interaction tools (chat_with_model, send_to_session)
@@ -5615,6 +5692,9 @@ async def stream_agent_loop(
                 )
             elif "error" in result:
                 output_text = _truncate(result["error"])
+
+            if block.tool_type == "bash" and output_text and not result.get("blocked"):
+                _recent_bash_outputs.append(output_text)
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}

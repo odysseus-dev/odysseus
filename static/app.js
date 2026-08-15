@@ -10,9 +10,9 @@ import modelsModule from './js/models.js?v=20260715startupcalm2';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260801fix1';
+import chatModule from './js/chat.js?v=20260813bashrun3';
 import compareModule from './js/compare/index.js?v=20260723compareicon2';
-import documentModule from './js/document.js?v=20260722emailfastindex1';
+import documentModule from './js/document.js?v=20260813bashrun3';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
@@ -49,7 +49,7 @@ import groupModule from './js/group.js';
 import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260813bashrun3';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
@@ -1341,6 +1341,8 @@ function initializeEventListeners() {
           if (bashToggle) bashToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
           const bashBtn = document.getElementById('bash-toggle-btn');
           if (bashBtn) bashBtn.style.display = 'none';
+          const bashScriptBtn = document.getElementById('bash-script-btn');
+          if (bashScriptBtn) bashScriptBtn.style.display = 'none';
         }
         // Hide document button
         if (!p.can_use_documents) {
@@ -1348,6 +1350,8 @@ function initializeEventListeners() {
           if (docBtn) docBtn.style.display = 'none';
           const docInd = document.getElementById('doc-indicator-btn');
           if (docInd) docInd.style.display = 'none';
+          const bashScriptBtn = document.getElementById('bash-script-btn');
+          if (bashScriptBtn) bashScriptBtn.style.display = 'none';
         }
         // Hide research toggle
         if (!p.can_use_research) {
@@ -1356,6 +1360,9 @@ function initializeEventListeners() {
           const resOverflow = document.getElementById('overflow-research-btn');
           if (resOverflow) resOverflow.style.display = 'none';
         }
+
+        // Re-apply mode visibility now that fail-closed privileges are known.
+        applyModeToToggles(loadToggleState().mode || 'chat');
 
       }
     })
@@ -1500,7 +1507,7 @@ function initializeEventListeners() {
       const map = {
         web_search:      ['web-toggle-btn'],
         deep_research:   ['research-toggle-btn', 'tool-research-btn', 'overflow-research-btn', 'rail-research'],
-        document_editor: ['overflow-doc-btn', 'rail-documents'],
+        document_editor: ['overflow-doc-btn', 'rail-documents', 'bash-script-btn'],
         gallery:         ['tool-gallery-btn', 'rail-gallery'],
       };
       Object.entries(map).forEach(([key, ids]) => {
@@ -1795,6 +1802,10 @@ function initializeEventListeners() {
     MODE_TOOLS.forEach(({ btnId, checkboxId, stateKey }) => {
       const btn = el(btnId);
       if (!btn) return;
+      if (stateKey === 'bash' && window._userPrivileges?.can_use_bash !== true) {
+        btn.style.display = 'none';
+        return;
+      }
       // Hide bash button in chat mode
       if (mode === 'chat' && stateKey === 'bash') {
         btn.style.display = 'none';
@@ -1807,6 +1818,14 @@ function initializeEventListeners() {
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
     });
+    const scriptBtn = el('bash-script-btn');
+    if (scriptBtn) {
+      const visibleByPreference = loadUIVis()['bash-script-btn'] !== false;
+      const allowed = window._userPrivileges?.can_use_bash === true
+        && window._userPrivileges?.can_use_documents === true;
+      scriptBtn.style.display = (mode === 'agent' && visibleByPreference && allowed) ? '' : 'none';
+    }
+    try { document.dispatchEvent(new CustomEvent('overflow-state-change')); } catch (_) {}
   }
 
 	  // ── Agent / Chat mode toggle ──
@@ -1821,6 +1840,8 @@ function initializeEventListeners() {
     if (currentMode === 'chat') {
       const bashBtn = el('bash-toggle-btn');
       if (bashBtn) bashBtn.style.display = 'none';
+      const bashScriptBtn = el('bash-script-btn');
+      if (bashScriptBtn) bashScriptBtn.style.display = 'none';
     }
 
     function setMode(mode) {
@@ -1910,7 +1931,7 @@ function initializeEventListeners() {
   const SPLASH_MAX = 2;
   const _toolSplashes = {
     web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
-    bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
+    bash: { role: 'Shell Access', text: 'Allows the AI to run Bash as the Odysseus app user. This is admin-only but not sandboxed: commands can access host files and the network. Review tool output and disable Shell when it is not needed.' },
     builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
     research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
   };
@@ -1967,6 +1988,12 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  const bashScriptBtn = el('bash-script-btn');
+  if (bashScriptBtn) {
+    bashScriptBtn.addEventListener('click', () => {
+      if (documentModule?.newBashDocument) documentModule.newBashDocument();
+    });
+  }
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
@@ -2266,7 +2293,7 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
+    const collapsibleIds = ['bash-script-btn', 'bash-toggle-btn', 'web-toggle-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
@@ -2745,6 +2772,17 @@ function initializeEventListeners() {
       document.querySelectorAll(selector).forEach(el => {
         el.style.display = visible ? '' : 'none';
       });
+    }
+    // Appearance preferences never override runtime privilege/mode gates.
+    const bashScriptBtn = document.getElementById('bash-script-btn');
+    if (bashScriptBtn) {
+      const privileges = window._userPrivileges;
+      const mode = loadToggleState().mode || 'chat';
+      if (mode !== 'agent'
+          || privileges?.can_use_bash === false
+          || privileges?.can_use_documents === false) {
+        bashScriptBtn.style.display = 'none';
+      }
     }
     // Drag reorder: use body class so dynamically created handles are covered
     const dragEnabled = state['section-drag-reorder'] === true;

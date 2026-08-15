@@ -10,7 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
-import codeRunnerModule from './codeRunner.js';
+import codeRunnerModule from './codeRunner.js?v=20260813bashrun3';
 import { langIcon } from './langIcons.js';
 import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
@@ -5418,7 +5418,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     const _eventInsideElement = (e, el) => {
       if (!e || !el || typeof e.clientX !== 'number' || typeof e.clientY !== 'number') return false;
+      // Synthetic clicks report (0, 0), and display:none email buttons also
+      // have a zero rectangle there. Treating that as a hit routed the code
+      // editor's programmatic Run click into Send Email.
+      if (el.hidden || (typeof el.getClientRects === 'function' && el.getClientRects().length === 0)) return false;
       const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
       return e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
     };
 
@@ -5498,7 +5503,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
           const doc = activeDocId && docs.get(activeDocId);
-          if (doc && doc.language === 'email' && isOpen) {
+          const liveLanguage = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+          if (doc && doc.language === 'email' && liveLanguage === 'email' && isOpen) {
             e.preventDefault();
             _sendEmail();
           }
@@ -5703,7 +5709,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         // Runnable language (python / js / ts / bash …) — clicking Run is
         // a one-shot execute; clicking Code dismisses the output pane.
         if (wantRun) {
-          document.getElementById('doc-header-preview-btn')?.click();
+          runDocument();
         } else {
           const out = document.getElementById('doc-run-output');
           if (out) out.style.display = 'none';
@@ -5909,6 +5915,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           e.stopPropagation();
           closePanel('down');
           return;
+        }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+          if (['javascript', 'js', 'python', 'py', 'bash', 'sh', 'shell', 'zsh'].includes(lang)) {
+            e.preventDefault();
+            e.stopPropagation();
+            runDocument();
+            return;
+          }
         }
         if (e.key === 'Tab') {
           e.preventDefault();
@@ -7011,7 +7026,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // Create a new blank document, reusing the current/last session or
   // auto-creating one. Same flow as the tab-bar "+" — the single entry point
   // the sidebar Library "+" should use too.
-  export async function newDocument() {
+  export async function newDocument(options = {}) {
     let sessionId = docs.get(activeDocId)?.sessionId
       || _lastSessionId
       || (sessionModule && sessionModule.getCurrentSessionId());
@@ -7019,10 +7034,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       try { sessionId = await _autoCreateSession(); }
       catch (e) { console.error('Failed to auto-create session for document:', e); return; }
     }
-    await createDocument(sessionId);
+    await createDocument(sessionId, options);
   }
 
-  export async function createDocument(sessionId) {
+  /** Open an exact server-side Bash script in the existing code editor. */
+  export async function newBashDocument() {
+    await newDocument({
+      title: 'Bash script',
+      content: '#!/usr/bin/env bash\n\n',
+      language: 'bash',
+    });
+  }
+
+  export async function createDocument(sessionId, options = {}) {
     if (_creatingDoc) return;
     _creatingDoc = true;
     // If the panel was in empty-state, the user may type into the editor
@@ -7036,9 +7060,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         credentials: 'same-origin',
         body: JSON.stringify({
           session_id: sessionId,
-          title: '',
-          content: '',
-          language: 'markdown',
+          title: String(options.title || ''),
+          content: String(options.content || ''),
+          language: String(options.language || 'markdown'),
         }),
       });
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
@@ -11168,6 +11192,7 @@ const documentModule = {
   swapSide,
   createDocument,
   newDocument,
+  newBashDocument,
   loadDocument,
   injectFreshDoc,
   replaceEmailReplyBody,

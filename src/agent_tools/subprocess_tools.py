@@ -1,209 +1,97 @@
 import asyncio
+import codecs
 import os
-import re
-import shutil
+import subprocess
 import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
-from core.platform_compat import IS_WINDOWS, find_bash
+from core.platform_compat import IS_WINDOWS, find_bash, kill_process_tree
 from src.constants import MAX_OUTPUT_CHARS
+from src.shell_security import validate_bash_command
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
 
 PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
-TMUX_CAPTURE_LINES = 2000
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
-    """Start the agent shell with Bash semantics on every supported OS.
+    """Start a fresh, non-interactive Bash process on every platform.
 
-    ``asyncio.create_subprocess_shell`` delegates to ``cmd.exe`` on native
-    Windows.  That contradicts the Bash tool contract and makes POSIX commands
-    such as ``pwd``, ``ls -la``, and ``cat`` unreliable even when the launcher
-    has found Git Bash.  Pass the selected workspace as a structural ``cwd``
-    argument; Git Bash inherits that native Windows directory and exposes it
-    using its normal ``/c/...`` representation.
+    Never delegate to ``/bin/sh`` and never make behavior depend on whether
+    tmux happens to be installed. A fresh process also makes the selected
+    workspace and environment deterministic for every tool call.
     """
+    bash = find_bash()
+    if not bash:
+        hint = "install Git for Windows" if IS_WINDOWS else "install bash"
+        raise RuntimeError(f"Bash was not found; {hint} and restart Odysseus")
     if IS_WINDOWS:
-        bash = find_bash()
-        if not bash:
-            raise RuntimeError(
-                "Git Bash is required for the Bash tool on Windows; "
-                "install Git for Windows and restart Odysseus"
-            )
-        return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
-    return await asyncio.create_subprocess_shell(command, **kwargs)
-
-
-def _tmux_session_name(session_id: Optional[str]) -> str:
-    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(session_id or "default")).strip("-")
-    return f"ody-agent-{raw[:80] or 'default'}"
-
-
-async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        kwargs.setdefault(
+            "creationflags", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    else:
+        kwargs.setdefault("start_new_session", True)
+    return await asyncio.create_subprocess_exec(
+        bash, "--noprofile", "--norc", "-c", command, **kwargs
     )
-    try:
-        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+
+
+class _BoundedOutput:
+    """Keep the beginning and end of a command log within a fixed budget."""
+
+    def __init__(self, limit: int = MAX_OUTPUT_CHARS):
+        self.limit = max(256, int(limit))
+        self.head_limit = self.limit // 2
+        self.tail_limit = self.limit - self.head_limit
+        self.head = ""
+        self.tail = ""
+        self.total = 0
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        self.total += len(text)
+        remaining = text
+        if len(self.head) < self.head_limit:
+            take = min(self.head_limit - len(self.head), len(remaining))
+            self.head += remaining[:take]
+            remaining = remaining[take:]
+        if remaining:
+            self.tail = (self.tail + remaining)[-self.tail_limit:]
+
+    def text(self) -> str:
+        if self.total <= self.limit:
+            return self.head + self.tail
+        omitted = self.total - len(self.head) - len(self.tail)
+        return self.head + f"\n... ({omitted} chars omitted) ...\n" + self.tail
+
+
+async def _terminate_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """Stop the command and its children, then reap the direct process."""
+    pid = getattr(proc, "pid", None)
+    if pid:
+        await asyncio.to_thread(kill_process_tree, pid)
+    else:
         try:
             proc.kill()
         except Exception:
             pass
-        return "", "timeout", 124
-    return (
-        out_b.decode("utf-8", errors="replace"),
-        err_b.decode("utf-8", errors="replace"),
-        proc.returncode or 0,
-    )
-
-
-async def _tmux_has_session(name: str) -> bool:
-    _, _, rc = await _run_exec("tmux", "has-session", "-t", name, timeout=3)
-    return rc == 0
-
-
-async def _tmux_capture(name: str) -> str:
-    out, _, _ = await _run_exec(
-        "tmux", "capture-pane", "-p", "-J", "-S", f"-{TMUX_CAPTURE_LINES}", "-t", name,
-        timeout=5,
-    )
-    return out
-
-
-async def _tmux_send_line(name: str, line: str) -> None:
-    if line:
-        await _run_exec("tmux", "send-keys", "-t", name, "-l", line, timeout=5)
-    await _run_exec("tmux", "send-keys", "-t", name, "C-m", timeout=5)
-
-
-async def _ensure_tmux_session(name: str, cwd: str, env: Optional[dict]) -> None:
-    if await _tmux_has_session(name):
-        await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
-        return
-    await _run_exec(
-        "tmux", "new-session", "-d", "-s", name, "-c", cwd,
-        "env",
-        f"TERM={env.get('TERM', 'xterm-256color') if env else 'xterm-256color'}",
-        f"COLUMNS={env.get('COLUMNS', '120') if env else '120'}",
-        f"LINES={env.get('LINES', '40') if env else '40'}",
-        "/bin/bash",
-        "--noprofile",
-        "--norc",
-        timeout=10,
-    )
-    if not await _tmux_has_session(name):
-        raise RuntimeError(f"failed to create tmux session {name}")
-    await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
-
-
-def _output_after_marker(capture: str, start_marker: str, end_marker: str) -> Tuple[str, bool]:
-    lines = capture.splitlines()
-    start_idx = -1
-    for idx, line in enumerate(lines):
-        if line.strip() == start_marker:
-            start_idx = idx
-    if start_idx < 0:
-        return capture, False
-    end_idx = -1
-    for idx in range(start_idx + 1, len(lines)):
-        if lines[idx].strip().startswith(end_marker):
-            end_idx = idx
-    if end_idx < 0:
-        return "\n".join(lines[start_idx + 1:]), False
-    return "\n".join(lines[start_idx + 1:end_idx]), True
-
-
-def _extract_marker_rc(capture: str, end_marker: str) -> int:
-    for line in reversed(capture.splitlines()):
-        stripped = line.strip()
-        if stripped.startswith(end_marker):
-            suffix = stripped[len(end_marker):].strip()
-            if suffix.isdigit():
-                return int(suffix)
-    return 0
-
-
-async def _run_tmux_bash(
-    content: str,
-    *,
-    session_id: str,
-    cwd: str,
-    env: Optional[dict],
-    timeout: float,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Tuple[str, str, Optional[int], bool]:
-    name = _tmux_session_name(session_id)
-    await _ensure_tmux_session(name, cwd, env)
-
-    stamp = f"{int(time.time() * 1000)}-{abs(hash(content)) % 1000000}"
-    start_marker = f"__ODYSSEUS_CMD_START_{stamp}__"
-    end_prefix = f"__ODYSSEUS_CMD_END_{stamp}__:"
-    wrapped = (
-        f"printf '\\n{start_marker}\\n'\n"
-        f"{content}\n"
-        f"__ody_rc=$?\n"
-        f"printf '\\n{end_prefix}%s\\n' \"$__ody_rc\"\n"
-    )
-    for line in wrapped.splitlines():
-        await _tmux_send_line(name, line)
-
-    started = time.time()
-    last_tail = ""
-    while True:
-        capture = await _tmux_capture(name)
-        body, done = _output_after_marker(capture, start_marker, end_prefix)
-        tail = "\n".join(body.splitlines()[-PROGRESS_TAIL_LINES:])
-        if progress_cb and tail != last_tail:
-            last_tail = tail
-            try:
-                await progress_cb({
-                    "elapsed_s": round(time.time() - started, 1),
-                    "tail": tail,
-                    "tmux_session": name,
-                })
-            except Exception:
-                pass
-        if done:
-            rc = _extract_marker_rc(capture, end_prefix)
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", rc, False
-        if time.time() - started > timeout:
-            try:
-                await _run_exec("tmux", "send-keys", "-t", name, "C-c", timeout=3)
-            except Exception:
-                pass
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", 124, True
-        await asyncio.sleep(0.5)
-
-
-def _clean_tmux_command_output(text: str, wrapped_command: str) -> str:
-    lines = text.splitlines()
-    wrapped_lines = {ln.rstrip() for ln in wrapped_command.splitlines() if ln.strip()}
-    cleaned = []
-    for line in lines:
-        raw = line.rstrip()
-        stripped = raw.strip()
-        if not stripped:
-            cleaned.append(raw)
-            continue
-        if stripped in wrapped_lines:
-            continue
-        if stripped.startswith("__ody_rc=") or stripped.startswith("printf "):
-            continue
-        if re.fullmatch(r"(?:bash|sh)-[\d.]+\$ ?", stripped):
-            continue
-        if re.fullmatch(r"[\w.@:/~+-]+[#$] ?", stripped):
-            continue
-        cleaned.append(raw)
-    return "\n".join(cleaned).strip()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=3)
+    except Exception:
+        if pid:
+            await asyncio.to_thread(kill_process_tree, pid, True)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+        except Exception:
+            pass
 
 async def _run_subprocess_streaming(
     proc: asyncio.subprocess.Process,
@@ -212,23 +100,36 @@ async def _run_subprocess_streaming(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
 ) -> Tuple[str, str, Optional[int], bool]:
     started = time.time()
-    stdout_full: list[str] = []
-    stderr_full: list[str] = []
+    stdout_full = _BoundedOutput()
+    stderr_full = _BoundedOutput()
     tail = collections.deque(maxlen=PROGRESS_TAIL_LINES)
 
     async def _reader(stream, full_buf, label: str):
         if stream is None:
             return
+        pending = ""
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(4096)
+            if not chunk:
                 break
-            decoded = line.decode("utf-8", errors="replace").rstrip("\n")
+            decoded = decoder.decode(chunk)
             full_buf.append(decoded)
-            if label == "err":
-                tail.append(f"! {decoded}")
+            pending += decoded
+            lines = pending.splitlines(keepends=True)
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                pending = lines.pop()
             else:
-                tail.append(decoded)
+                pending = ""
+            for line in lines:
+                clean = line.rstrip("\r\n")
+                tail.append(f"! {clean}" if label == "err" else clean)
+        final = decoder.decode(b"", final=True)
+        if final:
+            full_buf.append(final)
+            pending += final
+        if pending:
+            tail.append(f"! {pending}" if label == "err" else pending)
 
     async def _progress_emitter():
         await asyncio.sleep(PROGRESS_INTERVAL_S)
@@ -252,23 +153,9 @@ async def _run_subprocess_streaming(
         await asyncio.wait_for(proc.wait(), timeout=timeout)
     except asyncio.TimeoutError:
         timed_out = True
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
+        await _terminate_process_tree(proc)
     except asyncio.CancelledError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
+        await _terminate_process_tree(proc)
         for t in (rd_out, rd_err):
             t.cancel()
         if prog_task is not None:
@@ -288,8 +175,8 @@ async def _run_subprocess_streaming(
                 pass
 
     return (
-        "\n".join(stdout_full),
-        "\n".join(stderr_full),
+        stdout_full.text().rstrip("\n"),
+        stderr_full.text().rstrip("\n"),
         proc.returncode,
         timed_out,
     )
@@ -299,39 +186,19 @@ class BashTool:
         from src.tool_execution import agent_cwd, _truncate
         if isinstance(content, dict):
             content = str(content.get("command") or content.get("cmd") or content.get("code") or "")
+        try:
+            content = validate_bash_command(content)
+        except ValueError as e:
+            message = f"bash: {e}"
+            return {
+                "error": message,
+                "output": message,
+                "stdout": "",
+                "stderr": message,
+                "exit_code": 1,
+            }
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
-        session_id = ctx.get("session_id")
-        # tmux is a POSIX persistence path. A stray MSYS/Cygwin tmux.exe on
-        # native Windows must not bypass the Git Bash launcher below: the tmux
-        # setup hard-codes /bin/bash and cannot safely consume a native cwd.
-        if session_id and not IS_WINDOWS and shutil.which("tmux"):
-            stdout, stderr, rc, timed_out = await _run_tmux_bash(
-                content,
-                session_id=str(session_id),
-                cwd=agent_cwd(),
-                env=_subproc_env,
-                timeout=DEFAULT_BASH_TIMEOUT,
-                progress_cb=progress_cb,
-            )
-            if timed_out:
-                return {
-                    "error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — sent Ctrl-C to tmux session",
-                    "exit_code": 124,
-                    "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
-                    "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-                    "tmux_session": _tmux_session_name(str(session_id)),
-                }
-            output = stdout.rstrip()
-            err = stderr.rstrip()
-            if err:
-                output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-            return {
-                "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
-                "exit_code": rc or 0,
-                "tmux_session": _tmux_session_name(str(session_id)),
-            }
-
         try:
             proc = await _create_bash_subprocess(
                 content,
@@ -341,20 +208,43 @@ class BashTool:
                 cwd=agent_cwd(),
             )
         except RuntimeError as e:
-            return {"error": f"bash: {e}", "exit_code": 1}
+            message = f"bash: {e}"
+            return {
+                "error": message,
+                "output": message,
+                "stdout": "",
+                "stderr": message,
+                "exit_code": 1,
+            }
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_BASH_TIMEOUT,
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            message = f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed"
+            streams = stdout.rstrip()
+            if stderr.rstrip():
+                streams = (streams + "\nSTDERR: " + stderr.rstrip()).strip()
+            output = (streams + "\n" + message).strip()
+            return {
+                "error": message,
+                "output": _truncate(output, MAX_OUTPUT_CHARS),
+                "exit_code": 124,
+                "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+            }
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
             output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
         output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}
+        return {
+            "output": output or "(no output)",
+            "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+            "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+            "exit_code": rc if rc is not None else 1,
+        }
 
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:

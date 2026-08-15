@@ -37,6 +37,7 @@ export const UI_VIS_MAP = {
   'doc-toggle-btn':      '#overflow-doc-btn',
   'rag-toggle-btn':      '#overflow-rag-btn',
   'bash-toggle-btn':     '#bash-toggle-btn',
+  'bash-script-btn':     '#bash-script-btn',
   'overflow-plus-btn':   '.overflow-wrapper',
   'mode-toggle':         '.mode-toggle',
   'preset-mini-btn':     '#overflow-preset-btn',

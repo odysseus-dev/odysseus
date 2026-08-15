@@ -102,3 +102,5 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+.mypy_cache/

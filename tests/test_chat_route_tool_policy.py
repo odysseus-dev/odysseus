@@ -119,11 +119,11 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
     )
 
 
-def test_workspace_auto_escalation_keeps_shell_tools():
-    """Workspace/shell auto-routing must not use the light typed-tool clamp."""
+def test_workspace_auto_escalation_does_not_override_shell_toggle():
+    """Prompt intent may select Agent mode but must not grant Shell access."""
     source = _CHAT_ROUTES.read_text(encoding="utf-8")
     assert '_workspace_agent_intent = _tool_intent.category in {"shell", "workspace"}' in source
-    assert "allow_bash = \"true\"" in source
+    assert 'allow_bash = "true"' not in source
     assert "if auto_escalated and not _workspace_agent_intent:" in source
 
 
@@ -333,6 +333,9 @@ def test_frontend_always_sends_explicit_allow_bash():
     assert "allow_bash', el('bash-toggle').checked ? 'true' : 'false'" in source or \
            "allow_bash', 'false'" in source, (
         "Frontend must send explicit allow_bash=false when toggle is off"
+    )
+    assert "fd.set('allow_bash', 'true')" not in source, (
+        "Prompt intent must never silently override the visible Shell toggle"
     )
 
 

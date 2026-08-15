@@ -33,7 +33,9 @@ async def test_windows_bash_uses_git_bash_with_structural_cwd(monkeypatch):
     )
 
     assert result is process
-    assert captured["argv"] == (bash, "-c", "pwd; cat package.json")
+    assert captured["argv"] == (
+        bash, "--noprofile", "--norc", "-c", "pwd; cat package.json"
+    )
     assert captured["kwargs"]["cwd"] == workspace
 
 
@@ -48,7 +50,7 @@ async def test_windows_bash_without_git_bash_fails_clearly(monkeypatch):
     monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fail_spawn)
     monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_shell", fail_spawn)
 
-    with pytest.raises(RuntimeError, match="Git Bash is required"):
+    with pytest.raises(RuntimeError, match="install Git for Windows"):
         await subprocess_tools._create_bash_subprocess("pwd", cwd=r"C:\Work")
 
 
@@ -67,20 +69,12 @@ async def test_bash_tool_returns_install_hint_when_git_bash_is_missing(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
+async def test_windows_bash_session_id_does_not_change_execution_path(monkeypatch):
     captured = {}
     workspace = r"D:\Workspaces\Project with spaces"
 
     monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
-    monkeypatch.setattr(
-        subprocess_tools.shutil,
-        "which",
-        lambda name: r"C:\msys64\usr\bin\tmux.exe",
-    )
     monkeypatch.setattr("src.tool_execution.agent_cwd", lambda: workspace)
-
-    async def fail_tmux(*_args, **_kwargs):
-        pytest.fail("native Windows must not enter the POSIX tmux path")
 
     async def fake_create(command, **kwargs):
         captured["command"] = command
@@ -90,7 +84,6 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
     async def fake_stream(_process, **_kwargs):
         return "ok", "", 0, False
 
-    monkeypatch.setattr(subprocess_tools, "_run_tmux_bash", fail_tmux)
     monkeypatch.setattr(subprocess_tools, "_create_bash_subprocess", fake_create)
     monkeypatch.setattr(subprocess_tools, "_run_subprocess_streaming", fake_stream)
 
@@ -99,30 +92,40 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
         {"subproc_env": {}, "session_id": "chat-1"},
     )
 
-    assert result == {"output": "ok", "exit_code": 0}
+    assert result == {
+        "output": "ok",
+        "stdout": "ok",
+        "stderr": "",
+        "exit_code": 0,
+    }
     assert captured["command"] == "pwd"
     assert captured["kwargs"]["cwd"] == workspace
 
 
 @pytest.mark.asyncio
-async def test_posix_bash_keeps_existing_shell_path(monkeypatch):
+async def test_posix_bash_uses_explicit_bash(monkeypatch):
     captured = {}
     process = object()
 
     monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", False)
+    monkeypatch.setattr(subprocess_tools, "find_bash", lambda: "/usr/bin/bash")
 
-    async def fake_shell(command, **kwargs):
-        captured["command"] = command
+    async def fake_exec(*argv, **kwargs):
+        captured["argv"] = argv
         captured["kwargs"] = kwargs
         return process
 
-    async def fail_exec(*_args, **_kwargs):
-        pytest.fail("POSIX behavior must continue through create_subprocess_shell")
+    async def fail_shell(*_args, **_kwargs):
+        pytest.fail("the Bash tool must never delegate to /bin/sh")
 
-    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_shell", fake_shell)
-    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fail_exec)
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_shell", fail_shell)
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fake_exec)
 
     result = await subprocess_tools._create_bash_subprocess("pwd", cwd="/tmp/work")
 
     assert result is process
-    assert captured == {"command": "pwd", "kwargs": {"cwd": "/tmp/work"}}
+    assert captured["argv"] == (
+        "/usr/bin/bash", "--noprofile", "--norc", "-c", "pwd"
+    )
+    assert captured["kwargs"]["cwd"] == "/tmp/work"
+    assert captured["kwargs"]["start_new_session"] is True

@@ -2,8 +2,8 @@
 //
 // Workspace picker: browse server directories in a draggable modal, choose a
 // folder, and show it as a removable pill in the chat input bar. While set, the
-// chat request sends `workspace` so the agent's file/shell tools are confined
-// to that folder (see routes/chat_routes.py + src/tool_execution.py).
+// chat request sends `workspace` so file tools are confined there and shell
+// processes start there. Shell remains unsandboxed (see THREAT_MODEL.md).
 
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';

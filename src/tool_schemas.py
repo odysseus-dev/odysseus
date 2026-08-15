@@ -36,7 +36,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a command in a fresh Bash process rooted at the selected workspace (full access). stdout, stderr, and the exit code are returned. Use it for git, builds, tests, package commands, running programs, and system inspection. Commands do not share cd/export state, so include required setup in the same call. Prefer dedicated file tools for editing files.",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -1828,7 +1828,6 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
 	        fd.set('plan_mode', 'false');
 	      }
       fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
-      if (workspaceAgentIntent) fd.set('allow_bash', 'true');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -3581,6 +3580,19 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
 
               } else if (json.type === 'tool_output') {
                 if (_isBg) continue;
+                // Recover from an intervening render/round transition that
+                // cleared the JS pointer while the running card is still in
+                // the DOM. SSE ordering is stable, but UI re-renders and
+                // reconnects can otherwise leave a card showing only the
+                // command forever even though its result arrived.
+                if (!currentToolBubble) {
+                  const runningNodes = document.querySelectorAll(
+                    '.agent-thread.streaming .agent-thread-node.running'
+                  );
+                  currentToolBubble = runningNodes.length
+                    ? runningNodes[runningNodes.length - 1]
+                    : null;
+                }
                 // --- Update the current thread node ---
                 if (currentToolBubble) {
                   // Stop wave animation + the per-second cooking ticker
@@ -3596,7 +3608,8 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
                   const cmd = json.command || '';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
-                    outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
+                    const openOutput = json.tool === 'bash' ? ' open' : '';
+                    outHtml = `<details class="agent-tool-output"${openOutput}><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
                   }
                   // File-write diff (write_file): show a before/after unified diff.
                   let diffHtml = '';
@@ -3631,8 +3644,10 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
                   // click again. Click handling is delegated (see init at
                   // bottom of file) so no per-node listener needed.
                   const _wasOpen = currentToolBubble.classList.contains('open');
-                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
-                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+                  const _showShellResult = json.tool === 'bash';
+                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + ((_wasOpen || _showShellResult) ? ' open' : '');
+                  const _status = ok ? 'done' : `failed${json.exit_code != null ? ` (${json.exit_code})` : ''}`;
+                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${esc(_status)}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();

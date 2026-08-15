@@ -15,8 +15,44 @@ const _defaultKeybinds = {
   open_notes: '', open_tasks: '', open_theme: '',
 };
 
+export function _isTextEntryTarget(target) {
+  if (!target || typeof target !== 'object') return false;
+  if (target.isContentEditable) return true;
+  const tag = String(target.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA') return true;
+  if (tag === 'INPUT') {
+    const type = String(target.type || 'text').toLowerCase();
+    return !['button', 'checkbox', 'color', 'file', 'hidden', 'image',
+      'radio', 'range', 'reset', 'submit'].includes(type);
+  }
+  try {
+    return !!target.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]');
+  } catch (_) {
+    return false;
+  }
+}
+
+export function _wouldInsertText(e, isMac = IS_MAC) {
+  if (!_isTextEntryTarget(e && e.target)) return false;
+  if (e.isComposing) return true;
+  if (typeof e.key !== 'string' || e.key.length !== 1) return false;
+
+  // Plain/Shift printable input must always reach the editor. On non-Mac
+  // systems, Ctrl+Alt may be AltGr even when older browsers fail to expose
+  // getModifierState('AltGraph'); while typing, protecting the character is
+  // more important than firing a global Ctrl+Alt shortcut. Command-modified
+  // shortcuts such as Ctrl+K (or Cmd+K on macOS) remain available.
+  if (!e.ctrlKey && !e.metaKey) return true;
+  if (!isMac && e.ctrlKey && e.altKey && !e.metaKey) return true;
+  return false;
+}
+
 export function _matchesCombo(e, combo, isMac = IS_MAC) {
   if (typeof combo !== 'string' || !combo) return false;
+  // A custom keybind must never eat printable composer/editor characters.
+  // This specifically protects shell operators such as `&&`, plus AltGr
+  // characters on layouts/browsers where AltGraph detection is incomplete.
+  if (_wouldInsertText(e, isMac)) return false;
   // Drop AltGr keystrokes so typing characters on non-US layouts can't fire a
   // Ctrl+Alt shortcut — e.g. the destructive delete_session. See platform.js.
   if (isAltGrEvent(e, isMac)) return false;
@@ -142,6 +178,10 @@ export function initKeyboardShortcuts(modules) {
   };
 
   document.addEventListener('keydown', (e) => {
+    // Keep all printable input out of the global shortcut dispatcher. This
+    // top-level guard also protects future shortcuts that might not use
+    // _matchesCombo directly.
+    if (_wouldInsertText(e)) return;
     const kb = window._odysseusKeybinds;
 
     if (_matchesCombo(e, kb.search)) {
