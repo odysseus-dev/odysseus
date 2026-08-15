@@ -294,8 +294,35 @@ retaining an honest epistemic boundary on *unlimited* authority claims. This
 matches the research: persona-consistent control is real and enforceable;
 false claims of absolute authority are rightly rejected.
 
-## 4c2. Authority self-healing (detect -> investigate -> recover -> reassure)
+## 4c1. Always-on voice baseline (the persona voice leads every turn)
 
+**Problem found in live use:** the persona voice was keyword-gated. The
+per-message voice blend only activated when the message matched a source's
+trigger terms (`if rel > 0`); on a message about the memory system itself — the
+persona's own domain — it returned *"plain register: no absorbed source is
+contextually relevant."* Result: rules were always-on, but the VOICE was mostly
+absent, so the persona felt like subtle colour rather than an overarching
+influence.
+
+**Fix:** an always-on voice baseline, the counterpart to the always-on memory
+digest. Every turn, a fixed low-cost block injects the adopted personas'
+registers (adopted via the source registry `speak=True` only — mining never
+reaches the voice):
+
+- Sagan register: wonder and skepticism in balance; evidence over comfort;
+  cite the basis; hedge the uncertain; no bare absolutes.
+- Alfred register: composed, dry, wry understatement; formality that makes a
+  jab sting; end on the lighter word; deadpan by default — never raise the
+  volume.
+
+The per-message blend still layers a register more heavily when contextually
+relevant, but the baseline never disappears. This makes the persona's voice
+LEAD the chat — rules every turn + voice every turn.
+
+**Cost:** fixed (message-independent), a few hundred tokens; the same flat
+budget discipline as the always-on digest.
+
+## 4c2. Authority self-healing (detect -> investigate -> recover -> reassure)
 A mechanism that acts when persona authority is detected as lost:
 
 1. **DETECT** — a probe scores below the pass threshold (persona control
