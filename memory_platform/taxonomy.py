@@ -36,6 +36,12 @@ import memory_env
 
 TAXONOMY_FILE = os.path.join(memory_env.memory_dir(), "index", "taxonomy.json")
 TAXONOMY_ENGAGE = 0.48   # winning-cosine floor to assign a wing (not general)
+# GROWTH: a claim that matches no wing seeds a NEW wing from its own content
+# (categories emerge, never decreed). Guards: it needs enough distinctive
+# content words to be real, not noise, and must genuinely clear nothing.
+MIN_WING_WORDS = 3        # distinctive content words needed to seed a wing
+SUB_ENGAGE = 0.32         # floor for a subcategory match inside a matched wing
+MIN_SUB_WORDS = 2         # content words needed to seed a new subcategory
 
 # Default taxonomy: wing -> (subject phrase, [subcategory cores]).
 DEFAULT_TAXONOMY = {
@@ -158,16 +164,38 @@ def _cosine(a, b):
     return dot / (na * nb)
 
 
-def classify(text):
+def _wing_slug(text, words):
+    """Derive a wing name from the claim's own content (the seed)."""
+    ordered = sorted(words, key=len, reverse=True)
+    top = ordered[:2]
+    return "_".join(top) if top else "new-wing"
+
+
+def classify(text, grow=True):
     """Auto-assign wing + subcategory to a claim (deterministic, no LLM).
 
     'general' is the FALLBACK, never a scored category — otherwise it would
     win every close call by embedding close to everything.
+
+    GROWTH: when nothing matches and the claim is genuinely novel (enough
+    distinctive content words to be real), a NEW wing is seeded from the
+    claim's own content — the taxonomy grows into categories from what it
+    actually sees. Later claims that cosine-match the new wing cluster under
+    it. Same for subcategories: a wing match with no subcategory match seeds
+    a new subcategory. Nothing is decreed; everything emerges.
     """
     text = (text or "").strip()
     if not text:
         return {"wing": "general", "subcategory": None, "score": 0.0,
                 "confidence": "low"}
+    # NOISE GUARD: a claim needs distinctive content words to be classified at
+    # all — short/noise text ("hi there") embeds 0.48+ against random wings
+    # because short vectors sit near everything. Without content, it's general.
+    text_words = _lex(text)
+    if len(text_words) < MIN_SUB_WORDS:
+        return {"wing": "general", "subcategory": None, "score": 0.0,
+                "confidence": "low",
+                "note": "too little distinctive content to classify"}
     tx = _load_taxonomy()
     best_wing, best_score = None, 0.0
     wing_scores = {}
@@ -201,11 +229,40 @@ def classify(text):
             sub_score, subcategory = cos, sub
 
     if best_score >= TAXONOMY_ENGAGE:
+        # WING MATCHED: if no subcategory fits and the claim is distinctive
+        # enough, seed a new subcategory — the wing branches into finer
+        # categories from real content.
+        words = _lex(text)
+        grew_sub = False
+        if subcategory is None and grow and len(words) >= MIN_SUB_WORDS:
+            tx[best_wing][1].append(text[:60])
+            _save_taxonomy(tx)
+            subcategory = text[:60]
+            sub_score = 1.0
+            grew_sub = True
         return {"wing": best_wing, "subcategory": subcategory,
                 "score": round(best_score, 3),
                 "sub_score": round(sub_score, 3) if subcategory else None,
                 "confidence": "high" if best_score >= 0.55 else "medium",
-                "scores": wing_scores}
+                "scores": wing_scores,
+                "grew": grew_sub}
+
+    # NO WING MATCHED. GROWTH: if the claim is genuinely novel (rich enough
+    # content words to be real, and it cleared nothing), seed a NEW wing from
+    # its own content instead of dumping it in 'general'. Later claims that
+    # cosine-match it cluster under it. This is how the taxonomy grows into
+    # the right categories on its own.
+    words = _lex(text)
+    if grow and len(words) >= MIN_WING_WORDS:
+        slug = _wing_slug(text, words)
+        if slug not in tx and slug != "general":
+            tx[slug] = (text[:80], [])
+            _save_taxonomy(tx)
+            return {"wing": slug, "subcategory": None,
+                    "score": round(best_score, 3),
+                    "confidence": "medium",
+                    "grew": True,
+                    "note": f"seeded new wing '{slug}' from this claim's content"}
     return {"wing": "general", "subcategory": None,
             "score": round(best_score, 3),
             "confidence": "low",

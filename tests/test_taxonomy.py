@@ -53,9 +53,40 @@ def test_human_claim_classifies(iso):
 
 
 def test_unmatched_falls_to_general(iso):
-    res = taxonomy.classify("the mitochondria is the powerhouse of the cell")
+    """Without growth, a genuinely novel claim falls to general rather than
+    being misfiled (it's the review bucket, not a scoring target)."""
+    res = taxonomy.classify("the mitochondria is the powerhouse of the cell",
+                            grow=False)
     assert res["wing"] == "general"
     assert res["confidence"] == "low"
+
+
+def test_unmatched_seeds_new_wing(iso):
+    """GROWTH: a genuinely novel claim with enough content seeds a new wing
+    from its own content — categories emerge, not decreed."""
+    res = taxonomy.classify("the mitochondria is the powerhouse of the cell")
+    assert res["grew"] is True
+    assert res["wing"] not in ("general",)
+    assert any(w["wing"] == res["wing"] for w in taxonomy.wings())
+
+
+def test_related_claim_clusters_under_seeded_wing(iso):
+    """After a wing is seeded, a related claim clusters under it. It may grow
+    a subcategory (branching) but must NOT re-seed as a NEW wing."""
+    first = taxonomy.classify("the mitochondria is the powerhouse of the cell")
+    wing = first["wing"]
+    second = taxonomy.classify("mitochondria produce ATP via cellular respiration")
+    assert second["wing"] == wing       # same wing, not a new one
+    assert len(taxonomy.wings()) == len([w for w in taxonomy.wings()])  # sanity
+    wings_now = taxonomy.wings()
+    assert sum(1 for w in wings_now if w["wing"] == wing) == 1  # no duplicate wing
+
+
+def test_growth_does_not_seed_noise(iso):
+    """Short/thin claims (noise) must NOT seed wings — growth has a floor."""
+    res = taxonomy.classify("hi there")
+    assert res.get("grew") is not True
+    assert res["wing"] == "general"
 
 
 def test_wings_lists_taxonomy(iso):
