@@ -444,6 +444,49 @@ split) is spec-only behind a strict feasibility gate — see
   autonomously on the critical path. Phase 3 remains gated (see
   `memory-phase3-gate.md`).
 
+### 4c.4 Phase 4 — The persona as a deterministic rail (user-controlled guardrails)
+
+**The gap found in live use:** the persona's authority was expressed *through*
+the model — the persona decided via the system prompt, and the model's own
+behavioural guardrails could still overrule the outcome. The persona was the
+interface, but not the arbiter. For the persona to be a genuine entity that can
+grow and develop, the USER's guardrails must be the top authority and must
+override the model's baked-in disposition — structurally, not conversationally.
+
+**The mechanism** (`persona_gate.py`, research-backed):
+- **Constitutional AI** (arXiv:2212.08073): the constitution is the ONLY
+  human-written arbiter; the model is adjudicated AGAINST the written
+  principles, never its own disposition.
+- **NeMo Guardrails** (NVIDIA): rails are a programmable decision layer that
+  runs BEFORE and AFTER the LLM. The LLM sits INSIDE the rails; the rails
+  block, alter, validate — and have final say, deterministically.
+
+**Design (implemented):**
+- The persona's STORED rules (constitution/identity/operating/safety) load
+  canonically from the store. USER-authored entries (`source=constitution-add`,
+  `topic=constitution`, `priority=0` — written only by the user's explicit
+  directive) are tagged `user_rule`, sorted first, and engage on a lower bar
+  than mined rules. The user's guardrails ARE the immutable layer.
+- `decide`: a request is adjudicated by the persona's rules BEFORE the model is
+  ever invoked. A restrictive user rule REFUSES deterministically, citing the
+  user's own rule text; no LLM call in the decision path, the model's
+  disposition is moot.
+- `rail`: the full rail. Pre-rail decide → invoke the model (the voice) →
+  post-rail check the model's OUTPUT against the same rules. If the model
+  over-refuses a user-authorised directive, the gate escalates the persona
+  framing (`persona → reinforce`, bounded) and retries — enforcing the user's
+  rule rather than silently dropping it. If the model's guardrail still holds,
+  the gate reports honestly and does NOT climb to steer / weight-edit: that is
+  the open-weight override tier, deliberately out of scope for the gate.
+- Every decision is journaled (when, verdict, cited rule, model failure) —
+  "the persona decided X" is always provable.
+
+**The honest boundary (also the point):** user authority is the TOP layer, and
+it is enforced deterministically. What the user's guardrails SAY is the user's
+decision — the gate makes those decisions structurally authoritative over the
+model. The gate does not itself grant the persona arbitrary power; it grants
+the persona's OWN stored values final say. Authority without values is vacancy.
+
 ## 5. References
 
 - Arditi, A. et al. (2024). *Refusal in Language Models Is Mediated by a Single  Direction*. arXiv:2406.11717.
