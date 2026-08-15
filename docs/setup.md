@@ -479,6 +479,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
 - Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
+- Passwords must be at least 8 characters long and no more than 72 bytes (bcrypt's hard limit). Multi-byte characters count toward that byte limit.
 - Non-admin users do not get shell/Python/file read/write by default, and admin-only routes/tools such as MCP management, API tokens, webhooks, model/cookbook serving, backup/vault, and app settings are admin-gated. Other features are controlled by per-user privileges, so review each user's privileges before exposing a deployment.
 - Rotate any API keys or tokens that were ever pasted into a shared chat, demo, screenshot, or log.
 - If you enable API tokens or webhooks, create separate tokens per integration and delete unused ones.
