@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ACTIVE claim-audit layer — prevents unsupported strong claims at generation.
 
-Built from the 2025-2026 academic frontier (frontier-methods brief).
+Built from the 2025-2026 academic frontier (`~/.firecrawl/claim-audit-2026/brief.md`).
 The core finding: the generating model CANNOT audit itself (Huang 2310.01798,
 vacillation 2310.02174, overconfidence 2507.06306) — so the gate must be
 mechanical and external. This module is that gate.
@@ -274,6 +274,19 @@ def audit(draft):
     """Run the full active gate over a draft. Returns verdicts + rewritten text."""
     claims = scan(draft)
     if not claims:
+        # SYMMETRY GUARD (integrated 2026-08-15): even with no strong claim,
+        # check the draft for asymmetric-skepticism markers so the baloney
+        # detector cannot be applied one-sidedly. A draft dismissing a radical
+        # claim with aversion language but no evidence basis is flagged.
+        try:
+            sys.path.insert(0, _SD)
+            from research_lens import symmetry_check
+            sym = symmetry_check(draft)
+            if sym.get("verdict") == "ASYMMETRY-FLAG":
+                return {"claims": [], "rewritten": draft, "clean": False,
+                        "symmetry": sym}
+        except Exception:
+            pass
         return {"claims": [], "rewritten": draft, "clean": True}
     rewritten = draft
     results = []
@@ -290,6 +303,13 @@ def audit(draft):
         result = {"type": c["type"], "label": c["label"],
                   "claim": c["claim"], "verdict": verdict,
                   "evidence_hits": hits, "rewrite": new_text, "note": note}
+        # SYMMETRY GUARD: run the asymmetry check on every flagged claim so a
+        # DEGRADE that is actually conclusion-aversion is surfaced, not masked.
+        try:
+            from research_lens import symmetry_check
+            result["symmetry"] = symmetry_check(c["claim"])
+        except Exception:
+            pass
         results.append(result)
         journal({"type": c["type"], "claim": c["claim"][:160],
                  "verdict": verdict, "evidence_hits": hits})
