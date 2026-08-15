@@ -158,7 +158,7 @@ def ledger(topic=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["thesis", "critique", "concede", "coherence",
-                                    "ledger"])
+                                    "ledger", "check-consent"])
     ap.add_argument("topic", nargs="?", default="")
     ap.add_argument("text", nargs="*", default=None)
     ap.add_argument("--amend", default="", help="new rule text to adopt")
@@ -175,6 +175,26 @@ def main():
         return
     if args.cmd == "ledger":
         print(json.dumps(ledger(args.topic or None), indent=2))
+        return
+    if args.cmd == "check-consent":
+        # CONSENT GATE (corrected 2026-08-15): the Socratic loop applies ONLY
+        # when the user consents to argue about something. Default is evidence-
+        # when-available, not perpetual questioning. This returns whether the
+        # argumentative mode should engage at all.
+        topic = args.topic or " ".join(args.text)
+        print(json.dumps({
+            "verdict": "GATE",
+            "instruction": (
+                "Do NOT engage the Socratic/argument loop unless the user has "
+                "explicitly consented to argue about this. Otherwise the "
+                "evidence is sufficient — present it, absorb what survives, "
+                "and stop. The real Socratic method is a midwife, not a "
+                "wrestler: it serves the user's understanding, never 'wins.' "
+                "If you are reaching for 'the evidence says...' to deflect a "
+                "conclusion you find uncomfortable, that is the facsimile — "
+                "check whether the user consented to argue before continuing."),
+            "topic": topic,
+        }, indent=2))
         return
 
     body = " ".join(args.text) if args.text else ""
