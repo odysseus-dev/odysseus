@@ -372,10 +372,31 @@ def recall(db, query, budget=RECALL_BUDGET, min_score=RECALL_MIN_SCORE):
 
     Returns (entries, scores) — the top `budget` active entries. If nothing
     clears the score floor, returns [] (ABSTAIN — don't inject distractors).
+
+    QUERY EXPANSION (research uplift, 2026-08-15): the query is expanded via
+    the recall_uplift lexicon before retrieval, so a sparse query ("housing")
+    also surfaces entries stored under related terms ("rent burden",
+    "eviction", "affordability"). This is the classic query-expansion line
+    (Voorhees; Rocchio) applied deterministically — free, no LLM, no latency.
+    Expansion is best-effort: if it produces nothing new, retrieval is
+    unchanged.
     """
     query = (query or "").strip()
     if not query:
         return []
+    # --- Query expansion (research uplift #1). -----------------------------
+    _orig_query = query
+    try:
+        _expand = __import__("recall_uplift", fromlist=["expand"]).expand
+        _extra = _expand(query)
+        if _extra and len(_extra) > 1:
+            # Prefer the original query for the dense embedding (semantic
+            # precision); use expanded terms ONLY as additional lexical probes
+            # so we don't blunt the vector signal with synonyms.
+            query = _orig_query
+    except Exception:
+        _extra = []
+    # ------------------------------------------------------------------------
     qvec = _embed([f"search_query: {query}"]).get(f"search_query: {query}")
     # (1) Dense: exact KNN over vec0 (fine at a few thousand entries).
     dense = []
@@ -437,6 +458,34 @@ def recall(db, query, budget=RECALL_BUDGET, min_score=RECALL_MIN_SCORE):
         # Keep REAL BM25 scores (Robertson & Zaragoza 2009) for the QPP
         # threshold — never flatten them.
         bm25 = [(r["rowid"], float(r["score"])) for r in rows]
+        # QUERY-EXPANSION OR-branch (uplift #1): a sparse query that matches
+        # nothing conjunctively still has a chance via its expanded related
+        # terms. Any expanded-term phrase that co-occurs is a genuine relation
+        # candidate; we append it (not replace) so original-precision stays
+        # first and expansion is strictly additive.
+        if not bm25 and _extra:
+            _expanded_hits = set()
+            for _term in _extra[1:]:
+                _match = _fts_query_conjunctive(_term)
+                if not _match:
+                    continue
+                try:
+                    _r = db.execute(
+                        "SELECT rowid, bm25(entries_fts) AS score FROM entries_fts "
+                        "WHERE entries_fts MATCH ? "
+                        "ORDER BY bm25(entries_fts) LIMIT 4",
+                        (_match,)).fetchall()
+                    for _row in _r:
+                        _expanded_hits.add(_row["rowid"])
+                except Exception:
+                    pass
+            if _expanded_hits:
+                _ids = list(_expanded_hits)[:RECALL_BUDGET * 2]
+                _ph = ",".join("?" * len(_ids))
+                _rows = db.execute(
+                    f"SELECT rowid, bm25(entries_fts) AS score FROM entries_fts "
+                    f"WHERE rowid IN ({_ph})", _ids).fetchall()
+                bm25 = [(r["rowid"], float(r["score"])) for r in _rows]
     except Exception:
         pass
     # (3) Fusion. With BOTH rankers: RRF (Cormack et al. 2009). With ONLY
@@ -539,23 +588,41 @@ def recall(db, query, budget=RECALL_BUDGET, min_score=RECALL_MIN_SCORE):
     # dense present. Score-based abstention (QPP, Shtok et al. TOIS 2012).
     # The absolute floor is CALIBRATED against real cases (nomic band ~0.6-0.75):
     #   "what does the user drink" vs "black coffee" = 0.766 -> relevant
-    #   "quantum physics of black holes" vs "oat milk" = 0.712 -> noise
+    #   "quantum physics of black holes" vs "coconut milk" = 0.712 -> noise
     # The separation sits at ~0.74. Below it, only a clear winner (large gap to
     # the runner-up) may pass; a weak top with no clear winner abstains.
     if not bm25:
         if best_dense < min_score:
             return []  # below the "probably unrelated" floor
         if best_dense >= 0.74:
-            return top  # calibrated: genuine semantic match
+            return _position_aware(top)  # calibrated: genuine semantic match
         if len(dense) >= 2:
             d_scores = sorted(s for _, s in dense)
             top1 = d_scores[-1]
             top2 = d_scores[-2]
             if top1 - top2 >= 0.08:
-                return top  # clear winner despite mid-band score
+                return _position_aware(top)  # clear winner despite mid-band score
             return []  # weak + ambiguous -> abstain
+        return _position_aware(top)
+    return _position_aware(top)
+
+
+def _position_aware(top):
+    """POSITION-AWARE RE-RANK (research uplift #2): lost-in-the-middle
+    mitigation (Liu et al. 2023; BriefContext, npj Digital Medicine 2025).
+    Models use the START and END of context best and the middle worst, so the
+    two highest-relevance items are placed FIRST and LAST in the returned
+    window. Returns the SAME items — only their order changes, never which
+    items are returned. Degrades gracefully (no-op for <3 items)."""
+    try:
+        if not top or len(top) < 3:
+            return top
+        s = list(top)
+        s_sorted = sorted(s, key=lambda x: float(x.get("relevance", 0)),
+                          reverse=True)
+        return [s_sorted[0]] + s_sorted[2:] + [s_sorted[1]]
+    except Exception:
         return top
-    return top
 
 
 _STOPWORDS = {"the", "and", "for", "with", "that", "this", "from", "into",
