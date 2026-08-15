@@ -151,6 +151,30 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         user = _owner(request)
         return {"memory": memory_manager.load(owner=user)}
 
+    @router.get("/sleep-status")
+    def api_sleep_status(request: Request):
+        """Return the current sleep-time / consolidation status.
+
+        Reads the status file written by the sleep-time sub-agent
+        (memory/status.json). Used by the UI to show the animated bed+ZZZ
+        indicator while odysseus is consolidating memory. Non-authoritative
+        on failure — the UI just hides the indicator.
+        """
+        status_path = os.path.join(
+            os.path.expanduser("~/.config/opencode/memory"), "status.json")
+        try:
+            with open(status_path, "r") as f:
+                data = json.load(f)
+            return {"sleeping": data.get("state") != "idle",
+                    "state": data.get("state", "idle"),
+                    "phase": data.get("phase", ""),
+                    "note": data.get("note", ""),
+                    "updated": data.get("updated", "")}
+        except FileNotFoundError:
+            return {"sleeping": False, "state": "idle", "phase": "", "note": "", "updated": ""}
+        except Exception:
+            return {"sleeping": False, "state": "idle", "phase": "", "note": "", "updated": ""}
+
     @router.post("/search")
     def search_memories(request: Request, query: str = Form(...), session_id: str = Form(None), category: str = Form(None)):
         """Search across all memories with optional filters."""

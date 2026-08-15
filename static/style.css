@@ -41136,3 +41136,41 @@ body.theme-frosted .modal {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
 }
+
+/* ---- Sleep indicator (bed + animated ZZZ) ---- */
+.sleep-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 8px;
+  color: var(--muted, #8a8f98);
+  cursor: default;
+  vertical-align: middle;
+  line-height: 1;
+}
+.sleep-indicator .sleep-bed {
+  animation: sleep-bed-bob 2.4s ease-in-out infinite;
+}
+.sleep-indicator .sleep-zzz {
+  display: inline-flex;
+  gap: 1px;
+}
+.sleep-indicator .zz {
+  width: 7px;
+  height: 7px;
+  opacity: 0;
+  animation: zzz-float 2.4s ease-in-out infinite;
+}
+.sleep-indicator .zz1 { animation-delay: 0s; }
+.sleep-indicator .zz2 { animation-delay: 0.6s; }
+.sleep-indicator .zz3 { animation-delay: 1.2s; }
+@keyframes sleep-bed-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes zzz-float {
+  0%   { opacity: 0; transform: translate(0, 0) scale(0.8); }
+  25%  { opacity: 1; }
+  60%  { opacity: 0.8; transform: translate(2px, -4px) scale(1); }
+  100% { opacity: 0; transform: translate(4px, -8px) scale(1.15); }
+}

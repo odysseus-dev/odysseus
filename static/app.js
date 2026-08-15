@@ -1361,6 +1361,32 @@ function initializeEventListeners() {
     })
     .catch(() => {});
 
+  // Sleep indicator — show an animated bed + ZZZ beside the typing indicator
+  // while the sleep-time sub-agent is consolidating memory.
+  (function initSleepIndicator() {
+    const el = id => document.getElementById(id);
+    const ind = el('sleep-indicator');
+    if (!ind) return;
+    let lastState = '';
+    function refresh() {
+      fetch(`${API_BASE}/api/memory/sleep-status`, { credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(d => {
+          const sleeping = !!d.sleeping;
+          if (sleeping !== (ind.style.display !== 'none')) {
+            ind.style.display = sleeping ? 'inline-flex' : 'none';
+            if (sleeping) {
+              const phase = d.phase || 'consolidating';
+              ind.title = `Odysseus is consolidating memory… (${phase})`;
+            }
+          }
+        })
+        .catch(() => {});
+    }
+    refresh();
+    setInterval(refresh, 15000); // poll every 15s
+  })();
+
   // Session sort dropdown
   const sortBtn = el('session-sort-btn');
   const sortDropdown = el('session-sort-dropdown');
