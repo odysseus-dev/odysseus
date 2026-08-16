@@ -1,4 +1,5 @@
 import builtins
+import zipfile
 
 import pytest
 
@@ -8,6 +9,7 @@ from src.markitdown_runtime import (
     is_markitdown_format,
     load_markitdown,
     convert_to_markdown,
+    _extract_docx_native,
 )
 
 
@@ -73,3 +75,53 @@ def test_convert_extracts_real_docx(tmp_path):
     md = convert_to_markdown(str(path))
     assert md and "Quarterly Report" in md
     assert "#" in md  # docx heading styles become Markdown headings
+
+
+def _make_docx(tmp_path, xml_content: str) -> str:
+    """Build a minimal .docx (zip with ``word/document.xml``) for parser tests."""
+    path = tmp_path / "payload.docx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", xml_content)
+    return str(path)
+
+
+def test_native_extract_valid_docx(tmp_path):
+    xml = (
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>"
+    )
+    out = _extract_docx_native(_make_docx(tmp_path, xml))
+    assert out == "Hello"
+
+
+def test_native_extract_rejects_doctype_external_entity(tmp_path):
+    """A DOCTYPE with an external entity must be rejected, not expanded (XXE)."""
+    xml = (
+        '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>&xxe;</w:t></w:r></w:p></w:body></w:document>"
+    )
+    assert _extract_docx_native(_make_docx(tmp_path, xml)) is None
+
+
+def test_native_extract_rejects_doctype_billion_laughs(tmp_path):
+    """Internal-entity expansion ('billion laughs') must be rejected, not parsed."""
+    xml = (
+        '<?xml version="1.0"?>'
+        "<!DOCTYPE lolz ["
+        '<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">'
+        "]>"
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>safe</w:t></w:r></w:p></w:body></w:document>"
+    )
+    assert _extract_docx_native(_make_docx(tmp_path, xml)) is None
+
+
+def test_native_extract_case_insensitive_doctype(tmp_path):
+    """Lowercase '<!doctype' is still rejected (case-insensitive check)."""
+    xml = (
+        '<?xml version="1.0"?><!doctype r [<!ENTITY x SYSTEM "http://evil/xxe">]>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>body text</w:t></w:r></w:p></w:body></w:document>"
+    )
+    assert _extract_docx_native(_make_docx(tmp_path, xml)) is None

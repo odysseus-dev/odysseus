@@ -51,7 +51,14 @@ def _extract_docx_native(path: str) -> str | None:
     case people hit when markitdown isn't installed.
     """
     import zipfile
-    import xml.etree.ElementTree as ET
+    import xml.etree.ElementTree as ET  # nosec B405  # stdlib fallback below
+
+    try:
+        import defusedxml.ElementTree as SafeET  # type: ignore
+
+        _fromstring = SafeET.fromstring
+    except ImportError:  # pragma: no cover - fallback for envs without defusedxml
+        _fromstring = ET.fromstring
 
     ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     try:
@@ -59,8 +66,16 @@ def _extract_docx_native(path: str) -> str | None:
             xml_bytes = z.read("word/document.xml")
     except (zipfile.BadZipFile, KeyError, OSError):
         return None
+    # Reject any DOCTYPE before parsing. A crafted .docx can embed internal
+    # entity definitions (e.g. "billion laughs") that xml.etree expands during
+    # parse, causing pathological CPU/memory amplification on an untrusted
+    # document (CWE-611 / CWE-400). Disallowing the DOCTYPE declaration
+    # neutralises both external-entity and internal-entity-expansion attacks
+    # regardless of the parser's entity policy.
+    if b"<!DOCTYPE" in xml_bytes.upper():
+        return None
     try:
-        root = ET.fromstring(xml_bytes)
+        root = _fromstring(xml_bytes)  # nosec B314  # defusedxml preferred; DOCTYPE-guarded stdlib fallback
     except ET.ParseError:
         return None
     paragraphs: list[str] = []
