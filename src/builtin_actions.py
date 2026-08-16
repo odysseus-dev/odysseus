@@ -810,13 +810,27 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
 
     Research history lives entirely in data/deep_research/<id>.json and is NOT
     backed by chat-session rows — so a file must never be deleted just because
-    no chat session matches its id. Only prune files that fail to load."""
+    no chat session matches its id. Only prune files that fail to load.
+
+    A broken file has no readable owner stamp, so it cannot be matched against
+    `owner`. Clearing one is privileged: admins and the single-user operator
+    (AUTH_ENABLED=false) may, a regular user may not, and neither may anyone
+    during the pre-setup window before an admin exists.
+    """
     try:
         from pathlib import Path
         import json as _json
+        from src.tool_security import owner_is_admin_or_single_user
         research_dir = Path(DEEP_RESEARCH_DIR)
         if not research_dir.exists():
             raise TaskNoop("no research directory")
+        if not owner_is_admin_or_single_user(owner):
+            # Return before the glob rather than filtering inside the loop: the
+            # loop reports "none broken" off an empty `removed`, which reaches
+            # Activity as a false report to a user whose files it skipped, and a
+            # regular user need not read every owner's file to learn it may
+            # delete none of them.
+            raise TaskNoop("not permitted to remove unattributable research files")
         files = list(research_dir.glob("*.json"))
         removed = []
         for p in files:

@@ -3,7 +3,7 @@
  */
 
 import uiModule from './ui.js';
-import { openEditor, closeEditor, isEditorOpen } from './galleryEditor.js?v=20260708match1';
+import { loadPanel } from './panels.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -14,6 +14,54 @@ import fileHandlerModule from './fileHandler.js';
 const API_BASE = window.location.origin;
 let _open = false;
 let _galleryResizeHandler = null;
+
+// ── Image editor, loaded on first use ──
+// galleryEditor.js plus everything under js/editor/ is 54 modules / 576 KB.
+// It used to be a static import here, so every page load paid for it even
+// though most sessions never touch the Edit tab. The wrappers below keep the
+// three call shapes the rest of this file already uses.
+//
+// closeEditor() and isEditorOpen() stay synchronous on purpose: if the module
+// was never loaded there is no edit session to close, and none can be open.
+let _editorMod = null;
+let _editorLoading = false;
+
+async function _loadEditor() {
+  _editorLoading = true;
+  try {
+    _editorMod = await loadPanel('editor');
+    return _editorMod;
+  } finally {
+    _editorLoading = false;
+  }
+}
+
+async function openEditor(...args) {
+  let mod = _editorMod;
+  if (!mod) {
+    try {
+      mod = await _loadEditor();
+    } catch (e) {
+      // Previously unreachable — a static import either loaded or the whole
+      // page failed. Now it can fail on its own (offline before the panel was
+      // ever cached), so say so instead of doing nothing.
+      console.error('[gallery] image editor failed to load', e);
+      uiModule?.showError?.('Failed to load the image editor');
+      return;
+    }
+  }
+  return mod.openEditor(...args);
+}
+
+function closeEditor(...args) {
+  return _editorMod ? _editorMod.closeEditor(...args) : undefined;
+}
+
+// True while the module is still in flight as well — the gallery-close paths
+// use this to refuse to tear the container down under an edit that is opening.
+function isEditorOpen() {
+  return _editorLoading || (_editorMod ? _editorMod.isEditorOpen() : false);
+}
 
 // Auto-refresh gallery when new image is generated
 window.addEventListener('gallery-refresh', (e) => {

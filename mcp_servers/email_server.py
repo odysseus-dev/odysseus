@@ -1802,7 +1802,6 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
         from src.endpoint_resolver import (
             resolve_endpoint,
             resolve_utility_fallback_candidates,
-            resolve_chat_fallback_candidates,
         )
         from src.llm_core import llm_call_async_with_fallback
     except Exception as exc:
@@ -1843,13 +1842,6 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
         utility_fallbacks = resolve_utility_fallback_candidates() or []
     for cand in utility_fallbacks:
         _add(*cand)
-    try:
-        chat_fallbacks = resolve_chat_fallback_candidates(owner=None) or []
-    except TypeError:
-        chat_fallbacks = resolve_chat_fallback_candidates() or []
-    for cand in chat_fallbacks:
-        _add(*cand)
-
     if not candidates:
         return {"error": "No LLM endpoint configured for AI reply"}
 

@@ -7,7 +7,7 @@ import Storage from './storage.js';
 import themeModule from './theme.js';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
-import documentModule from './document.js?v=20260722emailfastindex1';
+import documentModule from './document.js?v=20260815approvalsave1';
 
 /**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
@@ -156,7 +156,7 @@ export function handleUIControl(uiData) {
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'email') {
-        import('./emailLibrary.js?v=20260722emailfastindex1').then(function(mod) {
+        import('./emailLibrary.js?v=20260815approvalsave1').then(function(mod) {
           var fn = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
           if (fn) fn();
         }).catch(function(){});
@@ -205,7 +205,7 @@ export function handleUIControl(uiData) {
       } catch (e) {
         console.warn('open_email_reply existing draft update failed:', e);
       }
-      import('./emailInbox.js?v=20260722emailfastindex1').then(function(mod) {
+      import('./emailInbox.js?v=20260815approvalsave1').then(function(mod) {
         var fn = mod.openReplyDraft || (mod.default && mod.default.openReplyDraft);
         if (fn) fn(uiData.uid, uiData.folder || 'INBOX', uiData.mode || 'reply', uiData.body || '');
       }).catch(function(e) {

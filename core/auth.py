@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 from core.atomic_io import atomic_write_json as _atomic_write_json  # noqa: E402
-from core.middleware import INTERNAL_TOOL_USER  # noqa: E402
 
 DEFAULT_PRIVILEGES = {
     "can_use_agent": True,
@@ -49,24 +48,18 @@ ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 ADMIN_PRIVILEGES["block_all_models"] = False
 
 from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH
+from src.owner_identity import RESERVED_AUTH_USERNAMES
 DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
-# Usernames the auth + middleware layer reserve as internal "synthetic owner"
-# sentinels; they must never belong to a real account. The most dangerous is
-# "internal-tool": `core.middleware.require_admin` treats any request whose
-# `current_user == "internal-tool"` as the in-process tool loopback and grants
-# admin, and because the cookie auth path sets `current_user` to the raw
-# username, an account literally named "internal-tool" would be silently
-# treated as an admin by every `require_admin`-gated route. "api" collides with
-# the bearer-token owner-attribution sentinel. "demo"/"system" round out the
-# synthetic-owner set the rest of the codebase already special-cases (see
-# `_SYNTHETIC_OWNERS` in routes/assistant_routes.py and the matching guards in
-# src/task_scheduler.py / routes/research_routes.py) — a real account with one
-# of those names would be denied an assistant and inconsistently owner-scoped.
-# Refuse to create or rename into any of them so the sentinels can't be
-# impersonated. (Keep this in sync with that synthetic-owner set.)
-RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
+# Usernames the auth + middleware layer reserves for request sentinels and
+# internal storage owners; they must never belong to a real login account.
+# "internal-tool" is the most dangerous because `core.middleware.require_admin`
+# treats it as the in-process tool loopback. "api" collides with bearer-token
+# attribution. "demo"/"system" are synthetic owners already special-cased by
+# scheduler/assistant/research paths. The Default/Local owner is a storage
+# bucket for explicit auth-disabled no-login mode, not a login username.
+RESERVED_USERNAMES = frozenset(RESERVED_AUTH_USERNAMES)
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
