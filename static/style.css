@@ -7431,6 +7431,13 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         height: 100vh !important;
         height: 100dvh !important;
       }
+      /* Email modal content has position:fixed (set by JS bottom:0),
+         so the parent's padding-top doesn't shift it. Set top +
+         padding-top so the *entire* slideover (rounded corners included)
+         shifts below the status bar. */
+      #email-lib-modal .modal-content {
+        top: env(safe-area-inset-top, 0px) !important;
+      }
       /* Anchor those modals to the top so the full height is usable,
          but shift below the iOS status bar / dynamic island. */
       #memory-modal,
