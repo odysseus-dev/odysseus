@@ -378,7 +378,7 @@ def test_auth_app_pwa_and_offline_shell_are_wired():
     assert "/static/i18n/registry.json" in worker
     assert "/static/i18n/en.json" in worker
     assert "/static/i18n/fr.json" not in worker
-    assert "odysseus-v378-i18n-dev-refresh" in worker
+    assert "odysseus-v381-i18n-shared-config-image-editor-lazy-katex-mermaid" in worker
     assert "setI18nText(setupNote, 'auth.first_time_setup'" in login
     assert "auth.two_factor_code" in login
 

@@ -22,6 +22,8 @@ from src.settings import (
     load_features as _load_features,
     save_features as _save_features,
     DEFAULT_SETTINGS,
+    RETIRED_SETTING_KEYS,
+    without_retired_settings,
 )
 from src.integrations import (
     load_integrations,
@@ -82,6 +84,33 @@ class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
 SESSION_COOKIE = "odysseus_session"
+
+
+def _secure_cookie(request: Request) -> bool:
+    """Decide the ``Secure`` attribute of the session cookie.
+
+    ``SECURE_COOKIES`` stays authoritative when it holds an explicit value:
+    ``true`` always marks the cookie Secure (the documented knob for a TLS
+    proxy), ``false`` never does, which is the escape hatch for an install
+    that still answers on plain HTTP alongside HTTPS. Anything else —
+    unset, or the present-but-empty value docker-compose injects for a
+    variable the host has not defined — derives it from the request, so an
+    HTTPS login gets a Secure cookie without any configuration.
+
+    Either the connection scheme or ``X-Forwarded-Proto`` saying https is
+    enough, which is the same test ``core/middleware.py`` applies before it
+    sends HSTS. Uvicorn's proxy-headers middleware already folds that header
+    into the scheme for the proxies it trusts, so reading it here only adds
+    the case of a terminator that is not on a trusted address; the cost is
+    that a client talking to the app directly can set the header and lock
+    its own session out over plain HTTP.
+    """
+    configured = os.getenv("SECURE_COOKIES", "").strip().lower()
+    if configured in ("true", "false"):
+        return configured == "true"
+    # A chained proxy sends a list — the client-facing hop comes first.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0]
+    return request.url.scheme == "https" or forwarded_proto.strip().lower() == "https"
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -157,7 +186,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             value=token,
             httponly=True,
             samesite="lax",
-            secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+            secure=_secure_cookie(request),
             path="/",
         )
         if body.remember:
@@ -689,7 +718,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         a scrubbed copy with secret keys blanked. The frontend uses this
         for keybinds + TTS prefs, so it stays callable without admin."""
         user = _get_current_user(request)
-        settings = _load_settings()
+        settings = without_retired_settings(_load_settings())
         if user and auth_manager.is_admin(user):
             return settings
         return scrub_settings(settings)
@@ -709,6 +738,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
         for key in DEFAULT_SETTINGS:
+            if key in RETIRED_SETTING_KEYS:
+                continue
             if key not in body:
                 continue
             val = body[key]
@@ -721,7 +752,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 val = max(lo, min(val, hi))
             current[key] = val
         _save_settings(current)
-        return current
+        return without_retired_settings(current)
 
     # ---- Integrations CRUD ----
 

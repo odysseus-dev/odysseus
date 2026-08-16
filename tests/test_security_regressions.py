@@ -131,6 +131,12 @@ def test_readme_native_quickstart_uses_loopback():
     assert "0.0.0.0` only when you intentionally want" in docs
 
 
+def test_readme_warns_auth_enabled_for_network_access():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "Keep `AUTH_ENABLED=true` for any network-accessible deployment." in readme
+    assert "Keep `LOCALHOST_BYPASS=false` outside local development." in readme
+
+
 def test_ollama_cookbook_runner_does_not_force_public_bind():
     route = Path("routes/cookbook_routes.py").read_text(encoding="utf-8")
     cookbook_js = Path("static/js/cookbook.js").read_text(encoding="utf-8")
@@ -738,6 +744,27 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     assert require_admin(_Req()) is None
 
 
+def test_require_admin_uses_central_auth_disabled_parser(monkeypatch):
+    from core.middleware import require_admin
+
+    monkeypatch.setenv("AUTH_ENABLED", " false ")
+
+    class _State:
+        current_user = None
+
+    class _AppState:
+        auth_manager = None
+
+    class _App:
+        state = _AppState()
+
+    class _Req:
+        state = _State()
+        app = _App()
+
+    assert require_admin(_Req()) is None
+
+
 def test_internal_tool_owner_header_logic_requires_known_user():
     """Pin the owner-attribution branch used by app.AuthMiddleware without
     booting the full FastAPI app."""
@@ -1000,9 +1027,13 @@ def test_session_html_export_escapes_name():
 def test_mcp_oauth_page_escapes_reflected_values():
     src = Path(__file__).resolve().parents[1] / "routes" / "mcp" / "mcp_routes.py"
     text = src.read_text()
-    body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
-    for var in ("auth_url", "server_id", "host", "redirect_uri"):
+    page = text.split("def _oauth_authorize_page(", 1)[1].split("def _oauth_result_page", 1)[0]
+    body = page.split("return f", 1)[0]
+    for var in ("auth_url", "server_id", "redirect_uri"):
         assert f"{var} = html.escape({var}" in body, var
+    # The Host header is no longer reflected at all: the paste-back form posts to
+    # a relative action, so there is nothing to escape and nothing to smuggle.
+    assert "{host}" not in page
 
 
 def _import_mcp_routes():

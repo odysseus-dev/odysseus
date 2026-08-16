@@ -1128,9 +1128,66 @@ function _renderTestLog(logEl, verdictEl, job, card, name) {
     else if (ev.type === 'agent_step') add('— round ' + ev.round + ' —', 'skill-test-round');
     else if (ev.type === 'tool_start') add('▸ ' + ev.tool + '  ' + String(ev.command || '').slice(0, 200), 'skill-test-tool');
     else if (ev.type === 'tool_output') add(String(ev.output || '').slice(0, 500), 'skill-test-out');
+    else if (ev.type === 'approval_granted' || ev.type === 'approval_denied') add(ev.text || '', 'skill-test-meta');
     else if (ev.type === 'say') add(ev.text || '', 'skill-test-say');
     else if (ev.type === 'evaluating') add('Evaluating run…', 'skill-test-meta');
     else if (ev.type === 'error') add('Error: ' + (ev.error || 'run failed'), 'skill-test-err');
+  }
+  if (job.status === 'awaiting_approval' && job.approval) {
+    const approval = job.approval;
+    const box = document.createElement('div');
+    box.className = 'skill-test-approval';
+    const question = document.createElement('div');
+    question.className = 'skill-test-meta';
+    question.textContent = approval.question || 'Allow this exact action once?';
+    box.appendChild(question);
+    if (approval.action) {
+      const action = document.createElement('pre');
+      action.className = 'skill-test-out';
+      action.textContent = [
+        approval.action.tool || 'tool',
+        approval.action.content || '',
+        Array.isArray(approval.action.effects)
+          ? `Effects: ${approval.action.effects.join(', ')}`
+          : '',
+        approval.action.workspace ? `Workspace: ${approval.action.workspace}` : '',
+        approval.action.digest ? `Approval fingerprint: ${approval.action.digest}` : '',
+      ].filter(Boolean).join('\n');
+      box.appendChild(action);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'modal-footer';
+    const decide = async (decision) => {
+      actions.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+      try {
+        const response = await fetch(
+          `${API}/api/skills/${encodeURIComponent(name)}/test-approval`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approval_id: approval.approval_id, decision }),
+          },
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await _testSkill(card, name, false);
+      } catch (error) {
+        add(`Approval failed: ${error.message || error}`, 'skill-test-err');
+        actions.querySelectorAll('button').forEach(btn => { btn.disabled = false; });
+      }
+    };
+    for (const [decision, label, cls] of [
+      ['deny', 'Deny', 'confirm-btn confirm-btn-secondary'],
+      ['approve', 'Allow once', 'confirm-btn confirm-btn-primary'],
+    ]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = cls;
+      button.textContent = label;
+      button.addEventListener('click', () => decide(decision));
+      actions.appendChild(button);
+    }
+    box.appendChild(actions);
+    logEl.appendChild(box);
   }
   if (job.status === 'running') add('…running (you can close this — it keeps going)', 'skill-test-meta');
   logEl.scrollTop = logEl.scrollHeight;

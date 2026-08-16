@@ -5,7 +5,7 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary, prewarmUnreadEmails } from './emailLibrary.js?v=20260722emailfastindex1';
+import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary, prewarmUnreadEmails } from './emailLibrary.js?v=20260815approvalsave1';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
