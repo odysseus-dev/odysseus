@@ -12,6 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Mapping, Sequence
+from urllib.parse import unquote, urlsplit
 
 
 class SandboxUnavailable(RuntimeError):
@@ -45,6 +46,7 @@ _SENSITIVE_DIR_NAMES = frozenset(
         ".aws",
         ".azure",
         ".codex",
+        ".cargo",
         ".docker",
         ".gnupg",
         ".kube",
@@ -54,12 +56,17 @@ _SENSITIVE_DIR_NAMES = frozenset(
 _SENSITIVE_FILE_NAMES = frozenset(
     {
         ".bash_profile",
+        ".bash_logout",
         ".bashrc",
+        ".cshrc",
         ".git-credentials",
         ".gitconfig",
         ".netrc",
         ".npmrc",
+        ".pgpass",
+        ".profile",
         ".pypirc",
+        ".tcshrc",
         ".zprofile",
         ".zshenv",
         ".zshrc",
@@ -98,7 +105,16 @@ def _normalized_workspace(workspace: str) -> str:
     if not isinstance(workspace, str) or not workspace.strip():
         raise SandboxUnavailable("Sandboxed execution requires a workspace.")
     resolved = os.path.realpath(os.path.expanduser(workspace))
-    if resolved in _BROAD_WORKSPACE_ROOTS or os.path.dirname(resolved) == resolved:
+    home_roots = {
+        os.path.realpath(path)
+        for path in (os.path.expanduser("~"), os.environ.get("HOME", ""))
+        if path
+    }
+    if (
+        resolved in _BROAD_WORKSPACE_ROOTS
+        or resolved in home_roots
+        or os.path.dirname(resolved) == resolved
+    ):
         raise SandboxUnavailable(
             f"Refusing broad sandbox workspace: {resolved}"
         )
@@ -162,9 +178,10 @@ def _workspace_overlays(
             ):
                 continue
             folded = name.casefold()
+            relative = os.path.relpath(path, workspace).replace(os.sep, "/").casefold()
             if folded == ".git":
                 args.extend(("--ro-bind", path, path))
-            elif folded in _SENSITIVE_DIR_NAMES:
+            elif folded in _SENSITIVE_DIR_NAMES or relative == ".config/gh":
                 args.extend(("--tmpfs", path))
             else:
                 retained_dirs.append(name)
@@ -188,6 +205,7 @@ def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
     """Hide application-owned stores even inside a broader selected workspace."""
     from src.constants import (
         AGENT_WORKSPACE_DIR,
+        APP_DB,
         DATA_DIR,
         LOGS_DIR,
         MAIL_ATTACHMENTS_DIR,
@@ -220,6 +238,27 @@ def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
         if _is_within(protected, workspace) and os.path.isdir(protected):
             args.extend(("--tmpfs", protected))
             hidden_roots.append(protected)
+
+    protected_files = {os.path.realpath(APP_DB)}
+    configured_database = os.environ.get("DATABASE_URL", "").strip()
+    if configured_database:
+        try:
+            parsed = urlsplit(configured_database)
+            if parsed.scheme == "sqlite" and parsed.path not in {"", "/:memory:"}:
+                database_path = unquote(parsed.path)
+                if not os.path.isabs(database_path):
+                    from src.runtime_paths import get_app_root
+
+                    database_path = os.path.join(get_app_root(), database_path)
+                protected_files.add(os.path.realpath(database_path))
+        except (TypeError, ValueError):
+            pass
+    for protected in sorted(protected_files):
+        for candidate in (protected, f"{protected}-journal", f"{protected}-shm", f"{protected}-wal"):
+            if any(_is_within(candidate, hidden) for hidden in hidden_roots):
+                continue
+            if _is_within(candidate, workspace) and os.path.isfile(candidate):
+                args.extend(("--ro-bind", "/dev/null", candidate))
     return args, hidden_roots
 
 

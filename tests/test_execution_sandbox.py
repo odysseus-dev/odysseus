@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import socket
 import shutil
 import subprocess
 import time
@@ -62,6 +63,8 @@ def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
     (workspace / ".env").write_text("SECRET=value", encoding="utf-8")
     (workspace / ".git").mkdir()
     (workspace / ".ssh").mkdir()
+    (workspace / ".config" / "gh").mkdir(parents=True)
+    (workspace / ".profile").write_text("persist", encoding="utf-8")
 
     argv = sandbox_command(["/bin/true"], workspace=str(workspace))
 
@@ -74,11 +77,20 @@ def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
         str(workspace / ".git"),
     ] in triples
     assert ["--tmpfs", str(workspace / ".ssh")] in pairs
+    assert ["--tmpfs", str(workspace / ".config" / "gh")] in pairs
+    assert ["--ro-bind", "/dev/null", str(workspace / ".profile")] in triples
 
 
 def test_sandbox_rejects_broad_workspace():
     with pytest.raises(SandboxUnavailable):
         sandbox_command(["/bin/true"], workspace="/")
+
+
+def test_sandbox_rejects_the_process_home_as_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    with pytest.raises(SandboxUnavailable):
+        sandbox_command(["/bin/true"], workspace=str(tmp_path))
 
 
 @requires_bubblewrap
@@ -95,6 +107,7 @@ def test_sandbox_hides_odysseus_data_inside_broader_workspace(
     data_dir.mkdir(parents=True)
     logs_dir.mkdir()
     agent_dir.mkdir()
+    (workspace / "allowed.txt").write_text("workspace", encoding="utf-8")
     (data_dir / "app.db").write_text("private", encoding="utf-8")
     (data_dir / ".env").write_text("PRIVATE=value", encoding="utf-8")
     monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
@@ -106,7 +119,7 @@ def test_sandbox_hides_odysseus_data_inside_broader_workspace(
         [
             "/bin/bash",
             "-c",
-            "test ! -e data/app.db && test ! -e logs/private.log",
+            "test -s allowed.txt && test ! -e data/app.db && test ! -e logs/private.log",
         ],
         workspace=str(workspace),
     )
@@ -124,6 +137,22 @@ def test_sandbox_hides_odysseus_data_inside_broader_workspace(
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_sandbox_masks_configured_sqlite_database_inside_workspace(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = workspace / "custom.db"
+    database.write_text("private", encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database}")
+
+    argv = sandbox_command(["/bin/true"], workspace=str(workspace))
+
+    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
+    assert ["--ro-bind", "/dev/null", str(database)] in triples
 
 
 def test_sandbox_allows_only_dedicated_workspace_below_data(
@@ -190,27 +219,31 @@ def test_sandbox_hides_host_and_environment_at_runtime(tmp_path):
 def test_sandbox_network_namespace_has_no_external_route(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    code = (
-        "import socket; "
-        "s=socket.socket(); s.settimeout(0.2); "
-        "\ntry: s.connect(('127.0.0.1', 9))"
-        "\nexcept OSError: raise SystemExit(0)"
-        "\nraise SystemExit(1)"
-    )
-    argv = sandbox_command(
-        ["/usr/bin/python3", "-I", "-c", code],
-        workspace=str(workspace),
-    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        code = (
+            "import socket; "
+            "s=socket.socket(); s.settimeout(0.2); "
+            f"\ntry: s.connect(('127.0.0.1', {port}))"
+            "\nexcept OSError: raise SystemExit(0)"
+            "\nraise SystemExit(1)"
+        )
+        argv = sandbox_command(
+            ["/usr/bin/python3", "-I", "-c", code],
+            workspace=str(workspace),
+        )
 
-    completed = subprocess.run(
-        argv,
-        cwd=str(workspace),
-        env={},
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+        completed = subprocess.run(
+            argv,
+            cwd=str(workspace),
+            env={},
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
 
     assert completed.returncode == 0, completed.stderr
 
