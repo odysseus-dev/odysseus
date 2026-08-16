@@ -9,6 +9,8 @@ stream_llm only captured usage when the delta was exactly None / {} /
 import asyncio
 import json
 
+import pytest
+
 from src import llm_core
 
 
@@ -116,7 +118,8 @@ def test_null_choice_chunk_does_not_crash(monkeypatch):
 
 
 def test_null_choice_with_null_usage_does_not_crash(monkeypatch):
-    # Chunk with both choices:[null] and usage:null — neither field should panic.
+    # Chunk with both choices:[null] and usage:null is a keepalive, not a real
+    # zero-token accounting record.
     lines = [
         'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
         'data: ' + json.dumps({"choices": [None], "usage": None}),
@@ -124,6 +127,66 @@ def test_null_choice_with_null_usage_does_not_crash(monkeypatch):
     ]
     result = _drive(monkeypatch, lines)
     assert "Hi" in result
+    assert _usage_events(result) == []
+
+
+def test_empty_usage_object_is_not_reported_as_real_zero_usage(monkeypatch):
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({"choices": [], "usage": {}}),
+        'data: [DONE]',
+    ]
+    result = _drive(monkeypatch, lines)
+    assert "Hi" in result
+    assert _usage_events(result) == []
+
+
+def test_explicit_zero_token_usage_is_preserved(monkeypatch):
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({
+            "choices": [],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }),
+        'data: [DONE]',
+    ]
+    usage = _usage_events(_drive(monkeypatch, lines))
+    assert usage == [{"input_tokens": 0, "output_tokens": 0}]
+
+
+@pytest.mark.parametrize(
+    "usage_payload",
+    [
+        {"prompt_tokens": None, "completion_tokens": 1},
+        {"prompt_tokens": "bad", "completion_tokens": 1},
+        {"prompt_tokens": -1, "completion_tokens": 1},
+        {"prompt_tokens": True, "completion_tokens": 1},
+        {"prompt_tokens": 1.5, "completion_tokens": 1},
+        {"prompt_tokens": float("inf"), "completion_tokens": 1},
+    ],
+)
+def test_malformed_token_values_do_not_emit_usage(monkeypatch, usage_payload):
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({"choices": [], "usage": usage_payload}),
+        'data: [DONE]',
+    ]
+    result = _drive(monkeypatch, lines)
+    assert "Hi" in result
+    assert _usage_events(result) == []
+
+
+def test_missing_usage_counterpart_defaults_to_zero(monkeypatch):
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({
+            "choices": [],
+            "usage": {"completion_tokens": 2},
+        }),
+        'data: [DONE]',
+    ]
+    usage = _usage_events(_drive(monkeypatch, lines))
+    assert usage == [{"input_tokens": 0, "output_tokens": 2}]
 
 
 def test_null_tool_call_in_delta_is_skipped(monkeypatch):

@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 import logging
 import re
 from src.constants import MAX_READ_CHARS
+from src.tool_approvals import document_content_digest
 from src.tool_utils import _parse_tool_args, get_upload_handler
 from src.upload_handler import reserve_upload_references
 
@@ -78,6 +79,40 @@ def _most_recent_owned_document(db, Document, owner: Optional[str], active_only:
         q = q.filter(Document.is_active == True)
     q = _owned_document_query(q, Document, owner)
     return q.order_by(Document.updated_at.desc()).first()
+
+
+def _approved_document_version_error(doc: Any, ctx: dict) -> Optional[Dict]:
+    """Reject a sealed document action when its target changed meanwhile."""
+    expected_version = ctx.get("expected_document_version")
+    expected_digest = (
+        str(ctx.get("expected_document_digest") or "").strip().lower()
+    )
+    if expected_version is None and not expected_digest:
+        return None
+    try:
+        version_unchanged = (
+            expected_version is None
+            or int(getattr(doc, "version_count", -1)) == int(expected_version)
+        )
+    except (TypeError, ValueError):
+        version_unchanged = False
+    content_unchanged = True
+    if expected_digest:
+        content_unchanged = (
+            doc is not None
+            and document_content_digest(getattr(doc, "current_content", ""))
+            == expected_digest
+        )
+    if version_unchanged and content_unchanged:
+        return None
+    return {
+        "error": (
+            "The target document changed after this action was proposed. "
+            "Review the latest version and request the edit again."
+        ),
+        "exit_code": 1,
+        "document_changed": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +489,12 @@ class UpdateDocumentTool:
             doc = None
             if target_id:
                 doc = _get_owned_document(db, Document, target_id, owner)
+            if (
+                not doc
+                and target_id
+                and ctx.get("expected_document_version") is not None
+            ):
+                return _approved_document_version_error(None, ctx)
             if not doc:
                 doc = _most_recent_owned_document(db, Document, owner)
                 if doc:
@@ -462,6 +503,10 @@ class UpdateDocumentTool:
                     logger.info(f"update_document: fell back to most recent doc id={target_id}")
             if not doc:
                 return {"error": "No documents exist to update"}
+
+            version_error = _approved_document_version_error(doc, ctx)
+            if version_error:
+                return version_error
 
             is_email_doc = doc.language == "email" or _looks_like_email_document(doc.current_content or "", doc.title or "")
             new_content = _coerce_email_document_content(doc.current_content or "", content) if is_email_doc else content.strip()
@@ -530,6 +575,12 @@ class EditDocumentTool:
             doc = None
             if target_id:
                 doc = _get_owned_document(db, Document, target_id, owner)
+            if (
+                not doc
+                and target_id
+                and ctx.get("expected_document_version") is not None
+            ):
+                return _approved_document_version_error(None, ctx)
             if not doc:
                 # Fallback: most recently updated document. Avoids "no active doc" errors
                 # after server restart or when the agent loses track of which doc to edit.
@@ -540,6 +591,10 @@ class EditDocumentTool:
                     logger.info(f"edit_document: fell back to most recent doc id={target_id} title={doc.title!r}")
             if not doc:
                 return {"error": "No documents exist to edit"}
+
+            version_error = _approved_document_version_error(doc, ctx)
+            if version_error:
+                return version_error
 
             is_email_doc = doc.language == "email" or _looks_like_email_document(doc.current_content or "", doc.title or "")
             blank_find_edits = [e for e in edits if not (e.get("find") or "").strip()]
@@ -676,6 +731,10 @@ class SuggestDocumentTool:
             doc = _get_owned_document(db, Document, target_id, owner)
             if not doc:
                 return {"error": f"Document {target_id} not found"}
+
+            version_error = _approved_document_version_error(doc, ctx)
+            if version_error:
+                return version_error
 
             # Validate that FIND text exists in document
             valid = []

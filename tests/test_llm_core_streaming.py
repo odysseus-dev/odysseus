@@ -135,7 +135,10 @@ def test_chatgpt_subscription_responses_function_call_stream(monkeypatch):
         "delta": '/workspace/README.txt"}',
     })
     lines += _event_data("response.completed", {
-        "response": {"usage": {"input_tokens": 7, "output_tokens": 2}},
+        "response": {
+            "model": "gpt-5.3-codex",
+            "usage": {"input_tokens": 7, "output_tokens": 2},
+        },
     })
 
     events = _drive(
@@ -151,8 +154,19 @@ def test_chatgpt_subscription_responses_function_call_stream(monkeypatch):
         "name": "read_file",
         "arguments": '{"path": "/workspace/README.txt"}',
     }]
+    actual = next(e for e in events if e.get("type") == "model_actual")
+    assert actual == {
+        "type": "model_actual",
+        "requested_model": "gpt-5.3-codex-spark",
+        "model": "gpt-5.3-codex",
+    }
     usage = next(e["data"] for e in events if e.get("type") == "usage")
-    assert usage == {"input_tokens": 7, "output_tokens": 2}
+    assert usage == {
+        "input_tokens": 7,
+        "output_tokens": 2,
+        "requested_model": "gpt-5.3-codex-spark",
+        "model": "gpt-5.3-codex",
+    }
 
 
 def test_single_call_chunked_arguments_still_accumulate(monkeypatch):

@@ -28,9 +28,23 @@ from src.tool_security import (
     is_public_blocked_tool,
     owner_is_admin_or_single_user,
 )
+from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
+from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
+
+
+class _MissingToolSecurityContext:
+    pass
+
+
+class _NoToolSecurityContext:
+    """Explicit sentinel for non-agent callers that have no run provenance."""
+
+
+_MISSING_TOOL_SECURITY_CONTEXT = _MissingToolSecurityContext()
+NO_TOOL_SECURITY_CONTEXT = _NoToolSecurityContext()
 
 # Persistent working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
@@ -759,10 +773,19 @@ async def _document_tool_dispatch(
     content: str,
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
+    document_id: Optional[str] = None,
+    document_version: Optional[int] = None,
+    document_digest: Optional[str] = None,
 ) -> Optional[Dict]:
     """Route a document tool through TOOL_HANDLERS with the right ctx shape."""
     from src.agent_tools import TOOL_HANDLERS
-    ctx = {"session_id": session_id, "owner": owner}
+    ctx = {
+        "session_id": session_id,
+        "owner": owner,
+        "doc_id": document_id,
+        "expected_document_version": document_version,
+        "expected_document_digest": document_digest,
+    }
     if tool in TOOL_HANDLERS:
         return await TOOL_HANDLERS[tool](content, ctx)
     return None
@@ -780,6 +803,12 @@ async def execute_tool_block(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
     tool_policy: Optional[Any] = None,
+    security_context: (
+        ToolRunSecurityContext
+        | _NoToolSecurityContext
+        | _MissingToolSecurityContext
+    ) = _MISSING_TOOL_SECURITY_CONTEXT,
+    exact_approval: Optional[ExactToolApproval] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -787,6 +816,104 @@ async def execute_tool_block(
     cwd confine to it) for the duration of this call, then delegate. Reset on the
     way out so the binding never leaks to the next tool call.
     """
+    if security_context is _MISSING_TOOL_SECURITY_CONTEXT:
+        raise TypeError(
+            "execute_tool_block requires security_context; pass a "
+            "ToolRunSecurityContext or NO_TOOL_SECURITY_CONTEXT explicitly"
+        )
+    if (
+        not isinstance(security_context, ToolRunSecurityContext)
+        and security_context is not NO_TOOL_SECURITY_CONTEXT
+    ):
+        raise TypeError(
+            "security_context must be a ToolRunSecurityContext or "
+            "NO_TOOL_SECURITY_CONTEXT"
+        )
+
+    approval_claimed = False
+    if exact_approval is not None:
+        if (
+            not isinstance(security_context, ToolRunSecurityContext)
+            or not security_context.external_untrusted_context_seen
+            or not exact_approval.pending.external_untrusted_context_seen
+        ):
+            return (
+                f"{getattr(block, 'tool_type', None)}: BLOCKED",
+                {
+                    "error": "Exact-action approval requires an armed run security context.",
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "exact_tool_approval",
+                },
+            )
+        if (
+            exact_approval.pending.tool_name
+            in {"edit_document", "suggest_document", "update_document"}
+            and (
+                not exact_approval.pending.document_id
+                or exact_approval.pending.document_version is None
+                or not exact_approval.pending.document_digest
+            )
+        ):
+            return (
+                f"{getattr(block, 'tool_type', None)}: BLOCKED",
+                {
+                    "error": (
+                        "The approved document action has no sealed target and "
+                        "cannot be executed."
+                    ),
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "exact_tool_approval",
+                },
+            )
+        sealed_workspace = exact_approval.pending.workspace
+        if sealed_workspace and vet_workspace(sealed_workspace) != sealed_workspace:
+            return (
+                f"{getattr(block, 'tool_type', None)}: BLOCKED",
+                {
+                    "error": (
+                        "The approved workspace is no longer a valid safe "
+                        "directory. Review the action again."
+                    ),
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "exact_tool_approval",
+                },
+            )
+        approval_claimed = exact_approval.claim(
+            owner=owner,
+            session_id=session_id,
+            tool_name=getattr(block, "tool_type", None),
+            content=getattr(block, "content", None),
+            workspace=workspace,
+        )
+        if not approval_claimed:
+            return (
+                f"{getattr(block, 'tool_type', None)}: BLOCKED",
+                {
+                    "error": "The exact-action approval did not match this tool request.",
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "exact_tool_approval",
+                },
+            )
+
+    if isinstance(security_context, ToolRunSecurityContext) and not approval_claimed:
+        decision = security_context.decision_for(
+            getattr(block, "tool_type", None),
+            getattr(block, "content", None),
+        )
+        if not decision.allowed:
+            logger.warning(
+                "External-context policy blocked tool=%r",
+                getattr(block, "tool_type", None),
+            )
+            return blocked_tool_result(
+                getattr(block, "tool_type", None),
+                decision.reason or "Tool blocked by external-context policy.",
+            )
+
     token = _active_workspace.set(workspace or None)
     try:
         output = await _execute_tool_block_impl(
@@ -796,7 +923,28 @@ async def execute_tool_block(
             owner=owner,
             progress_cb=progress_cb,
             tool_policy=tool_policy,
+            approved_document_id=(
+                exact_approval.pending.document_id
+                if approval_claimed
+                else None
+            ),
+            approved_document_version=(
+                exact_approval.pending.document_version
+                if approval_claimed
+                else None
+            ),
+            approved_document_digest=(
+                exact_approval.pending.document_digest
+                if approval_claimed
+                else None
+            ),
         )
+        if isinstance(security_context, ToolRunSecurityContext):
+            security_context.observe_tool_result(
+                getattr(block, "tool_type", None),
+                output[1],
+                getattr(block, "content", None),
+            )
         return output
     finally:
         _active_workspace.reset(token)
@@ -809,6 +957,9 @@ async def _execute_tool_block_impl(
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     tool_policy: Optional[Any] = None,
+    approved_document_id: Optional[str] = None,
+    approved_document_version: Optional[int] = None,
+    approved_document_digest: Optional[str] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -976,7 +1127,15 @@ async def _execute_tool_block_impl(
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"
-        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+        result = await _document_tool_dispatch(
+            tool,
+            content,
+            session_id,
+            owner,
+            document_id=approved_document_id,
+            document_version=approved_document_version,
+            document_digest=approved_document_digest,
+        ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
         if tool in ("edit_document", "suggest_document") and "title" in (result or {}):
             desc = f"{tool}: {result.get('title', '')}"
