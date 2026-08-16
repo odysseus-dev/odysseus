@@ -40,6 +40,21 @@ _BROAD_WORKSPACE_ROOTS = frozenset(
         "/var",
     }
 )
+_SYSTEM_WORKSPACE_ROOTS = frozenset(
+    {
+        "/bin",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/lib",
+        "/lib64",
+        "/proc",
+        "/root",
+        "/run",
+        "/sys",
+        "/usr",
+    }
+)
 _SENSITIVE_DIR_NAMES = frozenset(
     {
         ".agents",
@@ -114,6 +129,7 @@ def _normalized_workspace(workspace: str) -> str:
         resolved in _BROAD_WORKSPACE_ROOTS
         or resolved in home_roots
         or os.path.dirname(resolved) == resolved
+        or any(_is_within(resolved, root) for root in _SYSTEM_WORKSPACE_ROOTS)
     ):
         raise SandboxUnavailable(
             f"Refusing broad sandbox workspace: {resolved}"
@@ -171,14 +187,22 @@ def _workspace_overlays(
         retained_dirs: list[str] = []
         for name in dirs:
             path = os.path.join(root, name)
+            folded = name.casefold()
+            relative = os.path.relpath(path, workspace).replace(os.sep, "/").casefold()
+            if os.path.islink(path) and (
+                folded == ".git"
+                or folded in _SENSITIVE_DIR_NAMES
+                or relative == ".config/gh"
+            ):
+                raise SandboxUnavailable(
+                    f"Sensitive sandbox path cannot be a symlink: {relative}"
+                )
             resolved_path = os.path.realpath(path)
             if any(
                 resolved_path == excluded or _is_within(resolved_path, excluded)
                 for excluded in excluded_roots
             ):
                 continue
-            folded = name.casefold()
-            relative = os.path.relpath(path, workspace).replace(os.sep, "/").casefold()
             if folded == ".git":
                 args.extend(("--ro-bind", path, path))
             elif folded in _SENSITIVE_DIR_NAMES or relative == ".config/gh":
@@ -188,8 +212,14 @@ def _workspace_overlays(
         dirs[:] = retained_dirs
 
         for name in files:
-            if _is_sensitive_file(name):
-                path = os.path.join(root, name)
+            path = os.path.join(root, name)
+            if name.casefold() == ".git" and os.path.islink(path):
+                raise SandboxUnavailable(
+                    "Sensitive sandbox path cannot be a symlink: .git"
+                )
+            if name.casefold() == ".git":
+                args.extend(("--ro-bind", path, path))
+            elif _is_sensitive_file(name):
                 args.extend(("--ro-bind", "/dev/null", path))
     return args
 

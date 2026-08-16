@@ -85,12 +85,38 @@ def test_sandbox_rejects_broad_workspace():
     with pytest.raises(SandboxUnavailable):
         sandbox_command(["/bin/true"], workspace="/")
 
+    with pytest.raises(SandboxUnavailable):
+        sandbox_command(["/bin/true"], workspace="/usr/local/share/agent")
+
 
 def test_sandbox_rejects_the_process_home_as_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
     with pytest.raises(SandboxUnavailable):
         sandbox_command(["/bin/true"], workspace=str(tmp_path))
+
+
+def test_sandbox_protects_worktree_git_file(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    git_file = workspace / ".git"
+    git_file.write_text("gitdir: /outside", encoding="utf-8")
+
+    argv = sandbox_command(["/bin/true"], workspace=str(workspace))
+
+    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
+    assert ["--ro-bind", str(git_file), str(git_file)] in triples
+
+
+def test_sandbox_rejects_symlinked_sensitive_mounts(tmp_path):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (workspace / ".git").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SandboxUnavailable):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
 
 
 @requires_bubblewrap
