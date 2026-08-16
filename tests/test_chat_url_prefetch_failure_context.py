@@ -27,7 +27,10 @@ def test_failed_url_prefetch_keeps_diagnostics_out_of_model_context(monkeypatch)
     )
 
     preface, _, _ = _processor().build_context_preface(
-        message="Please summarize https://example.invalid/report",
+        message=(
+            "Please summarize "
+            "https://example.invalid/report?token=LEAK_URL_MARKER"
+        ),
         session=SimpleNamespace(endpoint_url="", model="", headers={}),
         use_web=False,
         use_rag=False,
@@ -37,14 +40,15 @@ def test_failed_url_prefetch_keeps_diagnostics_out_of_model_context(monkeypatch)
     failure = next(
         message
         for message in preface
-        if (message.get("metadata") or {}).get("source", "").startswith(
-            "web page fetch failure:"
-        )
+        if (message.get("metadata") or {}).get("source")
+        == "web page fetch failure"
     )
     assert failure["metadata"]["trusted"] is False
     assert "was not read: the page was unavailable" in failure["content"]
     assert "connection refused" not in failure["content"]
     assert "attacker supplied detail" not in failure["content"]
+    assert "LEAK_URL_MARKER" not in failure["content"]
+    assert "LEAK_URL_MARKER" not in str(failure["metadata"])
 
 
 def test_failed_url_prefetch_exposes_only_stable_http_status(monkeypatch):

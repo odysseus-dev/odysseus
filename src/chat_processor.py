@@ -492,8 +492,8 @@ class ChatProcessor:
                     elif error.startswith("Rate limit"):
                         status = "the request was rate limited"
                     preface.append(untrusted_context_message(
-                        f"web page fetch failure: {url}",
-                        f"The page at {url} was not read: {status}.",
+                        "web page fetch failure",
+                        f"A linked page was not read: {status}.",
                     ))
 
         # Skills index — progressive disclosure. Only injected when the
