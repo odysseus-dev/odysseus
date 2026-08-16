@@ -22,7 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
   The fix adds three improvements to the 401 interceptor:
   1. **Retry once after 2s** — catches transient 401s from stale cookies on
-     mobile tab resume that resolve on retry.
+     mobile tab resume that resolve on retry. The retry is restricted to safe,
+     idempotent requests (GET/HEAD/OPTIONS) so a state-changing request (POST,
+     PATCH, DELETE) is never silently replayed; a failed one reaches its caller
+     as-is and still triggers the login redirect.
   2. **Deduplication** — prevents multiple stacked redirects from concurrent
      background fetches (e.g. task polling + calendar refetch simultaneously
      hitting 401).
