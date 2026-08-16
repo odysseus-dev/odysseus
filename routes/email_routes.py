@@ -45,6 +45,7 @@ from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTE
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
+    _account_visible_to_owner,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
@@ -57,7 +58,8 @@ from routes.email_helpers import (
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
-    _friendly_email_auth_error,
+    _friendly_email_auth_error, _email_summary_failure_log_detail,
+    _generate_email_summary, EMAIL_SUMMARY_ERROR_CODE, EMAIL_SUMMARY_ERROR_MESSAGE,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause, email_translation_body_hash,
@@ -192,6 +194,64 @@ def _coerce_port(value, default):
         return int(value), None
     except (TypeError, ValueError):
         return None, f"Invalid port {value!r}; must be a whole number"
+
+
+def _lock_email_account_owner_mutation(db, *owners: str) -> None:
+    """Delegate account/default serialization to the shared DB primitive."""
+    from core.database import lock_email_account_owner_mutations
+
+    lock_email_account_owner_mutations(db, *owners)
+
+
+def _email_account_owner_scope(query, owner: str):
+    """Restrict a query to one normalized EmailAccount owner partition."""
+    from core.database import EmailAccount
+    from sqlalchemy import or_
+
+    if owner:
+        return query.filter(EmailAccount.owner == owner)
+    return query.filter(or_(EmailAccount.owner == None, EmailAccount.owner == ""))  # noqa: E711
+
+
+def _discover_email_account_mutation_scope(account_id: str, owner: str) -> str:
+    """Read the initial lock key and fail closed before a mutation session."""
+    from core.database import EmailAccount, SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.get(EmailAccount, account_id)
+        if row is None or (owner and not _account_visible_to_owner(row, owner)):
+            raise HTTPException(404, "Account not found")
+        return row.owner or ""
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Account-owner mutation check failed: %s", exc)
+        raise HTTPException(503, "Account check failed")
+    finally:
+        db.close()
+
+
+def _lock_and_reload_email_account(db, account_id: str, owner: str, scope: str):
+    """Lock, reload, and revalidate an account, retrying if its owner moved."""
+    from core.database import EmailAccount
+
+    owner_scopes = {scope or ""}
+    while True:
+        _lock_email_account_owner_mutation(db, *owner_scopes)
+        row = db.get(EmailAccount, account_id, populate_existing=True)
+        if row is None or (owner and not _account_visible_to_owner(row, owner)):
+            raise HTTPException(404, "Account not found")
+
+        current_scope = row.owner or ""
+        if current_scope in owner_scopes or db.get_bind().dialect.name == "sqlite":
+            return row
+
+        # The account changed owner after discovery but before lock acquisition.
+        # Release the partial lock set and reacquire all observed scopes in the
+        # shared helper's canonical order, then validate from the database again.
+        db.rollback()
+        owner_scopes.add(current_scope)
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -2907,13 +2967,22 @@ def setup_email_routes():
                 return indexed_response
             return {"emails": [], "total": 0, "error": "Mail operation failed"}
 
-    def _read_email_sync(uid, folder, account_id, owner, mark_seen=True, full=False):
+    def _read_email_sync(uid, folder, account_id, owner, mark_seen=False, full=False):
         """Sync IMAP read — wrapped in to_thread by the async handler.
 
         The normal reader path fetches the headers plus a bounded body prefix.
         That avoids downloading multi-megabyte attachments just to open a
         message. Full-message fetch remains available for flows that need
         attachment metadata immediately, such as forwarding.
+
+        `mark_seen` defaults to False because it mutates provider state: it
+        selects the mailbox read-write and issues a STORE. Only a foreground
+        open should ask for it, and it has to ask explicitly.
+
+        A failed \\Seen transition is reported as `mark_seen_failed` on an
+        otherwise normal response, never as an error. The body has already been
+        fetched at that point, so refusing to return it would turn a cosmetic
+        flag failure into an unreadable message.
         """
         import time as _t
         _t0 = _t.monotonic()
@@ -2921,9 +2990,28 @@ def setup_email_routes():
         preview_bytes = 384 * 1024
         _t_select = 0.0
         _t_fetch = 0.0
+        mark_seen_failed = False
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                # A foreground open owns both the body fetch and the \Seen
+                # transition. Keep them on one read-write IMAP selection so the
+                # route never schedules a second connection that can race the
+                # response. Prefetch/read-only callers retain BODY.PEEK and a
+                # read-only mailbox selection.
+                try:
+                    conn.select(_q(folder), readonly=not mark_seen)
+                except Exception as select_exc:
+                    if not mark_seen:
+                        raise
+                    # Read-only mailboxes (shared archives, some provider
+                    # folders) reject a read-write SELECT. Serve the message
+                    # read-only and report the flag failure.
+                    logger.warning(
+                        f"read-write SELECT rejected for {folder!r}; "
+                        f"serving read-only without \\Seen: {select_exc}"
+                    )
+                    conn.select(_q(folder), readonly=True)
+                    mark_seen_failed = True
                 _t_select = _t.monotonic() - _t0
                 fetch_query = "(BODY.PEEK[])" if full else f"(BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.{preview_bytes}>)"
                 status, msg_data = _imap_uid_fetch(conn, uid, fetch_query)
@@ -2949,22 +3037,44 @@ def setup_email_routes():
                         header_part = msg_data[0][1] or b""
                     raw = header_part + b"\r\n" + text_part
 
-            msg = email_mod.message_from_bytes(raw)
+                # Parse the fetched payload before mutating provider state. If
+                # the message is malformed enough that the reader cannot build
+                # a response, the caller gets an error while the message stays
+                # unread instead of receiving a false optimistic rollback.
+                msg = email_mod.message_from_bytes(raw)
 
-            subject = _decode_header(msg.get("Subject", "(no subject)"))
-            sender = _decode_header(msg.get("From", "unknown"))
-            to = _decode_header(msg.get("To", ""))
-            cc = _decode_header(msg.get("Cc", ""))
-            date_str = msg.get("Date", "")
-            message_id = msg.get("Message-ID", "")
-            in_reply_to = msg.get("In-Reply-To", "")
-            references = msg.get("References", "")
-            body = _extract_text(msg)
-            body_html = _extract_html(msg)
+                subject = _decode_header(msg.get("Subject", "(no subject)"))
+                sender = _decode_header(msg.get("From", "unknown"))
+                to = _decode_header(msg.get("To", ""))
+                cc = _decode_header(msg.get("Cc", ""))
+                date_str = msg.get("Date", "")
+                message_id = msg.get("Message-ID", "")
+                in_reply_to = msg.get("In-Reply-To", "")
+                references = msg.get("References", "")
+                body = _extract_text(msg)
+                body_html = _extract_html(msg)
 
-            sender_name, sender_addr = email.utils.parseaddr(sender)
-            parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
-            attachments = _list_attachments_from_msg(msg) if full else (_email_attachment_meta_cache_get(owner, account_id, folder, uid) or [])
+                sender_name, sender_addr = email.utils.parseaddr(sender)
+                parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
+                attachments = _list_attachments_from_msg(msg) if full else (_email_attachment_meta_cache_get(owner, account_id, folder, uid) or [])
+
+                if mark_seen and not mark_seen_failed:
+                    seen_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
+                    if seen_status != "OK":
+                        # Report, don't raise. The parsed body below is still a
+                        # valid response; only the flag claim is untrue.
+                        logger.warning(
+                            f"IMAP STORE \\Seen failed for UID {uid} in {folder!r}: {seen_status}"
+                        )
+                        mark_seen_failed = True
+
+            # Only record the local flag transition when the provider actually
+            # accepted it, so the index and list cache cannot drift ahead of
+            # the mailbox.
+            if mark_seen and not mark_seen_failed:
+                _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
+                _update_list_cache_seen(account_id, folder, uid, True)
+
             related_attachments = []
             if full and not _has_visible_attachments(msg):
                 related_attachments = _related_thread_attachments_sync(
@@ -3085,20 +3195,29 @@ def setup_email_routes():
                 "boundaries": cached_boundaries,
                 "thread_turns": cached_turns,
                 "sender_signature": cached_sender_sig,
+                # Per-request, not part of the message: the route strips this
+                # before caching so a one-off flag failure is never replayed to
+                # later readers.
+                "mark_seen_failed": mark_seen_failed,
             }
         except Exception as e:
             logger.error(f"Failed to read email {uid}: {e}")
             return {"error": "Mail operation failed"}
 
     def _mark_email_seen_sync(uid, folder, account_id, owner):
+        """Synchronously mark a cached email seen and report success."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                conn.select(_q(folder), readonly=False)
+                status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
+                if status != "OK":
+                    return False
             _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
             _update_list_cache_seen(account_id, folder, uid, True)
+            return True
         except Exception as e:
-            logger.debug(f"mark-seen after cached read failed uid={uid}: {e}")
+            logger.warning(f"mark-seen after cached read failed uid={uid}: {e}")
+            return False
 
     @router.get("/read/{uid}")
     async def read_email_by_uid(
@@ -3124,32 +3243,32 @@ def setup_email_routes():
             if cached.get("attachment_version") != EMAIL_READ_ATTACHMENT_VERSION:
                 cached = None
         if cached is not None:
-            if mark_seen:
-                try:
-                    _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
-                except RuntimeError:
-                    pass
+            # A cache hit already holds a complete, valid message. Await the
+            # STORE so the response reports the real flag state, but never let
+            # a failed STORE withhold a body we are holding in memory.
+            if mark_seen and not await _asyncio.to_thread(
+                _mark_email_seen_sync, uid, folder, account_id, owner
+            ):
+                return {**cached, "mark_seen_failed": True}
             return cached
         if not full:
             persisted = _email_preview_cache_get(owner, account_id, folder, uid)
             if persisted and persisted.get("attachment_version") == EMAIL_READ_ATTACHMENT_VERSION:
                 _read_cache_put(ck, persisted)
-                if mark_seen:
-                    try:
-                        _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
-                    except RuntimeError:
-                        pass
+                if mark_seen and not await _asyncio.to_thread(
+                    _mark_email_seen_sync, uid, folder, account_id, owner
+                ):
+                    return {**persisted, "mark_seen_failed": True}
                 return persisted
         result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, mark_seen, full)
         if result and not result.get("error"):
-            _read_cache_put(ck, result)
+            # `mark_seen_failed` describes this request, not the message, so it
+            # must not enter either cache — a later reader would otherwise be
+            # told a STORE failed that it never issued.
+            cacheable = {k: v for k, v in result.items() if k != "mark_seen_failed"}
+            _read_cache_put(ck, cacheable)
             if not full:
-                _email_preview_cache_put(owner, account_id, folder, uid, result)
-            if mark_seen:
-                try:
-                    _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
-                except RuntimeError:
-                    pass
+                _email_preview_cache_put(owner, account_id, folder, uid, cacheable)
         return result
 
     def _schedule_recent_email_warm(emails: list, folder: str, account_id: str | None, owner: str):
@@ -4851,8 +4970,6 @@ def setup_email_routes():
         """Generate a quick AI summary of an email body."""
         try:
             from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
-            import requests as _req
 
             body = data.get("body", "")
             subject = data.get("subject", "")
@@ -4863,7 +4980,11 @@ def setup_email_routes():
             if account_id:
                 _assert_owns_account(account_id, owner)
             if not body:
-                return {"success": False, "error": "No body provided"}
+                return {
+                    "success": False,
+                    "error": "No body provided",
+                    "error_code": "email_summary_missing_body",
+                }
 
             # If we know which UID this is, fetch the raw message and pull
             # attachment text so the summary can reference invoice totals,
@@ -4892,53 +5013,43 @@ def setup_email_routes():
             if not url:
                 url, model, headers = resolve_endpoint("default", owner=owner)
             if not url or not model:
-                return {"success": False, "error": "No LLM endpoint configured"}
+                return {
+                    "success": False,
+                    "error": "No model configured for email summaries",
+                    "error_code": "email_summary_not_configured",
+                }
 
             req_headers = {"Content-Type": "application/json"}
             if headers:
                 req_headers.update(headers)
-            tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": "You are an email summarizer. Format: 1-3 short bullet points (use '- '). Cover: main point, action items, deadlines. If the email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR CONTENTS — pull invoice totals, deadlines, key clauses, concrete numbers/dates from PDFs/docs into the bullets. Be terse.\n\nOUTPUT FORMAT: Put ONLY the bullet points between these exact markers, each on its own line:\n<<<SUMMARY>>>\n- ...\n<<<END>>>\nAny reasoning must come BEFORE <<<SUMMARY>>> (ideally inside <think>...</think>). Only the text between the markers is kept."},
-                    {"role": "user", "content": f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\n---\n\nSummarize the email. Output the bullets between <<<SUMMARY>>> and <<<END>>>."},
-                ],
-                tok_key: 8192,
-                "temperature": 0.3,
-                "stream": False,
-            }
-            # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
-            if _restricts_temperature(model):
-                payload.pop("temperature", None)
-            resp = await asyncio.to_thread(
-                _req.post, url, json=payload, headers=req_headers, timeout=180
-            )
-            if not resp.ok:
-                return {"success": False, "error": f"LLM HTTP {resp.status_code}"}
-            rdata = resp.json()
-            msg = (rdata.get("choices") or [{}])[0].get("message", {})
-            content = (msg.get("content") or "").strip()
-            content = _extract_reply(content)
+            try:
+                content = await _generate_email_summary(
+                    url=url,
+                    model=model,
+                    sender=sender,
+                    subject=subject,
+                    body_for_llm=body_for_llm,
+                    headers=req_headers,
+                    max_tokens=8192,
+                    timeout=180,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Email summary LLM call failed %s",
+                    _email_summary_failure_log_detail(e),
+                )
+                return {
+                    "success": False,
+                    "error": EMAIL_SUMMARY_ERROR_MESSAGE,
+                    "error_code": EMAIL_SUMMARY_ERROR_CODE,
+                }
 
             if not content:
-                # Model put everything in reasoning_content — extract bullet points
-                rc = (msg.get("reasoning_content") or "").strip()
-                # Find bullet-point style output (lines starting with -, •, *, or numbered)
-                bullet_lines = []
-                for line in rc.split("\n"):
-                    stripped = line.strip()
-                    if re.match(r"^[-•*]\s+|^\d+[.)]\s+", stripped):
-                        bullet_lines.append(stripped)
-                if bullet_lines:
-                    content = "\n".join(bullet_lines)
-                else:
-                    # Last resort: take the last paragraph
-                    paragraphs = [p.strip() for p in rc.split("\n\n") if p.strip()]
-                    content = paragraphs[-1] if paragraphs else rc[:500]
-
-            if not content:
-                return {"success": False, "error": "Empty response from model"}
+                return {
+                    "success": False,
+                    "error": "The model returned an empty summary",
+                    "error_code": "email_summary_empty",
+                }
 
             # Cache the summary if we have a message_id
             mid = data.get("message_id", "")
@@ -4961,8 +5072,15 @@ def setup_email_routes():
 
             return {"success": True, "summary": content, "model_used": model}
         except Exception as e:
-            logger.error(f"Failed to summarize: {e}")
-            return {"success": False, "error": "Mail operation failed"}
+            logger.error(
+                "Email summary route failed %s",
+                _email_summary_failure_log_detail(e),
+            )
+            return {
+                "success": False,
+                "error": EMAIL_SUMMARY_ERROR_MESSAGE,
+                "error_code": EMAIL_SUMMARY_ERROR_CODE,
+            }
 
     @router.post("/translate")
     async def translate_email(data: dict, owner: str = Depends(require_owner)):
@@ -4971,7 +5089,6 @@ def setup_email_routes():
             from src.endpoint_resolver import (
                 resolve_endpoint,
                 resolve_utility_fallback_candidates,
-                resolve_chat_fallback_candidates,
             )
             from src.llm_core import llm_call_async_with_fallback
 
@@ -5032,8 +5149,6 @@ def setup_email_routes():
             except Exception:
                 pass
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
-                _add(*cand)
-            for cand in resolve_chat_fallback_candidates(owner=owner) or []:
                 _add(*cand)
             if not candidates:
                 return {"success": False, "error": "No LLM endpoint configured"}
@@ -5294,13 +5409,11 @@ def setup_email_routes():
             # Build a candidate chain so a stale session-stored API key
             # (the most common cause of "authentication failed" here)
             # doesn't kill AI Reply outright — fall through to the
-            # user's Utility / Default endpoints AND their configured
-            # fallback chains. Dedupe by url+model so we don't retry
-            # the same broken endpoint.
+            # user's Utility / Default endpoints and active Utility fallback
+            # chain. Dedupe by url+model so we don't retry the same endpoint.
             from src.llm_core import llm_call_async_with_fallback
             from src.endpoint_resolver import (
                 resolve_utility_fallback_candidates,
-                resolve_chat_fallback_candidates,
             )
             _seen = set()
             _candidates = []
@@ -5325,10 +5438,8 @@ def setup_email_routes():
                 _add(_d_url, _d_model, _d_headers)
             except Exception:
                 pass
-            # Configured fallback chains last.
+            # Active Utility fallbacks last.
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
-                _add(*cand)
-            for cand in resolve_chat_fallback_candidates(owner=owner) or []:
                 _add(*cand)
             _messages = [
                 {"role": "system", "content": system_prompt},
@@ -5513,9 +5624,9 @@ def setup_email_routes():
         import uuid as _uuid
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             q = db.query(EmailAccount).filter(EmailAccount.is_default == True)  # noqa: E712
-            if owner:
-                q = q.filter(EmailAccount.owner == owner)
+            q = _email_account_owner_scope(q, owner)
             row = q.first()
             if row is None:
                 row = EmailAccount(id=_uuid.uuid4().hex, owner=owner, name="Default", is_default=True, enabled=True)
@@ -5541,8 +5652,7 @@ def setup_email_routes():
             if data.get("smtp_password"):
                 row.smtp_password = _enc(data["smtp_password"])
             clear_q = db.query(EmailAccount).filter(EmailAccount.id != row.id)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            clear_q = _email_account_owner_scope(clear_q, owner)
             clear_q.update({EmailAccount.is_default: False})
             db.commit()
         finally:
@@ -5637,6 +5747,7 @@ def setup_email_routes():
             return {"ok": False, "error": port_err}
         db = SessionLocal()
         try:
+            _lock_email_account_owner_mutation(db, owner)
             row = EmailAccount(
                 id=_uuid.uuid4().hex,
                 name=name,
@@ -5663,9 +5774,7 @@ def setup_email_routes():
             # the one-default invariant — but scope it to THIS user's accounts,
             # otherwise creating a default would clear every other user's
             # default flag too.
-            scope_q = db.query(EmailAccount)
-            if owner:
-                scope_q = scope_q.filter(EmailAccount.owner == owner)
+            scope_q = _email_account_owner_scope(db.query(EmailAccount), owner)
             existing_count = scope_q.count()
             if row.is_default or existing_count == 0:
                 scope_q.update({EmailAccount.is_default: False})
@@ -5716,28 +5825,39 @@ def setup_email_routes():
 
     @router.delete("/accounts/{account_id}")
     async def delete_email_account(account_id: str, owner: str = Depends(require_user)):
-        _assert_owns_account(account_id, owner)
+        initial_scope = _discover_email_account_mutation_scope(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
-            row = db.get(EmailAccount, account_id)
-            if not row:
-                return {"ok": False, "error": "Account not found"}
+            row = _lock_and_reload_email_account(
+                db, account_id, owner, initial_scope
+            )
+            row_scope = row.owner or ""
             was_default = bool(row.is_default)
             db.delete(row)
-            db.commit()
+            # Flush the removal before staging a replacement default.  The
+            # partial unique index is checked statement-by-statement, and the
+            # ORM is otherwise free to UPDATE the promoted row before DELETE.
+            db.flush()
             # If the deleted row was default, promote the next-oldest enabled
             # row owned by THIS user. Without the owner filter we'd promote
             # another user's account and the deleter would silently inherit
             # it as their default.
             if was_default:
-                promote_q = db.query(EmailAccount).filter(EmailAccount.enabled == True)  # noqa: E712
-                if owner:
-                    promote_q = promote_q.filter(EmailAccount.owner == owner)
-                promote = promote_q.order_by(EmailAccount.created_at.asc()).first()
+                promote_q = db.query(EmailAccount).filter(
+                    EmailAccount.id != account_id,
+                    EmailAccount.enabled == True,  # noqa: E712
+                )
+                promote_q = _email_account_owner_scope(promote_q, row_scope)
+                promote = promote_q.order_by(
+                    EmailAccount.created_at.asc(), EmailAccount.id.asc()
+                ).first()
                 if promote:
                     promote.is_default = True
-                    db.commit()
+            # Deletion and any replacement promotion are one durable state
+            # transition, so another worker can never observe or race the old
+            # split-commit gap.
+            db.commit()
             return {"ok": True}
         finally:
             db.close()
@@ -5950,18 +6070,18 @@ def setup_email_routes():
 
     @router.post("/accounts/{account_id}/set-default")
     async def set_default_account(account_id: str, owner: str = Depends(require_user)):
-        _assert_owns_account(account_id, owner)
+        initial_scope = _discover_email_account_mutation_scope(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
-            row = db.get(EmailAccount, account_id)
-            if not row:
-                return {"ok": False, "error": "Account not found"}
-            # SECURITY: scope the "clear other defaults" sweep to this user's
-            # accounts so we don't unset another user's default flag.
-            clear_q = db.query(EmailAccount)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            row = _lock_and_reload_email_account(
+                db, account_id, owner, initial_scope
+            )
+            # Scope the sweep to the target row's normalized owner partition;
+            # this also handles visible legacy NULL/empty-owner accounts.
+            clear_q = _email_account_owner_scope(
+                db.query(EmailAccount), row.owner or ""
+            )
             clear_q.update({EmailAccount.is_default: False})
             row.is_default = True
             db.commit()
@@ -5980,7 +6100,7 @@ def setup_email_routes():
             raise HTTPException(400, "GOOGLE_OAUTH_CLIENT_ID not set — add it to .env")
         redirect_uri = (
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
-            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
         state = make_oauth_state(account_id, owner)
         params = urllib.parse.urlencode({
@@ -6017,7 +6137,7 @@ def setup_email_routes():
         client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
         redirect_uri = (
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
-            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
         import httpx as _httpx
         try:

@@ -17,6 +17,8 @@ import os
 import re
 from typing import Optional
 
+from src.memory import MemoryStoreUnreadable
+
 logger = logging.getLogger(__name__)
 
 
@@ -387,7 +389,13 @@ async def extract_and_store(
         # Get owner from session
         _owner = getattr(session, 'owner', None)
 
-        existing = memory_manager.load_all()
+        # Strict load: this is a read-modify-write. Degrading to [] here would
+        # save only the newly extracted facts and drop the entire store.
+        try:
+            existing = memory_manager.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            logger.error("Skipping auto memory extraction, store unreadable: %s", e)
+            return
         added = 0
 
         for fact in facts:
@@ -626,7 +634,18 @@ async def audit_memories(
 
         # Merge audited entries back with other users' entries
         if owner:
-            all_entries = memory_manager.load_all()
+            # Strict load: the merge below reconstructs the whole file. If this
+            # degraded to [] we would save only this owner's audited slice and
+            # destroy every other tenant's memories.
+            try:
+                all_entries = memory_manager.load_all_for_update()
+            except MemoryStoreUnreadable as e:
+                logger.error("Aborting memory audit save, store unreadable: %s", e)
+                return {
+                    "before": before_count,
+                    "after": before_count,
+                    "error": "store_unreadable",
+                }
             audited_ids = {e["id"] for e in final_entries}
             other_entries = [e for e in all_entries if e.get("owner") != owner and (e.get("owner") is not None)]
             # Also keep legacy entries that weren't part of this audit

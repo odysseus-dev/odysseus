@@ -37,7 +37,7 @@ Non-admin defaults are in `core/auth.py:DEFAULT_PRIVILEGES`. Tool enforcement is
 
 - **Sessions:** bcrypt passwords, 7-day session tokens stored atomically in `data/sessions.json` via `core/atomic_io.py`.
 - **2FA:** TOTP with 8 single-use backup codes. Verified after password check, before session issuance.
-- **Reserved usernames:** `internal-tool`, `api`, `demo`, `system` cannot be registered or renamed into. Defined in `core/auth.py:RESERVED_USERNAMES`.
+- **Reserved usernames:** request sentinels and the Default/Local storage owner cannot be registered or renamed into. Defined in `core/auth.py:RESERVED_USERNAMES`.
   - `internal-tool` is security-critical: `core/middleware.py:require_admin` treats any request where `request.state.current_user == "internal-tool"` as the in-process tool loopback and grants admin unconditionally. A real account with that name would silently pass every `require_admin` check.
 - **Orphan sessions:** `validate_token` re-checks that the user record still exists on every call. A deleted user's cookie is dropped on next request rather than continuing to authenticate.
 

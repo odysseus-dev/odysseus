@@ -5,7 +5,11 @@ on:
   # works on fork PRs. Safe here: the checkout pins to the base branch (no fork
   # code runs) and the scripts only read context.payload and call the GitHub API.
   pull_request_target:  # zizmor: ignore[dangerous-triggers]
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 # Default-deny at the workflow level; each job opts into only the scopes it needs.
 # Note: modifying a PR's labels/comments needs pull-requests:write even though the
@@ -59,12 +63,14 @@ jobs:
 
   check-mergeable:
     name: Flag unmergeable PRs
+    needs: check-description
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       issues: write
-    # Skip bots: they open PRs programmatically and have their own process.
-    if: github.event.pull_request.user.type != 'Bot'
+    # Run after description validation failures, but never from an obsolete
+    # workflow run canceled by a newer PR event.
+    if: ${{ !cancelled() && github.event.pull_request.user.type != 'Bot' }}
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
