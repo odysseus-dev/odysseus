@@ -7438,6 +7438,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal .modal-content {
         top: env(safe-area-inset-top, 0px) !important;
       }
+      #notes-pane {
+        top: env(safe-area-inset-top, 0px) !important;
+      }
       /* Anchor those modals to the top so the full height is usable,
          but shift below the iOS status bar / dynamic island. */
       #memory-modal,
