@@ -636,7 +636,7 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp")
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
-    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda' in script
     assert script.index('DGGML_HIP=ON') < script.index('DGGML_CUDA=ON')
     assert 'ROCm/HIP detected — building llama-server with HIP support' in script
 
@@ -666,7 +666,7 @@ def test_llama_cpp_linux_bootstrap_cuda_cmake_present_when_cudart_found():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
-    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda' in script
     assert 'CUDA nvcc + cudart found' in script
 
 

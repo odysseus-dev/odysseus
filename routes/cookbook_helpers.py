@@ -1009,7 +1009,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      }')
     runner_lines.append('      if _odysseus_has_cudart; then')
     runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
-    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('      else')
     runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
     runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
