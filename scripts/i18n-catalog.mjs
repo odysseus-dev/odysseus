@@ -140,6 +140,24 @@ const CORE_MESSAGES = Object.freeze({
   'ui.the.model.returned.an.empty.summary': 'The model returned an empty summary',
   'ui.session.request.failed.http.value': 'Session request failed (HTTP {0})',
   'ui.session.request.returned.an.invalid.response': 'Session request returned an invalid response',
+  'ui.temporary.session.won.t.be.saved.and.no.memory.activation': 'Temporary session — won’t be saved and no memory activation.',
+  'ui.administration': 'Administration',
+  'ui.allow.this.exact.action.once': 'Allow this exact action once?',
+  'ui.collapse.settings.navigation': 'Collapse settings navigation',
+  'ui.communications': 'Communications',
+  'ui.document.could.not.be.saved.so.the.action.was.not': 'Document could not be saved, so the action was not approved. Reload the chat to retry.',
+  'ui.expand.settings.navigation': 'Expand settings navigation',
+  'ui.experience': 'Experience',
+  'ui.failed.to.load.the.image.editor': 'Failed to load the image editor',
+  'ui.fallback.value.failed.answered.by.value': 'Fallback: {0} failed — answered by {1}',
+  'ui.find.settings': 'Find settings…',
+  'ui.find.settings.f2c2479c': 'Find settings',
+  'ui.models.ai': 'Models & AI',
+  'ui.no.settings.found': 'No settings found',
+  'ui.not.sent.superseded.by.a.newer.message': '[Not sent — superseded by a newer message]',
+  'ui.resize.settings.navigation': 'Resize settings navigation',
+  'ui.selected.route': 'Selected route',
+  'ui.settings.search.results': 'Settings search results',
   'ui.welcome.tip.search_chats': 'Tip: Press Ctrl+K to search across all your conversations.',
   'ui.welcome.tip.toggle_sidebar': 'Tip: Press Ctrl+B to quickly toggle the sidebar.',
   'ui.welcome.tip.move_sidebar': 'Tip: Shift-click the sidebar toggle to swap it to the other side.',
@@ -365,6 +383,16 @@ function normalizeSource(raw) {
     .trim();
 }
 
+const NON_UI_SOURCE_LITERALS = new Set([
+  'event: error',
+  'Failed to update tools ({0})',
+  'Stream closed after canonical terminal event',
+]);
+
+function isNonUiSourceLiteral(source) {
+  return NON_UI_SOURCE_LITERALS.has(normalizeSource(source));
+}
+
 function decodeHtmlEntities(raw) {
   return String(raw).replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));/giu,
@@ -522,6 +550,7 @@ function makeCollector(existingEnglish = {}) {
 
   function add(raw, file, line, kind = 'literal') {
     const source = normalizeSource(decodeHtmlEntities(raw));
+    if (isNonUiSourceLiteral(source)) return;
     if (!looksUserFacing(source)) return;
     const key = keyFor(source);
     const record = entries.get(key) || { key, source, kind, locations: [] };
@@ -949,6 +978,7 @@ export {
   STABLE_TOKENS,
   LOCALES,
   isCodeLiteral,
+  isNonUiSourceLiteral,
   structurallyValid,
   unexpectedScripts,
 };

@@ -38,8 +38,12 @@ function json(response, value) {
 function startServer() {
   server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost');
-    if (appRoutes.has(url.pathname) || url.pathname === '/login') {
-      const page = url.pathname === '/login' ? 'login.html' : 'index.html';
+    const mounted = url.pathname === '/odysseus' || url.pathname.startsWith('/odysseus/');
+    const routePath = mounted
+      ? (url.pathname.slice('/odysseus'.length) || '/')
+      : url.pathname;
+    if (appRoutes.has(routePath) || routePath === '/login') {
+      const page = routePath === '/login' ? 'login.html' : 'index.html';
       let html = fs.readFileSync(path.join(ROOT, 'static', page), 'utf8')
         .replaceAll('{{CSP_NONCE}}', 'acceptance');
       if (page === 'login.html') {
@@ -52,24 +56,24 @@ function startServer() {
       response.end(html);
       return;
     }
-    if (url.pathname === '/api/version') return json(response, { version: 'test' });
-    if (url.pathname === '/__test/configured') {
+    if (routePath === '/api/version') return json(response, { version: 'test' });
+    if (routePath === '/__test/configured') {
       configured = url.searchParams.get('value') !== 'false';
       return json(response, { configured });
     }
-    if (url.pathname === '/api/auth/status') {
+    if (routePath === '/api/auth/status') {
       return json(response, { authenticated: false, configured, signup_enabled: true });
     }
-    if (url.pathname === '/api/auth/policy') {
+    if (routePath === '/api/auth/policy') {
       return json(response, { password_min_length: 8, reserved_usernames: [] });
     }
-    if (url.pathname === '/api/auth/2fa/status') {
+    if (routePath === '/api/auth/2fa/status') {
       return json(response, { enabled: false });
     }
-    if (url.pathname === '/api/auth/login' && request.method === 'POST') {
+    if (routePath === '/api/auth/login' && request.method === 'POST') {
       return json(response, { requires_totp: true });
     }
-    const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    const relative = decodeURIComponent(routePath).replace(/^\/+/, '');
     const file = path.resolve(ROOT, relative);
     if (!file.startsWith(`${ROOT}${path.sep}`) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
       response.writeHead(404);
@@ -900,6 +904,48 @@ async function main() {
       || result.route.shortName === 'Calendar'
     ) {
       throw new Error(`localized route metadata failed: ${JSON.stringify(result.route)}`);
+    }
+    const mountedLoaded = cdp.waitFor('Page.loadEventFired');
+    await cdp.send('Page.navigate', {
+      url: `http://127.0.0.1:${webPort}/odysseus/login`,
+    });
+    await mountedLoaded;
+    const mountedEvaluation = await cdp.send('Runtime.evaluate', {
+      awaitPromise: true,
+      returnByValue: true,
+      expression: `(async () => {
+        for (let attempt = 0; attempt < 200 && !window.odysseusI18n; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        if (!window.odysseusI18n) throw new Error('mounted login i18n runtime did not initialize');
+        await window.odysseusI18n.ready;
+        await window.odysseusI18n.setLocale('fr', {
+          persist: false,
+          announce: false,
+        });
+        const manifestHref = document.querySelector('link[rel="manifest"]').href;
+        const manifest = await fetch(manifestHref).then(response => response.json());
+        const requestPaths = performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname);
+        return {
+          lang: document.documentElement.lang,
+          manifestHref,
+          manifestLang: manifest.lang,
+          hasMountedCatalog: requestPaths.includes('/odysseus/static/i18n/fr.json'),
+          hasMountedManifest: requestPaths.includes('/odysseus/static/manifest.fr.json'),
+          hasRootCatalog: requestPaths.includes('/static/i18n/fr.json'),
+        };
+      })()`,
+    });
+    result.mounted = valueFrom(mountedEvaluation);
+    if (
+      result.mounted.lang !== 'fr'
+      || !result.mounted.manifestHref.endsWith('/odysseus/static/manifest.fr.json')
+      || result.mounted.manifestLang !== 'fr'
+      || !result.mounted.hasMountedCatalog
+      || !result.mounted.hasMountedManifest
+      || result.mounted.hasRootCatalog
+    ) {
+      throw new Error(`mounted login localization failed: ${JSON.stringify(result.mounted)}`);
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } finally {

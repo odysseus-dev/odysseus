@@ -11,6 +11,12 @@ import { topPortalZ } from './toolWindowZOrder.js';
 import sessionModule from './sessions.js';
 import fileHandlerModule from './fileHandler.js';
 
+function translate(key, fallback) {
+  const translated = globalThis.odysseusI18n?.t?.(key);
+  if (typeof translated === 'string' && translated && translated !== key) return translated;
+  return fallback;
+}
+
 const API_BASE = window.location.origin;
 let _open = false;
 let _galleryResizeHandler = null;
@@ -46,7 +52,10 @@ async function openEditor(...args) {
       // page failed. Now it can fail on its own (offline before the panel was
       // ever cached), so say so instead of doing nothing.
       console.error('[gallery] image editor failed to load', e);
-      uiModule?.showError?.('Failed to load the image editor');
+      uiModule?.showError?.(translate(
+        'ui.failed.to.load.the.image.editor',
+        'Failed to load the image editor',
+      ));
       return;
     }
   }

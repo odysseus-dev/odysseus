@@ -69,9 +69,19 @@ def test_login_page_static_assets_resolve_under_mount_path():
             "static/fonts/FiraCode-SemiBold.woff2",
             "/odysseus/static/fonts/FiraCode-SemiBold.woff2",
         ),
+        (
+            "static/fonts/NotoSansArabic-Regular.woff2",
+            "/odysseus/static/fonts/NotoSansArabic-Regular.woff2",
+        ),
+        (
+            "static/fonts/NotoSansArabic-SemiBold.woff2",
+            "/odysseus/static/fonts/NotoSansArabic-SemiBold.woff2",
+        ),
     ):
         assert relative_asset in html
         assert urlparse(urljoin(mounted_login_url, relative_asset)).path == mounted_path
+    assert 'src="static/js/i18n.js"' in html
+    assert 'src="/static/js/i18n.js"' not in html
 
 
 @pytest.mark.parametrize(
@@ -120,6 +130,7 @@ def test_real_auth_middleware_uses_application_relative_path(tmp_path):
     env = os.environ.copy()
     env.update({
         "AUTH_ENABLED": "true",
+        "DEBUG": "false",
         "CHROMADB_CONNECT_TIMEOUT": "0.01",
         "CHROMADB_HOST": "127.0.0.1",
         "CHROMADB_PORT": "9",

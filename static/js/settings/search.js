@@ -6,6 +6,25 @@ import {
 
 const _boundModals = new WeakSet();
 
+function interpolateFallback(value, parameters = {}) {
+  return String(value).replace(
+    /\{([A-Za-z_][A-Za-z0-9_]*|\d+)\}/g,
+    (placeholder, name) => (
+      Object.hasOwn(parameters, name) ? String(parameters[name]) : placeholder
+    ),
+  );
+}
+
+function translate(key, fallback, parameters = {}) {
+  const translated = globalThis.odysseusI18n?.t?.(key, parameters);
+  if (
+    typeof translated === 'string'
+    && translated
+    && translated !== key
+  ) return translated;
+  return interpolateFallback(fallback, parameters);
+}
+
 function groupLabelFor(panel) {
   const group = SETTINGS_GROUPS.find(candidate => candidate.id === panel.group);
   return group?.label || '';
@@ -88,12 +107,14 @@ export function bindSettingsSearch(modalEl, options = {}) {
 
     const matches = searchSettingsPanels(query, {
       isAdmin: isAdmin(),
+      translate,
     });
 
     if (!matches.length) {
       const empty = document.createElement('div');
       empty.className = 'settings-search-empty';
-      empty.textContent = 'No settings found';
+      empty.setAttribute('data-i18n', 'ui.no.settings.found');
+      empty.textContent = translate('ui.no.settings.found', 'No settings found');
       resultsEl.appendChild(empty);
       resultsEl.classList.remove('hidden');
       return;
@@ -109,11 +130,14 @@ export function bindSettingsSearch(modalEl, options = {}) {
 
       const label = document.createElement('span');
       label.className = 'settings-search-result-label';
-      label.textContent = panel.label;
+      label.setAttribute('data-i18n', panel.i18nKey);
+      label.textContent = translate(panel.i18nKey, panel.label);
 
       const group = document.createElement('span');
       group.className = 'settings-search-result-group';
-      group.textContent = groupLabelFor(panel);
+      const groupDefinition = SETTINGS_GROUPS.find(candidate => candidate.id === panel.group);
+      group.setAttribute('data-i18n', groupDefinition?.i18nKey || '');
+      group.textContent = translate(groupDefinition?.i18nKey, groupDefinition?.label || '');
 
       button.append(label, group);
       button.addEventListener('click', () => activateResult(button));
@@ -126,6 +150,10 @@ export function bindSettingsSearch(modalEl, options = {}) {
   input.addEventListener('input', render);
 
   input.addEventListener('focus', () => {
+    if (input.value.trim()) render();
+  });
+
+  document.addEventListener('odysseus:languagechange', () => {
     if (input.value.trim()) render();
   });
 

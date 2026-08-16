@@ -23,7 +23,7 @@ let _routeOpenerNeedsSessions = false;
 function _translatedText(key, fallback) {
   try {
     const translated = window.odysseusI18n?.t?.(key);
-    if (typeof translated === 'string' && translated !== key) return translated;
+    if (typeof translated === 'string' && translated && translated !== key) return translated;
   } catch (_) {}
   return fallback;
 }

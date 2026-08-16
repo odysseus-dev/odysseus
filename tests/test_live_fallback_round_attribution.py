@@ -140,6 +140,7 @@ def test_detached_resume_surfaces_fallback_then_provider_alias_before_reload():
         "const documentModule = null; const chatRenderer = { recordSessionMetricsCost() {}, addMessage() {} };",
         "const _resumingStreams = new Set(); const _streamRunIds = new Map(); const API_BASE = '';",
         "function hasActiveStream() { return false; } function _shortModel(v) { return v; } function _applyModelColor() {}",
+        "function _fallbackToastMessage(selected, answered) { return `Fallback: ${selected} failed — answered by ${answered}`; }",
         "function _setRoleModelLabel(role, requested, actual) { labels.push({requested, actual}); role.textContent = requested + ' -> ' + actual; }",
         "function _streamDisplayText(v) { return v; } function _showDocumentWritingStatus() {} function _finishDocumentWritingStatus() {} function _metricsCostRecordId() { return 'run'; }",
         "const events = [",

@@ -23745,7 +23745,7 @@ body.gallery-selecting .gallery-dl-btn,
   width: var(--settings-sidebar-width, 220px);
   flex: 0 0 var(--settings-sidebar-width, 220px);
   min-width: 0;
-  border-right: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
   padding: 8px;
   transition: width 0.16s ease, flex-basis 0.16s ease;
   display: flex;
@@ -41347,7 +41347,7 @@ body.theme-frosted .modal {
   position: absolute;
   z-index: 20;
   top: 0;
-  right: -3px;
+  inset-inline-end: -3px;
   width: 6px;
   height: 100%;
   cursor: col-resize;
@@ -41375,7 +41375,7 @@ body.settings-sidebar-resize-active {
   position: absolute;
   z-index: 25;
   top: 9px;
-  right: -13px;
+  inset-inline-end: -13px;
   display: flex;
   width: 24px;
   height: 24px;
@@ -41423,7 +41423,7 @@ body.settings-sidebar-resize-active {
 
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
   top: 10px;
-  right: 5px;
+  inset-inline-end: 5px;
 }
 
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-collapse {
@@ -41432,6 +41432,11 @@ body.settings-sidebar-resize-active {
 
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-expand {
   display: block;
+}
+
+html[dir="rtl"] .settings-sidebar-toggle-collapse,
+html[dir="rtl"] .settings-sidebar-toggle-expand {
+  transform: scaleX(-1);
 }
 
 /* The existing narrow/snapped layout is a horizontal tab rail. Sidebar

@@ -666,10 +666,11 @@ def test_stale_preflight_bails_before_creating_controller():
       let isStreaming = false;
       let currentHolder = null;
       let _sendInFlight = false;
-      function _setForegroundChatBusy() {{}}
-      const window = {{}};
-      const document = {{
-        createElement() {{ return {{ style: {{}}, textContent: '' }}; }},
+          function _setForegroundChatBusy() {{}}
+          const window = {{}};
+          function _tr(_key, fallback) {{ return fallback; }}
+          const document = {{
+            createElement() {{ return {{ style: {{}}, textContent: '', setAttribute() {{}} }}; }},
       }};
       const sessionModule = {{ getCurrentSessionId() {{ return 'session-1'; }} }};
       {state_and_stop}

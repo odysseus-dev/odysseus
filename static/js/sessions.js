@@ -39,7 +39,7 @@ let _historyPager = null;
 function _translatedSessionText(key, fallback, parameters = {}) {
   try {
     const translated = window.odysseusI18n?.t?.(key, parameters);
-    if (typeof translated === 'string' && translated !== key) return translated;
+    if (typeof translated === 'string' && translated && translated !== key) return translated;
   } catch (_) {}
   return String(fallback).replace(
     /\{([A-Za-z_][A-Za-z0-9_]*|\d+)\}/g,

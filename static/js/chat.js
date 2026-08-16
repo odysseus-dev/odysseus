@@ -33,9 +33,44 @@ import {
   applyModelMetricsState,
   applyModelRouteEventState,
   inheritModelRouteState,
+  SELECTED_ROUTE_SENTINEL,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
 import { loadPanel } from './panels.js';
+
+function _interpolateFallback(value, parameters = {}) {
+  return String(value).replace(
+    /\{([A-Za-z_][A-Za-z0-9_]*|\d+)\}/g,
+    (placeholder, name) => (
+      Object.hasOwn(parameters, name) ? String(parameters[name]) : placeholder
+    ),
+  );
+}
+
+function _tr(key, fallback, parameters = {}) {
+  const translated = globalThis.odysseusI18n?.t?.(key, parameters);
+  if (
+    typeof translated === 'string'
+    && translated
+    && translated !== key
+  ) return translated;
+  return _interpolateFallback(fallback, parameters);
+}
+
+const _DOCUMENT_SAVE_FAILED_KEY = 'ui.document.could.not.be.saved.so.the.action.was.not';
+const _DOCUMENT_SAVE_FAILED = 'Document could not be saved, so the action was not approved. Reload the chat to retry.';
+
+function _documentSaveFailedMessage() {
+  return _tr(_DOCUMENT_SAVE_FAILED_KEY, _DOCUMENT_SAVE_FAILED);
+}
+
+function _fallbackToastMessage(selectedModel, answeringModel) {
+  return _tr(
+    'ui.fallback.value.failed.answered.by.value',
+    'Fallback: {0} failed — answered by {1}',
+    { 0: selectedModel, 1: answeringModel },
+  );
+}
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -1781,9 +1816,7 @@ import { loadPanel } from './panels.js';
             ) {
               _pendingToolApproval = null;
             }
-            uiModule.showError && uiModule.showError(
-              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
-            );
+            uiModule.showError && uiModule.showError(_documentSaveFailedMessage());
             updateSubmitButton('idle', submitBtn);
             _releaseSendFlag();
             return;
@@ -1799,9 +1832,7 @@ import { loadPanel } from './panels.js';
             ) {
               _pendingToolApproval = null;
             }
-            uiModule.showError && uiModule.showError(
-              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
-            );
+            uiModule.showError && uiModule.showError(_documentSaveFailedMessage());
             updateSubmitButton('idle', submitBtn);
             _releaseSendFlag();
             return;
@@ -1948,7 +1979,11 @@ import { loadPanel } from './panels.js';
         if (_userMsgEl && _userMsgEl.parentNode) {
           const _notSentNote = document.createElement('div');
           _notSentNote.style.cssText = 'color: var(--color-error); font-style: italic; font-size: 0.85em; padding: 2px 0;';
-          _notSentNote.textContent = '[Not sent — superseded by a newer message]';
+          _notSentNote.setAttribute('data-i18n', 'ui.not.sent.superseded.by.a.newer.message');
+          _notSentNote.textContent = _tr(
+            'ui.not.sent.superseded.by.a.newer.message',
+            '[Not sent — superseded by a newer message]',
+          );
           _userMsgEl.appendChild(_notSentNote);
         }
         return;
@@ -3246,7 +3281,7 @@ import { loadPanel } from './panels.js';
                     holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
                     holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
                     holder._requestedEndpointId = json.requested_endpoint_id || json.endpoint_id || holder._requestedEndpointId || null;
-                    holder._requestedEndpointLabel = json.requested_endpoint_label || json.endpoint_label || holder._requestedEndpointLabel || 'Selected route';
+                    holder._requestedEndpointLabel = json.requested_endpoint_label || json.endpoint_label || holder._requestedEndpointLabel || SELECTED_ROUTE_SENTINEL;
                     holder._actualEndpointId = json.endpoint_id || holder._actualEndpointId || holder._requestedEndpointId;
                     holder._actualEndpointLabel = json.endpoint_label || holder._actualEndpointLabel || holder._requestedEndpointLabel;
                     if (json.suffix) holder._roleSuffix = json.suffix;
@@ -3270,15 +3305,20 @@ import { loadPanel } from './panels.js';
                 if (!_isBg) {
                   var _selM = _shortModel(json.selected_model || '');
                   var _ansM = _shortModel(json.answered_by || '');
-                  uiModule.showToast('Fallback: ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  uiModule.showToast(_fallbackToastMessage(_selM, _ansM), 6000);
                   var _fallbackHolder = applyModelRouteEventState(json, holder, roundHolder, modelName);
                   if (_fallbackHolder) {
                     var _rEl = _fallbackHolder.querySelector('.role');
                     if (_rEl) {
                       var _tsS = _rEl.querySelector('.role-timestamp');
                       _rEl.textContent = _ansM + ' (fallback) ';
-                      _rEl.title = (json.selected_model || '') + ' failed' +
-                        (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
+                      const _fallbackTitle = _fallbackToastMessage(
+                        json.selected_model || '',
+                        json.answered_by || '',
+                      );
+                      _rEl.title = json.reason
+                        ? _fallbackTitle + ': ' + json.reason
+                        : _fallbackTitle;
                       _applyModelColor(_rEl, json.answered_by);
                       if (_tsS) _rEl.appendChild(_tsS);
                       _setRoleModelLabel(_rEl, _fallbackHolder._requestedModel, _fallbackHolder._actualModel, {
@@ -5088,8 +5128,10 @@ import { loadPanel } from './panels.js';
               );
             }
             uiModule.showToast(
-              'Fallback: ' + _shortModel(json.selected_model || '') + ' failed — answered by ' +
-              _shortModel(json.answered_by || ''),
+              _fallbackToastMessage(
+                _shortModel(json.selected_model || ''),
+                _shortModel(json.answered_by || ''),
+              ),
               6000,
             );
           } else if (json.type === 'model_actual') {

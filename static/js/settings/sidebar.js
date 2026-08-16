@@ -8,6 +8,19 @@ export const SETTINGS_SIDEBAR_COLLAPSE_THRESHOLD = 110;
 
 const _bound = new WeakSet();
 
+function translate(key, fallback) {
+  const translated = globalThis.odysseusI18n?.t?.(key);
+  if (typeof translated === 'string' && translated && translated !== key) return translated;
+  return fallback;
+}
+
+function isRtl(element) {
+  if (typeof getComputedStyle === 'function') {
+    return getComputedStyle(element).direction === 'rtl';
+  }
+  return element?.dir === 'rtl' || element?.getAttribute?.('dir') === 'rtl';
+}
+
 function clampWidth(value) {
   const width = Number(value);
   if (!Number.isFinite(width)) return SETTINGS_SIDEBAR_DEFAULT_WIDTH;
@@ -88,13 +101,16 @@ export function setSettingsSidebarCollapsed(modalEl, collapsed, options = {}) {
   const toggle = sidebar.querySelector('#settings-sidebar-toggle');
   if (toggle) {
     toggle.setAttribute('aria-expanded', next ? 'false' : 'true');
-    toggle.setAttribute(
-      'aria-label',
-      next ? 'Expand settings navigation' : 'Collapse settings navigation',
-    );
-    toggle.title = next
+    const key = next
+      ? 'ui.expand.settings.navigation'
+      : 'ui.collapse.settings.navigation';
+    const fallback = next
       ? 'Expand settings navigation'
       : 'Collapse settings navigation';
+    toggle.setAttribute('data-i18n-aria-label', key);
+    toggle.setAttribute('data-i18n-title', key);
+    toggle.setAttribute('aria-label', translate(key, fallback));
+    toggle.title = translate(key, fallback);
   }
 
   if (!next) {
@@ -172,7 +188,10 @@ export function bindSettingsSidebar(modalEl) {
   }
 
   function onPointerMove(event) {
-    const rawWidth = startWidth + (event.clientX - startX);
+    const pointerDelta = isRtl(sidebar)
+      ? startX - event.clientX
+      : event.clientX - startX;
+    const rawWidth = startWidth + pointerDelta;
 
     if (rawWidth < SETTINGS_SIDEBAR_COLLAPSE_THRESHOLD) {
       sidebar.style.setProperty(
@@ -219,14 +238,16 @@ export function bindSettingsSidebar(modalEl) {
     }
 
     const current = sidebar.getBoundingClientRect().width;
-    const delta = event.key === 'ArrowLeft' ? -16 : 16;
+    const growKey = isRtl(sidebar) ? 'ArrowLeft' : 'ArrowRight';
+    const shrinkKey = isRtl(sidebar) ? 'ArrowRight' : 'ArrowLeft';
+    const delta = event.key === growKey ? 16 : -16;
 
     // Once keyboard resizing reaches the declared minimum, another ArrowLeft
     // collapses the rail. Without this explicit boundary transition the width
     // setter clamps 134px back to 150px forever, making keyboard collapse via
     // ArrowLeft unreachable.
     if (
-      event.key === 'ArrowLeft'
+      event.key === shrinkKey
       && current <= SETTINGS_SIDEBAR_MIN_WIDTH
     ) {
       setSettingsSidebarCollapsed(modalEl, true);

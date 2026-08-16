@@ -83,6 +83,48 @@ EXPECTED_NON_LATIN_SCRIPTS = {
     "zh-TW": {"Han"},
 }
 
+EXPECTED_DEV_MESSAGES = {
+    "ui.administration": "Administration",
+    "ui.allow.this.exact.action.once": "Allow this exact action once?",
+    "ui.collapse.settings.navigation": "Collapse settings navigation",
+    "ui.communications": "Communications",
+    "ui.document.could.not.be.saved.so.the.action.was.not": (
+        "Document could not be saved, so the action was not approved. "
+        "Reload the chat to retry."
+    ),
+    "ui.expand.settings.navigation": "Expand settings navigation",
+    "ui.experience": "Experience",
+    "ui.failed.to.load.the.image.editor": "Failed to load the image editor",
+    "ui.fallback.value.failed.answered.by.value": (
+        "Fallback: {0} failed — answered by {1}"
+    ),
+    "ui.find.settings": "Find settings…",
+    "ui.find.settings.f2c2479c": "Find settings",
+    "ui.models.ai": "Models & AI",
+    "ui.no.settings.found": "No settings found",
+    "ui.not.sent.superseded.by.a.newer.message": (
+        "[Not sent — superseded by a newer message]"
+    ),
+    "ui.resize.settings.navigation": "Resize settings navigation",
+    "ui.selected.route": "Selected route",
+    "ui.settings.search.results": "Settings search results",
+}
+
+STALE_DEV_SOURCES = {
+    "Add a model to try if the one above fails",
+    "Model {0} offline — switched to {1}",
+    "tools",
+    "users",
+    "— answered by",
+    "failed — answered by",
+}
+
+NON_UI_SOURCES = {
+    "event: error",
+    "Failed to update tools ({0})",
+    "Stream closed after canonical terminal event",
+}
+
 
 def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -128,6 +170,13 @@ def test_catalog_entries_are_safe_and_complete():
     ledger = _json(I18N_DIR / "ledger.json")
     expected_keys = set(english)
     assert len(expected_keys) == ledger["source_count"]
+    assert len(ledger["entries"]) == ledger["source_count"] == 5402
+    assert [entry["key"] for entry in ledger["entries"]] == list(english)
+    assert [entry["source"] for entry in ledger["entries"]] == list(english.values())
+    compact_english = json.dumps(english, ensure_ascii=False, separators=(",", ":"))
+    assert __import__("hashlib").sha256(compact_english.encode()).hexdigest() == ledger[
+        "source_hash"
+    ]
     assert not any(HTML_ENTITY.search(value) for value in english.values())
 
     for locale in STEAM_LOCALES:
@@ -229,7 +278,10 @@ def test_new_browser_messages_have_stable_semantic_keys():
     }
 
     assert {key: english.get(key) for key in expected} == expected
+    assert {key: english.get(key) for key in EXPECTED_DEV_MESSAGES} == EXPECTED_DEV_MESSAGES
     assert "function" not in english.values()
+    assert NON_UI_SOURCES.isdisjoint(english.values())
+    assert STALE_DEV_SOURCES.isdisjoint(english.values())
 
     index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     assert 'data-i18n-title="ui.save.this.memory"' in index
@@ -244,10 +296,41 @@ def test_new_browser_messages_have_stable_semantic_keys():
         catalog = _json(I18N_DIR / f"{locale}.json")
         for key, source in expected.items():
             assert catalog[key] != source, (locale, key)
+        for key, source in EXPECTED_DEV_MESSAGES.items():
+            assert catalog[key] != source, (locale, key)
         assert catalog["ui.session.request.failed.http.value"].count("{0}") == 1
         assert "Ctrl+K" in catalog["ui.welcome.tip.search_chats"]
         assert "Ctrl+B" in catalog["ui.welcome.tip.toggle_sidebar"]
         assert "+" in catalog["ui.welcome.tip.attach_files"]
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node binary not on PATH")
+def test_non_ui_exclusions_are_narrow_and_normalized():
+    script = """
+      const { isNonUiSourceLiteral } = await import('./scripts/i18n-catalog.mjs');
+      console.log(JSON.stringify({
+        excluded: [
+          isNonUiSourceLiteral('event: error'),
+          isNonUiSourceLiteral('Failed to update tools ({0})'),
+          isNonUiSourceLiteral('Stream closed after canonical terminal event'),
+        ],
+        neighbor: isNonUiSourceLiteral('Failed to load the image editor'),
+      }));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == {
+        "excluded": [True, True, True],
+        "neighbor": False,
+    }
+
+    raw_sources = (ROOT / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    assert "Failed to update tools (${res.status})" in raw_sources
 
 
 def test_executable_catalog_fragments_remain_byte_identical():
@@ -336,6 +419,18 @@ def test_catalogs_have_no_unexpected_script_contamination():
     assert not findings, findings
 
 
+def test_new_messages_use_the_locale_native_script():
+    english = _json(I18N_DIR / "en.json")
+    for locale, scripts in EXPECTED_NON_LATIN_SCRIPTS.items():
+        catalog = _json(I18N_DIR / f"{locale}.json")
+        for key in EXPECTED_DEV_MESSAGES:
+            target = catalog[key]
+            assert any(
+                match.lastgroup in scripts
+                for match in SCRIPT_PATTERN.finditer(target)
+            ), (locale, key, english[key], target)
+
+
 def test_semantic_email_folder_labels_match_their_legacy_catalog_entries():
     duplicate_pairs = {
         "ui.email.folder.junk": "ui.junk.86c7d94c",
@@ -373,7 +468,8 @@ def test_auth_app_pwa_and_offline_shell_are_wired():
     assert index.index("/static/js/i18n.js") < index.index("/static/js/storage.js")
     assert 'id="set-interface-language"' in index
     assert 'data-language-select' in index
-    assert "/static/js/i18n.js" in login
+    assert 'src="static/js/i18n.js"' in login
+    assert 'src="/static/js/i18n.js"' not in login
     assert 'id="login-interface-language"' in login
     assert "/static/i18n/registry.json" in worker
     assert "/static/i18n/en.json" in worker
@@ -479,3 +575,8 @@ def test_login_runtime_in_real_browser():
     assert payload["allLocales"]["payload"]["decodedBodyBytes"] > 0
     assert payload["allLocales"]["performance"]["samples"] == len(STEAM_LOCALES)
     assert payload["allLocales"]["performance"]["totalMs"] >= 0
+    assert payload["mounted"]["lang"] == "fr"
+    assert payload["mounted"]["manifestLang"] == "fr"
+    assert payload["mounted"]["hasMountedCatalog"] is True
+    assert payload["mounted"]["hasMountedManifest"] is True
+    assert payload["mounted"]["hasRootCatalog"] is False

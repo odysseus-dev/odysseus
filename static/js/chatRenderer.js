@@ -12,6 +12,7 @@ import { bindMenuDismiss } from './escMenuStack.js';
 import { loadPanel } from './panels.js';
 import { matchModelKey } from './model/matchKey.js';
 import { getTools } from './appConfig.js';
+import { SELECTED_ROUTE_SENTINEL } from './chatModelProvenance.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -613,6 +614,17 @@ function modelValue(name) {
   return String(name).trim();
 }
 
+function translateSelectedRoute(label) {
+  const value = modelValue(label);
+  if (value !== SELECTED_ROUTE_SENTINEL && value) return value;
+  const translated = globalThis.odysseusI18n?.t?.('ui.selected.route');
+  return (
+    typeof translated === 'string'
+    && translated
+    && translated !== 'ui.selected.route'
+  ) ? translated : SELECTED_ROUTE_SENTINEL;
+}
+
 export function sameModelName(left, right) {
   const a = modelValue(left);
   const b = modelValue(right);
@@ -647,7 +659,7 @@ export function modelRouteLabel(
   if (!requested || sameModelName(requested, actual)) {
     const model = shortModel(actual || requested);
     if (!routeChanged) return model;
-    const from = shortEndpointLabel(requestedEndpointLabel || 'Selected route');
+    const from = shortEndpointLabel(translateSelectedRoute(requestedEndpointLabel));
     const to = shortEndpointLabel(actualEndpointLabel || actualEndpointId);
     return model + ' (' + from + ' -> ' + to + ')';
   }
@@ -665,9 +677,9 @@ export function replyModelPair(modelName, metadata) {
       requestedModel: requested,
       actualModel: actual,
       requestedEndpointId: meta.requested_endpoint_id || null,
-      requestedEndpointLabel: meta.requested_endpoint_label || 'Selected route',
+      requestedEndpointLabel: meta.requested_endpoint_label || SELECTED_ROUTE_SENTINEL,
       actualEndpointId: meta.endpoint_id || null,
-      actualEndpointLabel: meta.endpoint_label || meta.requested_endpoint_label || 'Selected route',
+      actualEndpointLabel: meta.endpoint_label || meta.requested_endpoint_label || SELECTED_ROUTE_SENTINEL,
     };
   }
   const fallback = modelValue(modelName);
@@ -675,9 +687,9 @@ export function replyModelPair(modelName, metadata) {
     requestedModel: fallback,
     actualModel: fallback,
     requestedEndpointId: null,
-    requestedEndpointLabel: 'Selected route',
+    requestedEndpointLabel: SELECTED_ROUTE_SENTINEL,
     actualEndpointId: null,
-    actualEndpointLabel: 'Selected route',
+    actualEndpointLabel: SELECTED_ROUTE_SENTINEL,
   };
 }
 

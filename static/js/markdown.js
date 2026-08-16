@@ -16,9 +16,19 @@ var escapeHtml = uiModule.esc;
 // *promise* rather than the resolved library, so concurrent callers share one
 // fetch and a double trigger cannot start two loads. A failed load clears the
 // memo so the next diagram/formula retries instead of being poisoned forever.
-const MERMAID_SRC = '/static/lib/mermaid.min.js';
-const KATEX_SRC = '/static/lib/katex/katex.min.js';
-const KATEX_CSS = '/static/lib/katex/katex.min.css';
+function _staticAssetUrl(relativePath) {
+  try {
+    return new URL(`../${relativePath}`, import.meta.url).href;
+  } catch {
+    // Data-URL test harnesses have no filesystem base; retain the normal root
+    // deployment path there while production modules resolve their mount path.
+    return `/static/${relativePath}`;
+  }
+}
+
+const MERMAID_SRC = _staticAssetUrl('lib/mermaid.min.js');
+const KATEX_SRC = _staticAssetUrl('lib/katex/katex.min.js');
+const KATEX_CSS = _staticAssetUrl('lib/katex/katex.min.css');
 // Marks math emitted before KaTeX finished loading; renderMath() swaps these
 // for typeset output. The source stays as readable text inside the span, so a
 // load that never completes degrades to plain text rather than to nothing.

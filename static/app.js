@@ -2634,8 +2634,15 @@ function initializeEventListeners() {
         if (tipEl) {
           tipEl.dataset.originalTip = tipEl.textContent;
           tipEl.dataset.originalTipI18n = tipEl.getAttribute('data-i18n') || '';
-          tipEl.setAttribute('data-i18n', 'ui.temporary.session.won.t.be.saved.and.no.memory.activation');
-          tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.';
+          const nobodyTipKey = 'ui.temporary.session.won.t.be.saved.and.no.memory.activation';
+          const nobodyTipFallback = 'Temporary session \u2014 won\u2019t be saved and no memory activation.';
+          const nobodyTip = window.odysseusI18n?.t?.(nobodyTipKey);
+          tipEl.setAttribute('data-i18n', nobodyTipKey);
+          tipEl.textContent = (
+            typeof nobodyTip === 'string'
+            && nobodyTip
+            && nobodyTip !== nobodyTipKey
+          ) ? nobodyTip : nobodyTipFallback;
           tipEl.style.opacity = '0.5';
           tipEl.style.marginTop = '8px';
         }

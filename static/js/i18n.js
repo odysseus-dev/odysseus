@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'odysseus.locale';
-const RESOURCE_ROOT = '/static/i18n';
+const STATIC_ROOT = new URL('../', import.meta.url);
+const RESOURCE_ROOT = new URL('i18n/', STATIC_ROOT);
 const TRANSLATABLE_ATTRIBUTES = ['title', 'placeholder', 'aria-label', 'aria-description', 'alt'];
 
 // Never run legacy string matching over user-authored or model-authored text.
@@ -98,7 +99,7 @@ function safeStorageSet(key, value) {
 }
 
 async function fetchJson(name) {
-  const response = await fetch(`${RESOURCE_ROOT}/${name}.json`, { cache: 'no-cache' });
+  const response = await fetch(new URL(`${name}.json`, RESOURCE_ROOT), { cache: 'no-cache' });
   if (!response.ok) throw new Error(`Unable to load language resource: ${name}`);
   return response.json();
 }
@@ -443,7 +444,7 @@ async function setLocale(nextLocale, { persist = true, announce = persist } = {}
   if (typeof window.__odysseusUpdateRouteManifest === 'function') {
     window.__odysseusUpdateRouteManifest(locale, translateLegacy);
   } else if (manifest) {
-    manifest.href = `/static/manifest.${locale}.json`;
+    manifest.href = new URL(`manifest.${locale}.json`, STATIC_ROOT).href;
   }
   if (persist) safeStorageSet(STORAGE_KEY, locale);
   renderDocument();

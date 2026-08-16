@@ -1,3 +1,5 @@
+export const SELECTED_ROUTE_SENTINEL = 'Selected route';
+
 /** Select and update the response holder for a route-provenance event. */
 export function applyModelRouteEventState(event, holder, roundHolder, defaultModel = '') {
   const target = event && event.round && roundHolder ? roundHolder : holder;
@@ -37,7 +39,7 @@ export function applyModelRouteEventState(event, holder, roundHolder, defaultMod
       event.requested_endpoint_label
       || event.selected_endpoint_label
       || target._requestedEndpointLabel
-      || 'Selected route'
+      || SELECTED_ROUTE_SENTINEL
     );
     target._actualEndpointId = (
       event.endpoint_id
@@ -64,7 +66,7 @@ export function inheritModelRouteState(holder, roundHolder, target, defaultModel
   target._actualModel = source?._actualModel || target._requestedModel;
   if (source?._requestedEndpointLabel || source?._actualEndpointLabel) {
     target._requestedEndpointId = source?._requestedEndpointId || null;
-    target._requestedEndpointLabel = source?._requestedEndpointLabel || 'Selected route';
+    target._requestedEndpointLabel = source?._requestedEndpointLabel || SELECTED_ROUTE_SENTINEL;
     target._actualEndpointId = source?._actualEndpointId || target._requestedEndpointId;
     target._actualEndpointLabel = source?._actualEndpointLabel || target._requestedEndpointLabel;
   }
@@ -90,7 +92,7 @@ export function applyModelMetricsState(metrics, holder, roundHolder, defaultMode
     || target._requestedEndpointLabel
   ) {
     target._requestedEndpointId = metrics.requested_endpoint_id || target._requestedEndpointId || null;
-    target._requestedEndpointLabel = metrics.requested_endpoint_label || target._requestedEndpointLabel || 'Selected route';
+    target._requestedEndpointLabel = metrics.requested_endpoint_label || target._requestedEndpointLabel || SELECTED_ROUTE_SENTINEL;
     const hasRoundEndpointId = Boolean(roundHolder && roundEndpointIds.length);
     const hasRoundEndpointLabel = Boolean(roundHolder && roundEndpointLabels.length);
     target._actualEndpointId = hasRoundEndpointId

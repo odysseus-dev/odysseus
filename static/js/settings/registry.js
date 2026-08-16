@@ -22,22 +22,27 @@ export const SETTINGS_GROUPS = Object.freeze([
   defineGroup({
     id: 'models',
     label: 'Models & AI',
+    i18nKey: 'ui.models.ai',
   }),
   defineGroup({
     id: 'communications',
     label: 'Communications',
+    i18nKey: 'ui.communications',
   }),
   defineGroup({
     id: 'experience',
     label: 'Experience',
+    i18nKey: 'ui.experience',
   }),
   defineGroup({
     id: 'account',
     label: 'Account',
+    i18nKey: 'ui.account',
   }),
   defineGroup({
     id: 'administration',
     label: 'Administration',
+    i18nKey: 'ui.administration',
     adminOnly: true,
   }),
 ]);
@@ -47,6 +52,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'services',
     label: 'Add Models',
+    i18nKey: 'ui.add.models',
     group: 'models',
     controller: 'admin',
     keywords: ['models', 'provider', 'endpoint'],
@@ -54,6 +60,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'added-models',
     label: 'Added Models',
+    i18nKey: 'ui.added.models',
     group: 'models',
     controller: 'admin',
     keywords: ['models', 'configured', 'provider', 'endpoint'],
@@ -61,12 +68,14 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'ai',
     label: 'AI Defaults',
+    i18nKey: 'ui.ai.defaults',
     group: 'models',
     keywords: ['ai', 'defaults', 'model', 'vision', 'image', 'tts', 'stt'],
   }),
   definePanel({
     id: 'search',
     label: 'Search',
+    i18nKey: 'ui.search',
     group: 'models',
     keywords: ['search', 'research', 'provider'],
   }),
@@ -74,6 +83,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'integrations',
     label: 'Integrations',
+    i18nKey: 'ui.integrations',
     group: 'communications',
     controller: 'admin',
     keywords: ['integrations', 'connections', 'services'],
@@ -81,12 +91,14 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'email',
     label: 'Email',
+    i18nKey: 'ui.email',
     group: 'communications',
     keywords: ['email', 'imap', 'smtp', 'oauth'],
   }),
   definePanel({
     id: 'reminders',
     label: 'Reminders',
+    i18nKey: 'ui.reminders.ae8c3939',
     group: 'communications',
     keywords: ['reminders', 'notifications', 'alerts'],
   }),
@@ -94,12 +106,14 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'appearance',
     label: 'Appearance',
+    i18nKey: 'ui.appearance',
     group: 'experience',
     keywords: ['appearance', 'theme', 'font', 'density', 'peek'],
   }),
   definePanel({
     id: 'shortcuts',
     label: 'Shortcuts',
+    i18nKey: 'ui.shortcuts',
     group: 'experience',
     keywords: ['shortcuts', 'keyboard', 'hotkeys'],
   }),
@@ -107,6 +121,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'account',
     label: 'Account',
+    i18nKey: 'ui.account',
     group: 'account',
     keywords: ['account', 'password', 'logout'],
   }),
@@ -114,6 +129,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'tools',
     label: 'Agent Tools',
+    i18nKey: 'ui.agent.tools',
     group: 'administration',
     controller: 'admin',
     adminOnly: true,
@@ -122,6 +138,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'users',
     label: 'Users',
+    i18nKey: 'ui.users',
     group: 'administration',
     controller: 'admin',
     adminOnly: true,
@@ -130,6 +147,7 @@ export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'system',
     label: 'System',
+    i18nKey: 'ui.system',
     group: 'administration',
     controller: 'admin',
     adminOnly: true,
@@ -159,16 +177,26 @@ export function isAdminOnlySettingsTab(id) {
   return getSettingsPanel(id)?.adminOnly === true;
 }
 
-export function getSettingsPanelSearchText(panelOrId) {
+export function getSettingsPanelSearchText(panelOrId, options = {}) {
   const panel = typeof panelOrId === 'string'
     ? getSettingsPanel(panelOrId)
     : panelOrId;
 
   if (!panel) return '';
 
+  const group = SETTINGS_GROUPS.find(candidate => candidate.id === panel.group);
+  const translate = typeof options.translate === 'function' ? options.translate : null;
+  const translated = translate
+    ? [
+        translate(panel.i18nKey, panel.label),
+        translate(group?.i18nKey, group?.label || ''),
+      ]
+    : [];
   return [
     panel.label,
     ...(panel.keywords || []),
+    group?.label || '',
+    ...translated,
   ].join(' ').toLowerCase();
 }
 
@@ -189,7 +217,7 @@ export function searchSettingsPanels(query, options = {}) {
   return SETTINGS_PANELS.filter(panel => {
     if (panel.adminOnly && !isAdmin) return false;
 
-    const haystack = getSettingsPanelSearchText(panel);
+    const haystack = getSettingsPanelSearchText(panel, options);
     return terms.every(term => haystack.includes(term));
   });
 }

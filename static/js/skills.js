@@ -18,6 +18,12 @@ let _loadPromise = null;
 
 function esc(s) { return uiModule.esc(String(s ?? '')); }
 
+function translate(key, fallback) {
+  const translated = globalThis.odysseusI18n?.t?.(key);
+  if (typeof translated === 'string' && translated && translated !== key) return translated;
+  return fallback;
+}
+
 let _pendingFocusSkill = null;
 let _cascadeNext = false;   // set true to play the domino-in entrance on the next render
 
@@ -1139,7 +1145,13 @@ function _renderTestLog(logEl, verdictEl, job, card, name) {
     box.className = 'skill-test-approval';
     const question = document.createElement('div');
     question.className = 'skill-test-meta';
-    question.textContent = approval.question || 'Allow this exact action once?';
+    const approvalFallback = 'Allow this exact action once?';
+    if (!approval.question || approval.question === approvalFallback) {
+      question.setAttribute('data-i18n', 'ui.allow.this.exact.action.once');
+      question.textContent = translate('ui.allow.this.exact.action.once', approvalFallback);
+    } else {
+      question.textContent = approval.question;
+    }
     box.appendChild(question);
     if (approval.action) {
       const action = document.createElement('pre');
