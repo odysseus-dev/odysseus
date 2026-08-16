@@ -78,7 +78,7 @@ module.exports = async ({ github, context, core }) => {
 
   function isRuntimeSensitivePath(filename) {
     const path = filename.toLowerCase();
-    if (isDocsOnlyPath(path) || isUiSensitivePath(path)) return false;
+    if (isUiSensitivePath(path)) return false;
     if (path.startsWith('tests/') || path.startsWith('.github/')) return false;
     return /^(?:app\.py|routes\/|services\/|src\/|core\/|mcp_servers\/|scripts\/|docker\/)/.test(path)
       || /^(?:dockerfile|docker-compose.*\.ya?ml|requirements(?:-optional)?\.txt|pyproject\.toml|setup\.py)$/.test(path)
@@ -221,7 +221,11 @@ module.exports = async ({ github, context, core }) => {
 
   const descriptionComplete = descriptionProblems.length === 0;
   const evidenceComplete = evidenceGaps.length === 0;
-  await setLabel('ready for review', descriptionComplete && evidenceComplete);
+  const isDraft = Boolean(context.payload.pull_request.draft);
+  await setLabel(
+    'ready for review',
+    descriptionComplete && evidenceComplete && !isDraft,
+  );
   await setLabel('needs work', !descriptionComplete);
   await setLabel('needs runtime validation', needsRuntimeValidation);
   await setLabel('needs visual evidence', needsVisualEvidence);
