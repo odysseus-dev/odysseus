@@ -117,6 +117,31 @@ def test_agent_system_prompt_includes_shared_current_time(monkeypatch):
     assert "Australia/Brisbane, UTC+10:00" in datetime_messages[0]["content"]
 
 
+def test_route_prompt_rebuild_restores_leading_user_system_message(monkeypatch):
+    import src.agent_loop as agent_loop
+
+    monkeypatch.setattr(agent_loop, "_build_base_prompt", lambda *args, **kwargs: ("AGENT PROMPT", ""))
+    monkeypatch.setattr(agent_loop, "set_active_model", lambda model: None)
+    monkeypatch.setattr(agent_loop, "get_builtin_overrides", lambda: {})
+    monkeypatch.setattr(agent_loop, "_cached_base_prompt", None)
+    monkeypatch.setattr(agent_loop, "_cached_base_prompt_key", None)
+
+    original = [
+        {"role": "system", "content": "USER PERSONA"},
+        {"role": "user", "content": "hello"},
+    ]
+    built, _ = agent_loop._build_system_prompt(
+        original,
+        model="selected-model",
+        active_document=None,
+        mcp_mgr=None,
+    )
+
+    assert built[0]["content"] == "USER PERSONA\n\nAGENT PROMPT"
+    assert built[0]["_agent_injected"] == "merged_prompt"
+    assert agent_loop._strip_agent_injected_messages(built) == original
+
+
 def test_calendar_relative_time_parser_handles_dotted_pm(monkeypatch):
     import routes.calendar_routes as calendar_routes
 

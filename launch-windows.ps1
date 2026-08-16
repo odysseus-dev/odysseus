@@ -163,6 +163,10 @@ if (Test-Path $cudaBase) {
 }
 
 # 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# -Port only reaches uvicorn as a flag. Everything that builds a URL for this
+# instance - internal_api_base(), companion pairing, the MCP OAuth callback -
+# reads APP_PORT, so set it too or they all assume 7000.
+$env:APP_PORT = $Port
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
