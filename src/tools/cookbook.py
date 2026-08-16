@@ -954,7 +954,11 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
                                      json={"command": cmd}, headers=headers)
         if resp.status_code >= 400:
-            return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
+            return {
+                "error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}",
+                "exit_code": 1,
+                "untrusted_content": True,
+            }
         try:
             data = resp.json()
         except Exception:
@@ -1083,7 +1087,11 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
             resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
                                      json={"command": cmd}, headers=headers)
         if resp.status_code >= 400:
-            return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
+            return {
+                "error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}",
+                "exit_code": 1,
+                "untrusted_content": True,
+            }
         data = resp.json() if resp.content else {}
         output_text = (data.get("stdout") or "").strip()
         stderr_text = (data.get("stderr") or "").strip()

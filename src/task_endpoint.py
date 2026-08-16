@@ -1,7 +1,6 @@
 """Shared resolver for background-task AI endpoints."""
 
 from src.endpoint_resolver import (
-    resolve_chat_fallback_candidates,
     resolve_endpoint,
     resolve_utility_fallback_candidates,
 )
@@ -32,7 +31,6 @@ def resolve_task_candidates(
     2. Utility endpoint/model
     3. Default endpoint/model
     4. Utility fallback chain
-    5. Default fallback chain
     """
     candidates = []
 
@@ -49,9 +47,6 @@ def resolve_task_candidates(
     _append(*resolve_endpoint("default", owner=owner))
     for url, model, headers in resolve_utility_fallback_candidates(owner=owner):
         _append(url, model, headers)
-    for url, model, headers in resolve_chat_fallback_candidates(owner=owner):
-        _append(url, model, headers)
-
     return candidates
 
 

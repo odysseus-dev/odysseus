@@ -247,6 +247,7 @@ import re as _re_reply
 _REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
 _REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>+", _re_reply.I)
 _REPLY_ROLE_MARKER_RE = _re_reply.compile(r"</?\|(?:assistant|assistan|user|system|tool)\|>?|</\|end\|>?", _re_reply.I)
+_SUMMARY_BULLET_RE = _re_reply.compile(r"^(?:[-*\u2022]\s+|\d+[.)]\s+)")
 
 
 def _extract_reply(text: str) -> str:
@@ -275,6 +276,125 @@ def _extract_reply(text: str) -> str:
     t = _REPLY_CLOSE_RE.sub("", t)
     t = _REPLY_ROLE_MARKER_RE.sub("", t)
     return _strip_think(t).strip()
+
+
+def _build_email_summary_messages(sender: str, subject: str, body_for_llm: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are an email summarizer. Format: 1-3 short bullet points "
+                "(use '- '). Cover: main point, action items, deadlines. If the "
+                "email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR "
+                "CONTENTS - pull invoice totals, deadlines, key clauses, concrete "
+                "numbers/dates from PDFs/docs into the bullets. Be terse.\n\n"
+                "OUTPUT FORMAT: Put ONLY the bullet points between these exact "
+                "markers, each on its own line:\n"
+                "<<<SUMMARY>>>\n"
+                "- ...\n"
+                "<<<END>>>\n"
+                "Any reasoning must come BEFORE <<<SUMMARY>>> (ideally inside "
+                "<think>...</think>). Only the text between the markers is kept."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}"
+                "\n\n---\n\nSummarize the email. Output the bullets between "
+                "<<<SUMMARY>>> and <<<END>>>."
+            ),
+        },
+    ]
+
+
+async def _generate_email_summary(
+    url: str,
+    model: str,
+    sender: str,
+    subject: str,
+    body_for_llm: str,
+    *,
+    headers: dict | None = None,
+    max_tokens: int = 8192,
+    timeout: int = 180,
+) -> str:
+    """Generate an interactive email summary through the shared LLM adapter."""
+    from src.llm_core import llm_call_async
+
+    raw = await llm_call_async(
+        url=url,
+        model=model,
+        messages=_build_email_summary_messages(sender, subject, body_for_llm),
+        temperature=0.3,
+        max_tokens=max_tokens,
+        headers=headers,
+        timeout=timeout,
+        workload="foreground",
+    )
+    return _normalize_email_summary(raw)
+
+
+async def _generate_scheduled_email_summary(
+    url: str,
+    model: str,
+    sender: str,
+    subject: str,
+    body_for_llm: str,
+    *,
+    headers: dict | None = None,
+    owner: str | None = None,
+    max_tokens: int = 8192,
+    timeout: int = 180,
+) -> str:
+    """Generate a scheduled summary through the background task candidate chain."""
+    from src.task_endpoint import task_llm_call_async
+
+    raw = await task_llm_call_async(
+        messages=_build_email_summary_messages(sender, subject, body_for_llm),
+        fallback_url=url,
+        fallback_model=model,
+        fallback_headers=headers,
+        owner=owner,
+        temperature=0.3,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    return _normalize_email_summary(raw)
+
+
+def _normalize_email_summary(raw) -> str:
+    """Extract a stable cache/UI summary from provider output."""
+    raw_text = raw or ""
+    if _REPLY_OPEN_RE.search(raw_text):
+        summary = _extract_reply(raw_text)
+        if summary:
+            return summary
+
+    cleaned = _strip_think(raw_text).strip()
+    bullets = [
+        line.strip()
+        for line in cleaned.splitlines()
+        if _SUMMARY_BULLET_RE.match(line.strip())
+    ]
+    if bullets:
+        return "\n".join(bullets)
+    return cleaned.strip()
+
+
+EMAIL_SUMMARY_ERROR_CODE = "email_summary_unavailable"
+EMAIL_SUMMARY_ERROR_MESSAGE = "Failed to summarize"
+
+
+def _email_summary_failure_log_detail(exc: BaseException) -> str:
+    """Return useful provider-failure metadata without echoing exception text."""
+    detail = f"type={type(exc).__name__}"
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        detail += f" status={status}"
+    return detail
 
 
 def _apply_email_style_mechanics(text: str) -> str:

@@ -1,11 +1,13 @@
 # routes/personal_routes.py
 """Routes for personal documents management."""
+import asyncio
 import os
 import logging
 import shutil
 import uuid
 from typing import Any, Dict, List, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
+from fastapi.concurrency import run_in_threadpool
 from src.request_models import DirectoryRequest
 from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.rag_singleton import get_rag_manager
@@ -17,7 +19,6 @@ from src.upload_limits import PERSONAL_UPLOAD_MAX_BYTES
 UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 
 logger = logging.getLogger(__name__)
-
 
 def _personal_upload_dir_for_owner(owner: str | None, *, create: bool = True) -> str:
     """Return the per-owner upload directory used for direct RAG uploads."""
@@ -141,6 +142,22 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     """
     router = APIRouter(prefix="/api/personal")
 
+    # Serializes directory index jobs across requests. Indexing runs in the
+    # threadpool (#5558), so concurrent requests would otherwise run in parallel
+    # and race PersonalDocsManager's unsynchronized list mutations and file
+    # writes; before the threadpool move they serialized on the blocked event
+    # loop, so one-at-a-time is behavior parity.
+    #
+    # An asyncio.Lock acquired in the async handler BEFORE offloading: a waiting
+    # request parks on the event loop instead of pinning a threadpool worker (an
+    # earlier threading.Lock taken INSIDE the worker meant queued jobs held pool
+    # tokens while blocked, starving every other run_in_threadpool caller).
+    # add/remove/reload all take this lock, so their mutations never interleave.
+    # Per-router (not module-global) so each app binds it to its own event loop.
+    # Scope is the single process: multi-worker deployments would need a shared
+    # lock (out of scope for #5558).
+    _index_job_lock = asyncio.Lock()
+
     def _rag():
         """Get the current RAG manager, retrying init if needed."""
         return get_rag_manager()
@@ -172,8 +189,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         return {"files": files, "directories": directories}
     
     @router.post("/reload")
-    def api_personal_reload(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
-        personal_docs_manager.refresh_index()
+    async def api_personal_reload(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
+        # refresh_index() re-extracts text across every tracked directory —
+        # blocking work. Take the shared job lock (so it cannot race an add /
+        # remove) and run it off the event loop.
+        async with _index_job_lock:
+            await run_in_threadpool(personal_docs_manager.refresh_index)
         return {"ok": True, "count": len(personal_docs_manager.index)}
     
     @router.post("/add_directory")
@@ -207,12 +228,26 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             # Use the RAGManager to index the directory
             rag = _rag()
             if rag:
-                result = rag.index_personal_documents(directory, owner=owner)
-                
+                def _index_directory():
+                    result = rag.index_personal_documents(directory, owner=owner)
+                    if result["success"]:
+                        # Also update the personal_docs_manager to track this
+                        # directory. Kept inside the offloaded call: it triggers
+                        # refresh_index(), which re-extracts text across tracked
+                        # directories.
+                        personal_docs_manager.add_directory(directory, index=False)
+                    return result
+
+                # Indexing walks, embeds, and stores the whole tree — minutes
+                # on a real directory. The handler is async, so calling it
+                # inline runs it on the event loop and every other request
+                # queues behind it until it finishes (#5558). Serialize on the
+                # async job lock BEFORE offloading so a queued request parks on
+                # the loop instead of pinning a threadpool worker.
+                async with _index_job_lock:
+                    result = await run_in_threadpool(_index_directory)
+
                 if result["success"]:
-                    # Also update the personal_docs_manager to track this directory
-                    personal_docs_manager.add_directory(directory, index=False)
-                    
                     return {
                         "success": True,
                         "message": f"Successfully indexed {result['indexed_count']} chunks from {directory}",
@@ -251,17 +286,25 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
             logger.info(f"Removing directory from RAG: {directory}")
 
-            # Always remove from personal_docs_manager tracking
-            if hasattr(personal_docs_manager, 'remove_directory'):
-                personal_docs_manager.remove_directory(directory)
-
-            # Remove from RAG vector store (best-effort)
             rag = _rag()
-            if rag:
-                try:
-                    rag.remove_directory(directory)
-                except Exception as e:
-                    logger.warning(f"RAG removal failed for directory {directory}: {e}")
+
+            def _remove_directory():
+                # Always remove from personal_docs_manager tracking. This
+                # mutates the same unsynchronized list/index an add job touches
+                # and re-extracts text (refresh_index), so it is blocking work.
+                if hasattr(personal_docs_manager, 'remove_directory'):
+                    personal_docs_manager.remove_directory(directory)
+                # Remove from RAG vector store (best-effort).
+                if rag:
+                    try:
+                        rag.remove_directory(directory)
+                    except Exception as e:
+                        logger.warning(f"RAG removal failed for directory {directory}: {e}")
+
+            # Same job lock as add/reload so remove cannot interleave with an
+            # in-flight add; offloaded off the event loop.
+            async with _index_job_lock:
+                await run_in_threadpool(_remove_directory)
 
             return {
                 "success": True,
@@ -289,54 +332,73 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         total_failed = 0
         uploaded_files = []
 
-        for upload in files:
-            try:
-                file_path, stored_name, safe_name = _unique_personal_upload_path(upload_dir, upload.filename)
-                content_bytes = await upload.read(PERSONAL_UPLOAD_MAX_BYTES + 1)
-                if len(content_bytes) > PERSONAL_UPLOAD_MAX_BYTES:
-                    logger.warning(f"Rejected oversized personal upload: {upload.filename!r}")
-                    total_failed += 1
-                    continue
-                with open(file_path, "wb") as f:
-                    f.write(content_bytes)
-
-                ext = os.path.splitext(safe_name)[1].lower()
-                if ext == ".pdf":
-                    from src.personal_docs import extract_pdf_text
-                    text = extract_pdf_text(file_path)
-                else:
-                    text = content_bytes.decode("utf-8", errors="replace")
-
-                if not text or not text.strip():
-                    total_failed += 1
-                    continue
-
-                # Chunk and index
-                chunks = rag._split_into_chunks(text, chunk_size=500)
-                for i, chunk in enumerate(chunks):
-                    metadata = {
-                        "source": file_path,
-                        "filename": safe_name,
-                        "stored_filename": stored_name,
-                        "directory": upload_dir,
-                        "type": ext,
-                        "chunk_id": i,
-                    }
-                    if user:
-                        metadata["owner"] = user
-                    if rag.add_document(chunk, metadata):
-                        total_indexed += 1
-                    else:
+        # Chunking, embedding and the tracking update are blocking work over the
+        # same vector/tracking state add_directory mutates (#5634). Take the
+        # shared job lock BEFORE offloading so a queued request parks on the loop
+        # instead of pinning a threadpool worker, matching add_directory.
+        # Read and process one capped payload at a time so a multi-file request
+        # cannot retain len(files) * PERSONAL_UPLOAD_MAX_BYTES in memory.
+        async with _index_job_lock:
+            for upload in files:
+                try:
+                    file_path, stored_name, safe_name = _unique_personal_upload_path(
+                        upload_dir, upload.filename
+                    )
+                    content_bytes = await upload.read(PERSONAL_UPLOAD_MAX_BYTES + 1)
+                    if len(content_bytes) > PERSONAL_UPLOAD_MAX_BYTES:
+                        logger.warning(f"Rejected oversized personal upload: {upload.filename!r}")
                         total_failed += 1
+                        continue
 
-                uploaded_files.append(safe_name)
-            except Exception as e:
-                logger.error(f"Failed to upload/index {upload.filename}: {e}")
-                total_failed += 1
+                    def _index_upload():
+                        with open(file_path, "wb") as f:
+                            f.write(content_bytes)
 
-        # Track uploads directory
-        if uploaded_files and hasattr(personal_docs_manager, "add_directory"):
-            personal_docs_manager.add_directory(upload_dir, index=False)
+                        ext = os.path.splitext(safe_name)[1].lower()
+                        if ext == ".pdf":
+                            from src.personal_docs import extract_pdf_text
+                            text = extract_pdf_text(file_path)
+                        else:
+                            text = content_bytes.decode("utf-8", errors="replace")
+
+                        if not text or not text.strip():
+                            return 0, 1, None
+
+                        indexed = 0
+                        failed = 0
+                        chunks = rag._split_into_chunks(text, chunk_size=500)
+                        for i, chunk in enumerate(chunks):
+                            metadata = {
+                                "source": file_path,
+                                "filename": safe_name,
+                                "stored_filename": stored_name,
+                                "directory": upload_dir,
+                                "type": ext,
+                                "chunk_id": i,
+                            }
+                            if user:
+                                metadata["owner"] = user
+                            if rag.add_document(chunk, metadata):
+                                indexed += 1
+                            else:
+                                failed += 1
+                        return indexed, failed, safe_name
+
+                    indexed, failed, uploaded_name = await run_in_threadpool(_index_upload)
+                    total_indexed += indexed
+                    total_failed += failed
+                    if uploaded_name:
+                        uploaded_files.append(uploaded_name)
+                except Exception as e:
+                    logger.error(f"Failed to upload/index {upload.filename}: {e}")
+                    total_failed += 1
+
+            # Same transition, same lock: the tracking update must not land
+            # while another job is mid-write over the same state.
+            if uploaded_files and hasattr(personal_docs_manager, "add_directory"):
+                await run_in_threadpool(
+                    personal_docs_manager.add_directory, upload_dir, index=False
+                )
 
         return {
             "success": True,
@@ -349,38 +411,47 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     async def delete_file_from_rag(filepath: str = Query(...), owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
         """Delete a specific file from RAG index and optionally from disk."""
         try:
-            # Remove chunks from RAG vector store (best-effort)
-            removed = 0
-            rag = _rag()
-            if rag:
-                try:
-                    removed = rag.delete_by_source(filepath)
-                except Exception as e:
-                    logger.warning(f"RAG removal failed for {filepath}: {e}")
+            def _delete_file():
+                # Remove chunks from RAG vector store (best-effort)
+                removed = 0
+                rag = _rag()
+                if rag:
+                    try:
+                        removed = rag.delete_by_source(filepath)
+                    except Exception as e:
+                        logger.warning(f"RAG removal failed for {filepath}: {e}")
 
-            # Delete file from disk if it's in the caller's own uploads dir.
-            # Scope to the per-owner subdir, not the shared uploads root, so one
-            # admin can't delete another user's personal files by path.
-            deleted_from_disk = False
-            try:
-                abs_target = os.path.realpath(filepath)
-                base_abs = os.path.realpath(_personal_upload_dir_for_owner(owner, create=False))
-                in_uploads = (
-                    abs_target == base_abs
-                    or os.path.commonpath([abs_target, base_abs]) == base_abs
-                )
-            except ValueError:
-                # commonpath raises on mixed drives / non-comparable paths
-                in_uploads = False
-            if in_uploads and abs_target != base_abs:
+                # Delete file from disk if it's in the caller's own uploads dir.
+                # Scope to the per-owner subdir, not the shared uploads root, so one
+                # admin can't delete another user's personal files by path.
+                deleted_from_disk = False
                 try:
-                    os.remove(abs_target)
-                    deleted_from_disk = True
-                except FileNotFoundError:
-                    pass  # already gone — race with another request or cleanup
+                    abs_target = os.path.realpath(filepath)
+                    base_abs = os.path.realpath(_personal_upload_dir_for_owner(owner, create=False))
+                    in_uploads = (
+                        abs_target == base_abs
+                        or os.path.commonpath([abs_target, base_abs]) == base_abs
+                    )
+                except ValueError:
+                    # commonpath raises on mixed drives / non-comparable paths
+                    in_uploads = False
+                if in_uploads and abs_target != base_abs:
+                    try:
+                        os.remove(abs_target)
+                        deleted_from_disk = True
+                    except FileNotFoundError:
+                        pass  # already gone — race with another request or cleanup
 
-            # Exclude the file from the listing (persists across restarts)
-            personal_docs_manager.exclude_file(filepath)
+                # Exclude the file from the listing (persists across restarts)
+                personal_docs_manager.exclude_file(filepath)
+                return removed, deleted_from_disk
+
+            # Vector removal, the disk unlink and the exclusion write are one
+            # transition over the same state add_directory mutates (#5634), and
+            # all three block. Take the shared job lock BEFORE offloading, as
+            # add_directory does.
+            async with _index_job_lock:
+                removed, deleted_from_disk = await run_in_threadpool(_delete_file)
 
             return {
                 "success": True,
