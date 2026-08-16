@@ -66,6 +66,7 @@ class WebSearchTool:
             return {
                 "error": f"web_search failed: {type(e).__name__}: {str(e) or 'no details'}",
                 "exit_code": 1,
+                "untrusted_content": True,
             }
         if progress_cb:
             await progress_cb({
@@ -136,7 +137,11 @@ class WebFetchTool:
 
         if not text:
             if err:
-                return {"error": f"web_fetch: {url}: {err}", "exit_code": 1}
+                return {
+                    "error": f"web_fetch: {url}: {err}",
+                    "exit_code": 1,
+                    "untrusted_content": True,
+                }
             return {"error": f"web_fetch: {url}: no readable text content (not HTML, or the page needs JS/login)", "exit_code": 1}
 
         # Tell the model when the download budget cut the body short and how

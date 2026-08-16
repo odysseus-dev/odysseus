@@ -14,6 +14,13 @@ from src.constants import SETTINGS_FILE, FEATURES_FILE
 
 logger = logging.getLogger(__name__)
 
+# Keys retained in the raw settings store for compatibility and rollback, but
+# deliberately unavailable through generic settings APIs or agent tools.  They
+# must stay in ``DEFAULT_SETTINGS`` so old files continue to load without data
+# loss; callers that present or mutate settings should use this set as a
+# tombstone boundary.
+RETIRED_SETTING_KEYS = frozenset({"default_model_fallbacks"})
+
 # Tiny TTL cache for settings/features. get_setting() is called on hot paths
 # (every chat, every preprocess); without this it re-parses the JSON each call.
 # Picks up edits within _CACHE_TTL seconds, which is fine for human-edited config.
@@ -199,6 +206,17 @@ DEFAULT_SETTINGS = {
     },
 }
 
+
+def without_retired_settings(settings: dict) -> dict:
+    """Return a shallow copy suitable for generic settings interfaces."""
+    if not isinstance(settings, dict):
+        return {}
+    return {
+        key: value
+        for key, value in settings.items()
+        if key not in RETIRED_SETTING_KEYS
+    }
+
 DEFAULT_FEATURES = {
     "web_search": True,
     "web_fetch": True,
@@ -271,7 +289,7 @@ _PER_USER_KEYS = {
     # Default chat endpoint / model — without per-user resolution every new
     # account inherited whatever the most-recent admin picked, which then
     # got injected into the chat composer on first open.
-    "default_endpoint_id", "default_model", "default_model_fallbacks",
+    "default_endpoint_id", "default_model",
     "default_reasoning_effort", "default_verbosity",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",

@@ -8,13 +8,16 @@ import asyncio
 import json
 
 from src.agent_tools import ToolBlock, TOOL_TAGS  # noqa: E402  (import first to avoid circular)
-from src.tool_execution import execute_tool_block
+from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
 from src.tool_index import ALWAYS_AVAILABLE, BUILTIN_TOOL_DESCRIPTIONS
 from src.tool_security import is_public_blocked_tool
 
 
 def _run(content):
-    return asyncio.run(execute_tool_block(ToolBlock("ask_user", content)))
+    return asyncio.run(execute_tool_block(
+        ToolBlock("ask_user", content),
+        security_context=NO_TOOL_SECURITY_CONTEXT,
+    ))
 
 
 def test_valid_question_returns_ask_user_payload():

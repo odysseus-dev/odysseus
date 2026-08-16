@@ -73,6 +73,10 @@ cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
 INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
+# uvicorn is started with --port below, but APP_PORT is what the app itself
+# reads when it needs to build a URL for this instance (internal_api_base(),
+# companion pairing, the MCP OAuth callback), so export it as well.
+export APP_PORT="$PORT"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"

@@ -7,11 +7,22 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v376-settings-title-icons';
+const CACHE_NAME = 'odysseus-v377-lazy-image-editor';
 
-// Core shell precached on install so repeat opens are instant without any
-// network wait. Keep this list in sync with the <script type="module"> tags
-// and <link rel="stylesheet"> in index.html.
+// Two lists, two jobs — they are no longer the same set and must not be
+// "resynced" back into one:
+//
+//   PRECACHE       = the app shell. Mirrors the <script type="module"> tags
+//                    and <link rel="stylesheet"> in index.html — i.e. what
+//                    loads before first paint.
+//   PANEL_PRECACHE = modules that index.html deliberately does NOT load,
+//                    because js/panels.js imports them on first use. They are
+//                    off the critical path, not out of the offline manifest:
+//                    without them here, a panel the user never opened while
+//                    online could not open offline at all.
+//
+// Both are fetched at install time, in the background. Entries must match the
+// exact URL the browser requests, query string included.
 const PRECACHE = [
   '/',
   '/static/style.css',
@@ -63,13 +74,73 @@ const PRECACHE = [
   '/static/lib/highlight.min.js',
 ];
 
+// Lazily-imported panel modules (js/panels.js). Not in index.html by design;
+// precached so the panel still opens with no network.
+const PANEL_PRECACHE = [
+  // Image editor — galleryEditor.js and its js/editor/ graph.
+  '/static/js/galleryEditor.js',
+  '/static/js/editor/ai-inpaint.js?v=20260708match1',
+  '/static/js/editor/ai-models.js',
+  '/static/js/editor/ai-rembg.js',
+  '/static/js/editor/ai-tool-runner.js',
+  '/static/js/editor/ai-tools-misc.js',
+  '/static/js/editor/build/controls.js?v=20260708match1',
+  '/static/js/editor/build/popups.js',
+  '/static/js/editor/build/right-panel.js',
+  '/static/js/editor/build/toolbar.js?v=20260708sam3',
+  '/static/js/editor/build/topbar.js',
+  '/static/js/editor/build/transform-popup.js',
+  '/static/js/editor/canvas-coords.js',
+  '/static/js/editor/canvas-events.js',
+  '/static/js/editor/canvas-transforms.js',
+  '/static/js/editor/checkerboard.js',
+  '/static/js/editor/clipboard-and-drop.js',
+  '/static/js/editor/composite-helpers.js',
+  '/static/js/editor/filters/blur.js',
+  '/static/js/editor/filters/edge-feather.js',
+  '/static/js/editor/fx/adj-popup.js',
+  '/static/js/editor/fx/filter-string.js',
+  '/static/js/editor/fx/histogram.js',
+  '/static/js/editor/fx/pixel-pass.js',
+  '/static/js/editor/harmonize-masks.js',
+  '/static/js/editor/history-panel.js',
+  '/static/js/editor/keyboard-shortcuts.js',
+  '/static/js/editor/layer-helpers.js',
+  '/static/js/editor/layer-panel.js',
+  '/static/js/editor/mask-utils.js',
+  '/static/js/editor/shortcuts-popover.js',
+  '/static/js/editor/slider-ux.js',
+  '/static/js/editor/snap.js',
+  '/static/js/editor/state.js',
+  '/static/js/editor/stroke-pipeline.js',
+  '/static/js/editor/stroke-tool-sliders.js',
+  '/static/js/editor/tools/clone.js',
+  '/static/js/editor/tools/crop.js',
+  '/static/js/editor/tools/flood-fill.js',
+  '/static/js/editor/tools/lasso-mask.js',
+  '/static/js/editor/tools/lasso.js',
+  '/static/js/editor/tools/move.js',
+  '/static/js/editor/tools/stroke.js',
+  '/static/js/editor/tools/transform-drag.js',
+  '/static/js/editor/tools/transform-handles.js',
+  '/static/js/editor/tools/transform-session.js',
+  '/static/js/editor/tools/wand.js',
+  '/static/js/editor/wire-import.js',
+  '/static/js/editor/wire-inpaint-controls.js?v=20260708match1',
+  '/static/js/editor/wire-merge-buttons.js',
+  '/static/js/editor/wire-selection-controls.js',
+  '/static/js/editor/wire-topbar-menus.js',
+  '/static/js/editor/wire-topbar-overflow.js',
+  '/static/js/editor/wire-topbar.js',
+];
+
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
       // addAll is atomic — if any item fails, none are cached. Use individual
       // puts so a single 404 can't block the whole install.
       Promise.all(
-        PRECACHE.map(url =>
+        [...PRECACHE, ...PANEL_PRECACHE].map(url =>
           fetch(url, { cache: 'reload' })
             .then(res => res.ok ? cache.put(url, res) : null)
             .catch(() => null)

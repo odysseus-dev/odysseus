@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
+from src.prompt_security import untrusted_context_message
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,23 @@ def _skill_test_task(skill: dict) -> str:
         "example yourself. THEN apply the skill fully to that example and show the "
         "result. Context for when this skill is used: " + (ctx or "(general)")
     )
+
+
+def _skill_test_messages(md: str, task: str) -> list[dict]:
+    """Keep user-editable skill text out of the trusted system role."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are TESTING a skill. Follow the supplied reusable procedure "
+                "to complete the user's task for real, using available tools step "
+                "by step. If the skill is wrong, unclear, or references tools that "
+                "do not exist, do your best; the problems will be reviewed afterward."
+            ),
+        },
+        untrusted_context_message("skill under test", md),
+        {"role": "user", "content": task},
+    ]
 
 
 async def _eval_skill_run(skill_md: str, task: str, transcript: str,
@@ -411,7 +429,21 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
 _skill_test_jobs: dict = {}
 
 
-async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, skills_manager=None):
+async def _run_skill_test_job(
+    key,
+    name,
+    md,
+    task,
+    url,
+    model,
+    headers,
+    owner,
+    skills_manager=None,
+    *,
+    messages=None,
+    transcript=None,
+    exact_approval=None,
+):
     """Background coroutine: run the skill in an agent loop, capture a condensed
     log + transcript, then have the judge grade it. Writes into _skill_test_jobs."""
     import json as _json
@@ -421,7 +453,7 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
     if job is None:
         return
     log = job["log"]
-    transcript = []
+    transcript = transcript if isinstance(transcript, list) else []
     say_buf = []
 
     def _flush_say():
@@ -429,18 +461,12 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
             log.append({"type": "say", "text": "".join(say_buf)})
             say_buf.clear()
 
-    messages = [
-        {"role": "system", "content":
-            "You are TESTING a skill. Below is a reusable skill (a procedure). Follow it "
-            "to complete the user's task for real, using your available tools, step by "
-            "step. If the skill is wrong, unclear, or references tools that don't exist, "
-            "do your best — the problems will be reviewed afterward.\n\n=== SKILL ===\n" + md},
-        {"role": "user", "content": task},
-    ]
+    messages = list(messages) if isinstance(messages, list) else _skill_test_messages(md, task)
     try:
         async for chunk in stream_agent_loop(
             url, model, messages, headers=headers,
             temperature=0.3, max_tokens=0, max_rounds=8, owner=owner,
+            exact_approval=exact_approval,
         ):
             if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
                 continue
@@ -458,8 +484,25 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
             elif d.get("type") == "tool_output":
                 _flush_say()
                 out = str(d.get("output") or "")[:600]
-                log.append({"type": "tool_output", "output": out})
+                tool_log = {"type": "tool_output", "output": out}
+                approval = d.get("ask_user")
+                if isinstance(approval, dict):
+                    tool_log["ask_user"] = approval
+                log.append(tool_log)
                 transcript.append(f"[output] {out}\n")
+                if (
+                    isinstance(approval, dict)
+                    and approval.get("kind") == "tool_approval"
+                    and approval.get("approval_id")
+                ):
+                    # Manual skill tests have their own polling UI instead of a
+                    # chat session. Pause the run and retain only server-side
+                    # continuation state until the same owner approves/denies
+                    # this exact sealed action.
+                    job["status"] = "awaiting_approval"
+                    job["approval"] = approval
+                    job["_transcript"] = transcript
+                    return
             elif d.get("type") == "agent_step":
                 _flush_say()
                 log.append({"type": "agent_step", "round": d.get("round")})
@@ -471,6 +514,9 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
         _flush_say()
         log.append({"type": "error", "error": str(e)})
 
+    job.pop("approval", None)
+    job.pop("_transcript", None)
+    job.pop("_run", None)
     log.append({"type": "evaluating"})
     try:
         job["verdict"] = await _eval_skill_run(md, task, "".join(transcript), url, model, headers)
@@ -694,12 +740,8 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
     import json as _json
     from src.agent_loop import stream_agent_loop
     transcript = []
-    messages = [
-        {"role": "system", "content":
-            "You are TESTING a skill. Follow this skill's procedure to complete the task "
-            "for real, using your tools, step by step.\n\n=== SKILL ===\n" + md},
-        {"role": "user", "content": task},
-    ]
+    approval_required = None
+    messages = _skill_test_messages(md, task)
     try:
         # max_tokens explicitly set: passing 0 lets some upstreams (Ollama,
         # OpenAI-compat) generate an empty completion, which manifested as
@@ -719,11 +761,44 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
                 transcript.append(f"\n[tool {d.get('tool')}] {str(d.get('command') or d.get('args') or '')[:300]}\n")
             elif d.get("type") == "tool_output":
                 transcript.append(f"[output] {str(d.get('output') or '')[:600]}\n")
+                approval = d.get("ask_user")
+                if (
+                    isinstance(approval, dict)
+                    and approval.get("kind") == "tool_approval"
+                ):
+                    approval_required = approval
+                    break
             elif d.get("type") == "agent_step":
                 transcript.append(f"\n--- round {d.get('round')} ---\n")
     except Exception as e:
         transcript.append(f"\n[run error] {e}\n")
     text = "".join(transcript)
+    if approval_required is not None:
+        # Unattended audits have no authority to approve and no UI that could
+        # resume this record. Destructively deny it now instead of leaving a
+        # reusable opaque grant pending until TTL/cap eviction.
+        try:
+            from src.tool_approvals import tool_approval_store
+            tool_approval_store.consume(
+                approval_required.get("approval_id"),
+                decision="deny",
+                owner=owner,
+                session_id=None,
+            )
+        except Exception:
+            logger.debug("Could not retire unattended skill approval", exc_info=True)
+        return text, {
+            "verdict": "inconclusive",
+            "confidence": 1.0,
+            "summary": (
+                "This automated audit reached an exact action that requires "
+                "a human approval; no action was executed."
+            ),
+            "issues": [
+                "Run this skill's manual test and review the sealed action."
+            ],
+            "approval_required": True,
+        }
     verdict = await _eval_skill_run(md, task, text, url, model, headers)
     return text, verdict
 
@@ -863,6 +938,26 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     transcript, verdict = await _run_skill_test_once(md, task, url, model, headers, owner)
     v = verdict.get("verdict")
     log(f"{name}: verdict = {v} ({verdict.get('summary', '')[:80]})")
+    if verdict.get("approval_required"):
+        # An unattended audit is not authority for an action influenced by the
+        # skill under test. Preserve the skill's current publication/confidence
+        # state and route the exact action to the manual test UI instead of
+        # letting a safety pause demote, rewrite, or auto-publish the skill.
+        skills_manager.set_audit(
+            name,
+            "inconclusive",
+            by_teacher=False,
+            worker_model=model,
+            owner=owner,
+        )
+        status = skill.get("status") or "draft"
+        log(f"{name}: {status} unchanged — exact action needs manual approval")
+        return {
+            "skill": name,
+            "result": "approval_required",
+            "verdict": verdict,
+            "status": status,
+        }
     if v == "pass":
         # Procedure works. If the reviewer still flagged metadata (tags/category/
         # when_to_use/description), do ONE fixer pass to correct the frontmatter
@@ -1431,6 +1526,19 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             logger.warning(f"Skill-test model resolve failed: {_e}")
 
         key = (user or "", name)
+        previous_job = _skill_test_jobs.get(key) or {}
+        previous_approval = previous_job.get("approval") or {}
+        if previous_approval.get("approval_id"):
+            try:
+                from src.tool_approvals import tool_approval_store
+                tool_approval_store.consume(
+                    previous_approval["approval_id"],
+                    decision="deny",
+                    owner=user,
+                    session_id=None,
+                )
+            except Exception:
+                logger.debug("Could not retire replaced skill approval", exc_info=True)
         _skill_test_jobs[key] = {
             "status": "running",
             "task": task,
@@ -1439,9 +1547,134 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             "started": _time.time(),
             "log": [{"type": "skill_test_start", "task": task, "skill": name, "model": model}],
             "verdict": None,
+            "_run": {
+                "md": md,
+                "url": url,
+                "model": model,
+                "headers": headers,
+                "owner": user,
+            },
         }
         _asyncio.create_task(_run_skill_test_job(key, name, md, task, url, model, headers, user, skills_manager))
         return {"ok": True, "status": "running", "skill": name, "model": model}
+
+    @router.post("/{skill_id}/test-approval")
+    async def approve_skill_test_action(request: Request, skill_id: str):
+        """Resume a manual skill test with one exact server-sealed action."""
+        import asyncio as _asyncio
+        from src.tool_approvals import tool_approval_store
+
+        user = _owner(request)
+        skills = skills_manager.load(owner=user)
+        match = next(
+            (s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id),
+            None,
+        )
+        if not match:
+            raise HTTPException(404, "Skill not found")
+        _verify_owner(match, user)
+        name = match.get("name")
+        key = (user or "", name)
+        job = _skill_test_jobs.get(key)
+        if not job or job.get("status") != "awaiting_approval":
+            raise HTTPException(409, "This skill test is not awaiting an approval.")
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Tool approval body must be a JSON object.")
+        approval_id = str(body.get("approval_id") or "")
+        decision = str(body.get("decision") or "").strip().lower()
+        expected = job.get("approval") or {}
+        if approval_id != str(expected.get("approval_id") or ""):
+            raise HTTPException(409, "This approval does not match the pending skill test action.")
+        if decision not in {"approve", "deny"}:
+            raise HTTPException(400, "Invalid tool approval decision.")
+
+        pending = tool_approval_store.peek(approval_id)
+        normalized_owner = str(user or "").strip().casefold()
+        if (
+            pending is None
+            or pending.owner != normalized_owner
+            or pending.session_id != ""
+        ):
+            raise HTTPException(409, "This tool approval is invalid or expired.")
+        exact_approval = tool_approval_store.consume(
+            approval_id,
+            decision=decision,
+            owner=user,
+            session_id=None,
+        )
+
+        if decision == "approve" and exact_approval is None:
+            raise HTTPException(409, "This tool approval could not be consumed.")
+        job.pop("approval", None)
+        if decision == "deny":
+            job.pop("_transcript", None)
+            job.pop("_run", None)
+            job["log"].append({
+                "type": "approval_denied",
+                "text": "Exact action denied; the skill test stopped without executing it.",
+            })
+            job["verdict"] = {
+                "verdict": "inconclusive",
+                "confidence": 1.0,
+                "summary": "The test stopped because its exact action was denied.",
+                "issues": [],
+            }
+            job["status"] = "done"
+            return {"ok": True, "status": "done", "decision": "deny"}
+
+        run = job.get("_run") or {}
+        transcript = job.pop("_transcript", [])
+        # stream_agent_loop owns its per-round message list internally. Rebuild
+        # continuation context from the original untrusted skill plus the
+        # accumulated transcript so repeated approvals do not lose earlier
+        # approved results, while keeping every transcript byte tainted.
+        messages = _skill_test_messages(
+            run.get("md", ""),
+            job.get("task", ""),
+        )
+        if transcript:
+            messages.append(untrusted_context_message(
+                "skill test transcript",
+                "".join(str(item) for item in transcript),
+            ))
+        messages.extend([
+            {
+                "role": "assistant",
+                "content": str(expected.get("question") or "Allow this exact action once?"),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Approved the exact {exact_approval.pending.tool_name} "
+                    "action shown above once."
+                ),
+            },
+        ])
+        job["status"] = "running"
+        job["log"].append({
+            "type": "approval_granted",
+            "text": (
+                f"Approved exact {exact_approval.pending.tool_name} action once; "
+                "resuming test."
+            ),
+        })
+        _asyncio.create_task(_run_skill_test_job(
+            key,
+            name,
+            run.get("md", ""),
+            job.get("task", ""),
+            run.get("url"),
+            run.get("model"),
+            run.get("headers"),
+            run.get("owner"),
+            skills_manager,
+            messages=messages,
+            transcript=transcript,
+            exact_approval=exact_approval,
+        ))
+        return {"ok": True, "status": "running", "decision": "approve"}
 
     @router.get("/{skill_id}/test-status")
     async def test_skill_status(request: Request, skill_id: str):
@@ -1459,6 +1692,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             "model": job.get("model"),
             "log": job.get("log", []),
             "verdict": job.get("verdict"),
+            "approval": job.get("approval"),
         }
 
     @router.post("/audit-all")

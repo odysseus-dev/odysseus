@@ -22,6 +22,8 @@ from src.settings import (
     load_features as _load_features,
     save_features as _save_features,
     DEFAULT_SETTINGS,
+    RETIRED_SETTING_KEYS,
+    without_retired_settings,
 )
 from src.integrations import (
     load_integrations,
@@ -689,7 +691,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         a scrubbed copy with secret keys blanked. The frontend uses this
         for keybinds + TTS prefs, so it stays callable without admin."""
         user = _get_current_user(request)
-        settings = _load_settings()
+        settings = without_retired_settings(_load_settings())
         if user and auth_manager.is_admin(user):
             return settings
         return scrub_settings(settings)
@@ -713,6 +715,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "default_verbosity": {"", "auto", "low", "medium", "high"},
         }
         for key in DEFAULT_SETTINGS:
+            if key in RETIRED_SETTING_KEYS:
+                continue
             if key not in body:
                 continue
             val = body[key]
@@ -733,7 +737,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     raise HTTPException(400, f"Unsupported value for {key}")
             current[key] = val
         _save_settings(current)
-        return current
+        return without_retired_settings(current)
 
     # ---- Integrations CRUD ----
 

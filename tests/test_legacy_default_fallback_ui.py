@@ -8,15 +8,15 @@ from bs4 import BeautifulSoup
 _REPO = Path(__file__).resolve().parents[1]
 
 
-def test_legacy_default_fallback_editor_is_hidden():
+def test_legacy_default_fallback_editor_is_absent():
     soup = BeautifulSoup(
         (_REPO / "static" / "index.html").read_text(encoding="utf-8"),
         "html.parser",
     )
     editor = soup.find(id="set-defaultFallbacks")
 
-    assert editor is not None
-    assert editor.find_parent(class_="settings-row").has_attr("hidden")
+    assert editor is None
+    assert soup.find(id="set-defaultAddFallback") is None
 
 
 def test_default_model_save_does_not_rewrite_legacy_fallbacks():
@@ -29,3 +29,5 @@ def test_default_model_save_does_not_rewrite_legacy_fallbacks():
     assert "default_model_fallbacks:" not in default_chat_source
     assert "default_reasoning_effort:" in default_chat_source
     assert "default_verbosity:" in default_chat_source
+    assert "set-defaultFallbacks" not in default_chat_source
+    assert "set-defaultAddFallback" not in default_chat_source
