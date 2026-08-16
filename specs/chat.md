@@ -1,6 +1,6 @@
 # Chat
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -16,6 +16,7 @@ This spec covers current chat behavior in:
 - `src/attachment_refs.py` and `src/upload_handler.py` for durable attachment
   references and write reservations;
 - `src/context_budget.py`, `src/context_compactor.py`, and `src/topic_analyzer.py`;
+- `src/foreground_model_routing.py`, `src/tool_approvals.py`, and `src/tool_capabilities.py`;
 - `routes/workspace_routes.py` for workspace selection support;
 - frontend modules `static/js/chat.js`, `static/js/chatStream.js`, `static/js/chatRenderer.js`, `static/js/sessions.js`, `static/js/search-chat.js`, `static/js/compare/stream.js`, `static/js/workspace.js`, `static/js/composerArrowUpRecall.js`, `static/js/streamingSegmenter.js`, `static/js/group.js`, and `static/js/notes.js`;
 - integration points with uploads, documents, compare, research, agent tools, memory, RAG, search, and model endpoints.
@@ -41,7 +42,7 @@ Runtime behavior:
 - message metadata carries timestamps, metrics, tool events, sources, hidden
   thinking/reasoning text when providers expose it separately, context-trim
   metrics, structured attachment references, and related UI state;
-- metadata preserves both requested and actual reply models when provider streams or fallbacks report them, and stable session ids are kept available so prompt/sequence-memory and KV-cache paths can address the same conversation consistently;
+- metadata preserves requested and actual reply models and endpoints, per-round route transitions, and answering-route cost attribution; stable session ids remain available so prompt/sequence-memory and KV-cache paths can address the same conversation consistently;
 - multimodal content can be a list of content blocks for the live provider call,
   while persistence collapses raw media into readable text and stable
   attachment-reference lines;
@@ -51,7 +52,9 @@ Runtime behavior:
 
 `src.agent_runs` owns detached in-memory stream runs, replay buffers, replacement cancellation, resume subscribers, explicit stop, and terminal-buffer eviction. Closing the SSE connection does not necessarily stop generation. `static/js/chat.js` can live-resume a still-running detached stream through `/api/chat/resume/{session_id}`; rich responses reload from DB for canonical rendering. Detached runs are process-local and do not survive server restart.
 
-Provider adapters live below chat in `src.llm_core`. Chat consumes normalized SSE output, fallback/error events, reasoning/tool deltas, and metrics. Model fallback only commits a candidate after substantive text/reasoning or tool-call output; metadata-only and empty/DONE-only streams can advance to the next candidate without exposing stale metadata. After substantive output, errors are surfaced to the stream instead of silently retrying a new model.
+Provider adapters live below chat in `src.llm_core`. Chat consumes normalized SSE output, fallback/error events, reasoning/tool deltas, and metrics. Foreground chat is strict to the selected route by default. Only the selected owner can opt in through `foreground_fallback_enabled` plus ordered `foreground_model_fallbacks`; the retired `default_model_fallbacks` key is ignored. Eligible pre-content availability failures can advance through at most ten owner-visible exact model candidates, while missing configuration/endpoints, provider/schema errors, clean empty completions, and post-content failures remain on the selected route and surface an error. Once a route produces substantive text/reasoning or a tool call it is pinned as the answering route.
+
+Fallback candidates receive route-neutral context shaping. Only compaction performed for the answering route is persisted. Chat and agent metadata record requested/actual model and endpoint identity, round-by-round route transitions, and costs against the route that actually answered; the browser renders same-model endpoint changes as well as model changes.
 
 ## Context Preface
 
@@ -74,7 +77,7 @@ Current call sites include:
 - chat/research dispatch in `routes/chat_routes.py`;
 - agent execution in `src/agent_loop.py`;
 - deep research orchestration in `src/research_handler.py`;
-- compare entry points in `routes/compare_routes.py` and frontend compare modules.
+- compare entry points in canonical `routes/compare/compare_routes.py` and frontend compare modules.
 
 Agent-mode tool access is gated in layers. Chat route toggles and privileges
 build a disabled-tool set; incognito and compare mode remove persistence-heavy
@@ -114,6 +117,8 @@ tool-result metadata, so the UI can recover if a later `doc_update` stream event
 is missed. The chat renderer also hides raw/incomplete leaked tool JSON and
 document fences from normal transcript text.
 
+When untrusted external/workspace content has entered the agent context, high-impact tool calls pause as exact approval cards instead of executing. Approval continuation is bound to the sealed action and session: the browser submits only approve/deny, the server ignores new composer mutations and attachments, revalidates current policy and document freshness, consumes the one-use approval, executes the sealed tool, and resumes the agent. Sending a normal message retires a pending card while preserving the tainted session state.
+
 ## Security And Provenance
 
 `/api/chat` and `/api/chat_stream` verify session ownership before loading the session. Chat privilege gates enforce allowed models and daily message caps before LLM work. Active document injection, session auth/header recovery, endpoint repair, upload-id resolution and reservation, memory/RAG retrieval, and post-response work must stay owner-scoped.
@@ -124,12 +129,13 @@ Incognito disables memory, skill, and chat-history tools and skips assistant DB 
 
 ## Search Boundary
 
-`GET /api/search` in `routes/chat_routes.py` is chat-message search for the UI and slash commands. Web search routes are owned by `routes/search_routes.py`; chat and agent web context call through `src.search`, compatibility shims, and search content fetchers. Do not confuse chat-history search with external web retrieval.
+`GET /api/search` in `routes/chat_routes.py` is chat-message search for the UI and slash commands. Web search routes are owned by canonical `routes/search/search_routes.py`; chat and agent web context call through `src.search`, compatibility shims, and search content fetchers. Do not confuse chat-history search with external web retrieval.
 
 ## Degraded And Compatibility Behavior
 
 - Missing ChromaDB, embeddings, memory vectors, RAG managers, or skills indexes should remove injected context or fall back to keyword/text behavior without failing chat.
 - Sessions hydrate legacy string headers and multimodal JSON-array content, export text/HTML/Markdown after flattening non-string blocks, can lazy-load from DB when cached state is empty, and preserve old history/index delete behavior where needed.
+- Initial shell/session loading is non-blocking: the sidebar can render before a selected transcript is hydrated, and full transcript hydration is deferred until display or a model send requires it.
 - Chat repairs empty selected models and orphaned endpoint references before provider calls when possible.
 - Deleted-session stream writes fail closed.
 - Docker/native endpoint differences are owned by runtime/model setup, but chat sessions depend on the saved endpoint URLs and headers.

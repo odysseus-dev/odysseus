@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -29,7 +29,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 
 Runtime behavior:
 
-- local default calendars are created per owner as needed;
+- local default calendars are created lazily per owner with stable UUID5 candidates. Default creation remains inside the caller's transaction so a failed event write cannot leave an orphaned calendar; SQLite serializes the absent-row check with `BEGIN IMMEDIATE`, other backends recover insert races inside a savepoint, and renamed-owner ID collisions advance through deterministic slots. List-only callers explicitly commit the lazy default.
 - route-level no-login calendar access normalizes empty owner values to `ODYSSEUS_FALLBACK_OWNER` or `owner@localhost`, so route-created calendar rows do not use the empty string as their storage owner;
 - CalDAV account config lives in per-user prefs as `caldav_accounts`, with the legacy `/api/calendar/config` route reading/upserting the first account;
 - recurring rules are expanded server-side, including compound recurrence IDs;

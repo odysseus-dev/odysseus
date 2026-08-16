@@ -1,6 +1,6 @@
 # Speech
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -93,6 +93,8 @@ TTS cache behavior:
 - cache clear is global;
 - frontend TTS has a separate object-URL cache.
 
+`ODYSSEUS_TTS_CACHE_MAX_BYTES` bounds server cache growth and is forwarded by all Compose variants. The default is 500 MiB; invalid integers fall back to that default and values at or below zero disable eviction. After a cache write, enforcement scans only `.mp3`/`.wav`, ignores files that disappear or cannot be stated, and when over limit removes oldest-by-mtime entries toward 80% of the ceiling. Sort/stat/unlink failures are logged and do not fail synthesis.
+
 ## Security And Provenance
 
 Speech routes rely on app-wide authentication and do not implement route-local admin or scope checks. Bearer-token callers that pass app auth can reach speech stats/synthesis/transcription/cache-clear surfaces using global speech settings.
@@ -115,7 +117,7 @@ TTS cached audio can contain sensitive assistant text rendered as speech. The ca
 
 ## Testing Coverage
 
-Existing coverage includes `test_speech_service_toggles`, malformed/non-string TTS provider and speed handling, `test_tts_cache_stats`, `test_stt_leak`, `test_direct_upload_limits`, `test_model_routes`, and settings scrub coverage. A focused audit run of those relevant tests passed.
+Existing coverage includes speech service toggles, malformed/non-string TTS provider and speed handling, cache stats plus configured eviction/disable/file filtering/error handling, STT temp cleanup, direct upload limits, model routes, and settings scrubbing.
 
 Missing coverage includes route-level STT/TTS success and failure shapes, auth/API-token behavior, endpoint owner isolation, STT type/magic rejection, TTS request-size/no-store/cache privacy behavior, degraded optional dependency paths, and frontend recorder/TTS fallback states.
 

@@ -1,6 +1,6 @@
 # Ollama Provider Shape
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -33,6 +33,8 @@ definitions, `format`, `options`, and model-dependent `think`. Responses use
 `message.content`, `message.thinking`, and `message.tool_calls`. Generate uses
 top-level `response` and `thinking`. OpenAI compatibility is a separate dialect
 and can change control names independently.
+
+Manual Ollama endpoints registered against the OpenAI-compatible `/v1` surface default to text/prompted tools unless the operator explicitly enables `supports_tools`; model naming alone does not opt that dialect into native function schemas.
 
 Thinking control is model-specific: most documented reasoning families accept
 a native bool, while GPT-OSS accepts low/medium/high and cannot be fully

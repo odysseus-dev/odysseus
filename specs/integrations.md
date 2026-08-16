@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -11,7 +11,7 @@ This spec covers external integration surfaces in:
 - `routes/api_token_routes.py` and bearer-token handling in `app.py`;
 - `routes/auth_routes.py` integration CRUD/test routes;
 - `src/integrations.py` and `data/integrations.json`;
-- `routes/webhook_routes.py` and `src/webhook_manager.py`;
+- canonical `routes/webhook/webhook_routes.py` plus its top-level compatibility shim, and `src/webhook_manager.py`;
 - task webhook generation/triggering in `routes/task_routes.py`, `app.py`, and `static/js/tasks.js`;
 - companion/mobile pairing in `companion/routes.py` and `companion/pairing.py`;
 - provider OAuth/device-flow endpoint links in `routes/copilot_routes.py`, `routes/chatgpt_subscription_routes.py`, `routes/device_flow.py`, and `ProviderAuthSession` rows;
@@ -92,6 +92,8 @@ Link-local/metadata targets are always rejected; setting
 `INTEGRATION_API_BLOCK_PRIVATE_IPS=true` also rejects loopback/RFC1918/private
 addresses for operators who do not need LAN integrations.
 
+After validation, `execute_api_call()` pins the outbound connection to the validated IP snapshot while preserving the configured URL, Host header, TLS server name, and redirect policy. DNS cannot select a different destination between SSRF validation and transport.
+
 Current call sites include:
 
 - `src.agent_loop` injecting enabled integration descriptions;
@@ -135,6 +137,8 @@ Read endpoints accept session or bearer-token callers and resolve the effective 
 
 `companion.pairing` owns LAN host detection, pairing payload shape, token minting, and optional QR generation. QR rendering depends on optional `qrcode`; if unavailable or failing, pairing still returns the text payload.
 
+When `COMPANION_BASE_URL` is set, pairing advertises that validated operator-selected v1 address instead of container/request auto-detection. The accepted form is a canonical ASCII `http://` LAN/Tailscale IPv4, single-label hostname, or `*.local` origin with optional valid port and no credentials/path/query/fragment; HTTPS, public/misleading numeric host spellings, percent/backslash/control characters, and unsupported hosts fail closed. Auth-disabled model inventory retains the normal single-user all-endpoints view instead of filtering every ownerless request to legacy-null rows.
+
 ## Unified Settings Surface
 
 The Settings Integrations view aggregates several subsystem surfaces:
@@ -157,7 +161,7 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 - Webhook delivery has no retry/backoff queue; the persisted state is last status or sanitized last error.
 - Webhook URLs are validated at create and delivery time, redirects are disabled,
   and delivery connects to the IP set validated immediately before the request.
-- Companion LAN detection is best-effort and falls back to local host/port defaults.
+- Companion LAN detection is best-effort and falls back to local host/port defaults unless a valid `COMPANION_BASE_URL` is configured.
 - `ODYSSEUS_URL` must be reachable from the external coding agent; no Docker/native URL rewrite is performed.
 
 ## Security And Provenance
@@ -188,8 +192,7 @@ The integration audit also ran the targeted venv subset covering those areas wit
 - `do_manage_webhooks()` bypasses route behavior and does not cover signing-secret parity.
 - Companion read endpoints should either require `chat` scope or be documented as an explicit scope-policy exception.
 - Decide whether webhook secret plaintext fallback should remain accepted when the API key manager is unavailable.
-- Decide whether generic integration base URLs should stay LAN-capable by
-  default or make `INTEGRATION_API_BLOCK_PRIVATE_IPS=true` the default.
-- Decide whether admin-authored integration descriptions and `api_call` results need a shared untrusted-context wrapper.
+- Decide whether generic integration base URLs should stay LAN-capable by default or make `INTEGRATION_API_BLOCK_PRIVATE_IPS=true` the default.
+- Admin-authored integration descriptions and `api_call` results enter the untrusted-result/gated-action pipeline, but their product-level trust presentation still needs continued review.
 - The dormant SQLAlchemy `Integration` model should be removed, migrated into use, or documented as legacy.
 - `scripts/odysseus-webhook` still emits the removed `/api/webhook/{token}` path.

@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -36,6 +36,8 @@ This spec covers deep research behavior in:
 `src.research_handler.ResearchHandler` owns panel and chat-stream active research jobs: validation, query synthesis, model probing, endpoint/model selection inputs, task registry state, cancellation, progress, raw findings, result persistence, average-duration caching, owner stamping, and owner rename for active/disk-backed task state.
 
 `routes.research.research_routes` owns the browser/API surface: auth and privileges, active/status/cancel/result/result-peek/stream routes, report HTML, hide/unhide images, library/detail/archive/delete, endpoint resolution for panel launch, and spinoff chat creation. Top-level `routes.research_routes` is a `sys.modules` compatibility shim.
+
+Internal-tool owner forwarding rejects only request sentinel identities. The reserved Default/Local storage owner is allowed to own research state in explicit no-login storage flows, while named-user lookups and route gates remain authoritative in configured auth mode.
 
 `TaskScheduler` owns scheduled research execution. It uses `DeepResearcher` directly, creates `[Research]` chat sessions, and writes `data/deep_research/*.json` in a compatible library/report shape without going through `ResearchHandler.start_research()`.
 

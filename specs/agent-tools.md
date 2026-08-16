@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -14,6 +14,8 @@ This spec covers agent/tool behavior in:
 - `src/tool_index.py`;
 - `src/tool_parsing.py`;
 - `src/tool_security.py`;
+- `src/tool_capabilities.py`;
+- `src/tool_approvals.py`;
 - `src/attachment_refs.py` and shared upload lifecycle helpers in
   `src/upload_handler.py` / `src/tool_utils.py`;
 - `src/tool_implementations.py`;
@@ -27,7 +29,7 @@ This spec covers agent/tool behavior in:
 - `src/mcp_manager.py`;
 - `src/builtin_mcp.py`;
 - `src/bg_jobs.py` and `src/bg_monitor.py`;
-- `routes/chat_routes.py`, `routes/chat_helpers.py`, `routes/model_routes.py`, `routes/skills_routes.py`, `routes/mcp_routes.py`, and `routes/workspace_routes.py`;
+- `routes/chat_routes.py`, `routes/chat_helpers.py`, `routes/model_routes.py`, `routes/skills_routes.py`, canonical `routes/mcp/mcp_routes.py` plus its shim, and `routes/workspace_routes.py`;
 - `mcp_servers/*.py`;
 - frontend stream/admin/settings files that display tool events, workspaces, and disabled tools;
 - `tests/test_agent_loop.py`, `tests/test_tool_*`, and focused MCP/public-policy/schema tests.
@@ -73,15 +75,7 @@ Tool retrieval has domain-specific hooks beyond generic similarity: contact quer
 
 Interaction/session/model helper tools are native first-class tools, not prompt-only conventions. `ask_user` and `update_plan` live in `src.agent_tools.interaction_tools`, model delegation/listing helpers live in `model_interaction_tools`, session creation/list/send/manage helpers live in `session_tools`, and `manage_bg_jobs` lives in `bg_job_tools`.
 
-Prompted-tool parsing includes recovery paths for local/provider text leaks:
-bare JSON after a web-tool mention, OpenAI-style raw
-`{"function": ...}` payloads, StepFun/Gemma/DSML markup, and
-`<function_model><function_call>...</function_call><parameters>...</parameters></function_model>`
-wrappers from local MLX/Exo models. Non-dict JSON arguments are rejected back to
-empty args instead of crashing the turn, common `tex` typos normalize to
-`text`, and delimiter scans are forward-only so unterminated tool markup cannot
-drive quadratic regex rescans. Executed raw tool JSON is stripped from assistant
-text afterward; this is still not a general-purpose JSON-command parser.
+Prompted-tool parsing includes recovery paths for local/provider text leaks: bare JSON after a web-tool mention, OpenAI-style raw `{"function": ...}` payloads, StepFun/Gemma/DSML markup, Hermes/Qwen JSON bodies nested inside `tool_call` wrappers, and `<function_model><function_call>...</function_call><parameters>...</parameters></function_model>` wrappers from local MLX/Exo models. The Qwen bare end marker requires its pipe delimiter so ordinary text cannot terminate a tool block. Non-dict JSON arguments are rejected back to empty args instead of crashing the turn, common `tex` typos normalize to `text`, and delimiter scans are forward-only so unterminated tool markup cannot drive quadratic rescans. Executed raw tool JSON is stripped from assistant text afterward; this is still not a general-purpose JSON-command parser.
 
 Current call sites include:
 
@@ -108,6 +102,9 @@ Loop-breaker final-answer rounds, explicit repeated-tool/intent-nudge guard even
 - Path-based tools must remain confined to allowed roots and reject sensitive paths. Sensitive-path checks are case-insensitive and apply to direct file tools and code-navigation tools; `grep`/`glob`/`ls` must not become existence or content oracles for `.env`, SSH/GPG material, `id_rsa`, and similar denylisted paths.
 - Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
+- `src.tool_capabilities` classifies each tool's effects and result integrity. Once external/workspace-untrusted content becomes model-visible, the request/session security context permits only explicitly low-impact tools without interruption and requires exact approval for high-impact, unknown, and arbitrary MCP calls.
+- `src.tool_approvals` seals an opaque, expiring, exact one-use action to owner, session, origin run, tool content, workspace, capability snapshot, and—when relevant—document id/version/content digest. Approve/deny resumes only the sealed server record after current-policy and freshness checks; new normal turns and superseding actions retire stale approvals without clearing taint.
+- Tool results that expose remote or stored untrusted content arm the gate even when their tool status is failed. Content-free failures and server-generated policy/approval placeholders do not. Native/provider tool messages and fenced results carry model-visible untrusted metadata/wrapping instead of relying on prompt wording alone.
 - Attachment-bearing document, note, and calendar tools owner-reserve internal
   upload references before durable writes and fail without mutation when the
   referenced upload is unavailable.
@@ -120,7 +117,7 @@ Loop-breaker final-answer rounds, explicit repeated-tool/intent-nudge guard even
 
 ## MCP
 
-`src.mcp_manager` owns configured MCP server lifecycle, discovered tool state, qualified MCP names, OpenAI schema conversion, call routing, generation invalidation, and connect/disconnect status. It supports stdio, SSE, and Streamable HTTP transports; Streamable HTTP can publish a `needs_auth` state and uses `src.mcp_oauth` for OAuth/OIDC-style authorization, token refresh, and encrypted token storage. `src.builtin_mcp` owns built-in server registration and the native-vs-MCP split. `mcp_servers/` owns server-specific tools for email, image generation, memory, RAG, and optional browser tooling.
+`src.mcp_manager` owns configured MCP server lifecycle, discovered tool state, qualified MCP names, OpenAI schema conversion, call routing, generation invalidation, and connect/disconnect status. It supports stdio, SSE, and Streamable HTTP transports; Streamable HTTP can publish a `needs_auth` state and uses `src.mcp_oauth` for OAuth/OIDC-style authorization, token refresh, and encrypted token storage. Arbitrary MCP tools classify fail-high for approvals. `src.builtin_mcp` owns built-in server registration and the native-vs-MCP split. `mcp_servers/` owns server-specific tools for email, image generation, memory, RAG, and optional browser tooling.
 
 Native bash, python, file, web search, and web fetch tools continue through native fallback even when MCP is unavailable. Browser MCP is optional and can be skipped when cached Playwright/NPX packages are missing. Public users get no MCP schemas, and any `mcp__*` execution attempt must be blocked.
 
@@ -148,7 +145,7 @@ When an email reader is active, browser chat passes active email metadata and th
 - Some AI-control helpers are still globally wired from app startup rather than a narrower service layer.
 - Tool registry consistency is manual across handler maps, tags, aliases, schemas, retrieval descriptions, execution dispatch, settings/model routes, and frontend toggles.
 - MCP disabled-tool changes can stale-cache tool retrieval because disabled maps are not always an index generation input.
-- External MCP output truncation and tool-result prompt-injection wrapping need stronger guarantees.
+- External MCP output still needs a single central size cap before model re-entry; untrusted-result metadata and the post-external-context action gate now cover the prompt-injection/authorization boundary.
 - Auth-disabled/no-login owner propagation is inconsistent between route dependencies and chat/agent execution, so tool-security and native tool storage behavior need dedicated regression coverage.
 - Agent tests mostly cover helpers and targeted regressions, including round-cap
   and disconnect cancellation paths, but not an end-to-end fake-LLM

@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -41,7 +41,7 @@ The suite currently contains roughly 728 `test_*.py` files. Treat that count as 
 
 Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, OAuth/token custody, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
 
-`tests/run_focus.py` and `tests/_taxonomy.py` provide a local focused-run helper and category map. `.github/scripts/focused_test_guidance.py` and its focused-test guidance checks map changed files to suggested focused tests for PR review, while keeping the full pytest job informational. `tests/TESTING_STANDARD.md` documents expectations for targeted validation, and `tests/LAYOUT_INVENTORY.md` records the test-suite layout. CLI tests live under `tests/cli/`.
+`tests/run_focus.py` and `tests/_taxonomy.py` provide a local focused-run helper and category map. `.github/scripts/focused_test_guidance.py` maps changed files to suggested focused tests for PR review, while the configured full pytest CI job is authoritative. `tests/TESTING_STANDARD.md` documents expectations for targeted validation, and `tests/LAYOUT_INVENTORY.md` records the test-suite layout. CLI tests live under `tests/cli/`.
 
 ## JS And UI Tests
 
@@ -86,6 +86,8 @@ docker compose logs --tail=120 odysseus
 ```
 
 `docker-compose.yml` starts Odysseus, ChromaDB, SearXNG, and ntfy. It binds services to loopback by default through `APP_BIND`, `CHROMADB_BIND`, and `NTFY_BIND`, persists configurable `APP_DATA_DIR`/`APP_LOGS_DIR`, SSH identity, HuggingFace cache, and user-local Python installs, and gives the Odysseus container host-loopback reachability through `host.docker.internal`.
+
+Compose variants forward `ODYSSEUS_TTS_CACHE_MAX_BYTES`, defaulting in the service to 500 MiB, and run the mounted `scripts/migrate_searxng_settings.py` helper so retained SearXNG YAML gains default inheritance without replacement. The helper preserves file metadata and formatting where possible and writes atomically; migration failure is non-fatal to the wrapper command. MCP OAuth callback setup follows `OAUTH_REDIRECT_BASE_URL`, `APP_PUBLIC_URL`, or the launcher/bind `APP_PORT`, so externally remapped deployments should set a public base explicitly.
 
 `Dockerfile` builds a Python 3.14 slim image with Node/npm, tmux, OpenSSH client, git/cmake, the pinned Docker CLI `29.6.2`, `gosu`, `libmagic1`, and the image-only `python-magic` wrapper.
 
@@ -142,7 +144,7 @@ When route/API behavior changes, check whether a matching CLI script depends on 
 
 ## GitHub Metadata
 
-`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, emits focused-test guidance for changed code, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
+`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and CI. Current CI runs on pushes to `main` and `dev` plus pull requests, compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, emits focused-test guidance for changed code, and runs the configured `python -m pytest -q` scope as an authoritative failing job; pytest still skips documentation-only changes.
 
 `CONTRIBUTING.md` owns the branch model: PRs target `dev`; `main` is the curated user-running branch fast-forwarded from stable `dev` commits. Contributors who accidentally target `main` should retarget the PR base without rebasing.
 
@@ -159,7 +161,8 @@ Issue description checks:
 - validate bug or feature sections based on labels;
 - flag unfilled dropdown placeholders such as `-- Please Select --`;
 - route public vulnerability reports toward GitHub Security Advisories;
-- update a bot comment and swap status labels.
+- update a bot comment and swap status labels;
+- remove the workflow-owned review label when an issue closes so closed issues do not retain stale readiness state.
 
 Security metadata includes container Trivy SARIF upload, Dockerfile lint, dependency review, secret scan, workflow security linting, GitHub default-setup CodeQL, Dependabot metadata, and hardened PR/issue description checks that avoid unsafe head-branch execution. `docs/security-ci.md` documents CodeQL as a dynamic GitHub default-setup workflow; the repo should not add a checked-in CodeQL workflow while that default setup is active.
 

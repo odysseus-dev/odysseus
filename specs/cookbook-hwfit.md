@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -46,7 +46,7 @@ Access policy is split by surface:
 Runtime behavior:
 
 - POSIX and most remote flows run detached through tmux;
-- local Windows uses detached process/log/pid behavior under `%TEMP%\\odysseus-tmux`;
+- local Windows uses detached process/log/pid behavior under `%TEMP%\\odysseus-tmux`; Python first publishes a valid Win32 fallback PID, then Git Bash may replace it with `/proc/$$/winpid` after a ready-file handoff, so PowerShell `Stop-Tree` can terminate the actual serving shell and children instead of receiving an MSYS PID;
 - remote Windows uses PowerShell runner scripts;
 - missing `tmux`, `docker`, or serve-engine binaries return shaped errors where possible;
 - local Docker inside the Odysseus container is available only when the Docker CLI exists, `ODYSSEUS_ENABLE_HOST_DOCKER=true`, and `/var/run/docker.sock` is actually mounted as a socket; otherwise Cookbook should show the host-Docker access hint and prefer remote SSH Docker workflows;

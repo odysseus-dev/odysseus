@@ -1,12 +1,12 @@
 # Search
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
 This spec covers web search, URL fetching, and search-derived context in:
 
-- `routes/search_routes.py`;
+- canonical `routes/search/search_routes.py`, with `routes/search_routes.py` as a compatibility shim;
 - `services/search/*` and exported `services.search.SearchService`;
 - `src/search/*` compatibility aliases around canonical service modules;
 - search call sites in `src/chat_processor.py`, `src/tool_execution.py`, `src/session_search.py`, `src/research_handler.py`, `src/deep_research.py`, and `services/research/research_handler.py`;
@@ -19,7 +19,7 @@ This spec covers web search, URL fetching, and search-derived context in:
 
 ## Route Flows
 
-`routes/search_routes.py` owns the browser/API web-search routes:
+`routes/search/search_routes.py` owns the browser/API web-search routes:
 
 - `GET /api/search/config` returns search configuration with provider key presence, not secret values;
 - `POST /api/search` calls `comprehensive_web_search(..., return_sources=True)` and returns `{context, sources, error?}`;
@@ -124,6 +124,8 @@ Deep research wraps fetched webpage content through `untrusted_context_message("
 ## Optional And Platform Behavior
 
 `ddgs` is optional; provider code has an HTML fallback. Search cache and analytics state live under the shared data dir and mkdir failures in read-only image layers are tolerated where possible. PDF extraction uses `pdfminer.six` only when installed. Native SearXNG defaults to `http://localhost:8080`; Docker uses the compose `searxng` service URL and pins the SearXNG image with a healthcheck.
+
+Compose preserves retained SearXNG settings but runs `scripts/migrate_searxng_settings.py` before startup to add missing `use_default_settings: true` inheritance. The migration accepts only a regular single-document YAML mapping, preserves BOM/newline/style/ownership/mode, writes and directory-fsyncs atomically, and no-ops when the key exists. Compose treats migration failure as non-fatal so SearXNG health reports the retained-file problem instead of the wrapper command preventing startup.
 
 `httpx` and BeautifulSoup are required runtime dependencies for the active search/fetch path.
 

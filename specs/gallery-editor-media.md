@@ -1,6 +1,6 @@
 # Gallery, Editor, And Media
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -12,7 +12,7 @@ This spec covers media surfaces in:
 - generated-image writers in `src/ai_interaction.py` and `mcp_servers/image_gen_server.py`;
 - image tool schemas/dispatch/implementations in `src/tool_schemas.py`, `src/tool_execution.py`, and `src/tool_implementations.py`;
 - `routes/editor_draft_routes.py`;
-- `routes/signature_routes.py` and document signature consumers in `routes/document_routes.py`;
+- `routes/signature_routes.py` and document signature consumers in canonical `routes/document/document_routes.py`;
 - `routes/emoji_routes.py`;
 - `routes/font_routes.py`;
 - `src/generated_images.py`;
@@ -87,6 +87,7 @@ Optional dependency behavior:
 - remove-bg tries `rembg`, then transformers-style fallback, then an error;
 - face enhancement falls back from GFPGAN/OpenCV toward PIL behavior;
 - video uploads intentionally skip EXIF/ffprobe metadata today.
+- grounding and mask model inputs cast only `float64` tensors to `float32` before transfer to Apple's MPS backend, because MPS rejects float64; integer/other tensors and non-tensor processor values preserve their normal device-transfer behavior.
 
 ## Editor Drafts
 

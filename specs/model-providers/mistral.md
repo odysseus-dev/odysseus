@@ -1,6 +1,6 @@
 # Mistral Provider Shape
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -28,10 +28,7 @@ of these fields. Different Mistral models retain independent identities.
 
 ## Request And Response Shape
 
-Reasoning-capable models accept graded `reasoning_effort`. Mistral can return
-`content` as typed blocks: a `thinking` block containing text fragments plus a
-normal `text` block. Normalize these structured blocks into separate reasoning
-and visible channels; do not stringify the list or scan text tags (#4698).
+Reasoning-capable models accept graded `reasoning_effort`. Mistral can return `content` as typed blocks: a `thinking` block containing text fragments plus a normal `text` block. Runtime normalizes those blocks for async utility calls as well as chat/stream paths, keeping reasoning and visible text separate instead of stringifying the list or scanning text tags (#4698, #5882).
 
 ## Fallback And Safety
 

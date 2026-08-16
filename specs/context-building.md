@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -15,6 +15,7 @@ This spec covers model-context construction in:
   `routes/chat_helpers.py`;
 - `src/tool_policy.py`;
 - `src/prompt_security.py`;
+- `src/tool_capabilities.py` and `src/tool_approvals.py`;
 - URL fetchers in `src/search/content.py` and `services/search/content.py`;
 - search orchestration in `services/search/core.py` and the compatibility wrapper in `src/search/core.py`;
 - RAG and personal docs in `src/rag_singleton.py`, `src/rag_vector.py`, `src/rag_manager.py`, and `src/personal_docs.py`;
@@ -39,7 +40,7 @@ Runtime rules:
 `src.prompt_security` owns the untrusted wrapper:
 
 - `UNTRUSTED_CONTEXT_POLICY` states global model policy;
-- `untrusted_context_message(label, content)` wraps source content as user-role data with `metadata.trusted = False`.
+- `untrusted_context_message(label, content)` wraps source content as user-role data with `metadata.trusted = False`, provenance origin, and an `arm_tool_gate`/`tool_gate_untrusted` signal that defaults to arming the server-owned tool gate.
 
 Current untrusted context sources include:
 
@@ -76,7 +77,9 @@ Current behavior is not yet unified:
 
 ## Tool Result Envelope
 
-`src.tool_execution` executes and formats tools. Tool output caps live in `src.constants` and are re-exported through older facades; shared native-tool truncation lives in `src.tool_utils`. `src.agent_loop._append_tool_results()` owns model re-entry: native tool calls return as provider-style `role: "tool"` messages, while fenced-tool results can become a bracketed user message. These results are untrusted, but they do not all currently use `untrusted_context_message()` or `metadata.trusted = False`.
+`src.tool_execution` executes and formats tools. Tool output caps live in `src.constants` and are re-exported through older facades; shared native-tool truncation lives in `src.tool_utils`. `src.agent_loop._append_tool_results()` owns model re-entry: native tool calls return as provider-style `role: "tool"` messages with untrusted metadata, while fenced-tool results use the untrusted wrapper. Classification considers both the requested tool and the result payload, so remote or stored model-visible content can arm the session gate even on a failed tool status.
+
+Taint is server-owned continuation state, not a model instruction. After untrusted external/workspace context, low-impact reads can continue, but high-impact, unknown, and arbitrary MCP actions become proposals that produce an exact approval card. The server seals the action and consumes a matching one-use approval before dispatch; document actions also bind the current document version and digest. Blocked/approval placeholders and content-free failures do not recursively arm the gate.
 
 Context budgeting uses known model context windows when available. `src.context_budget` treats the default 6000-token value as an automatic sentinel, scales to a capped fraction of known context length for non-explicit budgets, and leaves unknown windows on conservative defaults.
 
@@ -106,6 +109,5 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 - URL/search context result shape is not unified across chat prefetch, agent tools, and research.
 - Some failed fetch states are still easier for code to drop than to represent explicitly.
 - Tool/context wording is spread across schema, prompt, and retrieval surfaces.
-- Agent tool-result reinjection lacks a unified untrusted wrapper/metadata envelope across native, fenced, MCP, and app API outputs.
-- Source-specific wrapping and unavailable-state behavior need focused tests for chat URL prefetch, literal URL intent, search context, deep-research extraction, RAG/memory/skills, YouTube, and tool results.
+- Source-specific wrapping and unavailable-state behavior still needs broader focused coverage for literal URL intent, research, RAG/memory/skills, and YouTube; external tool results and approval continuation now have dedicated gate/taint regressions.
 - Compare pre-search context is computed but may not be submitted through the current compare stream form.

@@ -1,6 +1,6 @@
 # Anthropic Provider Shape
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -24,10 +24,7 @@ user blocks. Text, thinking, signatures, server-tool blocks, and tool calls are
 typed content rather than OpenAI roles/fields. Preserve block IDs/signatures
 needed for continuation.
 
-Sampling and thinking support can be version/model specific. The Opus 4.7+
-sampling omission is a model-scoped runtime observation, not an Anthropic-wide
-rule. Anthropic-compatible proxies are Anthropic dialect only when configured
-or their exact payload/endpoint shape proves it (#3110).
+Sampling and thinking support can be version/model specific. The Opus 4.7+ sampling omission is a model-scoped runtime observation, not an Anthropic-wide rule. Runtime version parsing accepts explicit major/minor IDs and later major-only IDs such as `claude-opus-5`, treats a missing minor as `.0`, caps both components so date stamps cannot be misread as versions, and keeps legacy Claude 3 Opus sampling intact. Anthropic-compatible proxies are Anthropic dialect only when configured or their exact payload/endpoint shape proves it (#3110).
 
 ## Fallback And Safety
 

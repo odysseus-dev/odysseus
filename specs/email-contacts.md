@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -14,7 +14,7 @@ This spec covers mail and contacts in:
 - canonical contact/CardDAV routes in `routes/contacts/contacts_routes.py`,
   with `routes/contacts_routes.py` as a compatibility shim;
 - Codex email bridge in `routes/codex_routes.py`;
-- document signed-reply flows in `routes/document_routes.py` and document `source_email_*` fields;
+- document signed-reply flows in canonical `routes/document/document_routes.py` and document `source_email_*` fields;
 - reminder/task email senders in `routes/note_routes.py` and `src/task_scheduler.py`;
 - email/contact agent surfaces in `src/tool_implementations.py`, `src/tool_schemas.py`, `src/tool_index.py`, and `src/agent_loop.py`;
 - CLI wrappers `scripts/odysseus-mail` and `scripts/odysseus-contacts`;
@@ -35,6 +35,8 @@ This spec covers mail and contacts in:
 ## Email Accounts And Transport
 
 `EmailAccount` rows own IMAP/SMTP configuration. Password fields are string columns containing encrypted ciphertext written with `src.secret_storage`; startup migrations handle legacy plaintext rows. Google OAuth account rows also carry `oauth_provider`, encrypted access/refresh tokens, token expiry, and an optional outbound `display_name`. Do not return decrypted credentials or OAuth tokens, or write them to logs.
+
+Exactly one default account per owner is enforced as a serialized database transition. Startup normalizes legacy duplicate defaults and installs a unique per-owner default constraint/index; first create, delete/promotion, set-default, demo teardown, and owner rename lock the relevant owner rows and commit atomically. Multi-owner rename acquires locks in canonical order so stale concurrent writers fail closed.
 
 `routes.email_helpers` owns:
 
@@ -78,6 +80,7 @@ Google OAuth behavior is account-owned:
 - token refresh uses `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, stores refreshed access tokens encrypted, and logs only generic/account-id context on failures;
 - SMTP and IMAP use XOAUTH2 when `oauth_provider == "google"`; OAuth accounts are send-capable without an SMTP password when host and user are configured;
 - outbound mail formats the `From` header with `display_name` when present.
+- authorize/callback redirect URIs derive their scheme and host from the mounted request unless `GOOGLE_OAUTH_REDIRECT_URI` explicitly pins a value; the browser preserves the selected SMTP security mode during connect and reopens Settings after the callback.
 
 MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs. Built-in signature-learning and daily-brief actions also use UID SEARCH/FETCH rather than sequence-number commands.
 
@@ -88,6 +91,10 @@ IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messa
 Scheduled email rows live in `data/scheduled_emails.db` and are owner-scoped. Scheduled send times are normalized before storage.
 
 `routes.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Before SMTP work, each poller atomically claims a due row with a conditional `pending` to `sending` update; concurrent in-process/CLI pollers that lose the claim skip the row instead of sending a duplicate. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Background email automation can also consult the foreground activity gate so auto actions do not compete with active browser/model work. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
+
+Manual and scheduled summaries use the shared LLM adapter and owner-scoped cache instead of constructing provider calls locally. Scheduled summaries use background fallback policy and yield to foreground work; provider exception text is shaped before it can reach the browser.
+
+Urgency delivery publishes through a serialized atomic checkpoint transaction. Generation and membership fences prevent stale scans from overwriting newer state; authoritative scans retire deleted/disabled accounts, partial failures preserve the prior checkpoint, concurrent account-scoped actions merge disjoint facts, and cancellation rolls back without publishing.
 
 Transport degraded behavior:
 
@@ -100,6 +107,10 @@ Transport degraded behavior:
 ## Caching And Staleness
 
 Email list/read behavior uses short route caches, longer read caches, capped warm prefetch, and owner/account-aware pool/cache keys. The frontend email library has its own session SWR cache, cache-buster refreshes, scheduled/search cache exclusions, and stale-row behavior when refresh fails.
+
+Opening an unread message is one authoritative backend IMAP operation. The read route fetches/parses the message and applies `\Seen` over the same connection; cached bodies still await one UID STORE, read-only mailboxes serve content without claiming a mark, and STORE failure returns the body with explicit failure state rather than caching a false read. Inbox/library clients deduplicate opens, carry immutable mailbox context, and ignore late responses after account, folder, or message changes.
+
+Library prewarm runs only while genuinely idle, as one bounded single-flight request for the default or last-used enabled account and initial page. Visible foreground work, panel lifecycle, account changes, or explicit reads cancel or join it so delayed duplicate IMAP work cannot escape the idle gate.
 
 List/read route caches are owner/account-aware. Helper-side summary, AI-reply, tag, calendar-extraction, urgency-alert, and learned sender-signature tables carry owner columns and owner clauses. Thread-boundary rows are still keyed by message shape rather than a full owner/account/mailbox key, so they remain cross-owner audit points when identical messages appear in multiple mailboxes.
 
@@ -180,7 +191,7 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, Google OAuth state/callback/token-refresh/XOAUTH2 behavior, OAuth account token non-disclosure, UID-only IMAP move/flag/fetch behavior, concurrent scheduled-email claim behavior, iCloud-compatible MCP full-message fetch shape, owner scope, ownerless account mailbox-match guards, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, active-email reply guard behavior, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP owner-account scope, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, bulk-selection reset, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
+Existing coverage includes header/envelope/IMAP/SMTP behavior, serialized default accounts, Google OAuth state/callback/token-refresh/XOAUTH2/redirect/settings behavior, shared-adapter summaries, authoritative read/mark-seen and frontend dedup, idle prewarm, UID-only mutations, scheduled-email claims and urgency checkpoint transactions, MCP full-message/owner behavior, owner scope/caches/signatures, thread/sanitizer behavior, CardDAV password encryption, mail CLI behavior, contacts basics, and selected frontend/security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security outside the OAuth path, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 

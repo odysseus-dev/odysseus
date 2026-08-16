@@ -1,12 +1,10 @@
 # OpenCode Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
-Canonical provider identity `opencode` with Zen/Go endpoint variants;
-OpenAI-compatible transport and webhook presets in `src/llm_core.py` and
-`routes/webhook_routes.py`.
+Canonical provider identity `opencode` with Zen/Go endpoint variants; OpenAI-compatible transport and webhook presets in `src/llm_core.py` and canonical `routes/webhook/webhook_routes.py`, with the top-level route module retained as a compatibility shim.
 
 ## Shape
 

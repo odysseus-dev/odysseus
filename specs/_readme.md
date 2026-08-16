@@ -1,6 +1,6 @@
 # Specs DocumentMap
 
-Last updated: dev@01790c2 | 2026-07-28
+Last updated: dev@2e2bb52 | 2026-08-16
 
 This folder is the compact implementation-truth map for humans and coding agents working on Odysseus. Read this file first, then open only the subsystem specs that match the work.
 

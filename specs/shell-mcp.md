@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -10,7 +10,7 @@ This spec covers shell and MCP behavior in:
 - the standalone shell helper in `services/shell/service.py`;
 - agent shell/background execution in `src/tool_execution.py`, `src/agent_tools/subprocess_tools.py`, `src/bg_jobs.py`, and `src/bg_monitor.py`;
 - app wiring and startup/shutdown in `app.py`;
-- MCP configuration routes in `routes/mcp_routes.py`;
+- MCP configuration routes in canonical `routes/mcp/mcp_routes.py`, with `routes/mcp_routes.py` as a compatibility shim;
 - MCP runtime state in `src/mcp_manager.py`;
 - generic MCP OAuth helpers in `src/mcp_oauth.py`;
 - built-in server registration in `src/builtin_mcp.py`;
@@ -49,7 +49,7 @@ Those endpoints probe local or SSH-remote packages, prepend user install bins fo
 
 ## Agent Shell And Background Jobs
 
-`src.tool_execution` owns agent-side `bash` execution and the `#!bg` marker. A `bash` block whose first line is `#!bg` starts a detached background job instead of holding the chat stream open.
+`src.tool_execution` owns agent-side `bash` execution and the `#!bg` marker. A `bash` block whose first line is `#!bg` starts a detached background job instead of holding the chat stream open. On Windows, request-scoped workspace shell execution prefers Git Bash when available so POSIX-style agent commands and path confinement use the intended shell instead of `cmd.exe` parsing.
 
 `src.bg_jobs` owns disk-backed job state under `data/bg_jobs.json` and `data/bg_jobs/*`. It stores wrapper scripts, logs, exit-code files, timestamps, status, and capped result text.
 
@@ -64,7 +64,7 @@ Runtime behavior:
 
 ## Configured MCP Servers
 
-`routes.mcp_routes` owns admin HTTP configuration for MCP servers:
+`routes.mcp.mcp_routes` owns admin HTTP configuration for MCP servers:
 
 - list/add/reconnect/enable/disable/delete servers;
 - list tools and per-server tools;
@@ -114,7 +114,7 @@ own subsystem spec says otherwise.
 
 Current exposure path:
 
-- `routes.mcp_routes` stores disabled tool names;
+- `routes.mcp.mcp_routes` stores disabled tool names;
 - `src.agent_loop` loads disabled maps for prompts/schemas;
 - `McpManager.get_all_openai_schemas()` and prompt descriptions filter disabled tools;
 - `src.tool_index` indexes MCP prompt descriptions by manager generation;
@@ -122,6 +122,8 @@ Current exposure path:
 - `src.tool_execution` dispatches received `mcp__*` calls to `McpManager.call_tool()`.
 
 Per-server disabled MCP tools currently hide tools from prompts/schemas while listings still return tools with disabled metadata. They are not a complete execution-time gate if a disabled qualified name reaches tool execution. Plan mode additionally asks `McpManager.plan_mode_blocked_mcp()` to hide write/unknown MCP tools and add qualified names to the runtime disabled set for that turn.
+
+After model-visible external/workspace context, arbitrary MCP actions classify fail-high and require an exact one-use approval unless a specific low-impact capability classification says otherwise. MCP results are marked external-untrusted for continuation security even when a call returns a failed status with remote payload.
 
 ## Degraded And Platform Behavior
 
@@ -133,7 +135,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 - Missing or uncached browser NPX package is optional and log-only during built-in startup; startup should not perform an implicit package download.
 - Windows does not support POSIX PTY/tmux paths; streaming falls back to pipes or detached logfile behavior.
 - Docker images include selected shell dependencies and the Docker CLI, but host Docker socket access from inside the app container remains unavailable unless the operator explicitly enables `docker/host-docker.yml`/`ODYSSEUS_ENABLE_HOST_DOCKER=true` and mounts a real socket.
-- OAuth supports Google `installed` or `web` key shapes, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Valid JSON values that are not objects are treated as empty token state and replaced by an object on the next write. Google and generic MCP OAuth share `src.mcp_oauth.REDIRECT_URI`, built from `OAUTH_REDIRECT_BASE_URL`, `APP_PUBLIC_URL`, or `http://localhost:7000` plus `/api/mcp/oauth/callback`; `APP_PORT` is intentionally not part of this redirect calculation.
+- OAuth supports Google `installed` or `web` key shapes, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Valid JSON values that are not objects are treated as empty token state and replaced by an object on the next write. Google and generic MCP OAuth share `src.mcp_oauth.REDIRECT_URI`, built from `OAUTH_REDIRECT_BASE_URL`, then `APP_PUBLIC_URL`, then `http://localhost:${APP_PORT:-7000}`, plus `/api/mcp/oauth/callback`. Reverse proxies, public domains, and Docker host-port mappings should set an explicit public base because container bind state cannot infer the browser origin.
 - `services.shell.service` remains a transitional/simple facade separate from route-level compatibility behavior.
 
 ## Security And Provenance
@@ -149,7 +151,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
   automatically equivalent to owner-scoped HTTP route behavior. Email MCP is
   the current exception with explicit owner filtering; other built-ins need
   their own owner policy before being treated as scoped surfaces.
-- MCP output is untrusted tool output. Current MCP text output is not centrally capped before model re-entry.
+- MCP output is external-untrusted tool output and arms the high-impact continuation gate when model-visible. Current MCP text output is still not centrally capped before model re-entry.
 
 ## Testing Notes
 
@@ -166,7 +168,7 @@ The shell/MCP audit ran the targeted venv subset with 78 passing tests and one w
 - Add hard per-server disabled MCP execution checks or document disabled tools as prompt/schema filtering only.
 - Make MCP tool indexing sensitive to disabled-map changes, not only manager generation.
 - Fix stale outer prompt/cache behavior when MCP disabled tools change.
-- Add central truncation and untrusted-context wrapping for MCP result text and images before model re-entry.
+- Add one central truncation layer for MCP result text and images before model re-entry; untrusted-result marking and exact-action continuation approval are now implemented.
 - Decide whether `McpServer.env` and OAuth key files need masking, encryption, and chmod beyond admin-only access.
 - Decide whether built-in MCP servers should become owner-aware or remain documented as admin/global compatibility surfaces.
 - Decide whether optional browser MCP cache misses should surface in `/api/mcp` status instead of startup logs only.

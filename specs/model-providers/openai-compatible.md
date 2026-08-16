@@ -1,6 +1,6 @@
 # General OpenAI-Compatible Inventory Fallback
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -44,6 +44,8 @@ Non-object entries are skipped; null or malformed roots return no records.
 Provider-specific headers, request extensions, and reasoning channels must be
 selected by explicit provider/endpoint adapters. They never leak through this
 fallback.
+
+Compatible tool-call syntax is likewise a runtime concern rather than catalog capability. Current parsers recover selected Hermes/Qwen JSON bodies nested inside `tool_call` wrappers and require the full Qwen bare end delimiter; GPT-OSS compatibility can alias names that collide with its built-in tools and reverse that alias before local dispatch. None of those repairs grants execution authority or proves generic tool support.
 
 ## Current Gaps
 

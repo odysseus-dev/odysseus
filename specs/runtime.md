@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -16,9 +16,7 @@ This spec covers current app runtime wiring in:
 - `src/host_docker_access.py`;
 - `core/middleware.py`;
 - all route setup functions registered from `app.py`, including canonical
-  `routes/gallery/`, `routes/memory/`, `routes/research/`,
-  `routes/history/`, `routes/contacts/`, and `routes/note/` packages plus top-level
-  compatibility shims;
+  `routes/admin_wipe/`, `routes/cleanup/`, `routes/compare/`, `routes/contacts/`, `routes/document/`, `routes/gallery/`, `routes/history/`, `routes/mcp/`, `routes/memory/`, `routes/note/`, `routes/research/`, `routes/search/`, `routes/vault/`, and `routes/webhook/` packages plus top-level compatibility shims;
 - `routes/prefs_routes.py`, `routes/workspace_routes.py`, and `companion/routes.py`;
 - `src/generated_images.py` for generated-media file resolution;
 - `launcher.py`, `Odysseus.spec`, and platform launcher scripts where frozen/native startup changes runtime paths;
@@ -44,14 +42,7 @@ Current router call sites include:
 - TTS/STT, documents, signatures, gallery, editor drafts, scheduled tasks, assistant, calendar, shell, Cookbook, HW Fit, compare, preferences, backup, fonts, Copilot and ChatGPT Subscription auth;
 - MCP, webhooks, API tokens, notes, email, Codex/Claude scoped APIs, vault, contacts, and companion routes.
 
-Gallery, memory, research, history, contacts, and note routes have canonical
-subpackage modules (`routes.gallery.gallery_routes`,
-`routes.memory.memory_routes`, `routes.research.research_routes`,
-`routes.history.history_routes`, `routes.contacts.contacts_routes`, and
-`routes.note.note_routes`). The old top-level modules replace their
-`sys.modules` entries with the canonical module object so legacy imports,
-`importlib`, and monkeypatch tests target the same route module that `app.py`
-uses.
+Admin wipe, cleanup, compare, contacts, documents, gallery, history, MCP, memory, notes, research, search, vault, and webhooks have canonical subpackage modules. Their old top-level route modules replace their `sys.modules` entries with the canonical module object so legacy imports, `importlib`, and monkeypatch tests target the same module that `app.py` uses.
 
 The SPA routes `/`, `/notes`, `/calendar`, `/cookbook`, `/email`, `/memory`, `/gallery`, `/tasks`, and `/library` all serve `static/index.html`. `static/` is served with revalidation for `.js`, `.css`, and `.html` because the frontend ships raw browser modules with no hashed build output.
 
@@ -72,7 +63,7 @@ Generated-image path resolution fails closed for invalid names, path escape, and
 ## Runtime Behavior
 
 - Request hard timeout applies to non-exempt paths that reach `_RequestTimeoutMiddleware`.
-- `src.interactive_gate` tracks foreground requests, browser heartbeats, and active chat streams. Background task/email work can wait for a quiet window so scheduled jobs do not compete with visible browser or model activity.
+- `src.interactive_gate` tracks foreground requests, browser heartbeats, and active chat streams. Background task/email work can wait for a quiet window so scheduled jobs do not compete with visible browser or model activity. Status polling and `/api/email/unread-state` are passive reads: they do not cancel running scheduled work or manufacture foreground pressure.
 - YouTube support is initialized through `services.youtube.init_youtube()`.
 - Vector document RAG is initialized lazily through `src.rag_singleton.get_rag_manager()` and may be unavailable at startup.
 - `routes.workspace_routes` lets the browser choose a server directory for agent turns; execution confinement is enforced below the route layer by tool execution.
@@ -92,6 +83,7 @@ Shutdown cancels upload cleanup, stops the task scheduler, closes the webhook ma
 
 - On Windows, HuggingFace symlink warnings are disabled so model files copy instead of symlink on network/UNC paths.
 - `.env` is loaded with `utf-8-sig` to tolerate Notepad BOM files.
+- Auth and middleware path checks use Starlette's application-relative route path, so a deployment mounted under `root_path` keeps segment-aware auth exemptions, timeout policy, and login redirects instead of comparing proxy prefixes as application routes.
 - Process-wide MIME registration forces stable `.js` and `.mjs` types across native platforms.
 - Frozen/PyInstaller builds use `src.runtime_paths` so bundled app assets resolve from the executable payload while persistent data defaults to `~/.odysseus/data`; normal source runs still default to the repository `data/` directory unless `ODYSSEUS_DATA_DIR` overrides it.
 - Docker detection in `/api/runtime` selects `host.docker.internal` as the Ollama default inside containers and `127.0.0.1` natively. Compose sets Chroma to `chromadb:8000`; native Chroma defaults live in `src/chroma_client.py`.

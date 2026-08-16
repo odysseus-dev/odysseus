@@ -1,6 +1,6 @@
 # DeepSeek Provider Shape
 
-Last updated: dev@28d27ee | 2026-07-17
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -19,6 +19,8 @@ variants, and future V4 models do not share one capability record.
 Cloud endpoint evidence can support tools while a local DeepSeek-R1 deployment
 may not have a working tool parser. Existing tool-support tests intentionally
 separate official host from local engine/model-name heuristics.
+
+Current runtime thinking-pattern detection includes DeepSeek V4 identifiers so their structured reasoning channel is handled like the other supported DeepSeek reasoning families. This name-level compatibility rule is not canonical capability evidence and does not make every V4-labelled local deployment tool-capable.
 
 ## Fallback And Current Gaps
 

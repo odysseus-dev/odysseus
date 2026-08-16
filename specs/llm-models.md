@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -8,6 +8,7 @@ This spec covers model/provider behavior in:
 
 - `src/llm_core.py`;
 - `src/endpoint_resolver.py`;
+- `src/foreground_model_routing.py`;
 - `src/model_discovery.py`;
 - `src/model_context.py`;
 - `src/model_capabilities.py`;
@@ -36,7 +37,7 @@ post and stream paths probe `/models` through their existing async client and
 await each candidate, so header negotiation does not block the event loop; both
 paths share the accepted-value cache and 403 fallback policy.
 
-Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit `temperature` where required, reasoning models omit or clamp unsupported temperature values, and self-hosted compatible endpoints keep normal OpenAI-compatible parameters unless detected otherwise. Mistral/Moonshot/Kimi reasoning content, `gpt-oss` harmony channel output, and native/OpenAI-compatible Ollama thinking formats are normalized so hidden reasoning and visible text stay separated where the provider exposes that structure. Copilot request metadata is treated defensively; malformed/non-dict `request_flags` in the last message must not crash payload construction.
+Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit sampling controls where required, and major-only Opus IDs such as `claude-opus-5` also omit temperature instead of falling through numeric minor-version parsing. Reasoning models omit or clamp unsupported temperature values, while self-hosted compatible endpoints keep normal parameters unless detected otherwise. Mistral structured content is normalized in async utility calls as well as stream/chat paths, and Mistral/Moonshot/Kimi reasoning content, `gpt-oss` harmony output, DeepSeek V4 thinking identifiers, and native/OpenAI-compatible Ollama thinking formats keep hidden reasoning separate from visible text. Tool names that collide with GPT-OSS built-ins are aliased on the provider boundary and mapped back before execution. Copilot request metadata remains defensive against malformed `request_flags`.
 
 ## Canonical Provider And Model Shape
 
@@ -106,7 +107,9 @@ Cookbook and HWFit own local model download, serve, ranking, and auto-registrati
 
 ## Runtime Fallback And Routing
 
-Streaming chat and agent mode use configured fallback candidates through `stream_llm_with_fallback()`. A candidate commits only after a non-empty text/reasoning delta, a tool-call delta, or a non-empty completed tool-call event. Metadata is buffered until that point, so metadata followed by `[DONE]` or a clean empty completion can fall through to the next candidate without leaking stale model/usage state. Tool-call deltas are forwarded immediately and prevent fallback. If every candidate completes without substantive output, the stream emits one terminal 502-shaped error. Non-streaming chat and rewrite routes do not automatically get the same fallback path. Utility callers may use `llm_call_async_with_fallback()`, and vision uses its own fallback loop.
+`src.foreground_model_routing` owns foreground Chat/Agent fallback policy. Selected models are strict by default. Fallback requires owner-scoped `foreground_fallback_enabled=true` and an ordered `foreground_model_fallbacks` list; the old `default_model_fallbacks` setting is retired, ignored, and not migrated into consent. Named users never inherit a legacy flat/single-user fallback choice, candidate lists are capped at ten exact owner-visible models, and caller-provided allowed-model restrictions remain authoritative.
+
+Only eligible availability failures before substantive output can fall through. Default eligible statuses are 408, 425, 429, 500, 502, 503, 504, 507, 508, and 529. Missing endpoint/configuration, provider/schema/request errors, empty completions, and post-content failures do not silently change routes. A candidate commits after non-empty visible/reasoning text or a tool call; the answering route is then pinned. Foreground routing carries model and endpoint descriptors together, shapes context/compaction route-neutrally across candidates, persists only answering-route compaction, and records requested/actual/per-round route provenance plus cost attribution. Utility/background and vision fallbacks remain separate policies.
 
 Model selection has three layers: endpoint resolver hidden-model and first-chat-model selection, `/api/default-chat` per-user default/fallback resolution, and frontend picker auto-selection for empty sessions.
 
@@ -118,7 +121,7 @@ Provider tool calls are untrusted requests, not authorization. `supports_tools` 
 
 - Provider offline or probe failures should surface actionable errors without crashing the app. Async calls retry transient 429/502/503/504 responses before failing.
 - Docker deployments may need loopback URL rewriting from `127.0.0.1` to host-accessible addresses.
-- Fallback selection must preserve endpoint identity and owner scope. User/API-token LLM dispatch that can carry configured endpoint keys must pass the effective owner into resolver calls.
+- Foreground fallback selection must preserve endpoint identity, explicit owner consent, allowed-model policy, and owner scope. User/API-token LLM dispatch that can carry configured endpoint keys must pass the effective owner into resolver calls.
 - Async and streaming calls use dead-host cooldown; sync utility/vision calls do not have identical cooldown coverage.
 - llama.cpp slot-affinity routing is local-endpoint behavior only and must not be applied to cloud/provider endpoints.
 - Hidden, pinned, cached, endpoint-kind, refresh-policy, and offline model state are UI/runtime compatibility data. Pinned models may not participate in every resolver auto-pick path unless code explicitly includes them.

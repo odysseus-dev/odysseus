@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -12,6 +12,8 @@ This spec covers current security and trust-boundary behavior in:
 - `core/database.py`;
 - `app.py` auth middleware and token cache;
 - `src/auth_helpers.py`;
+- `src/owner_identity.py`;
+- `src/tool_approvals.py` and `src/tool_capabilities.py`;
 - `src/tool_security.py`;
 - `src/tool_execution.py`;
 - `src/task_action_policy.py`;
@@ -27,7 +29,7 @@ This spec covers current security and trust-boundary behavior in:
 - `src/generated_images.py`;
 - `scripts/diffusion_server.py`;
 - `companion/routes.py` and `companion/pairing.py`;
-- `routes/auth_routes.py`, `routes/api_token_routes.py`, `routes/vault_routes.py`;
+- `routes/auth_routes.py`, `routes/api_token_routes.py`, and canonical `routes/vault/vault_routes.py` plus its top-level compatibility shim;
 - admin-gated call sites in route files;
 - `THREAT_MODEL.md` and `SECURITY.md`.
 
@@ -45,7 +47,7 @@ Odysseus is a trusted-user private-network app. Admins intentionally have powerf
 - `core.middleware.require_admin()` owns the normal admin gate. Local wrappers must document and test any intentional divergence from that boundary.
 - `src.auth_helpers.effective_user()` owns cookie/API-token owner attribution for selected route code. `require_user()` owns route-level degraded user resolution, `require_privilege()` owns privilege checks, and `owner_filter()` owns shared/null-owner query compatibility.
 
-Reserved usernames include `internal-tool`, `api`, `demo`, and `system`. Loaded auth data drops reserved user records, and create/rename flows must reject real users with those names.
+Reserved usernames include request-only sentinels `internal-tool`, `api`, `demo`, and `system`, plus the storage-only Default/Local owner `__odysseus_local__`. Loaded auth data drops reserved user records, and create/rename flows must reject real users with those names. `src.owner_identity` is the canonical owner vocabulary and `auth_disabled()` parser.
 
 ## Auth Runtime Flow
 
@@ -67,13 +69,14 @@ Cookie requests use the real username. Bearer-token requests are stamped as `req
 
 Internal loopback calls may stamp `current_user = "internal-tool"` or a validated `X-Odysseus-Owner` username. Network/proxy validation for that bypass lives in `app.py`; `require_admin()` trusts the stamped sentinel or raw internal header and should be used behind equivalent middleware control.
 
-Missing-owner values are state-dependent and are not one canonical identity:
+Missing-owner values remain state-dependent at legacy call sites, but new storage-facing code has one normalization contract:
 
 - Auth-enabled, configured auth with no `current_user` is unauthenticated and should fail closed at route dependencies.
-- `AUTH_ENABLED=false` is an explicit local single-user/no-login mode. Route helpers return `""`, and admin gates allow the local operator.
+- `AUTH_ENABLED=false` is an explicit local single-user/no-login mode. Existing route dependencies can still return `""`, and admin gates allow the local operator. `effective_storage_owner()` and `storage_owner_for_request()` normalize an absent owner to `__odysseus_local__` only in this mode.
 - Chat/agent code that reads `get_current_user(request)` directly gets `None` when auth middleware is disabled, because no middleware stamps request state.
 - SQL `NULL`/JSON missing owners remain legacy/shared compatibility data, not the same thing as a logged-out authenticated caller.
 - `"api"` and `"internal-tool"` are request sentinels. They must not be persisted as normal storage owners unless a route explicitly defines that behavior.
+- `__odysseus_local__` is a valid storage owner but never a login or request sentinel. Adoption is incremental: callers that do not use the storage-owner helper can still expose older `None`/empty/null compatibility behavior.
 
 Authenticated `manage_tasks` mutations require an exact stored task-owner
 match and reject both cross-owner and legacy null-owner rows. The `owner=None`
@@ -105,9 +108,13 @@ Current admin gates include `require_admin()` call sites across admin wipe, back
 `src.prompt_security` owns the model-facing untrusted data contract:
 
 - `UNTRUSTED_CONTEXT_POLICY` states the policy in system prompt text.
-- `untrusted_context_message(label, content)` wraps external content as user-role data with `metadata.trusted = False`.
+- `untrusted_context_message(label, content)` wraps external content as user-role data with `metadata.trusted = False`, provenance metadata, and a default `tool_gate_untrusted` marker. Guard-like labels/content are escaped so source text cannot counterfeit the wrapper boundary.
 
 Current untrusted surfaces include fetched URLs, web results, emails, memories, skills, notes, documents, active editor content, and tool output sourced from outside the server. Injecting those as trusted system instructions is a security bug.
+
+`src.tool_capabilities` classifies native and MCP tools by effects and result integrity. After external/workspace-untrusted context becomes model-visible, `ToolRunSecurityContext` keeps a server-owned taint for the session turn: only explicitly low-impact tools can run immediately, while write, execute, network-egress, UI/external-side-effect, admin, destructive, unknown, and arbitrary MCP actions require exact approval. Failed tools can still arm the gate when their result carries remote or stored payload; content-free failures and server-generated blocked/approval placeholders do not.
+
+`src.tool_approvals` owns opaque one-use approvals sealed to the owner, session, origin run, exact tool name/content, workspace, capability effects/result integrity, and expiry. Document actions additionally seal document id, version, content digest, and workspace. Approve/deny is a turn boundary: the browser can submit only the opaque decision, the server restores the sealed action, rechecks current policy/security and document freshness, consumes approval before dispatch, and ignores new composer attachments or mutable action fields. A new ordinary turn or superseding action retires pending approval while preserving the session's taint.
 
 ## URL, Path, And Secret Policy
 
@@ -118,9 +125,7 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
   rejects private/internal targets, disables redirects, and pins delivery to
   the public IP set that passed validation immediately before the request.
 - `src.integrations` owns admin-configured integration base URLs and secret
-  masking. `api_call` accepts only relative paths, rejects link-local/metadata
-  destinations through `src.url_safety`, and can additionally block
-  RFC1918/loopback/private targets with `INTEGRATION_API_BLOCK_PRIVATE_IPS=true`.
+  masking. `api_call` accepts only relative paths, rejects link-local/metadata destinations through `src.url_safety`, can additionally block RFC1918/loopback/private targets with `INTEGRATION_API_BLOCK_PRIVATE_IPS=true`, and pins requests to the IP set that passed SSRF validation while preserving the intended Host/TLS identity.
 - `services.search.content` validates every redirect hop, rejects private/local
   resolved addresses, and pins the HTTP connection to the validated public IP
   while preserving original URL/SNI/Host semantics.
@@ -142,7 +147,7 @@ Host Docker socket access is a high-trust admin/deployment choice, not a normal 
 
 ## Degraded And Compatibility Behavior
 
-- `AUTH_ENABLED=false` skips `AuthMiddleware` and `src.auth_helpers.require_user()` returns `""` from any host. This preserves local single-user/no-login operation; it is not permission for auth-enabled logged-out callers. Route code should still avoid assuming a non-empty owner, and chat/agent code must handle that direct `get_current_user()` reads return `None` in this mode. Owner-scoped routes that tolerate no-login mode should still call `require_user()` so auth-enabled anonymous requests fail closed.
+- `AUTH_ENABLED=false` skips `AuthMiddleware` and `src.auth_helpers.require_user()` returns `""` from any host. This preserves local single-user/no-login operation; it is not permission for auth-enabled logged-out callers. Storage code that adopts `storage_owner_for_request()` receives the reserved Default/Local owner; direct `get_current_user()` readers still receive `None`. Owner-scoped routes that tolerate no-login mode should call the appropriate route or storage helper so auth-enabled anonymous requests fail closed.
 - First-run setup mode redirects browser requests to `/login`, returns API `401 Setup required`, and keeps setup/status/login surfaces auth-exempt. Setup/signup/login are rate-limited; status is exempt but not rate-limited. Route helper fallbacks only tolerate unconfigured anonymous access from loopback.
 - User privilege checks distinguish legacy empty `allowed_models=[]` from explicit no-model access through `allowed_models_restricted=True`.
 - `LOCALHOST_BYPASS` in `app.py` only applies to direct loopback clients and excludes proxy/tunnel headers. Helper fallback code is weaker and should not be treated as the primary bypass boundary.
@@ -154,6 +159,6 @@ Host Docker socket access is a high-trust admin/deployment choice, not a normal 
 - There is no shell/filesystem sandbox for admin tools.
 - Token scopes remain coarse for some surfaces.
 - `app.py` AuthMiddleware lacks direct regression coverage for bearer-token state/cache behavior, trusted-loopback proxy-header rejection, and internal-tool owner stamping.
-- Codex/Claude scoped route enforcement and untrusted tool-result reinjection need stronger regression coverage.
+- Codex/Claude scoped route enforcement still needs stronger regression coverage.
 - `THREAT_MODEL.md` still has stale token-scope and `/api/v1/chat` SSRF gap text that should be reconciled with current route validation.
-- The no-login owner model is split across route helper `""`, chat/agent `None`, SQL/JSON null-owner compatibility, and calendar fallback owner behavior. It has targeted tool-access coverage, but still needs a canonical cross-domain policy.
+- The Default/Local owner contract is canonical but only incrementally adopted; route helper `""`, chat/agent `None`, SQL/JSON null-owner compatibility, and calendar fallback owner behavior still need domain-by-domain migration decisions.

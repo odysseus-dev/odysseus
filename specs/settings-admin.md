@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -14,14 +14,13 @@ This spec covers settings and admin surfaces in:
 - `src/preset_manager.py` and `routes/preset_routes.py`;
 - `routes/backup_routes.py` and `scripts/odysseus-backup`;
 - `routes/diagnostics_routes.py`;
-- `routes/admin_wipe_routes.py`;
-- `routes/cleanup_routes.py` and `src/cleanup_service.py`;
-- `routes/vault_routes.py` and vault-related tool implementations;
+- canonical `routes/admin_wipe/admin_wipe_routes.py`, `routes/cleanup/cleanup_routes.py`, and `routes/vault/vault_routes.py` plus their top-level compatibility shims;
+- `src/cleanup_service.py` and vault-related tool implementations;
 - `routes/font_routes.py`;
 - `routes/model_routes.py` for `/api/tools` and settings-bound model endpoint references;
 - `src/agent_tools/admin_tools.py`, `src/tool_implementations.py`, `src/tool_execution.py`, `src/tool_schemas.py`, and `src/tool_index.py` for `manage_settings`;
 - `src/agent_loop.py` for stale agent prompt references to settings APIs;
-- frontend modules `static/js/settings.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
+- frontend modules `static/js/settings.js`, `static/js/settings/{registry,navigation,lifecycle,search,dom,sidebar}.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
 - CLI helpers `scripts/odysseus-preset` and `scripts/odysseus-theme`.
 
 Generic API integrations are cross-referenced in `integrations.md`. Model endpoint CRUD and endpoint cleanup are covered in `llm-models.md`. Email/contact/calendar legacy setting fallbacks stay with their domain specs.
@@ -29,6 +28,8 @@ Generic API integrations are cross-referenced in `integrations.md`. Model endpoi
 ## Data Stores
 
 `src.settings` owns `data/settings.json` and `data/features.json`. Settings and features are merged over defaults and cached briefly. Missing, corrupt, unreadable, or non-object stores fall back to defaults.
+
+`default_model_fallbacks` is a retired setting key. `src.settings.without_retired_settings()` removes it from loaded/API-visible settings, writes ignore it, and no migration treats it as consent for the owner-scoped `foreground_fallback_enabled` plus ordered `foreground_model_fallbacks` contract.
 
 `routes.prefs_routes` owns `data/user_prefs.json`. It supports:
 
@@ -74,7 +75,9 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - bundled accessibility font selection such as OpenDyslexic and text-size variable application;
 - CSS variable application.
 
-`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, accessibility/font/text-size controls, scoped-token helpers, and unified integrations forms. Its email account forms include provider presets, Google Workspace/.edu OAuth connect/reconnect controls, display-name fields, password-field hiding for OAuth flows, and redirect result banners. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes. Google Gemini API endpoint creation omits `model_refresh_mode` so the backend can apply its manual default; proxies remain manual and other API endpoint forms submit auto refresh.
+`static/js/settings.js` owns domain panel load/save behavior and compatibility exports, while `static/js/settings/registry.js` is the canonical group/panel metadata inventory. `navigation.js` activates panels and lazy admin content, `search.js` implements the registry-backed finder while filtering admin-only entries, `lifecycle.js` owns modal open/close/Escape/drag/docking behavior, `sidebar.js` owns persisted collapse/resize state, and `dom.js` holds shared DOM helpers. Registry/DOM consistency is a tested contract; new panels must update both the registry metadata and actual DOM.
+
+Settings panels cover provider/model/search/research/reminder/email/CalDAV/CardDAV/vault, accessibility/font/text-size, scoped tokens, and unified integrations. The hidden legacy fallback editor was removed; no current Settings panel exposes the new foreground fallback keys, so opt-in exists only through owner-scoped preferences/internal callers until a deliberate UI is added. Email OAuth connect preserves the selected SMTP security mode and returns to the Settings surface after callback. `static/js/admin.js` owns user/admin panels, model endpoints, builtin tool toggles, MCP forms, feature toggles, token/webhook panels, diagnostics, backup/import, and danger-zone wipes.
 
 Logout/user-switch flows clear local/session storage to avoid stale cross-account UI state.
 
@@ -181,7 +184,7 @@ Current targeted coverage includes settings store fallback/error paths, settings
 - Add diagnostics tests for broader error redaction and sensitive output limits.
 - Add admin wipe tests for every wipe kind, unknown-kind 400, rollback behavior, and admin gating.
 - Add vault route tests for session omission, permission setting, login/unlock failures, lock/logout clearing, corrupt config, and admin gates.
-- Add frontend tests for Settings/Admin panel save/load flows, vault password clearing, diagnostics buttons, cleanup/wipe confirmations, custom font/theme wiring, and tab state.
+- Add broader frontend behavior coverage for Settings/Admin panel save/load flows, vault password clearing, diagnostics buttons, cleanup/wipe confirmations, custom font/theme wiring, and tab state; registry/navigation/finder/lifecycle contracts now have focused source/JS tests.
 - Decide whether `user_templates` and `group_presets` should remain shared despite user-facing names.
 - Decide whether backup/import should preserve explicit owner fields or force imported owner ownership.
-- Decide whether a dedicated split is needed for the large `static/js/settings.js` and `static/js/admin.js` ownership boundary.
+- Continue moving shell/navigation concerns out of the still-large `static/js/settings.js` and `static/js/admin.js` domain boundary without duplicating registry ownership.

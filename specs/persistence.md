@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -15,7 +15,7 @@ This spec covers durable state in:
 - `core/atomic_io.py`;
 - `src/attachment_refs.py`, `src/upload_handler.py`, and
   `routes/upload_routes.py` for durable upload references and retention;
-- JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, canonical `routes/contacts/contacts_routes.py` plus its shim, `routes/vault_routes.py`, `routes/cookbook_routes.py`, and memory/skills managers;
+- JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, canonical `routes/contacts/contacts_routes.py` and `routes/vault/vault_routes.py` plus their shims, `routes/cookbook_routes.py`, and memory/skills managers;
 - `routes/email_helpers.py` scheduled-email storage;
 - `routes/backup_routes.py` and `scripts/odysseus-backup`;
 - runtime data under `data/`.
@@ -57,6 +57,8 @@ Current calendar/task persistence includes CalDAV remote identity columns (`Cale
 
 `EmailAccount` includes encrypted password fields plus Google OAuth fields (`oauth_provider`, encrypted access/refresh tokens, token expiry) and optional `display_name`. Startup migrations add those OAuth/display columns idempotently for older databases.
 
+Email default-account state is serialized per owner. Startup normalizes legacy duplicate defaults and installs a per-owner unique default constraint/index; create, delete/promotion, set-default, demo teardown, and user rename perform their default transition in one locked transaction. Multi-owner rename locks are acquired in canonical order, so a stale concurrent default mutation fails closed instead of recreating multiple defaults.
+
 `core/models.py` owns pure dataclasses used by `SessionManager`. It does not own database persistence.
 
 `routes/email_helpers.py` owns a second SQLite database at `data/scheduled_emails.db` for scheduled email, summary, reply, tag, sender-signature, urgency-alert, calendar-extraction, and cache state. Its migrations and owner backfills are local to that module, not `core/database.py`, and those auxiliary tables are owner-scoped.
@@ -82,7 +84,7 @@ Owner columns are security-relevant. Current owner-bearing domains include sessi
 
 Route code owns filtering for its domain. `src.auth_helpers.owner_filter()` is the common helper where available; gallery, documents, calendar, email, skills, and other surfaces also use local filters. Null-owner compatibility is domain-specific: shared endpoints may include null owners, while strict gates and disk stores may reject them. Do not rely on frontend filtering for access control.
 
-There is no single anonymous/local owner value today. SQL `NULL` and missing JSON owners usually mean legacy/shared/unscoped compatibility; route-level no-login helpers use the empty string `""` when `AUTH_ENABLED=false`; chat/agent paths can pass `owner=None`; and calendar routes normalize empty owners to `ODYSSEUS_FALLBACK_OWNER` or `owner@localhost`. Email account helpers treat ownerless rows as single-user/global only for empty-owner mode; for non-empty owners, old ownerless account rows are visible only when the mailbox/from-address matches the owner. Lower-level helpers such as `get_upcoming_events(owner=None)` treat `None` as no owner scoping, so multi-user callers must pass a non-empty owner deliberately.
+`src.owner_identity` defines the storage-only Default/Local owner `__odysseus_local__`. `effective_storage_owner()` maps an absent caller to it only when auth is explicitly disabled, preserves named owners, and rejects request sentinels; `storage_owner_for_request()` also resolves bearer tokens to their real owner. This is a new canonical contract, not a completed migration. SQL `NULL` and missing JSON owners still usually mean legacy/shared/unscoped compatibility; older route dependencies can return `""`, chat/agent paths can pass `None`, and calendar routes retain fallback-owner behavior. Email account helpers treat ownerless rows as single-user/global only for empty-owner mode; for non-empty owners, old ownerless rows are visible only when mailbox/from-address matches. Multi-user callers must continue to pass or derive a non-empty effective owner deliberately.
 
 ## Secrets And Local Stores
 
@@ -105,7 +107,9 @@ Current JSON/local stores include:
 
 Cookbook state lives under the shared `DATA_DIR` path through the `COOKBOOK_STATE_FILE` constant. Search cache/analytics, FastEmbed cache fallback, uploads, generated media, logs, and auxiliary SQLite stores also resolve from shared data-dir constants and must work with source, Docker, and frozen data-dir defaults.
 
-`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Attachment-bearing chat/session, document, note, and calendar writers take owner-checked upload reservations before their durable writes; reservations share the upload-index lock with cleanup and refresh access time. Cleanup receives a complete reference snapshot from chat content/metadata, document current/version content, gallery rows, notes, and calendar rows, and removes only expired uploads proven unreferenced with coherent index state. Missing/incomplete scans fail closed, and index rows are restored when byte deletion fails. Memory and user prefs use temp-and-rename. API keys preserve encrypted values when saving one provider, presets persist atomically, and settings/feature loads degrade to defaults when the store is unreadable.
+`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Its JSON and text writers use a random UUID suffix per write, so concurrent writers in the same process cannot collide on a constant PID-derived temporary path. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Its cache signature covers the live and backup files by device, inode, size, nanosecond mtime, and ctime; reads recheck the whole signature so same-timestamp corruption or replacement cannot pair stale parsed data with a fresh identity. Destructive reads require a valid live index and never use backup recovery as deletion authority. Attachment-bearing chat/session, document, note, and calendar writers take owner-checked upload reservations before durable writes; reservations share the upload-index lock with cleanup and access-time refresh. Cleanup receives a complete reference snapshot and removes only expired uploads proven unreferenced with coherent index state. Missing/incomplete scans fail closed, and index rows are restored when byte deletion fails.
+
+Memory mutations have their own fail-closed durability contract: `MemoryManager.load_all_for_update()` raises `MemoryStoreUnreadable` for a corrupt or unreadable `memory.json`, and read-modify-write callers use that strict path so they cannot replace an unreadable store with an empty one. Read-only `load_all()` remains lenient and can degrade to no memories; legacy `memory.txt` migration remains supported.
 
 Persisted memories, skills, documents, email, RAG chunks, notes, and other user-editable data are untrusted when reintroduced to model context. Route and processor code must pass them through the untrusted-context contract described in `context-building.md` and `auth-security.md`.
 
@@ -129,5 +133,5 @@ ChromaDB/vector stores are optional durable storage outside `data/app.db`; missi
 - Ownerless legacy rows make access-control reasoning harder.
 - Some JSON store shapes are only documented by manager code and tests.
 - Startup migrations lack a legacy-schema/idempotence test harness for owner backfills, encrypted-secret rewrites, and repeated runs.
-- JSON-store atomicity is inconsistent across stores, though prefs and upload metadata now have focused atomic-write paths.
+- JSON-store atomicity is inconsistent across stores, though shared atomic writers, upload metadata recovery, prefs, and strict memory mutations now have focused coverage.
 - Agent filesystem tools currently allow broad `data/` access; secret-bearing files under `data/` need explicit deny coverage.

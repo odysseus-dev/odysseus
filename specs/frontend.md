@@ -1,6 +1,6 @@
 # Frontend
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
@@ -47,6 +47,8 @@ The frontend is a raw static SPA served by FastAPI. There is no Vite, React, Typ
 
 `static/index.html` owns the DOM shell and script loading order. It loads browser ES modules directly. Current boot order includes nonce-bearing inline boot scripts, self-hosted highlight.js, async CDN KaTeX/Mermaid, modulepreloads, ordered module script tags, `static/app.js`, `static/js/init.js`, `static/js/a11y.js`, workspace/chat helpers, provider device-flow helpers, and service-worker registration.
 
+The two first-paint Fira Code faces are preloaded so the shell does not wait for later CSS discovery. `static/js/startupShell.js` lets the visible shell initialize before session loading completes; session/transcript hydration is deferred and coordinated by `static/js/sessions.js` plus history/session routes rather than blocking first paint.
+
 Exact script URL identity matters. Versioned script tags, unversioned imports, and service-worker precache entries must stay aligned. Current service-worker precache coverage is not a full mirror of the `index.html` module graph, so changes there need direct verification.
 
 ## Security Policy
@@ -89,6 +91,7 @@ Current major frontend areas include:
 
 - chat, stream handling, rendering, sessions, markdown, uploads, voice recorder, TTS, and keyboard shortcuts;
 - models, provider setup, pure model-key matching helpers, model picker, presets, search, RAG, settings, and admin;
+- settings shell modules under `static/js/settings/`: registry metadata, navigation, finder search, lifecycle/docking, DOM helpers, and persisted sidebar collapse/resize behavior;
 - compare modules under `static/js/compare/`, including sanitized popup/search/image handling;
 - document editor/library in `static/js/document.js` and `static/js/documentLibrary.js`;
 - image editor integration in `static/js/galleryEditor.js` plus leaves under `static/js/editor/`;
@@ -105,7 +108,9 @@ Coordinator ownership:
 
 Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, `static/js/keyboard-shortcuts.js` for rejecting empty or non-string persisted keybinds before combo parsing, `static/js/modalSnap.js` for reusable desktop modal edge docking, `static/js/toolWindowZOrder.js` for shared portal/window z-index allocation, and `static/js/emailShared.js` for common email UI helpers.
 
-Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, queued prompts preserving mobile composer behavior during active streams, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, user-message edit textareas expanding the bubble to the normal 85% editing width, native document tool results opening/updating the editor even if a later stream event is missed, chat rendering that hides raw leaked tool JSON/document fences and displays explicit agent loop/intent guard stops, Markdown inline-math delimiter rules that leave currency ranges such as `$5 to $10` as text, notes search reset on reopen, email bulk-selection reset across folder/account/search context changes, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, Google Workspace/.edu email OAuth controls in both email account forms, Google Gemini model-endpoint creation omitting an automatic refresh value so the backend manual default applies, gallery editor AI edit command routing, OpenDyslexic/text-size accessibility preferences, admin promote/demote buttons, admin diagnostics log polling, and dismissible toasts that do not block pointer interaction longer than intended.
+Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits; ArrowUp recall only consuming a truly empty composer with the caret at the top, not an unsent multiline prompt; queued prompts preserving mobile behavior; regenerate-from-here versus resend; AI-message delete confirmation; native document tool results opening/updating the editor; and exact tool-approval cards that expose the sealed action/effects/workspace/document identity and submit only opaque approve/deny decisions. Chat rendering hides leaked tool JSON/document fences, no longer strips the ordinary word “assistant,” and batches live-thinking DOM updates with bounded timers. Markdown editing/restoration preserves extracted code/math blocks verbatim, including replacement-string `$&` and `$$` text and triple-backtick fences. Session URL hashes are restored, minimized sidebar icon state follows per-tab visibility, detached terminal dots remain centered, and spinner animation starts only when attached.
+
+The Settings finder and navigation are registry-backed, hide admin-only destinations from non-admin users, lazy-load admin panels, and keep the registry synchronized with DOM panels. Email OAuth connect preserves SMTP security and reopens the settings surface; unread message opens use one authoritative backend read/mark-seen request with stale-response guards; email-library prewarm is idle-only, single-flight, bounded to the initial page, and cancelled around visible foreground work.
 
 ## UI Policy
 
@@ -129,7 +134,7 @@ Recent browser behavior contracts include mobile chat Enter inserting newlines w
 
 Existing frontend coverage is a mix of Node-executed helper tests, `.mjs` tests, static DOM/CSS/source-shape tests, browser exploration specs, and app/static tests. Many tests are useful source-shape regressions but do not replace browser/module-graph execution.
 
-Recent focused coverage includes model-key matching under Node, document-library counter source-shape checks, chat resend/delete/mobile Enter, agent guard events, editable message width, and queued prompt behavior, malformed keybind handling, currency-safe inline math, email bulk-selection reset, notes search reset, calendar week-start preference, modal snap zones, manifest icon existence, admin log fetching, Markdown DOM XSS helpers, and CardDAV unchanged-password handling.
+Recent focused coverage includes model-key matching under Node, document-library counters, chat resend/delete/mobile Enter/ArrowUp, agent guard and exact-approval continuation events, route provenance, live-thinking throttling, startup shell/history hydration, settings registry/navigation/finder/lifecycle, email read dedup/prewarm, Markdown restoration, malformed keybinds, currency-safe inline math, notes/calendar/modal/manifest/admin-log behavior, Markdown XSS helpers, and CardDAV unchanged-password handling.
 
 Missing coverage includes:
 

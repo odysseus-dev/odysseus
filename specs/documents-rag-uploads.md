@@ -1,13 +1,13 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@df2fad2 | 2026-07-12
+Last updated: dev@2e2bb52 | 2026-08-16
 
 ## Scope
 
 This spec covers file/document context, document storage, and vector retrieval in:
 
 - `app.py` and `src/app_initializer.py` route/manager wiring;
-- `routes/upload_routes.py`, `routes/personal_routes.py`, `routes/embedding_routes.py`, `routes/document_routes.py`, and `routes/document_helpers.py`;
+- `routes/upload_routes.py`, `routes/personal_routes.py`, `routes/embedding_routes.py`, canonical `routes/document/document_routes.py` and `routes/document/document_helpers.py`, plus their top-level compatibility shims;
 - chat attachment paths in `routes/chat_routes.py`, `routes/chat_helpers.py`, `src/chat_handler.py`, and `src/chat_processor.py`;
 - `core/session_manager.py`, `src/attachment_refs.py`, `src/upload_handler.py`,
   `src/upload_limits.py`, and the public reference contract in
@@ -28,6 +28,8 @@ This spec covers file/document context, document storage, and vector retrieval i
 ## Uploads And Attachments
 
 `src.upload_handler.UploadHandler` owns upload IDs, safe filenames, upload metadata, owner rename rewrites, atomic `uploads.json` writes, content-type detection, and file storage under `data/uploads`. Upload IDs accept extensionless values or one sanitized alphanumeric extension.
+
+Upload-index reads track the live and `.bak` files by device, inode, size, nanosecond mtime, and ctime, then verify the combined signature after parsing. This catches same-timestamp corruption/replacement and prevents stale parsed data from being cached under a newer file identity. Non-destructive reads can recover from the backup; destructive cleanup requires a valid live index and never treats an older backup as deletion authority. Lifecycle writes can synchronize the backup so intentionally removed metadata is not resurrected.
 
 `src.upload_limits` owns central upload-size caps and environment overrides for chat attachments, gallery, transforms, memory import, personal uploads, email compose, STT audio, and ICS imports. Invalid configured limits fail fast at import so routes do not silently accept unsafe sizes. Docker installs `libmagic1` plus `python-magic` so `UploadHandler.detect_content_type()` can sniff bytes in the official image; native installs can fall back to extension/MIME guesses when `python-magic` is unavailable.
 
@@ -94,13 +96,15 @@ documented race protection assumes the current single-worker deployment.
 
 ## Living Documents And PDF
 
-`routes/document_routes.py` owns the HTTP document API: create/read/update/archive/delete, library listing, import/export, version history, tidy/AI tidy, PDF rendering/export, PDF form helpers, and email-attachment reply preparation.
+`routes/document/document_routes.py` owns the HTTP document API: create/read/update/archive/delete, library listing, import/export, version history, tidy/AI tidy, PDF rendering/export, PDF form helpers, and email-attachment reply preparation. The top-level document route/helper modules remain compatibility aliases.
 
 `static/js/documentLibrary.js` owns local library state after archive/delete actions, including total counts and language chips. Server route truth still owns durable document state.
 
 `static/js/document.js` owns the browser document editor and markdown preview. Preview rendering applies code highlighting when highlight.js is present, renders Mermaid diagrams when the Mermaid runtime is available, refreshes after AI edits, and discards pending AI diffs before switching the active document.
 
 Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. HTTP and native-agent document writers owner-reserve any internal upload/PDF references before persisting new current content or versions. Native document tool outputs include metadata that the browser can use to open/update the editor if a later stream update is missed. Those callers must preserve document owner, attachment, and version semantics.
+
+After external/workspace-untrusted context, a proposed document mutation is sealed into an exact approval with document id, current version, content digest, tool content, owner/session, and workspace. Approval continuation re-reads and verifies those fields before consuming the one-use authorization, so an intervening edit cannot apply a stale approved patch to new content.
 
 Email draft documents are a first-class document language. Create/update paths
 detect the `To`/`Subject`/header shape, coerce language to `email`, and preserve
@@ -131,7 +135,7 @@ Office/EPUB attachment extraction is optional and MarkItDown-backed for `.docx`,
 
 `src.rag_vector.VectorRAG` owns Chroma/embedding-backed indexing and owner-filtered retrieval. Chunk ids are owner-scoped so byte-identical chunks from different owners do not suppress each other. `src.rag_singleton` owns lazy initialization, retry throttling, and reset behavior.
 
-`routes/personal_routes.py` owns personal-doc and direct RAG-upload routes. Directory list/index/delete routes are admin-gated. Direct RAG upload is user-authenticated, requires document privilege, forwards owner into the manager wrapper, writes unique files under per-owner subdirectories of `data/personal_uploads`, and has looser file-type validation than normal uploads.
+`routes/personal_routes.py` owns personal-doc and direct RAG-upload routes. Directory list/index/delete routes are admin-gated, and directory indexing runs in a worker thread so traversal/extraction does not block the async event loop. Direct RAG upload is user-authenticated, requires document privilege, forwards owner into the manager wrapper, writes unique files under per-owner subdirectories of `data/personal_uploads`, and has looser file-type validation than normal uploads.
 
 Current call sites include:
 
