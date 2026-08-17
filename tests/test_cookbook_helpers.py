@@ -794,9 +794,11 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
     assert "/proc/$$/winpid" in routes_src
     assert "pid_ready_path.touch()" in routes_src
     assert '\\"$$\\" > {pp}' not in routes_src
-    assert "function Stop-Tree([int]$Id)" in running_src
+    assert "function Add-Tree([int]$Id)" in running_src
     assert "('ParentProcessId = ' + $Id)" in running_src
-    assert "Stop-Tree ([int]$p)" in running_src
+    assert "Add-Tree ([int]$p)" in running_src
+    assert "taskkill.exe /PID $target /T /F" in running_src
+    assert "$alive.Count -gt 0" in running_src
 
 
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
