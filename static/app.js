@@ -1914,7 +1914,7 @@ function initializeEventListeners() {
       indicator.hidden = labels.length === 0;
       indicator.textContent = labels.length ? `Context: ${labels.join(' · ')}` : '';
       indicator.title = labels.length
-        ? `This thread has seen ${labels.join(', ')} context. These labels only accumulate; policy may require exact approval before later actions.`
+        ? `This thread has seen ${labels.join(', ')} context. These labels only accumulate and remain available to provenance-aware policy.`
         : '';
     };
     window.__odysseusSetProvenance({});

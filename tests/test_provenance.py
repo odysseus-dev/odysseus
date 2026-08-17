@@ -32,6 +32,30 @@ def test_message_provenance_keeps_origin_and_sensitivity_separate():
     assert state.external_untrusted_context_seen is False
 
 
+def test_folded_message_provenance_preserves_multiple_origins():
+    message = untrusted_context_message(
+        "tool execution results",
+        "mixed results",
+        origin=ProvenanceOrigin.EXTERNAL,
+        sensitivity=ContextSensitivity.PRIVATE,
+    )
+    message["metadata"]["provenance_origins"] = [
+        "external",
+        "workspace",
+        "odysseus",
+    ]
+    message["metadata"]["sensitivities"] = ["private", "workspace"]
+
+    state = provenance_from_messages([message])
+
+    assert state.labels() == (
+        "external_untrusted",
+        "workspace_untrusted",
+        "odysseus_untrusted",
+        "private_data",
+    )
+
+
 def test_provenance_merge_is_monotonic():
     state = ConversationProvenance(workspace_untrusted_context_seen=True)
     state.merge(ConversationProvenance(private_data_context_seen=True))

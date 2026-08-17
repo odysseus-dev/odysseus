@@ -118,23 +118,44 @@ def provenance_from_messages(
         metadata = message.get("metadata")
         if not isinstance(metadata, dict) or metadata.get("trusted") is not False:
             continue
+        origins: set[ProvenanceOrigin] = set()
+        raw_origins = metadata.get("provenance_origins")
+        if isinstance(raw_origins, (list, tuple, set)):
+            for raw_origin in raw_origins:
+                try:
+                    origins.add(ProvenanceOrigin(raw_origin))
+                except (TypeError, ValueError):
+                    continue
         try:
-            origin = ProvenanceOrigin(metadata.get("provenance_origin"))
+            origins.add(ProvenanceOrigin(metadata.get("provenance_origin")))
         except (TypeError, ValueError):
+            pass
+        if not origins:
             # Legacy untrusted wrappers were predominantly external. Preserve
             # the old fail-high behavior until every saved message is labelled.
-            origin = ProvenanceOrigin.EXTERNAL
-        try:
-            sensitivity = ContextSensitivity(metadata.get("sensitivity"))
-        except (TypeError, ValueError):
-            sensitivity = ContextSensitivity.PUBLIC
+            origins.add(ProvenanceOrigin.EXTERNAL)
 
-        if origin is ProvenanceOrigin.EXTERNAL:
+        sensitivities: set[ContextSensitivity] = set()
+        raw_sensitivities = metadata.get("sensitivities")
+        if isinstance(raw_sensitivities, (list, tuple, set)):
+            for raw_sensitivity in raw_sensitivities:
+                try:
+                    sensitivities.add(ContextSensitivity(raw_sensitivity))
+                except (TypeError, ValueError):
+                    continue
+        try:
+            sensitivities.add(ContextSensitivity(metadata.get("sensitivity")))
+        except (TypeError, ValueError):
+            pass
+        if not sensitivities:
+            sensitivities.add(ContextSensitivity.PUBLIC)
+
+        if ProvenanceOrigin.EXTERNAL in origins:
             state.external_untrusted_context_seen = True
-        elif origin is ProvenanceOrigin.WORKSPACE:
+        if ProvenanceOrigin.WORKSPACE in origins:
             state.workspace_untrusted_context_seen = True
-        elif origin is ProvenanceOrigin.ODYSSEUS:
+        if ProvenanceOrigin.ODYSSEUS in origins:
             state.odysseus_untrusted_context_seen = True
-        if sensitivity is ContextSensitivity.PRIVATE:
+        if ContextSensitivity.PRIVATE in sensitivities:
             state.private_data_context_seen = True
     return state

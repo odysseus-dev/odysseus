@@ -3044,6 +3044,35 @@ def _append_tool_results(
     without the per-round accumulation.
     """
     tool_result_records = tool_result_records or []
+
+    def _result_provenance(
+        record: Dict[str, Any],
+    ) -> tuple[ProvenanceOrigin, ContextSensitivity, bool]:
+        tool_name = record.get("tool_name")
+        tool_content = record.get("content")
+        result = record.get("result")
+        capabilities = capabilities_for_action(tool_name, tool_content)
+        result_integrity = capabilities.result_integrity
+        should_arm = tool_result_should_arm_gate(
+            tool_name,
+            result,
+            tool_content,
+        )
+        if not should_arm:
+            return ProvenanceOrigin.SYSTEM, ContextSensitivity.PUBLIC, False
+        if (
+            isinstance(result, dict)
+            and result.get("untrusted_content") is True
+            and result_integrity is ResultIntegrity.SYSTEM
+        ):
+            result_integrity = ResultIntegrity.EXTERNAL_UNTRUSTED
+        origin = {
+            ResultIntegrity.EXTERNAL_UNTRUSTED: ProvenanceOrigin.EXTERNAL,
+            ResultIntegrity.WORKSPACE_UNTRUSTED: ProvenanceOrigin.WORKSPACE,
+            ResultIntegrity.ODYSSEUS_UNTRUSTED: ProvenanceOrigin.ODYSSEUS,
+        }.get(result_integrity, ProvenanceOrigin.SYSTEM)
+        return origin, capabilities.result_sensitivity, should_arm
+
     # Strip reasoning_content from earlier assistant turns; only the newest keeps it.
     for _m in messages:
         if _m.get("role") == "assistant":
@@ -3092,10 +3121,12 @@ def _append_tool_results(
                 "content": result_text,
             }
             capabilities = capabilities_for_action(tool_name, tool_content)
-            should_arm_gate = tool_result_should_arm_gate(
-                tool_name,
-                result,
-                tool_content,
+            origin, sensitivity, should_arm_gate = _result_provenance(
+                {
+                    "tool_name": tool_name,
+                    "content": tool_content,
+                    "result": result,
+                }
             )
             if (
                 capabilities.result_integrity is not ResultIntegrity.SYSTEM
@@ -3105,6 +3136,8 @@ def _append_tool_results(
                     "trusted": False,
                     "source": f"tool result: {tool_name}",
                     "tool_gate_untrusted": should_arm_gate,
+                    "provenance_origin": origin.value,
+                    "sensitivity": sensitivity.value,
                 }
             messages.append(result_message)
     else:
@@ -3126,27 +3159,45 @@ def _append_tool_results(
         # data, not instructions — same hardening as skills (#788) and the
         # web/RAG context. THREAT_MODEL.md lists tool output as a surface that
         # must go through untrusted_context_message.
-        arm_tool_gate = any(
-            tool_result_should_arm_gate(
-                record.get("tool_name"),
-                record.get("result"),
-                record.get("content"),
-            )
-            for record in tool_result_records
+        result_provenance = [
+            _result_provenance(record) for record in tool_result_records
+        ]
+        arm_tool_gate = any(item[2] for item in result_provenance)
+        origins = {item[0] for item in result_provenance if item[2]}
+        sensitivities = {item[1] for item in result_provenance if item[2]}
+        origin_order = (
+            ProvenanceOrigin.EXTERNAL,
+            ProvenanceOrigin.WORKSPACE,
+            ProvenanceOrigin.ODYSSEUS,
+            ProvenanceOrigin.SYSTEM,
         )
-        messages.append(
-            untrusted_context_message(
-                "tool execution results",
-                tool_output_text,
-                arm_tool_gate=arm_tool_gate,
-                origin=(
-                    ProvenanceOrigin.EXTERNAL
-                    if arm_tool_gate
-                    else ProvenanceOrigin.SYSTEM
-                ),
-                sensitivity=ContextSensitivity.PUBLIC,
-            )
+        sensitivity_order = (
+            ContextSensitivity.PRIVATE,
+            ContextSensitivity.WORKSPACE,
+            ContextSensitivity.PUBLIC,
         )
+        primary_origin = next(
+            (value for value in origin_order if value in origins),
+            ProvenanceOrigin.SYSTEM,
+        )
+        primary_sensitivity = next(
+            (value for value in sensitivity_order if value in sensitivities),
+            ContextSensitivity.PUBLIC,
+        )
+        result_message = untrusted_context_message(
+            "tool execution results",
+            tool_output_text,
+            arm_tool_gate=arm_tool_gate,
+            origin=primary_origin,
+            sensitivity=primary_sensitivity,
+        )
+        result_message["metadata"]["provenance_origins"] = [
+            value.value for value in origin_order if value in origins
+        ]
+        result_message["metadata"]["sensitivities"] = [
+            value.value for value in sensitivity_order if value in sensitivities
+        ]
+        messages.append(result_message)
 
 
 def _compute_final_metrics(

@@ -111,11 +111,6 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"search_hf_models"},
-    ToolEffect.READ_PUBLIC,
-    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
-)
-_register(
     {"get_workspace", "glob", "grep", "ls", "read_file"},
     ToolEffect.READ_WORKSPACE,
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
@@ -279,22 +274,6 @@ _register(
     ToolEffect.ADMIN_CHANGE,
     # Cookbook/process operations can return stored presets, provider data,
     # remote shell output, and command errors.
-    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
-)
-_register(
-    {
-        "api_call",
-        "app_api",
-        "manage_endpoints",
-        "manage_mcp",
-        "manage_settings",
-        "manage_tokens",
-        "manage_webhooks",
-    },
-    ToolEffect.ADMIN_CHANGE,
-    # api_call/app_api return remote or stored application data, and the
-    # admin managers can echo user-controlled configuration.  Conservatively
-    # retain the action effect while treating every successful result as data.
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
@@ -686,7 +665,11 @@ def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> boo
         if not isinstance(metadata, dict) or metadata.get("trusted") is not False:
             continue
         gate_marker = metadata.get("tool_gate_untrusted")
-        if gate_marker is True:
+        if gate_marker is True and not metadata.get("provenance_origin"):
+            # Before structured provenance existed, this marker meant that
+            # external context had armed the old gate. Current messages carry
+            # an explicit origin, which must not collapse workspace or
+            # Odysseus content into the external bucket.
             return True
         if gate_marker is False:
             # Explicit current-format opt-outs are authoritative.  The source

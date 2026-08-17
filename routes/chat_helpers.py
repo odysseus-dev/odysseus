@@ -711,11 +711,11 @@ async def build_chat_context(
 
     # Agent mode has side-effecting tools, so ambient memory and personal-doc
     # retrieval must not silently add account data to model context. The model
-    # can request the exact manage_memory/manage_documents read and the run
-    # policy will ask before fetching it. Directly selected resources (an
-    # opened editor document, email, or upload) are explicit context. Enabled
-    # skills/integrations are handled by the agent prompt as durable user
-    # configuration and still receive provenance labels.
+    # can request an explicit manage_memory/manage_documents read, whose result
+    # receives provenance labels before later actions. Directly selected
+    # resources (an opened editor document, email, or upload) are explicit
+    # context. Enabled skills/integrations are handled by the agent prompt as
+    # durable user configuration and receive the same provenance treatment.
     if agent_mode:
         mem_enabled = False
         skills_enabled = False

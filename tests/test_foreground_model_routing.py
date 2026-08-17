@@ -17,6 +17,7 @@ import routes.chat_helpers as chat_helpers
 import routes.prefs_routes as prefs_routes
 from src.request_models import ChatRequest
 from src.tool_approvals import document_content_digest
+from src.tool_capabilities import ToolRunSecurityContext
 from src.foreground_model_routing import (
     FOREGROUND_AVAILABILITY_STATUSES,
     MAX_FOREGROUND_FALLBACKS,
@@ -350,6 +351,10 @@ async def test_chat_stream_consumes_exact_tool_approval_for_own_session(monkeypa
         tool_name="update_document",
         content=tool_content,
         workspace=None,
+        security_mode="sandbox",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
     )
     assert "update_document" not in captured["approval_disabled_tools"]
 

@@ -139,7 +139,9 @@ def _pending(store, **overrides):
     return store.create(**values)
 
 
-def test_private_read_is_classified_from_exact_action_and_requires_approval():
+def test_private_read_is_classified_from_exact_action_and_requires_approval(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("sandbox")
     context = ToolRunSecurityContext()
     read = '{"action":"list"}'
@@ -162,7 +164,9 @@ def test_private_read_is_classified_from_exact_action_and_requires_approval():
     }
 
 
-def test_private_context_requires_exact_approval_before_brokered_egress():
+def test_private_context_requires_exact_approval_before_brokered_egress(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("sandbox")
     context = ToolRunSecurityContext(private_data_context_seen=True)
 
@@ -172,7 +176,9 @@ def test_private_context_requires_exact_approval_before_brokered_egress():
     assert "private" in (decision.reason or "").lower()
 
 
-def test_workspace_context_requires_exact_approval_before_brokered_egress():
+def test_workspace_context_requires_exact_approval_before_brokered_egress(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("sandbox")
     context = ToolRunSecurityContext(workspace_untrusted_context_seen=True)
 
@@ -182,7 +188,9 @@ def test_workspace_context_requires_exact_approval_before_brokered_egress():
     assert "workspace" in (decision.reason or "").lower()
 
 
-def test_workspace_and_odysseus_untrusted_context_gate_high_impact_actions():
+def test_workspace_and_odysseus_untrusted_context_gate_high_impact_actions(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("sandbox")
 
     for context in (
@@ -234,6 +242,9 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         content="printf exact",
         workspace="/tmp/workspace",
         security_mode="full_access",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
     )
     assert grant.claim(
         owner="ALICE",
