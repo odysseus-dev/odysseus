@@ -16,9 +16,15 @@ let _modal = null;
 let _curPath = '';
 let _defaultPath = '';
 let _workspace = Storage.get(KEYS.WORKSPACE, '') || '';
+let _workspaceReadyPromise = null;
 
 export function getWorkspace() {
   return _workspace;
+}
+
+export function whenWorkspaceReady() {
+  if (!_workspaceReadyPromise) _workspaceReadyPromise = _syncServerWorkspace();
+  return _workspaceReadyPromise;
 }
 
 function _basename(p) {
@@ -345,6 +351,29 @@ export function closeWorkspaceBrowser() {
   if (_modal) _modal.style.display = 'none';
 }
 
+async function _syncServerWorkspace() {
+  try {
+    const cached = getWorkspace();
+    const state = await _getServerSelection();
+    if (state.path) {
+      setWorkspace(state.path);
+    } else if (state.warning) {
+      await clearWorkspace({ quiet: true, localOnFailure: true });
+    } else if (cached && state.migration_allowed && !state.warning) {
+      // One-time migration from the old browser-only setting.
+      const migrated = await vetAndSetWorkspace(cached);
+      if (!migrated.ok) setWorkspace('');
+    } else {
+      setWorkspace('');
+    }
+    if (state.warning && uiModule && uiModule.showError) uiModule.showError(state.warning);
+  } catch (e) {
+    // Retain the local cache during a transient server failure; selection is
+    // still revalidated by the chat route before any tools receive it.
+    console.warn('[workspace] Failed to load server selection:', e.message);
+  }
+}
+
 export function initWorkspace() {
   // Show the browser cache immediately, then replace it with the server-owned
   // per-user selection so another browser or PC sees the same workspace.
@@ -353,28 +382,7 @@ export function initWorkspace() {
   if (overflow) overflow.addEventListener('click', openWorkspaceBrowser);
   const pill = document.getElementById('workspace-indicator-btn');
   if (pill) pill.addEventListener('click', clearWorkspace);
-  void (async () => {
-    try {
-      const cached = getWorkspace();
-      const state = await _getServerSelection();
-      if (state.path) {
-        setWorkspace(state.path);
-      } else if (state.warning) {
-        await clearWorkspace({ quiet: true, localOnFailure: true });
-      } else if (cached && !state.warning) {
-        // One-time migration from the old browser-only setting.
-        const migrated = await vetAndSetWorkspace(cached);
-        if (!migrated.ok) setWorkspace('');
-      } else {
-        setWorkspace('');
-      }
-      if (state.warning && uiModule && uiModule.showError) uiModule.showError(state.warning);
-    } catch (e) {
-      // Retain the local cache during a transient server failure; selection is
-      // still revalidated by the chat route before any tools receive it.
-      console.warn('[workspace] Failed to load server selection:', e.message);
-    }
-  })();
+  void whenWorkspaceReady();
 }
 
-export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, vetAndSetWorkspace, clearWorkspace, syncWorkspaceIndicator, applyMode };
+export default { initWorkspace, openWorkspaceBrowser, getWorkspace, whenWorkspaceReady, setWorkspace, vetAndSetWorkspace, clearWorkspace, syncWorkspaceIndicator, applyMode };

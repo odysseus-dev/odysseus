@@ -1256,6 +1256,7 @@ async function _cmdToggleDoc(args, ctx) {
 // Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
 // show / set <path> / clear / pick (open the directory browser).
 async function _cmdWorkspace(args, ctx) {
+  await workspaceModule.whenWorkspaceReady();
   const sub = (args[0] || '').toLowerCase();
   const rest = args.slice(1).join(' ').trim();
   const cur = workspaceModule.getWorkspace();

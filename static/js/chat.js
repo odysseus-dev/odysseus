@@ -36,6 +36,7 @@ import {
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
 import { loadPanel } from './panels.js';
+import workspaceModule from './workspace.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -1927,7 +1928,8 @@ import { loadPanel } from './panels.js';
       if (isIncognito) {
         fd.append('incognito', 'true');
       }
-      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      await workspaceModule.whenWorkspaceReady();
+      const _ws = workspaceModule.getWorkspace();
       if (_ws) {
         fd.append('workspace', _ws);
       }

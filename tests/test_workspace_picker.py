@@ -64,6 +64,10 @@ def test_default_workspace_is_created_and_browsed(workspace_api):
     assert out["selectable"] is True
     assert out["can_create_folder"] is True
 
+    selected = workspace_api["get"](request=_request())
+    assert selected["path"] == ""
+    assert selected["migration_allowed"] is True
+
 
 def test_application_data_folder_is_visibly_unselectable(workspace_api):
     private = workspace_api["managed"].parent / "private"
@@ -283,7 +287,11 @@ def test_clear_removes_server_owned_selection(workspace_api):
     out = workspace_api["clear"](request=_request())
 
     assert out["ok"] is True
-    assert workspace_api["get"](request=_request())["path"] == ""
+    selected = workspace_api["get"](request=_request())
+    assert selected["path"] == ""
+    assert selected["migration_allowed"] is False
+    stored = json.loads(Path(prefs_routes.PREFS_FILE).read_text(encoding="utf-8"))
+    assert stored["_users"]["admin"]["agent_workspace"] == ""
 
 
 def test_workspace_mutations_reject_cross_site_requests(workspace_api):
@@ -309,3 +317,9 @@ def test_picker_source_uses_typed_value_and_visible_creation_controls():
     assert 'id="workspace-new-folder"' in source
     assert 'id="workspace-selection-status"' in source
     assert "not sandboxed" not in source
+    assert "cached && state.migration_allowed" in source
+    assert "export function whenWorkspaceReady()" in source
+
+    chat_source = open("static/js/chat.js", encoding="utf-8").read()
+    assert "await workspaceModule.whenWorkspaceReady();" in chat_source
+    assert "const _ws = workspaceModule.getWorkspace();" in chat_source

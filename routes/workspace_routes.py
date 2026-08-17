@@ -196,24 +196,26 @@ def _browse_payload(target: str) -> dict:
     }
 
 
-def _load_selected_workspace(owner) -> tuple[str, str]:
+def _load_selected_workspace(owner) -> tuple[str, str, bool]:
     from routes.prefs_routes import _load_for_user
 
-    raw = str((_load_for_user(owner) or {}).get(_WORKSPACE_PREF_KEY) or "").strip()
+    prefs = _load_for_user(owner) or {}
+    configured = _WORKSPACE_PREF_KEY in prefs
+    raw = str(prefs.get(_WORKSPACE_PREF_KEY) or "").strip()
     if not raw:
-        return "", ""
+        return "", "", configured
     resolved, reason = _workspace_validation(raw)
-    return (resolved or ""), reason
+    return (resolved or ""), reason, configured
 
 
 def _save_selected_workspace(owner, path: str):
     from routes.prefs_routes import _load_for_user, _save_for_user
 
     prefs = _load_for_user(owner) or {}
-    if path:
-        prefs[_WORKSPACE_PREF_KEY] = path
-    else:
-        prefs.pop(_WORKSPACE_PREF_KEY, None)
+    # Preserve an explicit empty value as a tombstone. Without it, another
+    # browser's legacy localStorage cache could be mistaken for an unmigrated
+    # selection and resurrect a workspace the user intentionally cleared.
+    prefs[_WORKSPACE_PREF_KEY] = path
     _save_for_user(owner, prefs)
 
 
@@ -245,8 +247,13 @@ def setup_workspace_routes():
             default_path = ensure_default_workspace()
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        path, warning = _load_selected_workspace(owner)
-        return {"path": path, "default_path": default_path, "warning": warning}
+        path, warning, configured = _load_selected_workspace(owner)
+        return {
+            "path": path,
+            "default_path": default_path,
+            "warning": warning,
+            "migration_allowed": not configured,
+        }
 
     @router.post("/selection")
     def select_workspace(request: Request, body: WorkspaceSelection):
