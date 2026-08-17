@@ -39,6 +39,7 @@ from src.foreground_model_routing import (
 )
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
+from src.execution_sandbox import network_profile_for_internet_preference
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
@@ -2200,8 +2201,12 @@ def setup_chat_routes(
 
                     # For now, Bubblewrap networking follows the existing user
                     # web toggle. This mapping may change in the future; keep
-                    # every other toggle's behavior unchanged for now.
-                    _allow_sandbox_network = _search_enabled
+                    # every other toggle's behavior unchanged for now. The
+                    # server snapshots a BROKERED_ONLY or NETWORKLESS profile;
+                    # Sandbox mode never exposes the raw container namespace.
+                    _sandbox_network_profile = network_profile_for_internet_preference(
+                        _search_enabled
+                    )
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,
@@ -2239,7 +2244,7 @@ def setup_chat_routes(
                             )
                         ),
                         exact_approval=exact_tool_approval,
-                        allow_network=_allow_sandbox_network,
+                        network_profile=_sandbox_network_profile,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

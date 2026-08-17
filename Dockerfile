@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     chromium \
     bubblewrap \
+    libseccomp2 \
     util-linux \
     tmux \
     openssh-client \
@@ -96,6 +97,12 @@ RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
 
 # Copy app code
 COPY . .
+
+# Compile and install the fixed-purpose inner-seccomp launcher under a
+# root-owned path that the dropped runtime user and model workspace cannot
+# modify. The policy generator verifies pinned Moby provenance first.
+RUN make -C security/seccomp install \
+    && rm -rf security/seccomp/build
 
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search

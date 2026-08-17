@@ -16,6 +16,10 @@ import logging
 
 from src import bg_jobs
 from src.prompt_security import untrusted_context_message
+from src.execution_sandbox import (
+    SandboxNetworkProfile,
+    network_profile_from_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +40,12 @@ def _background_result_message(rec):
     return untrusted_context_message("background job output", inject)
 
 
-async def _drain_agent(sess, messages, *, allow_network: bool = False):
+async def _drain_agent(
+    sess,
+    messages,
+    *,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
+):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
@@ -51,7 +60,7 @@ async def _drain_agent(sess, messages, *, allow_network: bool = False):
         session_id=sess.id,
         max_rounds=_FOLLOWUP_MAX_ROUNDS,
         owner=getattr(sess, "owner", None),
-        allow_network=allow_network,
+        network_profile=network_profile,
     ):
         if not chunk.startswith("data: "):
             continue
@@ -125,7 +134,7 @@ async def _run_followup(rec: dict) -> bool:
     full, tool_events = await _drain_agent(
         sess,
         context,
-        allow_network=bool(rec.get("allow_network", False)),
+        network_profile=network_profile_from_snapshot(rec.get("network_profile")),
     )
 
     # Persist ONLY the assistant continuation so it renders as a normal agent

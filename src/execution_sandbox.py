@@ -8,8 +8,9 @@ filesystem, inherited environment, network namespace, and ambient capabilities.
 from __future__ import annotations
 
 import os
-import shutil
+import stat
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
 from urllib.parse import unquote
@@ -17,6 +18,30 @@ from urllib.parse import unquote
 
 class SandboxUnavailable(RuntimeError):
     """Raised when the requested sandbox cannot be established safely."""
+
+
+class SandboxNetworkProfile(str, Enum):
+    """Server-owned network authority snapshotted when a process starts."""
+
+    NETWORKLESS = "networkless"
+    BROKERED_ONLY = "brokered_only"
+
+
+def network_profile_for_internet_preference(enabled: bool) -> SandboxNetworkProfile:
+    """Map the existing user Internet preference to process-boundary policy."""
+    return (
+        SandboxNetworkProfile.BROKERED_ONLY
+        if enabled
+        else SandboxNetworkProfile.NETWORKLESS
+    )
+
+
+def network_profile_from_snapshot(value: object) -> SandboxNetworkProfile:
+    """Restore a persisted server snapshot without ever widening authority."""
+    try:
+        return SandboxNetworkProfile(value)
+    except (TypeError, ValueError):
+        return SandboxNetworkProfile.NETWORKLESS
 
 
 _BROAD_WORKSPACE_ROOTS = frozenset(
@@ -92,6 +117,9 @@ _SENSITIVE_FILE_NAMES = frozenset(
     }
 )
 _MAX_WORKSPACE_SCAN_ENTRIES = 100_000
+_TRUSTED_BWRAP = "/usr/bin/bwrap"
+_TRUSTED_SECCOMP_LAUNCHER = "/usr/local/libexec/odysseus-seccomp-launcher"
+_CA_CERTIFICATE = "/etc/ssl/certs/ca-certificates.crt"
 _SANDBOX_LIMITS = (
     "--as=4294967296",
     "--core=0",
@@ -102,18 +130,41 @@ _SANDBOX_LIMITS = (
 )
 
 
+def _trusted_executable(path: str, description: str) -> str:
+    """Require a fixed root-owned executable outside model-writable storage."""
+    try:
+        metadata = os.stat(path)
+    except OSError as exc:
+        raise SandboxUnavailable(
+            f"Sandboxed agent execution requires the trusted {description} at {path}."
+        ) from exc
+    if (
+        os.path.realpath(path) != path
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or not os.access(path, os.X_OK)
+    ):
+        raise SandboxUnavailable(
+            f"Trusted {description} is not a root-owned, read-only executable at {path}."
+        )
+    return path
+
+
 def _bubblewrap_binary() -> str:
     if not sys.platform.startswith("linux"):
         raise SandboxUnavailable(
             "Sandboxed agent execution requires Linux with bubblewrap."
         )
-    binary = shutil.which("bwrap")
-    if not binary:
+    return _trusted_executable(_TRUSTED_BWRAP, "Bubblewrap binary")
+
+
+def _seccomp_launcher_binary() -> str:
+    if not sys.platform.startswith("linux"):
         raise SandboxUnavailable(
-            "Sandboxed agent execution is unavailable because bubblewrap "
-            "(`bwrap`) is not installed."
+            "Sandboxed agent execution requires Linux with the trusted seccomp launcher."
         )
-    return os.path.realpath(binary)
+    return _trusted_executable(_TRUSTED_SECCOMP_LAUNCHER, "seccomp launcher")
 
 
 def _normalized_workspace(workspace: str) -> str:
@@ -315,27 +366,46 @@ def sandbox_command(
     workspace: str,
     readonly_files: Mapping[str, str] | None = None,
     extra_environment: Mapping[str, str] | None = None,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> list[str]:
     """Build a positive-mount bubblewrap command.
 
     `readonly_files` maps host source files to absolute paths inside the
     sandbox.  It is intended for server-generated command files, never broad
-    directories. Network access remains isolated unless the caller explicitly
-    enables it.
+    directories. Network authority is a server-owned launch snapshot. Raw
+    container networking is never available in Sandbox mode.
     """
     if not command or not all(isinstance(part, str) for part in command):
         raise SandboxUnavailable("Sandbox command must be a non-empty argv list.")
 
+    if not isinstance(network_profile, SandboxNetworkProfile):
+        raise SandboxUnavailable("Invalid server-owned sandbox network profile.")
+    if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
+        raise SandboxUnavailable(
+            "Brokered Internet was requested, but no trusted sandbox egress "
+            "bridge is configured. Refusing to expose raw container networking."
+        )
+
+    launcher = _seccomp_launcher_binary()
     binary = _bubblewrap_binary()
     root = _normalized_workspace(workspace)
+    if _is_within(launcher, root):
+        raise SandboxUnavailable(
+            "Trusted sandbox installation overlaps the selected workspace."
+        )
     if not os.path.isfile("/usr/bin/prlimit"):
         raise SandboxUnavailable(
             "Sandboxed agent execution requires `/usr/bin/prlimit`."
         )
     args = [
+        launcher,
         binary,
-        "--unshare-all",
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--unshare-net",
+        "--unshare-uts",
+        "--unshare-cgroup",
         "--die-with-parent",
         "--new-session",
         "--clearenv",
@@ -351,16 +421,14 @@ def sandbox_command(
         "usr/lib",
         "/lib",
     ]
-    if allow_network:
-        # Retain only the network namespace; every other namespace requested by
-        # --unshare-all stays isolated.
-        args.append("--share-net")
     if os.path.exists("/usr/lib64"):
         args.extend(("--symlink", "usr/lib64", "/lib64"))
     args.extend(
         (
             "--dev",
             "/dev",
+            "--proc",
+            "/proc",
             "--tmpfs",
             "/tmp",
             "--dir",
@@ -370,6 +438,9 @@ def sandbox_command(
 
     args.extend(_directory_creation_args(root))
     args.extend(("--bind", root, root))
+    if os.path.isfile(_CA_CERTIFICATE):
+        args.extend(_directory_creation_args(_CA_CERTIFICATE, include_leaf=False))
+        args.extend(("--ro-bind", _CA_CERTIFICATE, _CA_CERTIFICATE))
     data_overlays, hidden_data_roots = _odysseus_data_overlays(root)
     args.extend(data_overlays)
     args.extend(_workspace_overlays(root, excluded_roots=hidden_data_roots))
@@ -394,6 +465,7 @@ def sandbox_command(
         "LC_ALL": "C.UTF-8",
         "LINES": "40",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "SSL_CERT_FILE": _CA_CERTIFICATE,
         "TERM": "xterm-256color",
         "TMPDIR": "/tmp",
     }

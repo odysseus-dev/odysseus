@@ -269,8 +269,9 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    shutil.which("bwrap") is None,
-    reason="bubblewrap is required for subprocess sandbox execution",
+    shutil.which("bwrap") is None
+    or not os.path.isfile("/usr/local/libexec/odysseus-seccomp-launcher"),
+    reason="the shipped Bubblewrap and trusted launcher are required",
 )
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""

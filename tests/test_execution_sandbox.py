@@ -4,6 +4,7 @@ import asyncio
 import os
 import socket
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.execution_sandbox import (
+    SandboxNetworkProfile,
     SandboxUnavailable,
     environment_for_sandbox_launcher,
     sandbox_command,
@@ -21,17 +23,72 @@ from src.execution_sandbox import (
 @pytest.fixture(autouse=True)
 def _stable_bubblewrap_lookup(monkeypatch):
     """Keep argv-only tests independent of the CI runner's package set."""
-    if shutil.which("bwrap") is None:
-        monkeypatch.setattr(
-            "src.execution_sandbox._bubblewrap_binary",
-            lambda: "/usr/bin/bwrap",
-        )
+    monkeypatch.setattr(
+        "src.execution_sandbox._bubblewrap_binary",
+        lambda: "/usr/bin/bwrap",
+    )
+    monkeypatch.setattr(
+        "src.execution_sandbox._seccomp_launcher_binary",
+        lambda: "/usr/local/libexec/odysseus-seccomp-launcher",
+    )
 
 
 requires_bubblewrap = pytest.mark.skipif(
-    shutil.which("bwrap") is None,
-    reason="bubblewrap is required for sandbox runtime assertions",
+    shutil.which("bwrap") is None or shutil.which("make") is None,
+    reason="bubblewrap and make are required for sandbox runtime assertions",
 )
+
+
+@pytest.fixture(scope="session")
+def compiled_seccomp_launcher(tmp_path_factory):
+    build_dir = tmp_path_factory.mktemp("seccomp-launcher")
+    source_dir = Path(__file__).resolve().parents[1] / "security" / "seccomp"
+    completed = subprocess.run(
+        [
+            "make",
+            "-C",
+            str(source_dir),
+            f"BUILD_DIR={build_dir}",
+            "all",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"trusted launcher compilation failed: {completed.stderr}")
+    return build_dir / "odysseus-seccomp-launcher"
+
+
+@pytest.fixture
+def runtime_seccomp_launcher(monkeypatch, compiled_seccomp_launcher, tmp_path):
+    monkeypatch.setattr(
+        "src.execution_sandbox._seccomp_launcher_binary",
+        lambda: str(compiled_seccomp_launcher),
+    )
+    preflight_workspace = tmp_path / "sandbox-preflight"
+    preflight_workspace.mkdir()
+    completed = subprocess.run(
+        sandbox_command(["/bin/true"], workspace=str(preflight_workspace)),
+        cwd=preflight_workspace,
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if (
+        completed.returncode != 0
+        and "Can't mount proc" in completed.stderr
+        and "Operation not permitted" in completed.stderr
+    ):
+        pytest.skip(
+            "secretless runner outer sandbox blocks fresh procfs; "
+            "shipped outer OCI profile validation is required"
+        )
+    assert completed.returncode == 0, completed.stderr
+    return compiled_seccomp_launcher
 
 
 def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_path):
@@ -40,8 +97,24 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
 
     argv = sandbox_command(["/bin/bash", "-c", "true"], workspace=str(workspace))
 
-    assert "--unshare-all" in argv
+    assert argv[:2] == [
+        "/usr/local/libexec/odysseus-seccomp-launcher",
+        "/usr/bin/bwrap",
+    ]
+    for option in (
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--unshare-net",
+        "--unshare-uts",
+        "--unshare-cgroup",
+    ):
+        assert option in argv
     assert "--share-net" not in argv
+    assert "--seccomp" not in argv
+    assert ["--proc", "/proc"] in [
+        argv[index:index + 2] for index in range(len(argv) - 1)
+    ]
     assert "--clearenv" in argv
     assert "/usr/bin/prlimit" in argv
     assert "--nproc=256" in argv
@@ -56,21 +129,62 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
     ]
     assert environment_for_sandbox_launcher() == {}
     assert "OPENAI_API_KEY" not in argv
+    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "no_proxy"):
+        assert variable not in argv
 
 
-def test_sandbox_argv_shares_only_network_when_explicitly_enabled(tmp_path):
+def test_trusted_executable_rejects_missing_or_writable_install(monkeypatch):
+    from src.execution_sandbox import _trusted_executable
+
+    with pytest.raises(SandboxUnavailable, match="requires the trusted"):
+        _trusted_executable("/definitely/missing/launcher", "seccomp launcher")
+
+    metadata = type(
+        "Metadata",
+        (),
+        {"st_mode": stat.S_IFREG | 0o775, "st_uid": 0},
+    )()
+    monkeypatch.setattr("src.execution_sandbox.os.stat", lambda _path: metadata)
+    monkeypatch.setattr("src.execution_sandbox.os.path.realpath", lambda path: path)
+    monkeypatch.setattr("src.execution_sandbox.os.access", lambda *_args: True)
+    with pytest.raises(SandboxUnavailable, match="root-owned, read-only"):
+        _trusted_executable("/trusted/launcher", "seccomp launcher")
+
+
+def test_sandbox_rejects_invalid_network_profile(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    argv = sandbox_command(
-        ["/bin/bash", "-c", "true"],
-        workspace=str(workspace),
-        allow_network=True,
+    with pytest.raises(SandboxUnavailable, match="Invalid server-owned"):
+        sandbox_command(
+            ["/bin/true"],
+            workspace=str(workspace),
+            network_profile="open",  # type: ignore[arg-type]
+        )
+
+
+def test_sandbox_rejects_launcher_workspace_overlap(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        "src.execution_sandbox._seccomp_launcher_binary",
+        lambda: str(workspace / "odysseus-seccomp-launcher"),
     )
 
-    assert "--unshare-all" in argv
-    assert "--share-net" in argv
-    assert "--clearenv" in argv
+    with pytest.raises(SandboxUnavailable, match="overlaps"):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
+
+
+def test_brokered_profile_fails_closed_without_trusted_bridge(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(SandboxUnavailable, match="Brokered Internet"):
+        sandbox_command(
+            ["/bin/bash", "-c", "true"],
+            workspace=str(workspace),
+            network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+        )
 
 
 def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
@@ -139,6 +253,7 @@ def test_sandbox_rejects_symlinked_sensitive_mounts(tmp_path):
 def test_sandbox_hides_odysseus_data_inside_broader_workspace(
     tmp_path,
     monkeypatch,
+    runtime_seccomp_launcher,
 ):
     import src.constants as constants
 
@@ -236,7 +351,10 @@ def test_sandbox_allows_only_dedicated_workspace_below_data(
 
 
 @requires_bubblewrap
-def test_sandbox_hides_host_and_environment_at_runtime(tmp_path):
+def test_sandbox_hides_host_and_environment_at_runtime(
+    tmp_path,
+    runtime_seccomp_launcher,
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside-secret"
@@ -249,7 +367,7 @@ def test_sandbox_hides_host_and_environment_at_runtime(tmp_path):
         "test -z \"${OPENAI_API_KEY:-}\"; "
         "test ! -s .env; "
         "test ! -e /home; "
-        "test ! -e /proc; "
+        "test -r /proc/self/status; "
         "touch allowed.txt; "
         "if touch .git/blocked 2>/dev/null; then exit 91; fi"
     )
@@ -275,7 +393,10 @@ def test_sandbox_hides_host_and_environment_at_runtime(tmp_path):
 
 
 @requires_bubblewrap
-def test_sandbox_network_namespace_has_no_external_route(tmp_path):
+def test_sandbox_network_namespace_has_no_external_route(
+    tmp_path,
+    runtime_seccomp_launcher,
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     with socket.socket() as listener:
@@ -308,35 +429,212 @@ def test_sandbox_network_namespace_has_no_external_route(tmp_path):
 
 
 @requires_bubblewrap
-def test_sandbox_can_share_network_namespace_when_enabled(tmp_path):
+def test_sandbox_status_has_one_additional_inner_filter(
+    tmp_path,
+    runtime_seccomp_launcher,
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(1)
-        port = listener.getsockname()[1]
-        code = (
-            "import socket; "
-            "s=socket.socket(); s.settimeout(1); "
-            f"s.connect(('127.0.0.1', {port}))"
-        )
-        argv = sandbox_command(
-            ["/usr/bin/python3", "-I", "-c", code],
-            workspace=str(workspace),
-            allow_network=True,
-        )
 
-        completed = subprocess.run(
-            argv,
-            cwd=str(workspace),
-            env={},
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+    def status_value(text, name):
+        for line in text.splitlines():
+            if line.startswith(f"{name}:"):
+                return int(line.split(":", 1)[1].strip())
+        raise AssertionError(f"missing {name} in process status")
+
+    parent_status = Path("/proc/self/status").read_text(encoding="utf-8")
+    parent_filters = status_value(parent_status, "Seccomp_filters")
+    argv = sandbox_command(
+        [
+            "/bin/bash",
+            "-c",
+            "grep -E '^(NoNewPrivs|Seccomp|Seccomp_filters):' /proc/self/status",
+        ],
+        workspace=str(workspace),
+    )
+    completed = subprocess.run(
+        argv,
+        cwd=workspace,
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
 
     assert completed.returncode == 0, completed.stderr
+    assert status_value(completed.stdout, "NoNewPrivs") == 1
+    assert status_value(completed.stdout, "Seccomp") == 2
+    assert status_value(completed.stdout, "Seccomp_filters") == parent_filters + 1
+
+
+@requires_bubblewrap
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "bpf",
+        "perf_event_open",
+        "clone_namespace",
+        "clone3",
+        "unshare",
+        "setns",
+        "mount",
+        "umount2",
+        "pivot_root",
+        "ptrace",
+        "process_vm_readv",
+        "process_vm_writev",
+        "keyctl",
+        "open_by_handle_at",
+        "af_packet",
+        "af_alg",
+        "af_vsock",
+        "tiocsti",
+        "userfaultfd",
+        "io_uring_setup",
+        "fork",
+    ],
+)
+def test_inner_seccomp_syscall_policy(
+    tmp_path,
+    runtime_seccomp_launcher,
+    probe,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    probe_source = Path(__file__).with_name("seccomp_probe.c")
+    probe_binary = workspace / "seccomp-probe"
+    compiled = subprocess.run(
+        [
+            "cc",
+            "-std=c11",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(probe_source),
+            "-o",
+            str(probe_binary),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert compiled.returncode == 0, compiled.stderr
+
+    completed = subprocess.run(
+        sandbox_command([str(probe_binary), probe], workspace=str(workspace)),
+        cwd=workspace,
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    if completed.returncode == 77:
+        pytest.skip(f"{probe} is unavailable on this architecture")
+    assert completed.returncode == 0, completed.stderr
+
+
+@requires_bubblewrap
+def test_common_development_workloads_remain_compatible(
+    tmp_path,
+    runtime_seccomp_launcher,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    command = r"""
+set -eu
+printf 'alpha\n' > ordinary.txt
+cp ordinary.txt renamed.txt
+rm ordinary.txt
+python3 - <<'PY'
+import multiprocessing
+import pathlib
+import subprocess
+import threading
+
+seen = []
+thread = threading.Thread(target=lambda: seen.append("thread"))
+thread.start()
+thread.join()
+assert seen == ["thread"]
+assert subprocess.check_output(["/bin/sh", "-c", "printf child"]) == b"child"
+proc = multiprocessing.get_context("fork").Process(target=lambda: None)
+proc.start()
+proc.join()
+assert proc.exitcode == 0
+pathlib.Path("python-output.txt").write_text("python", encoding="utf-8")
+PY
+if command -v node >/dev/null 2>&1; then
+  node -e 'require("fs").writeFileSync("node-output.txt", "node")'
+fi
+if command -v cc >/dev/null 2>&1; then
+  printf 'int main(void) { return 0; }\n' > probe.c
+  cc probe.c -o compiled-probe
+  ./compiled-probe
+fi
+git status --short >/dev/null
+git diff --no-ext-diff >/dev/null
+git log -1 --oneline >/dev/null
+"""
+    subprocess.run(
+        ["git", "init", "-q", str(workspace)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    (workspace / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "-c",
+            "user.name=Sandbox Test",
+            "-c",
+            "user.email=sandbox@example.invalid",
+            "add",
+            "tracked.txt",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "-c",
+            "user.name=Sandbox Test",
+            "-c",
+            "user.email=sandbox@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    completed = subprocess.run(
+        sandbox_command(["/bin/bash", "-c", command], workspace=str(workspace)),
+        cwd=workspace,
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert (workspace / "renamed.txt").read_text(encoding="utf-8") == "alpha\n"
+    assert (workspace / "python-output.txt").read_text(encoding="utf-8") == "python"
+    if shutil.which("node"):
+        assert (workspace / "node-output.txt").read_text(encoding="utf-8") == "node"
 
 
 def test_tmux_session_identity_includes_network_policy(tmp_path):
@@ -346,19 +644,22 @@ def test_tmux_session_identity_includes_network_policy(tmp_path):
     workspace.mkdir()
 
     isolated = _tmux_session_name("session-1", str(workspace))
-    networked = _tmux_session_name(
+    brokered = _tmux_session_name(
         "session-1",
         str(workspace),
-        allow_network=True,
+        network_profile=SandboxNetworkProfile.BROKERED_ONLY,
     )
 
-    assert isolated != networked
-    assert isolated.endswith("-nonet")
-    assert networked.endswith("-net")
+    assert isolated != brokered
+    assert isolated.endswith("-networkless")
+    assert brokered.endswith("-brokered-only")
 
 
 @requires_bubblewrap
-def test_tmux_bash_shell_runs_inside_same_sandbox(tmp_path):
+def test_tmux_bash_shell_runs_inside_same_sandbox(
+    tmp_path,
+    runtime_seccomp_launcher,
+):
     from src.agent_tools.subprocess_tools import (
         _run_exec,
         _run_tmux_bash,
@@ -398,7 +699,11 @@ def test_tmux_bash_shell_runs_inside_same_sandbox(tmp_path):
 
 
 @requires_bubblewrap
-def test_detached_background_job_uses_sandbox(tmp_path, monkeypatch):
+def test_detached_background_job_uses_sandbox(
+    tmp_path,
+    monkeypatch,
+    runtime_seccomp_launcher,
+):
     from src import bg_jobs
 
     jobs_dir = tmp_path / "jobs"

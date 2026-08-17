@@ -160,7 +160,7 @@ def _chat_stream_endpoint(
             "fallbacks": kwargs.get("fallbacks"),
         }
         if capture_network:
-            captured["agent_allow_network"] = kwargs.get("allow_network")
+            captured["agent_network_profile"] = kwargs.get("network_profile")
         if kwargs.get("external_untrusted_context_seen"):
             captured["agent_external_untrusted_context_seen"] = True
         if kwargs.get("exact_approval") is not None:
@@ -297,7 +297,14 @@ async def test_chat_stream_maps_only_web_toggle_to_sandbox_network(
     async for _ in response.body_iterator:
         pass
 
-    assert captured["agent_allow_network"] is expected
+    from src.execution_sandbox import SandboxNetworkProfile
+
+    expected_profile = (
+        SandboxNetworkProfile.BROKERED_ONLY
+        if expected
+        else SandboxNetworkProfile.NETWORKLESS
+    )
+    assert captured["agent_network_profile"] is expected_profile
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,8 @@
 services:
   odysseus:
     build: .
+    security_opt:
+      - seccomp=./docker/seccomp/odysseus-bubblewrap.json
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:

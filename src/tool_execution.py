@@ -29,6 +29,7 @@ from src.tool_security import (
 )
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
+from src.execution_sandbox import SandboxNetworkProfile
 from src.tool_policy import ToolPolicy
 from src.constants import (
     AGENT_WORKSPACE_DIR,
@@ -466,7 +467,7 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
@@ -475,7 +476,7 @@ async def _call_mcp_tool(
             tool,
             content,
             progress_cb=progress_cb,
-            allow_network=allow_network,
+            network_profile=network_profile,
         ) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
@@ -489,7 +490,7 @@ async def _call_mcp_tool(
             tool,
             content,
             progress_cb=progress_cb,
-            allow_network=allow_network,
+            network_profile=network_profile,
         )
         if fallback:
             return fallback
@@ -550,14 +551,14 @@ async def _direct_fallback(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Optional[Dict]:
     try:
         ctx = {
             "progress_cb": progress_cb,
             "session_id": session_id,
             "owner": owner,
-            "allow_network": allow_network,
+            "network_profile": network_profile,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -611,7 +612,7 @@ async def execute_tool_block(
         | _MissingToolSecurityContext
     ) = _MISSING_TOOL_SECURITY_CONTEXT,
     exact_approval: Optional[ExactToolApproval] = None,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -726,7 +727,7 @@ async def execute_tool_block(
             owner=owner,
             progress_cb=progress_cb,
             tool_policy=tool_policy,
-            allow_network=allow_network,
+            network_profile=network_profile,
             approved_document_id=(
                 exact_approval.pending.document_id
                 if approval_claimed
@@ -761,7 +762,7 @@ async def _execute_tool_block_impl(
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     tool_policy: Optional[Any] = None,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
     approved_document_id: Optional[str] = None,
     approved_document_version: Optional[int] = None,
     approved_document_digest: Optional[str] = None,
@@ -886,7 +887,7 @@ async def _execute_tool_block_impl(
                     _bg_cmd,
                     session_id=session_id,
                     cwd=agent_cwd(),
-                    allow_network=allow_network,
+                    network_profile=network_profile,
                 )
             except Exception as exc:
                 return (
@@ -925,7 +926,7 @@ async def _execute_tool_block_impl(
             tool,
             content,
             progress_cb=progress_cb,
-            allow_network=allow_network,
+            network_profile=network_profile,
         )
     elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
@@ -1142,7 +1143,7 @@ async def _execute_tool_block_impl(
             tool,
             content,
             progress_cb=progress_cb,
-            allow_network=allow_network,
+            network_profile=network_profile,
         )
 
         if isinstance(res, tuple):

@@ -10,6 +10,7 @@ from typing import Optional, Callable, Awaitable, Tuple, Dict
 from core.platform_compat import IS_WINDOWS, find_bash
 from src.constants import MAX_OUTPUT_CHARS
 from src.execution_sandbox import (
+    SandboxNetworkProfile,
     SandboxUnavailable,
     environment_for_sandbox_launcher,
     sandbox_command,
@@ -49,13 +50,13 @@ def _tmux_session_name(
     session_id: Optional[str],
     workspace: str = "",
     *,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> str:
     raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(session_id or "default")).strip("-")
     workspace_key = hashlib.sha256(
         os.path.realpath(workspace or ".").encode("utf-8", errors="replace")
     ).hexdigest()[:10]
-    network_key = "net" if allow_network else "nonet"
+    network_key = network_profile.value.replace("_", "-")
     return f"ody-agent-sbx-v1-{raw[:60] or 'default'}-{workspace_key}-{network_key}"
 
 
@@ -107,12 +108,20 @@ async def _ensure_tmux_session(
     if await _tmux_has_session(name):
         await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
         return
-    await _run_exec(
+    _, launch_error, _ = await _run_exec(
         "tmux", "new-session", "-d", "-s", name, "-c", cwd,
         *shell_argv,
         timeout=10,
     )
     if not await _tmux_has_session(name):
+        if (
+            launch_error.startswith("odysseus-seccomp-launcher:")
+            or launch_error.startswith("bwrap:")
+        ):
+            raise RuntimeError(
+                "sandbox setup failed for the persistent shell; verify the "
+                "trusted launcher and outer OCI seccomp compatibility"
+            )
         raise RuntimeError(f"failed to create tmux session {name}")
     await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
 
@@ -151,15 +160,15 @@ async def _run_tmux_bash(
     cwd: str,
     timeout: float,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Tuple[str, str, Optional[int], bool]:
-    # Network policy is part of the persistent session identity so a tmux shell
-    # created with networking cannot be reused after the user disables it.
-    name = _tmux_session_name(session_id, cwd, allow_network=allow_network)
+    # The launch snapshot is part of the persistent session identity, so a
+    # tmux shell can never be reused under a different network profile.
+    name = _tmux_session_name(session_id, cwd, network_profile=network_profile)
     shell_argv = sandbox_command(
         ["/bin/bash", "--noprofile", "--norc"],
         workspace=cwd,
-        allow_network=allow_network,
+        network_profile=network_profile,
     )
     await _ensure_tmux_session(name, cwd, shell_argv)
 
@@ -315,6 +324,37 @@ async def _run_subprocess_streaming(
         timed_out,
     )
 
+
+def _sandbox_setup_failure(
+    tool: str,
+    stderr: str,
+    returncode: Optional[int],
+) -> Optional[Dict]:
+    """Convert trusted-launcher/Bubblewrap setup failures into a safe result."""
+    stripped = (stderr or "").strip()
+    if stripped.startswith("odysseus-seccomp-launcher:"):
+        detail = stripped.split(":", 1)[1].strip()
+        return {
+            "error": (
+                f"{tool}: Sandbox setup failed: {detail}. "
+                "No unsandboxed fallback was attempted."
+            ),
+            "exit_code": 1,
+            "blocked": True,
+        }
+    if returncode and stripped.startswith("bwrap:"):
+        return {
+            "error": (
+                f"{tool}: Bubblewrap could not establish the required private "
+                "namespaces and mounts. Verify the shipped outer OCI seccomp "
+                "profile and host user-namespace support. No unsandboxed "
+                "fallback was attempted."
+            ),
+            "exit_code": 1,
+            "blocked": True,
+        }
+    return None
+
 class BashTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
@@ -323,7 +363,9 @@ class BashTool:
         progress_cb = ctx.get("progress_cb")
         subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
-        allow_network = bool(ctx.get("allow_network", False))
+        network_profile = ctx.get(
+            "network_profile", SandboxNetworkProfile.NETWORKLESS
+        )
         workspace = agent_cwd()
         if IS_WINDOWS:
             return {
@@ -343,7 +385,7 @@ class BashTool:
                 cwd=workspace,
                 timeout=DEFAULT_BASH_TIMEOUT,
                 progress_cb=progress_cb,
-                allow_network=allow_network,
+                network_profile=network_profile,
             )
             if timed_out:
                 return {
@@ -354,7 +396,7 @@ class BashTool:
                     "tmux_session": _tmux_session_name(
                         str(session_id),
                         workspace,
-                        allow_network=allow_network,
+                        network_profile=network_profile,
                     ),
                 }
             output = stdout.rstrip()
@@ -367,7 +409,7 @@ class BashTool:
                 "tmux_session": _tmux_session_name(
                     str(session_id),
                     workspace,
-                    allow_network=allow_network,
+                    network_profile=network_profile,
                 ),
             }
 
@@ -384,7 +426,7 @@ class BashTool:
                 argv = sandbox_command(
                     ["/bin/bash", "--noprofile", "--norc", "-c", content],
                     workspace=workspace,
-                    allow_network=allow_network,
+                    network_profile=network_profile,
                 )
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
@@ -402,6 +444,9 @@ class BashTool:
         )
         if timed_out:
             return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+        setup_failure = _sandbox_setup_failure("bash", stderr, rc)
+        if setup_failure:
+            return setup_failure
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
@@ -414,7 +459,9 @@ class PythonTool:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
         subproc_env = ctx.get("subproc_env")
-        allow_network = bool(ctx.get("allow_network", False))
+        network_profile = ctx.get(
+            "network_profile", SandboxNetworkProfile.NETWORKLESS
+        )
         workspace = agent_cwd()
         if IS_WINDOWS:
             return {
@@ -433,18 +480,21 @@ class PythonTool:
                 argv = sandbox_command(
                     [sandbox_python_executable(), "-I", "-c", content],
                     workspace=workspace,
-                    allow_network=allow_network,
+                    network_profile=network_profile,
                 )
                 process_env = environment_for_sandbox_launcher()
         except SandboxUnavailable as exc:
             return {"error": f"python: {exc}", "exit_code": 1, "blocked": True}
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=process_env,
-            cwd=workspace,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=process_env,
+                cwd=workspace,
+            )
+        except (OSError, RuntimeError) as exc:
+            return {"error": f"python: {exc}", "exit_code": 1, "blocked": True}
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_PYTHON_TIMEOUT,
@@ -452,6 +502,9 @@ class PythonTool:
         )
         if timed_out:
             return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+        setup_failure = _sandbox_setup_failure("python", stderr, rc)
+        if setup_failure:
+            return setup_failure
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:

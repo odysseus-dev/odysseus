@@ -9,6 +9,10 @@ import pytest
 import src.agent_loop as agent_loop
 import src.tool_execution as tool_execution
 from src.agent_tools import ToolBlock
+from src.execution_sandbox import (
+    SandboxNetworkProfile,
+    network_profile_from_snapshot,
+)
 from src.tool_execution import NO_TOOL_SECURITY_CONTEXT
 
 
@@ -24,7 +28,7 @@ async def test_tool_executor_forwards_network_policy_to_subprocess_fallback(monk
     seen = []
 
     async def fake_direct_fallback(tool, content, **kwargs):
-        seen.append((tool, content, kwargs.get("allow_network")))
+        seen.append((tool, content, kwargs.get("network_profile")))
         return {"output": "ok", "exit_code": 0}
 
     monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
@@ -34,12 +38,14 @@ async def test_tool_executor_forwards_network_policy_to_subprocess_fallback(monk
     _, result = await tool_execution.execute_tool_block(
         ToolBlock("bash", "printf ok"),
         owner="admin",
-        allow_network=True,
+        network_profile=SandboxNetworkProfile.BROKERED_ONLY,
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
 
     assert result["exit_code"] == 0
-    assert seen == [("bash", "printf ok", True)]
+    assert seen == [
+        ("bash", "printf ok", SandboxNetworkProfile.BROKERED_ONLY)
+    ]
 
 
 @pytest.mark.asyncio
@@ -76,10 +82,16 @@ async def test_subprocess_handlers_apply_network_policy(monkeypatch, tool_name):
         if tool_name == "bash"
         else subprocess_tools.PythonTool()
     )
-    result = await handler.execute("printf ok", {"allow_network": True})
+    result = await handler.execute(
+        "printf ok",
+        {"network_profile": SandboxNetworkProfile.BROKERED_ONLY},
+    )
 
     assert result["exit_code"] == 0
-    assert sandbox_calls[0][1]["allow_network"] is True
+    assert (
+        sandbox_calls[0][1]["network_profile"]
+        is SandboxNetworkProfile.BROKERED_ONLY
+    )
 
 
 @pytest.mark.asyncio
@@ -100,7 +112,7 @@ async def test_background_bash_inherits_network_policy(monkeypatch):
         session_id="session-1",
         owner="admin",
         workspace="/tmp/workspace",
-        allow_network=True,
+        network_profile=SandboxNetworkProfile.BROKERED_ONLY,
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
 
@@ -111,7 +123,7 @@ async def test_background_bash_inherits_network_policy(monkeypatch):
             {
                 "session_id": "session-1",
                 "cwd": "/tmp/workspace",
-                "allow_network": True,
+                "network_profile": SandboxNetworkProfile.BROKERED_ONLY,
             },
         )
     ]
@@ -140,7 +152,7 @@ def test_agent_loop_forwards_network_policy_to_every_tool_call(monkeypatch):
         yield "data: [DONE]\n\n"
 
     async def fake_execute(block, **kwargs):
-        calls.append((block.tool_type, kwargs.get("allow_network")))
+        calls.append((block.tool_type, kwargs.get("network_profile")))
         return "bash", {"output": "ok", "exit_code": 0}
 
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
@@ -154,12 +166,12 @@ def test_agent_loop_forwards_network_policy_to_every_tool_call(monkeypatch):
             owner="admin",
             max_rounds=2,
             relevant_tools={"bash"},
-            allow_network=True,
+            network_profile=SandboxNetworkProfile.BROKERED_ONLY,
             _is_teacher_run=True,
         )
     )
 
-    assert calls == [("bash", True)]
+    assert calls == [("bash", SandboxNetworkProfile.BROKERED_ONLY)]
 
 
 def test_background_followup_preserves_originating_network_policy(monkeypatch):
@@ -168,7 +180,7 @@ def test_background_followup_preserves_originating_network_policy(monkeypatch):
     seen = []
 
     async def fake_stream_agent_loop(*args, **kwargs):
-        seen.append(kwargs.get("allow_network"))
+        seen.append(kwargs.get("network_profile"))
         yield "data: [DONE]"
 
     monkeypatch.setattr(agent_loop, "stream_agent_loop", fake_stream_agent_loop)
@@ -181,6 +193,39 @@ def test_background_followup_preserves_originating_network_policy(monkeypatch):
         owner="admin",
     )
 
-    asyncio.run(bg_monitor._drain_agent(session, [], allow_network=True))
+    asyncio.run(
+        bg_monitor._drain_agent(
+            session,
+            [],
+            network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+        )
+    )
 
-    assert seen == [True]
+    assert seen == [SandboxNetworkProfile.BROKERED_ONLY]
+
+
+def test_invalid_persisted_profile_fails_back_to_networkless():
+    assert (
+        network_profile_from_snapshot("open")
+        is SandboxNetworkProfile.NETWORKLESS
+    )
+
+
+def test_network_profile_has_no_raw_open_mode():
+    assert {profile.value for profile in SandboxNetworkProfile} == {
+        "networkless",
+        "brokered_only",
+    }
+
+
+def test_launch_snapshot_does_not_follow_a_later_toggle_change():
+    launched_record = {
+        "network_profile": SandboxNetworkProfile.BROKERED_ONLY.value,
+    }
+    current_selection = SandboxNetworkProfile.NETWORKLESS
+
+    assert current_selection is SandboxNetworkProfile.NETWORKLESS
+    assert (
+        network_profile_from_snapshot(launched_record["network_profile"])
+        is SandboxNetworkProfile.BROKERED_ONLY
+    )

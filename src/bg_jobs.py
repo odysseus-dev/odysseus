@@ -44,6 +44,7 @@ from core.platform_compat import (
 
 from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
 from src.execution_sandbox import (
+    SandboxNetworkProfile,
     environment_for_sandbox_launcher,
     sandbox_command,
 )
@@ -120,7 +121,7 @@ def launch(
     session_id: str,
     cwd: Optional[str] = None,
     max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
-    allow_network: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
@@ -173,7 +174,7 @@ def launch(
             ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
             workspace=cwd or "",
             readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
-            allow_network=allow_network,
+            network_profile=network_profile,
         )
         argv = [
             sys.executable,
@@ -207,7 +208,7 @@ def launch(
         "ended_at": None,
         "exit_code": None,
         "max_runtime_s": max_runtime_s,
-        "allow_network": bool(allow_network),
+        "network_profile": network_profile.value,
         "followed_up": False,       # has the agent been re-invoked with the result?
         "log_path": str(log_path),
         "exit_path": str(exit_path),
