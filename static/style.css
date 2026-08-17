@@ -41034,7 +41034,20 @@ body.theme-frosted .modal {
   padding: 10px 18px;
   border-top: 1px solid var(--border);
 }
-.workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+.workspace-footer-spacer { flex: 1; }
+.workspace-note,
+.workspace-input-hint { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+.workspace-input-hint { margin-top: -3px; }
+.workspace-selection-status {
+  margin: 0 0 8px;
+  min-height: 16px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.workspace-status-error { color: var(--danger, #dc5a5a); }
+.workspace-status-success { color: var(--success, #4fa66a); }
+.workspace-status-info { color: var(--text-muted, #8a8a8a); }
+.workspace-create-missing { align-self: flex-start; margin: 0 0 8px; }
 
 /* Real-time Diagnostics Log Terminal UI Styles */
 .settings-system-logs-svg {

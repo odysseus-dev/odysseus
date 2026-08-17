@@ -247,9 +247,10 @@ def _login_home_roots() -> set[str]:
     return homes
 
 
-def _normalized_workspace(workspace: str) -> str:
+def validate_sandbox_workspace_path(workspace: str) -> tuple[str | None, str]:
+    """Apply process-sandbox path policy without creating the directory."""
     if not isinstance(workspace, str) or not workspace.strip():
-        raise SandboxUnavailable("Sandboxed execution requires a workspace.")
+        return None, "Sandboxed execution requires a workspace."
     resolved = os.path.realpath(os.path.expanduser(workspace))
     from src.constants import AGENT_WORKSPACE_DIR
 
@@ -263,18 +264,21 @@ def _normalized_workspace(workspace: str) -> str:
     )
     sensitive_root = Path(resolved).name.casefold() in _SENSITIVE_WORKSPACE_ROOT_NAMES
     if sensitive_root:
-        raise SandboxUnavailable(
-            f"Refusing sensitive sandbox workspace root: {resolved}"
-        )
+        return None, f"Refusing sensitive sandbox workspace root: {resolved}"
     if (
         resolved in _BROAD_WORKSPACE_ROOTS
         or exposes_login_home
         or os.path.dirname(resolved) == resolved
         or any(_is_within(resolved, root) for root in _SYSTEM_WORKSPACE_ROOTS)
     ):
-        raise SandboxUnavailable(
-            f"Refusing broad or login-profile sandbox workspace: {resolved}"
-        )
+        return None, f"Refusing broad or login-profile sandbox workspace: {resolved}"
+    return resolved, ""
+
+
+def _normalized_workspace(workspace: str) -> str:
+    resolved, reason = validate_sandbox_workspace_path(workspace)
+    if not resolved:
+        raise SandboxUnavailable(reason)
     try:
         Path(resolved).mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:

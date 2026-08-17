@@ -285,7 +285,7 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
 @pytest.mark.asyncio
 async def test_get_workspace_tool(ws, admin):
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a", workspace=ws)
-    assert r["exit_code"] == 0 and r["output"].startswith(ws) and "not sandboxed" in r["output"]
+    assert r["exit_code"] == 0 and r["output"].startswith(ws) and "process sandbox" in r["output"]
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a")  # none active
     assert r["exit_code"] == 0 and "No workspace" in r["output"]
 
@@ -436,13 +436,14 @@ def test_workspace_coding_mode_prompt_is_injected(monkeypatch):
 
 # ── browse route is admin-gated ─────────────────────────────────────────
 
-def test_browse_is_admin_gated(monkeypatch):
+def test_browse_is_admin_gated(monkeypatch, tmp_path):
     from fastapi import HTTPException
     import routes.workspace_routes as wr
 
     router = wr.setup_workspace_routes()
     browse = next(r.endpoint for r in router.routes if r.path == "/api/workspace/browse")
 
+    monkeypatch.setattr(wr, "AGENT_WORKSPACE_DIR", str(tmp_path / "agent_workspace"))
     monkeypatch.setattr(wr, "get_current_user", lambda req: "bob")
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: False)
     with pytest.raises(HTTPException) as ei:
@@ -487,24 +488,30 @@ def test_vet_workspace_rejects_filesystem_root():
     assert vet_workspace("/") is None
 
 
-def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch):
+def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch, tmp_path):
     import routes.workspace_routes as wr
 
     router = wr.setup_workspace_routes()
     browse = next(r.endpoint for r in router.routes if r.path == "/api/workspace/browse")
     vet = next(r.endpoint for r in router.routes if r.path == "/api/workspace/vet")
 
+    monkeypatch.setattr(wr, "AGENT_WORKSPACE_DIR", str(tmp_path / "agent_workspace"))
     monkeypatch.setattr(wr, "get_current_user", lambda req: "admin")
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
 
     out = browse(request=object(), path="/")
     assert out["selectable"] is False
     out = browse(request=object(), path=os.path.expanduser("~"))
-    assert out["selectable"] is True
+    assert out["selectable"] is False
+    assert "broad" in out["selectable_reason"].lower()
 
-    assert vet(request=object(), path="/") == {"ok": False, "path": None}
+    out = vet(request=object(), path="/")
+    assert out["ok"] is False and out["path"] is None
+    assert "root" in out["error"].lower() or "broad" in out["error"].lower()
     home = os.path.realpath(os.path.expanduser("~"))
-    assert vet(request=object(), path="~") == {"ok": True, "path": home}
+    out = vet(request=object(), path="~")
+    assert out["ok"] is False and out["path"] is None
+    assert "broad" in out["error"].lower()
 
     from fastapi import HTTPException
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: False)

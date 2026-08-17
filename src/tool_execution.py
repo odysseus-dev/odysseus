@@ -266,27 +266,46 @@ def get_active_workspace() -> Optional[str]:
     return _active_workspace.get()
 
 
-def vet_workspace(raw: str) -> Optional[str]:
-    """Validate a requested workspace path at bind time.
+def validate_workspace(raw: str) -> tuple[Optional[str], str]:
+    """Return a canonical workspace path or a user-facing rejection reason.
 
-    Returns the canonical path, or None when it is unusable: not a real
-    directory, or itself a sensitive path (.ssh, .gnupg, ...). The in-workspace
-    resolver deny-lists sensitive paths *inside* the workspace, but the
-    empty-path search root is the workspace itself, so the root has to be
-    vetted before it is ever bound.
+    Keep this as the single path-policy source for both bind-time enforcement
+    and the workspace picker.  The UI needs a concrete reason so invalid paths
+    are not silently replaced with another directory.
     """
     raw = (raw or "").strip()
     if not raw:
-        return None
+        return None, "Enter a folder path."
     resolved = os.path.realpath(os.path.expanduser(raw))
-    if not os.path.isdir(resolved) or _is_sensitive_path(resolved):
-        return None
+    if not os.path.exists(resolved):
+        return None, "Folder does not exist."
+    if not os.path.isdir(resolved):
+        return None, "Path is not a folder."
+    if _is_sensitive_path(resolved):
+        return None, "Sensitive folders cannot be used as a workspace."
     # Reject filesystem roots: binding / (or a Windows drive/UNC root) as the
     # workspace would make every absolute path "inside" it, collapsing the
     # confinement into host-wide file access. A root is its own dirname, which
     # also covers C:\ and \\server\share without platform-specific lists.
     if os.path.dirname(resolved) == resolved:
-        return None
+        return None, "A filesystem root cannot be used as a workspace."
+    return resolved, ""
+
+
+def workspace_path_is_sensitive(raw: str) -> bool:
+    """Return whether a present or prospective workspace path is sensitive."""
+    resolved = os.path.realpath(os.path.expanduser((raw or "").strip()))
+    return bool(resolved) and _is_sensitive_path(resolved)
+
+
+def vet_workspace(raw: str) -> Optional[str]:
+    """Validate a requested workspace path at bind time.
+
+    Returns the canonical path, or None when it is unusable.  Call
+    :func:`validate_workspace` when the rejection reason must be shown to a
+    user.
+    """
+    resolved, _reason = validate_workspace(raw)
     return resolved
 
 

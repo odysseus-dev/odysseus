@@ -3231,10 +3231,10 @@ import { loadPanel } from './panels.js';
                 const _wsPath = (json.data && json.data.path) || '';
                 import('./workspace.js').then((m) => {
                   const ws = m.default || m;
-                  if (ws && ws.setWorkspace) ws.setWorkspace('');
+                  if (ws && ws.clearWorkspace) ws.clearWorkspace({ quiet: true });
                 });
                 uiModule.showToast(
-                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
+                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; the saved selection was cleared`,
                   6000
                 );
                 continue;
