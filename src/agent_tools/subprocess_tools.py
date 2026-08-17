@@ -116,6 +116,8 @@ async def _ensure_tmux_session(
     if not await _tmux_has_session(name):
         if (
             launch_error.startswith("odysseus-seccomp-launcher:")
+            or launch_error.startswith("odysseus-egress-broker:")
+            or launch_error.startswith("odysseus-egress-bridge:")
             or launch_error.startswith("bwrap:")
         ):
             raise RuntimeError(
@@ -338,6 +340,16 @@ def _sandbox_setup_failure(
             "error": (
                 f"{tool}: Sandbox setup failed: {detail}. "
                 "No unsandboxed fallback was attempted."
+            ),
+            "exit_code": 1,
+            "blocked": True,
+        }
+    if stripped.startswith(("odysseus-egress-broker:", "odysseus-egress-bridge:")):
+        detail = stripped.split(":", 1)[1].strip()
+        return {
+            "error": (
+                f"{tool}: Brokered Internet setup failed: {detail}. "
+                "No raw-network or unsandboxed fallback was attempted."
             ),
             "exit_code": 1,
             "blocked": True,

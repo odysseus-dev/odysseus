@@ -119,6 +119,10 @@ _SENSITIVE_FILE_NAMES = frozenset(
 _MAX_WORKSPACE_SCAN_ENTRIES = 100_000
 _TRUSTED_BWRAP = "/usr/bin/bwrap"
 _TRUSTED_SECCOMP_LAUNCHER = "/usr/local/libexec/odysseus-seccomp-launcher"
+_TRUSTED_EGRESS_BROKER = "/usr/local/libexec/odysseus-egress-broker"
+_TRUSTED_EGRESS_BRIDGE = "/usr/local/libexec/odysseus-egress-bridge"
+_BROKER_SOCKET = "/run/odysseus-egress/broker.sock"
+_BROKER_PROXY_URL = "http://127.0.0.1:3128"
 _CA_CERTIFICATE = "/etc/ssl/certs/ca-certificates.crt"
 _SANDBOX_LIMITS = (
     "--as=4294967296",
@@ -151,6 +155,30 @@ def _trusted_executable(path: str, description: str) -> str:
     return path
 
 
+def _trusted_python_helper(path: str, description: str) -> str:
+    """Require an isolated, fixed-interpreter trusted Python entry point."""
+    helper = _trusted_executable(path, description)
+    try:
+        with open(helper, "rb") as stream:
+            first_line = stream.readline(256).decode("ascii").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SandboxUnavailable(
+            f"Trusted {description} has an invalid interpreter declaration."
+        ) from exc
+    fields = first_line.removeprefix("#!").split()
+    if (
+        not first_line.startswith("#!")
+        or len(fields) != 2
+        or fields[1] != "-I"
+        or not fields[0].startswith("/usr/")
+    ):
+        raise SandboxUnavailable(
+            f"Trusted {description} must use an isolated absolute Python interpreter."
+        )
+    _trusted_executable(fields[0], f"{description} Python interpreter")
+    return helper
+
+
 def _bubblewrap_binary() -> str:
     if not sys.platform.startswith("linux"):
         raise SandboxUnavailable(
@@ -165,6 +193,22 @@ def _seccomp_launcher_binary() -> str:
             "Sandboxed agent execution requires Linux with the trusted seccomp launcher."
         )
     return _trusted_executable(_TRUSTED_SECCOMP_LAUNCHER, "seccomp launcher")
+
+
+def _egress_broker_binary() -> str:
+    if not sys.platform.startswith("linux"):
+        raise SandboxUnavailable(
+            "Brokered Internet requires Linux with the trusted egress broker."
+        )
+    return _trusted_python_helper(_TRUSTED_EGRESS_BROKER, "egress broker")
+
+
+def _egress_bridge_binary() -> str:
+    if not sys.platform.startswith("linux"):
+        raise SandboxUnavailable(
+            "Brokered Internet requires Linux with the trusted egress bridge."
+        )
+    return _trusted_python_helper(_TRUSTED_EGRESS_BRIDGE, "egress bridge")
 
 
 def _normalized_workspace(workspace: str) -> str:
@@ -380,16 +424,18 @@ def sandbox_command(
 
     if not isinstance(network_profile, SandboxNetworkProfile):
         raise SandboxUnavailable("Invalid server-owned sandbox network profile.")
-    if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
-        raise SandboxUnavailable(
-            "Brokered Internet was requested, but no trusted sandbox egress "
-            "bridge is configured. Refusing to expose raw container networking."
-        )
-
     launcher = _seccomp_launcher_binary()
     binary = _bubblewrap_binary()
+    broker = None
+    bridge = None
+    if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
+        broker = _egress_broker_binary()
+        bridge = _egress_bridge_binary()
     root = _normalized_workspace(workspace)
-    if _is_within(launcher, root):
+    trusted_paths = [launcher, binary]
+    if broker is not None and bridge is not None:
+        trusted_paths.extend((broker, bridge))
+    if any(_is_within(path, root) for path in trusted_paths):
         raise SandboxUnavailable(
             "Trusted sandbox installation overlaps the selected workspace."
         )
@@ -397,30 +443,33 @@ def sandbox_command(
         raise SandboxUnavailable(
             "Sandboxed agent execution requires `/usr/bin/prlimit`."
         )
-    args = [
-        launcher,
-        binary,
-        "--unshare-user",
-        "--unshare-ipc",
-        "--unshare-pid",
-        "--unshare-net",
-        "--unshare-uts",
-        "--unshare-cgroup",
-        "--die-with-parent",
-        "--new-session",
-        "--clearenv",
-        "--cap-drop",
-        "ALL",
-        "--ro-bind",
-        "/usr",
-        "/usr",
-        "--symlink",
-        "usr/bin",
-        "/bin",
-        "--symlink",
-        "usr/lib",
-        "/lib",
-    ]
+    args = [launcher, binary]
+    if broker is not None:
+        args.insert(0, broker)
+    args.extend(
+        [
+            "--unshare-user",
+            "--unshare-ipc",
+            "--unshare-pid",
+            "--unshare-net",
+            "--unshare-uts",
+            "--unshare-cgroup",
+            "--die-with-parent",
+            "--new-session",
+            "--clearenv",
+            "--cap-drop",
+            "ALL",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+        ]
+    )
     if os.path.exists("/usr/lib64"):
         args.extend(("--symlink", "usr/lib64", "/lib64"))
     args.extend(
@@ -469,13 +518,25 @@ def sandbox_command(
         "TERM": "xterm-256color",
         "TMPDIR": "/tmp",
     }
+    if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
+        environment.update(
+            {
+                "HTTP_PROXY": _BROKER_PROXY_URL,
+                "HTTPS_PROXY": _BROKER_PROXY_URL,
+                "http_proxy": _BROKER_PROXY_URL,
+                "https_proxy": _BROKER_PROXY_URL,
+            }
+        )
     for name, value in (extra_environment or {}).items():
         if name in {"COLUMNS", "LINES", "TERM"} and isinstance(value, str):
             environment[name] = value[:80]
     for name, value in environment.items():
         args.extend(("--setenv", name, value))
 
-    args.extend(("--chdir", root, "--", "/usr/bin/prlimit"))
+    args.extend(("--chdir", root, "--"))
+    if bridge is not None:
+        args.extend((bridge, _BROKER_SOCKET, "--"))
+    args.extend(("/usr/bin/prlimit",))
     args.extend(_SANDBOX_LIMITS)
     args.extend(("--",))
     args.extend(command)

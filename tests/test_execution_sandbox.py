@@ -31,6 +31,14 @@ def _stable_bubblewrap_lookup(monkeypatch):
         "src.execution_sandbox._seccomp_launcher_binary",
         lambda: "/usr/local/libexec/odysseus-seccomp-launcher",
     )
+    monkeypatch.setattr(
+        "src.execution_sandbox._egress_broker_binary",
+        lambda: "/usr/local/libexec/odysseus-egress-broker",
+    )
+    monkeypatch.setattr(
+        "src.execution_sandbox._egress_bridge_binary",
+        lambda: "/usr/local/libexec/odysseus-egress-bridge",
+    )
 
 
 requires_bubblewrap = pytest.mark.skipif(
@@ -101,6 +109,9 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
         "/usr/local/libexec/odysseus-seccomp-launcher",
         "/usr/bin/bwrap",
     ]
+    assert "/usr/local/libexec/odysseus-egress-broker" not in argv
+    assert "/usr/local/libexec/odysseus-egress-bridge" not in argv
+    assert "/run/odysseus-egress/broker.sock" not in argv
     for option in (
         "--unshare-user",
         "--unshare-ipc",
@@ -151,6 +162,30 @@ def test_trusted_executable_rejects_missing_or_writable_install(monkeypatch):
         _trusted_executable("/trusted/launcher", "seccomp launcher")
 
 
+def test_trusted_python_helpers_require_fixed_isolated_interpreter(
+    tmp_path,
+    monkeypatch,
+):
+    from src.execution_sandbox import _trusted_python_helper
+
+    helper = tmp_path / "broker"
+    helper.write_text("#!/usr/bin/python3.13 -I\n", encoding="ascii")
+    metadata = type(
+        "Metadata",
+        (),
+        {"st_mode": stat.S_IFREG | 0o755, "st_uid": 0},
+    )()
+    monkeypatch.setattr("src.execution_sandbox.os.stat", lambda _path: metadata)
+    monkeypatch.setattr("src.execution_sandbox.os.path.realpath", lambda path: path)
+    monkeypatch.setattr("src.execution_sandbox.os.access", lambda *_args: True)
+
+    assert _trusted_python_helper(str(helper), "egress broker") == str(helper)
+
+    helper.write_text("#!/usr/bin/env python3\n", encoding="ascii")
+    with pytest.raises(SandboxUnavailable, match="isolated absolute"):
+        _trusted_python_helper(str(helper), "egress broker")
+
+
 def test_sandbox_rejects_invalid_network_profile(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -175,13 +210,68 @@ def test_sandbox_rejects_launcher_workspace_overlap(tmp_path, monkeypatch):
         sandbox_command(["/bin/true"], workspace=str(workspace))
 
 
-def test_brokered_profile_fails_closed_without_trusted_bridge(tmp_path):
+def test_brokered_profile_uses_private_namespace_and_trusted_proxy(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    with pytest.raises(SandboxUnavailable, match="Brokered Internet"):
+    argv = sandbox_command(
+        ["/bin/bash", "-c", "true"],
+        workspace=str(workspace),
+        network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+    )
+
+    assert argv[:3] == [
+        "/usr/local/libexec/odysseus-egress-broker",
+        "/usr/local/libexec/odysseus-seccomp-launcher",
+        "/usr/bin/bwrap",
+    ]
+    assert "--unshare-net" in argv
+    assert "--share-net" not in argv
+    separator = argv.index("--")
+    assert argv[separator + 1:separator + 4] == [
+        "/usr/local/libexec/odysseus-egress-bridge",
+        "/run/odysseus-egress/broker.sock",
+        "--",
+    ]
+    environment = {
+        argv[index + 1]: argv[index + 2]
+        for index, value in enumerate(argv[:-2])
+        if value == "--setenv"
+    }
+    assert environment["HTTP_PROXY"] == "http://127.0.0.1:3128"
+    assert environment["HTTPS_PROXY"] == "http://127.0.0.1:3128"
+    assert environment["http_proxy"] == "http://127.0.0.1:3128"
+    assert environment["https_proxy"] == "http://127.0.0.1:3128"
+    assert "NO_PROXY" not in environment
+    assert "no_proxy" not in environment
+    assert "ALL_PROXY" not in environment
+    assert all(
+        "@" not in environment[name]
+        for name in environment
+        if "proxy" in name.lower()
+    )
+    assert "OPENAI_API_KEY" not in argv
+
+
+def test_brokered_profile_fails_closed_when_trusted_broker_is_missing(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def missing_broker():
+        raise SandboxUnavailable(
+            "Sandboxed agent execution requires the trusted egress broker."
+        )
+
+    monkeypatch.setattr(
+        "src.execution_sandbox._egress_broker_binary",
+        missing_broker,
+    )
+    with pytest.raises(SandboxUnavailable, match="trusted egress broker"):
         sandbox_command(
-            ["/bin/bash", "-c", "true"],
+            ["/bin/true"],
             workspace=str(workspace),
             network_profile=SandboxNetworkProfile.BROKERED_ONLY,
         )
