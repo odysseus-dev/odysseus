@@ -27,6 +27,24 @@ docker compose up -d --build
 ```
 To include optional extras in the image (PDF viewer, Office extraction; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`.
 
+**Official Docker images.** The compose files reference the official multi-arch image `ghcr.io/odysseus-dev/odysseus`, which CI (the `ci / docker publish` workflow) publishes on every push to `main` and `dev`. When the image is reachable, Compose pulls it instead of building — so the same files work on hosts without a build toolchain (Portainer stacks, Coolify, etc.). `--build` forces a local build regardless.
+
+Tag scheme:
+
+| Tag | Meaning |
+| --- | --- |
+| `:latest`, `:X.Y.Z` | Latest curated build from `main`. **Mutable** — re-pushed on every push to `main`, even without a version bump. |
+| `:X.Y.Z-<sha>` | Immutable build pin (e.g. `1.0.2-7c8070f`). One tag, one build, forever. **Use this in production.** |
+| `:dev`, `:X.Y.Z-dev.<sha>` | Rolling `dev` branch builds; the `<sha>` form is also immutable. |
+
+For production, pin the immutable tag by overriding the image in `.env` (or the stack's environment variables):
+
+```bash
+ODYSSEUS_IMAGE=ghcr.io/odysseus-dev/odysseus:1.0.2-7c8070f
+```
+
+Browse current tags at <https://github.com/odysseus-dev/odysseus/pkgs/container/odysseus>. (Until this package is made public and linked to the repo by an org owner, pulls fall back to the local build automatically — that fallback is intentional.)
+
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
