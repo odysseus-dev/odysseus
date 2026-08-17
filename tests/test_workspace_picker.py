@@ -105,6 +105,44 @@ def test_invalid_path_reports_validation_error(workspace_api):
     assert exc_info.value.detail == "Folder path is invalid."
 
 
+def test_default_workspace_failure_does_not_expose_internal_error(
+    workspace_api, monkeypatch
+):
+    def fail_mkdir(*_args, **_kwargs):
+        raise OSError("private deployment path and stack detail")
+
+    monkeypatch.setattr(workspace_routes.Path, "mkdir", fail_mkdir)
+
+    with pytest.raises(HTTPException) as exc_info:
+        workspace_api["browse"](request=_request(), path="")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Default workspace is unavailable."
+
+
+def test_sandbox_policy_failure_does_not_expose_internal_error(
+    workspace_api, monkeypatch
+):
+    import src.execution_sandbox as execution_sandbox
+
+    project = workspace_api["managed"] / "project"
+    project.mkdir(parents=True)
+
+    def fail_policy(_path):
+        raise RuntimeError("private sandbox configuration and stack detail")
+
+    monkeypatch.setattr(
+        execution_sandbox,
+        "validate_sandbox_workspace_path",
+        fail_policy,
+    )
+
+    out = workspace_api["browse"](request=_request(), path=str(project))
+
+    assert out["selectable"] is False
+    assert out["selectable_reason"] == "Workspace sandbox policy is unavailable."
+
+
 def test_typed_existing_folder_is_selected_and_persisted(workspace_api):
     project = workspace_api["managed"] / "project"
     project.mkdir(parents=True)

@@ -280,6 +280,8 @@ def validate_workspace(raw: str) -> tuple[Optional[str], str]:
         resolved = os.path.realpath(os.path.expanduser(raw))
     except (OSError, ValueError):
         return None, "Folder path is invalid."
+    # These metadata probes are the validation boundary itself; callers cannot
+    # open or execute the path until the policy checks below also succeed.
     if not os.path.exists(resolved):
         return None, "Folder does not exist."
     if not os.path.isdir(resolved):

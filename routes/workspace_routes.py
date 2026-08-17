@@ -32,7 +32,7 @@ def ensure_default_workspace() -> str:
     try:
         Path(AGENT_WORKSPACE_DIR).mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:
-        raise RuntimeError(f"Could not create the default workspace: {exc}") from exc
+        raise RuntimeError("Could not create the default workspace.") from exc
     return os.path.realpath(AGENT_WORKSPACE_DIR)
 
 
@@ -72,6 +72,8 @@ def _creation_target(raw_path: str) -> tuple[str, bool]:
     # Resolve the deepest existing ancestor so a symlink below the managed
     # root cannot redirect creation outside it.
     ancestor = candidate
+    # The admin-supplied candidate has already passed lexical containment under
+    # the server-owned managed root; these probes locate its existing ancestor.
     while not os.path.lexists(ancestor):
         parent = os.path.dirname(ancestor)
         if parent == ancestor:
@@ -127,6 +129,8 @@ def _create_managed_path(target: str) -> str:
         finally:
             os.close(fd)
     else:
+        # Non-POSIX fallback retains the lexical precheck and canonical
+        # postcheck around this intentionally admin-selected managed path.
         Path(candidate).mkdir(mode=0o700, parents=True, exist_ok=True)
 
     resolved = os.path.realpath(candidate)
@@ -148,8 +152,8 @@ def _workspace_validation(path: str) -> tuple[str | None, str]:
         from src.execution_sandbox import validate_sandbox_workspace_path
 
         resolved, reason = validate_sandbox_workspace_path(resolved)
-    except (ImportError, OSError, RuntimeError) as exc:
-        return None, str(exc)
+    except (ImportError, OSError, RuntimeError):
+        return None, "Workspace sandbox policy is unavailable."
     return resolved, reason
 
 
@@ -162,6 +166,8 @@ def _browse_payload(target: str) -> dict:
             status_code=400,
             detail=reason or "Folder path is invalid.",
         ) from exc
+    # Browsing arbitrary server-visible folders is an intentional admin-only
+    # capability. Canonicalization and workspace policy run before these sinks.
     if not os.path.exists(canonical):
         raise HTTPException(status_code=404, detail="Folder does not exist.")
     if not os.path.isdir(canonical):
@@ -237,7 +243,7 @@ def setup_workspace_routes():
         try:
             default_path = ensure_default_workspace()
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail="Default workspace is unavailable.") from exc
         return _browse_payload(path.strip() or default_path)
 
     @router.get("/selection")
@@ -246,7 +252,7 @@ def setup_workspace_routes():
         try:
             default_path = ensure_default_workspace()
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail="Default workspace is unavailable.") from exc
         path, warning, configured = _load_selected_workspace(owner)
         return {
             "path": path,
@@ -328,6 +334,8 @@ def setup_workspace_routes():
                 ),
             )
         target = os.path.join(parent, name)
+        # ``parent`` passed canonical managed-root policy and ``name`` excludes
+        # separators, dot components, hidden names, and NUL bytes.
         if os.path.exists(target):
             if not os.path.isdir(target):
                 raise HTTPException(status_code=409, detail="A file already uses that name.")
