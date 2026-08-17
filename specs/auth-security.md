@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@2a6b09b | 2026-08-17
 
 ## Scope
 
@@ -53,7 +53,7 @@ Reserved usernames include request-only sentinels `internal-tool`, `api`, `demo`
 
 `AuthMiddleware` is the outer request gate because FastAPI middleware executes in reverse add order. It can return API `401` JSON or browser `/login` redirects before timeout/security-header middleware reaches the route.
 
-Public/auth-exempt surfaces are limited to setup, signup/login/logout/status, feature/settings/integration preset reads, health/version/login, `/static/*`, and task webhook trigger paths. `routes/task_routes.py` owns validation of `POST /api/tasks/{task_id}/webhook/{token}` path credentials.
+Public/auth-exempt surfaces are limited to setup, signup/login/logout/status, feature/settings/integration preset reads, health/version/login, `/static/*`, and task webhook trigger paths. `routes/task/task_routes.py` owns validation of `POST /api/tasks/{task_id}/webhook/{token}` path credentials.
 
 Login issues an `HttpOnly`, `SameSite=Lax` cookie, with `SECURE_COOKIES` opt-in and a seven-day max age when "remember" is enabled. TOTP is checked before session issuance. Logout, password changes, user deletion, rename flows, expired sessions, and deleted-user sessions must keep revocation/migration behavior intact.
 
@@ -85,7 +85,7 @@ unscoped list/create/mutation behavior.
 
 Owner-scoped route code should use `require_user()` or equivalent policy before querying per-owner data. Current note CRUD/reorder/reminder routes do this so an auth-enabled request that reaches the route without identity returns `401` instead of falling into single-user/null-owner compatibility behavior.
 
-Scheduled task actions attribute differently again. `_execute_action` (`src/task_scheduler.py:1231`) invokes the action with `owner=task.owner` read from the stored `ScheduledTask` row, so no request and no resolved principal are in flight. Every trigger path converges there: schedule, event bus, manual run (`routes/task/task_routes.py:865`), the `manage_tasks` agent tool (`src/tools/system.py:469`), and webhook triggers (`routes/task/task_routes.py:1045`), which are unauthenticated by design with the token as the only credential and execute under the stored `task.owner`. Trigger-side ownership checks use the `if user and task.owner != user` shape, so a falsy caller skips them. Action bodies that reach owner-scoped storage must treat `task.owner` as the authority; route-level `require_user()` never runs on this path.
+Scheduled task actions attribute differently again. `_execute_action` (`src/task_scheduler.py:1231`) invokes the action with `owner=task.owner` read from the stored `ScheduledTask` row, so no request and no resolved principal are in flight. These trigger paths converge there: schedule, event bus, manual run (`routes/task/task_routes.py:865`), the `manage_tasks` agent tool (`src/tools/system.py:469`), webhook triggers (`routes/task/task_routes.py:1045`), which are unauthenticated by design with the token as the only credential and execute under the stored `task.owner`, and success-chained tasks (`src/task_scheduler.py:1063-1074`), which additionally require the chained target to share `task.owner` and reject cycles. Trigger-side ownership checks use the `if user and task.owner != user` shape, so a falsy caller skips them. Action bodies that reach owner-scoped storage must treat `task.owner` as the authority; route-level `require_user()` never runs on this path.
 
 ## API Tokens And Scoped Integrations
 
