@@ -152,33 +152,29 @@ def _load_libseccomp() -> ctypes.CDLL:
     return lib
 
 
-def _verify_arches(source: dict[str, Any], policy: dict[str, Any]) -> None:
+def _verify_arches(policy: dict[str, Any]) -> None:
     lib = _load_libseccomp()
+    # These names are either installed through explicit argument-sensitive
+    # rules by the launcher or are required for its core execution path. The
+    # pinned Moby allowlists can also contain newer syscall names that an older
+    # build-host libseccomp does not know yet. The launcher safely skips those
+    # names under default-deny, so they must not make artifact verification
+    # depend on the build host's syscall table version.
     required = {
         "clone",
         "clone3",
         "execve",
         "ioctl",
         "openat",
+        "personality",
         "seccomp",
         "socket",
+        "socketpair",
     }
-    for generated_arch, moby_arch in policy["target_arches"].items():
+    for generated_arch in policy["target_arches"]:
         token = lib.seccomp_arch_resolve_name(generated_arch.encode("ascii"))
         if token == 0:
             raise RuntimeError(f"libseccomp does not recognize {generated_arch}")
-        # Portable Moby lists legitimately contain negative pseudo syscall
-        # numbers for calls absent on one architecture. The launcher skips
-        # those under default-deny. Every argument-sensitive rule that it must
-        # actively install has to resolve to a native nonnegative number.
-        names = set(_allowlist_for_arch(source, policy, moby_arch))
-        unrecognized = {
-            name
-            for name in names
-            if lib.seccomp_syscall_resolve_name_arch(
-                token, name.encode("ascii")
-            ) == -1
-        }
         missing_required = {
             name
             for name in required
@@ -186,11 +182,10 @@ def _verify_arches(source: dict[str, Any], policy: dict[str, Any]) -> None:
                 token, name.encode("ascii")
             ) < 0
         }
-        unknown = sorted(unrecognized | missing_required)
-        if unknown:
+        if missing_required:
             raise RuntimeError(
                 f"libseccomp cannot resolve {generated_arch} syscalls: "
-                + ", ".join(unknown)
+                + ", ".join(sorted(missing_required))
             )
 
 
@@ -212,7 +207,7 @@ def main() -> int:
     policy = _load_json(POLICY)
     _verify_source(policy)
     if args.verify_arches:
-        _verify_arches(source, policy)
+        _verify_arches(policy)
 
     outputs = {
         GENERATED_HEADER: _render_header(source, policy),
