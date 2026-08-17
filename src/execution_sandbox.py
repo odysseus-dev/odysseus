@@ -12,7 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Mapping, Sequence
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 
 class SandboxUnavailable(RuntimeError):
@@ -271,11 +271,17 @@ def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
 
     protected_files = {os.path.realpath(APP_DB)}
     configured_database = os.environ.get("DATABASE_URL", "").strip()
-    if configured_database:
+    sqlite_prefix = "sqlite:///"
+    if configured_database.startswith(sqlite_prefix):
         try:
-            parsed = urlsplit(configured_database)
-            if parsed.scheme == "sqlite" and parsed.path not in {"", "/:memory:"}:
-                database_path = unquote(parsed.path)
+            database_path = unquote(
+                configured_database[len(sqlite_prefix):].split("?", 1)[0]
+            )
+            if (
+                database_path
+                and database_path != ":memory:"
+                and not database_path.casefold().startswith("file:")
+            ):
                 if not os.path.isabs(database_path):
                     from src.runtime_paths import get_app_root
 

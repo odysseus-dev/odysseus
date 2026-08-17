@@ -181,6 +181,23 @@ def test_sandbox_masks_configured_sqlite_database_inside_workspace(
     assert ["--ro-bind", "/dev/null", str(database)] in triples
 
 
+def test_sandbox_resolves_relative_configured_sqlite_database(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = workspace / "relative.db"
+    database.write_text("private", encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///relative.db")
+    monkeypatch.setattr("src.runtime_paths.get_app_root", lambda: str(workspace))
+
+    argv = sandbox_command(["/bin/true"], workspace=str(workspace))
+
+    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
+    assert ["--ro-bind", "/dev/null", str(database)] in triples
+
+
 def test_sandbox_allows_only_dedicated_workspace_below_data(
     tmp_path,
     monkeypatch,
