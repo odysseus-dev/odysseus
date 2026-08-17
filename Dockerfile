@@ -38,6 +38,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     libxcb1 \
     libmagic1 \
+    && BWRAP_POLICY_VERSION=0.11.0 \
+    && BWRAP_POLICY_PACKAGE=0.11.0-2+deb13u1 \
+    && BWRAP_ACTUAL="$(bwrap --version)" \
+    && BWRAP_PACKAGE="$(dpkg-query -W -f='${Version}' bubblewrap)" \
+    && if [ "$BWRAP_ACTUAL" != "bubblewrap ${BWRAP_POLICY_VERSION}" ]; then \
+         echo "unsupported Bubblewrap version: $BWRAP_ACTUAL (expected ${BWRAP_POLICY_VERSION})" >&2; \
+         exit 1; \
+       fi \
+    && if [ "$BWRAP_PACKAGE" != "$BWRAP_POLICY_PACKAGE" ]; then \
+         echo "unsupported Bubblewrap package: $BWRAP_PACKAGE (expected $BWRAP_POLICY_PACKAGE)" >&2; \
+         exit 1; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,

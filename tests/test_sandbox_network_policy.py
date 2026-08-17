@@ -229,3 +229,64 @@ def test_launch_snapshot_does_not_follow_a_later_toggle_change():
         network_profile_from_snapshot(launched_record["network_profile"])
         is SandboxNetworkProfile.BROKERED_ONLY
     )
+
+
+@pytest.mark.asyncio
+async def test_tmux_launch_scrubs_the_server_environment(monkeypatch):
+    import src.agent_tools.subprocess_tools as subprocess_tools
+
+    session_checks = iter((False, True))
+    calls = []
+
+    async def fake_has_session(_name):
+        return next(session_checks)
+
+    async def fake_run_exec(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "", "", 0
+
+    monkeypatch.setattr(subprocess_tools, "_tmux_has_session", fake_has_session)
+    monkeypatch.setattr(subprocess_tools, "_run_exec", fake_run_exec)
+    shell_argv = [
+        "/usr/local/libexec/odysseus-seccomp-launcher",
+        "/usr/bin/bwrap",
+        "--",
+        "/bin/bash",
+    ]
+
+    await subprocess_tools._ensure_tmux_session(
+        "session",
+        "/workspace",
+        shell_argv,
+    )
+
+    launch = calls[0][0]
+    scrubber = launch.index("/usr/bin/env")
+    assert launch[scrubber:scrubber + 2] == ("/usr/bin/env", "-i")
+    assert launch[scrubber + 2:] == tuple(shell_argv)
+
+
+@pytest.mark.asyncio
+async def test_tmux_client_does_not_update_server_from_application_env(monkeypatch):
+    import src.agent_tools.subprocess_tools as subprocess_tools
+
+    captured = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(kwargs)
+        return Process()
+
+    monkeypatch.setattr(
+        subprocess_tools.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    assert await subprocess_tools._run_exec("tmux", "-V") == ("", "", 0)
+    assert captured["env"] == {}

@@ -146,7 +146,14 @@ int main(int argc, char **argv)
 #endif
 #ifdef TIOCSTI
     if (strcmp(probe, "tiocsti") == 0) {
-        return expect_errno(ioctl(STDIN_FILENO, TIOCSTI, "x"), EPERM);
+        return expect_errno(ioctl(STDIN_FILENO, TIOCSTI, "x"), EACCES);
+    }
+    if (strcmp(probe, "tiocsti_high_bits") == 0) {
+        const unsigned long request = (1UL << 32U) | (unsigned long)TIOCSTI;
+        return expect_errno(
+            syscall(SYS_ioctl, STDIN_FILENO, request, "x"),
+            EACCES
+        );
     }
 #endif
 #ifdef SYS_userfaultfd

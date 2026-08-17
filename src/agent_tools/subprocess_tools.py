@@ -23,6 +23,7 @@ DEFAULT_PYTHON_TIMEOUT = 60 * 60
 PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
 TMUX_CAPTURE_LINES = 2000
+_TMUX_ENV_SCRUBBER = "/usr/bin/env"
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
@@ -65,6 +66,7 @@ async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env={},
     )
     try:
         out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -108,9 +110,11 @@ async def _ensure_tmux_session(
     if await _tmux_has_session(name):
         await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
         return
+    if not os.path.isfile(_TMUX_ENV_SCRUBBER):
+        raise RuntimeError("trusted tmux environment scrubber is unavailable")
     _, launch_error, _ = await _run_exec(
         "tmux", "new-session", "-d", "-s", name, "-c", cwd,
-        *shell_argv,
+        _TMUX_ENV_SCRUBBER, "-i", *shell_argv,
         timeout=10,
     )
     if not await _tmux_has_session(name):

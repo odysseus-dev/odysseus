@@ -21,7 +21,8 @@
 
 #include "generated_inner_policy.h"
 
-/* Minimal libseccomp ABI copied from seccomp.h.in at de2bf463. */
+/* Minimal libseccomp ABI copied from seccomp.h.in at
+ * de2bf463afa565e1573f58096167e31eaf6e08b6. */
 typedef void *scmp_filter_ctx;
 
 enum scmp_compare {
@@ -248,10 +249,30 @@ static scmp_filter_ctx build_filter(const struct seccomp_api *api)
         .datum_a = TIOCSTI,
         .datum_b = 0,
     };
+    const struct scmp_arg_cmp tiocsti_comparison = {
+        /* Linux truncates the ioctl command to unsigned int after the seccomp
+         * check. Match the low 32 bits so high bits cannot bypass the deny. */
+        .arg = 1,
+        .op = SCMP_CMP_MASKED_EQ,
+        .datum_a = UINT32_MAX,
+        .datum_b = TIOCSTI,
+    };
 
     if (add_allowlist(api, filter, allowlist, allowlist_count) < 0
         || add_rule(api, filter, SCMP_ACT_ALLOW, "clone", 1, &clone_comparison) < 0
         || add_rule(api, filter, SCMP_ACT_ERRNO(ENOSYS), "clone3", 0, NULL) < 0
+        /* The action must differ from the default EPERM for libseccomp to
+         * retain a masked deny rule alongside the compatibility allow rule.
+         * Add the deny first: affected libseccomp releases can otherwise
+         * weaken an overlapping 64-bit comparison while merging the tree. */
+        || add_rule(
+            api,
+            filter,
+            SCMP_ACT_ERRNO(EACCES),
+            "ioctl",
+            1,
+            &tiocsti_comparison
+        ) < 0
         || add_rule(api, filter, SCMP_ACT_ALLOW, "ioctl", 1, &ioctl_comparison) < 0
         || add_exact_argument_rules(
             api,
@@ -296,7 +317,7 @@ static bool valid_bwrap(const char *path)
     return stat(path, &metadata) == 0
         && S_ISREG(metadata.st_mode)
         && metadata.st_uid == 0
-        && (metadata.st_mode & (S_IWGRP | S_IWOTH)) == 0
+        && (metadata.st_mode & (S_ISUID | S_ISGID | S_IWGRP | S_IWOTH)) == 0
         && access(path, X_OK) == 0;
 }
 

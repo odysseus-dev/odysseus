@@ -35,6 +35,7 @@ MAX_CONNECTIONS = 16
 MAX_HEADER_BYTES = 64 * 1024
 MAX_HTTP_BODY_BYTES = 16 * 1024 * 1024
 MAX_TUNNEL_BYTES_PER_DIRECTION = 1024 * 1024 * 1024
+MAX_RESOLVED_TARGETS = 16
 CONNECT_TIMEOUT_SECONDS = 10.0
 HEADER_TIMEOUT_SECONDS = 10.0
 IDLE_TIMEOUT_SECONDS = 60.0
@@ -51,6 +52,14 @@ _HOP_BY_HOP = {
     "trailer",
     "upgrade",
 }
+_CONNECTION_PROTECTED_HEADERS = {
+    "content-length",
+    "expect",
+    "host",
+    "transfer-encoding",
+}
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_LOCAL_USE = ipaddress.ip_network("64:ff9b:1::/48")
 
 
 class BrokerError(RuntimeError):
@@ -85,6 +94,22 @@ def _public_ip(value: object) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
         raise BrokerError("destination did not resolve to an IP address") from exc
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
+    if isinstance(address, ipaddress.IPv6Address):
+        if address in _NAT64_LOCAL_USE:
+            raise BrokerError("destination resolved to a non-public address")
+        if address in _NAT64_WELL_KNOWN:
+            embedded = ipaddress.IPv4Address(address.packed[-4:])
+            if (
+                not embedded.is_global
+                or embedded.is_multicast
+                or embedded.is_private
+                or embedded.is_loopback
+                or embedded.is_link_local
+                or embedded.is_reserved
+                or embedded.is_unspecified
+            ):
+                raise BrokerError("destination resolved to a non-public address")
+            return embedded
     # is_global rejects loopback, RFC1918, link-local/metadata, CGNAT, ULA,
     # multicast, unspecified, benchmarking, documentation, and reserved space.
     if (
@@ -126,6 +151,7 @@ def resolve_public_targets(
 
     targets: list[PublicTarget] = []
     seen: set[tuple[int, tuple]] = set()
+    too_many_targets = False
     for answer in answers:
         if not isinstance(answer, tuple) or len(answer) < 5:
             raise BrokerError("destination resolution returned an invalid answer")
@@ -139,8 +165,13 @@ def resolve_public_targets(
         _public_ip(sockaddr[0])
         normalized = (family, sockaddr)
         if normalized not in seen:
+            if len(seen) >= MAX_RESOLVED_TARGETS:
+                too_many_targets = True
+                continue
             seen.add(normalized)
             targets.append(PublicTarget(family, sockaddr))
+    if too_many_targets:
+        raise BrokerError("destination resolved to too many addresses")
     if not targets:
         raise BrokerError("destination resolution failed")
     return targets
@@ -167,6 +198,8 @@ def connect_public_target(
     """Connect to the exact approved sockaddr without a second name lookup."""
     targets = resolve_public_targets(host, port, resolver=resolver)
     for target in targets:
+        target_address = _public_ip(target.sockaddr[0])
+        target_port = int(target.sockaddr[1])
         try:
             outbound = connector(
                 target.family,
@@ -177,9 +210,11 @@ def connect_public_target(
             continue
         try:
             peer = outbound.getpeername()
-            if not isinstance(peer, tuple) or not peer:
+            if not isinstance(peer, tuple) or len(peer) < 2:
                 raise BrokerError("connected peer address is unavailable")
-            _public_ip(peer[0])
+            peer_address = _public_ip(peer[0])
+            if peer_address != target_address or int(peer[1]) != target_port:
+                raise BrokerError("connected peer does not match the approved target")
         except Exception:
             outbound.close()
             continue
@@ -390,6 +425,28 @@ def _single_header(headers: Sequence[tuple[str, str]], name: str) -> str | None:
     return values[0] if values else None
 
 
+def _connection_options(headers: Sequence[tuple[str, str]]) -> set[str]:
+    """Parse hop-by-hop names without allowing request-framing removal."""
+    options: set[str] = set()
+    for name, value in headers:
+        if name.casefold() != "connection":
+            continue
+        for raw_option in value.split(","):
+            option = raw_option.strip()
+            if not option:
+                continue
+            try:
+                encoded = option.encode("ascii")
+            except UnicodeEncodeError as exc:
+                raise RequestError(400, "invalid Connection header") from exc
+            if not _TOKEN.fullmatch(encoded):
+                raise RequestError(400, "invalid Connection header")
+            options.add(option.casefold())
+    if options & _CONNECTION_PROTECTED_HEADERS:
+        raise RequestError(400, "Connection header cannot remove request framing")
+    return options
+
+
 def _serve_connect(
     client: socket.socket,
     target: str,
@@ -471,6 +528,7 @@ def _serve_http(
         raise RequestError(400, "HTTP request body too large")
     if len(remainder) > body_length:
         raise RequestError(400, "pipelined proxy requests are not supported")
+    connection_tokens = _connection_options(headers)
 
     outbound = connect_public_target(
         host,
@@ -482,14 +540,6 @@ def _serve_http(
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
-        connection_tokens: set[str] = set()
-        for name, value in headers:
-            if name.casefold() == "connection":
-                connection_tokens.update(
-                    token.strip().casefold()
-                    for token in value.split(",")
-                    if token.strip()
-                )
         forwarded = [f"{method} {path} {version}\r\n"]
         forwarded.append(f"Host: {_format_authority(host, port)}\r\n")
         for name, value in headers:

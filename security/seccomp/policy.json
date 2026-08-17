@@ -12,6 +12,7 @@
   },
   "default_errno": "EPERM",
   "clone3_errno": "ENOSYS",
+  "tiocsti_errno": "EACCES",
   "clone_namespace_mask": 2114060288,
   "socket_families": [
     "AF_UNIX",
@@ -102,6 +103,9 @@
       "umount2"
     ],
     "bubblewrap_version_basis": "v0.11.0",
-    "bubblewrap_commit": "a871b148b7bc0571f50b917cd5fd03b427f54ed1"
+    "bubblewrap_tag_object": "a871b148b7bc0571f50b917cd5fd03b427f54ed1",
+    "bubblewrap_commit": "9ca3b05ec787acfb4b17bed37db5719fa777834f",
+    "bubblewrap_release_sha256": "988fd6b232dafa04b8b8198723efeaccdb3c6aa9c1c7936219d5791a8b7a8646",
+    "shipped_package_basis": "0.11.0-2+deb13u1"
   }
 }

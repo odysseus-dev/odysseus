@@ -8,6 +8,7 @@ filesystem, inherited environment, network namespace, and ambient capabilities.
 from __future__ import annotations
 
 import os
+import re
 import stat
 import sys
 from enum import Enum
@@ -117,6 +118,8 @@ _SENSITIVE_FILE_NAMES = frozenset(
     }
 )
 _MAX_WORKSPACE_SCAN_ENTRIES = 100_000
+_MOUNTINFO_ESCAPE = re.compile(r"\\([0-7]{3})")
+_MOUNTINFO_PATH = "/proc/self/mountinfo"
 _TRUSTED_BWRAP = "/usr/bin/bwrap"
 _TRUSTED_SECCOMP_LAUNCHER = "/usr/local/libexec/odysseus-seccomp-launcher"
 _TRUSTED_EGRESS_BROKER = "/usr/local/libexec/odysseus-egress-broker"
@@ -146,11 +149,13 @@ def _trusted_executable(path: str, description: str) -> str:
         os.path.realpath(path) != path
         or not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != 0
-        or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or metadata.st_mode
+        & (stat.S_ISUID | stat.S_ISGID | stat.S_IWGRP | stat.S_IWOTH)
         or not os.access(path, os.X_OK)
     ):
         raise SandboxUnavailable(
-            f"Trusted {description} is not a root-owned, read-only executable at {path}."
+            f"Trusted {description} is not a root-owned, non-setuid, "
+            f"read-only executable at {path}."
         )
     return path
 
@@ -263,12 +268,45 @@ def _is_sensitive_file(name: str) -> bool:
     )
 
 
+def _reject_nested_workspace_mounts(workspace: str) -> None:
+    """Reject mount points that a recursive workspace bind would carry in."""
+    try:
+        with open(
+            _MOUNTINFO_PATH,
+            encoding="utf-8",
+            errors="surrogateescape",
+        ) as stream:
+            entries = list(stream)
+    except OSError as exc:
+        raise SandboxUnavailable(
+            "Unable to verify sandbox workspace mount boundaries."
+        ) from exc
+
+    for entry in entries:
+        fields = entry.split()
+        if len(fields) < 5:
+            raise SandboxUnavailable(
+                "Unable to verify sandbox workspace mount boundaries."
+            )
+        mount_point = _MOUNTINFO_ESCAPE.sub(
+            lambda match: chr(int(match.group(1), 8)),
+            fields[4],
+        )
+        resolved_mount = os.path.realpath(mount_point)
+        if resolved_mount != workspace and _is_within(resolved_mount, workspace):
+            relative = os.path.relpath(resolved_mount, workspace).replace(os.sep, "/")
+            raise SandboxUnavailable(
+                f"Sandbox workspace contains a nested mount: {relative}"
+            )
+
+
 def _workspace_overlays(
     workspace: str,
     *,
     excluded_roots: Sequence[str] = (),
 ) -> list[str]:
     """Return mounts that protect repository metadata and credential paths."""
+    _reject_nested_workspace_mounts(workspace)
     args: list[str] = []
     scanned = 0
     for root, dirs, files in os.walk(workspace, followlinks=False):
@@ -284,7 +322,8 @@ def _workspace_overlays(
             path = os.path.join(root, name)
             folded = name.casefold()
             relative = os.path.relpath(path, workspace).replace(os.sep, "/").casefold()
-            if os.path.islink(path) and (
+            is_symlink = os.path.islink(path)
+            if is_symlink and (
                 folded == ".git"
                 or folded in _SENSITIVE_DIR_NAMES
                 or relative == ".config/gh"
@@ -308,6 +347,17 @@ def _workspace_overlays(
 
         for name in files:
             path = os.path.join(root, name)
+            relative = os.path.relpath(path, workspace).replace(os.sep, "/")
+            try:
+                metadata = os.lstat(path)
+            except OSError as exc:
+                raise SandboxUnavailable(
+                    f"Unable to verify sandbox workspace entry: {relative}"
+                ) from exc
+            if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
+                raise SandboxUnavailable(
+                    f"Sandbox workspace contains an unsupported special file: {relative}"
+                )
             if name.casefold() == ".git" and os.path.islink(path):
                 raise SandboxUnavailable(
                     "Sensitive sandbox path cannot be a symlink: .git"
@@ -431,6 +481,10 @@ def sandbox_command(
     if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
         broker = _egress_broker_binary()
         bridge = _egress_bridge_binary()
+        if not os.path.isfile(_CA_CERTIFICATE):
+            raise SandboxUnavailable(
+                "Brokered Internet requires the system CA certificate bundle."
+            )
     root = _normalized_workspace(workspace)
     trusted_paths = [launcher, binary]
     if broker is not None and bridge is not None:

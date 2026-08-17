@@ -10,6 +10,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -124,6 +125,8 @@ class _Transport:
         "fc00::1",
         "ff02::1",
         "::ffff:169.254.169.254",
+        "64:ff9b::a9fe:a9fe",
+        "64:ff9b::a00:1",
     ],
 )
 def test_non_public_destinations_are_rejected(address):
@@ -145,12 +148,35 @@ def test_public_ipv4_and_ipv6_destinations_are_allowed():
     assert [target.sockaddr[0] for target in targets] == [PUBLIC_V4, PUBLIC_V6]
 
 
+def test_nat64_allows_only_an_embedded_public_ipv4_destination():
+    target = "64:ff9b::808:808"
+
+    targets = broker.resolve_public_targets(
+        "public-via-nat64.example",
+        443,
+        resolver=_resolver(target),
+    )
+
+    assert [item.sockaddr[0] for item in targets] == [target]
+
+
 def test_mixed_public_private_dns_answer_fails_closed():
     with pytest.raises(broker.BrokerError, match="non-public"):
         broker.resolve_public_targets(
             "rebind.example",
             443,
             resolver=_resolver(PUBLIC_V4, "127.0.0.1"),
+        )
+
+
+def test_excessive_dns_answer_set_fails_closed():
+    addresses = [f"8.8.8.{index}" for index in range(1, 18)]
+
+    with pytest.raises(broker.BrokerError, match="too many"):
+        broker.resolve_public_targets(
+            "wide.example",
+            443,
+            resolver=_resolver(*addresses),
         )
 
 
@@ -169,6 +195,25 @@ def test_connected_peer_is_revalidated():
                 connector=connector,
             )
     finally:
+        remote.close()
+
+
+def test_connected_peer_must_match_the_resolved_target():
+    local, remote = socket.socketpair()
+
+    def connector(_family, _sockaddr, _timeout):
+        return _PublicPeerSocket(local, peer=("1.1.1.1", 443))
+
+    try:
+        with pytest.raises(broker.BrokerError, match="connection failed"):
+            broker.connect_public_target(
+                "public.example",
+                443,
+                resolver=_resolver(PUBLIC_V4),
+                connector=connector,
+            )
+    finally:
+        local.close()
         remote.close()
 
 
@@ -191,6 +236,7 @@ def test_https_connect_reaches_only_validated_public_target():
         kwargs={"resolver": resolver, "connector": connector},
     )
     worker.start()
+    client.settimeout(2)
     client.sendall(
         b"CONNECT public.example:443 HTTP/1.1\r\n"
         b"Host: public.example:443\r\n\r\n"
@@ -255,6 +301,42 @@ def test_plain_http_is_rewritten_and_proxy_credentials_are_stripped():
     assert b"Host: public.example:80\r\n" in request
     assert b"Proxy-Authorization" not in request
     assert b"Connection: close\r\n" in request
+
+
+def test_connection_header_cannot_remove_content_length_framing():
+    client, broker_side = socket.socketpair()
+    outbound, origin = socket.socketpair()
+    connector_calls = []
+
+    def connector(_family, _sockaddr, _timeout):
+        connector_calls.append(True)
+        return _PublicPeerSocket(outbound, peer=(PUBLIC_V4, 80))
+
+    worker = threading.Thread(
+        target=broker.serve_proxy_client,
+        args=(broker_side,),
+        kwargs={
+            "resolver": _resolver(PUBLIC_V4),
+            "connector": connector,
+        },
+    )
+    worker.start()
+    client.settimeout(2)
+    client.sendall(
+        b"POST http://public.example/upload HTTP/1.1\r\n"
+        b"Host: public.example\r\n"
+        b"Content-Length: 4\r\n"
+        b"Connection: content-length\r\n\r\nbody"
+    )
+    client.shutdown(socket.SHUT_WR)
+    response = client.recv(4096)
+    client.close()
+    origin.close()
+    worker.join(timeout=2)
+
+    assert b" 400 " in response
+    assert connector_calls == []
+    assert not worker.is_alive()
 
 
 @pytest.mark.parametrize(
@@ -423,12 +505,94 @@ def test_loopback_bridge_forwards_to_the_mounted_unix_socket(tmp_path):
     echo.join(timeout=2)
 
 
+def test_loopback_bridge_releases_a_slot_when_the_broker_closes_first(tmp_path):
+    socket_path = tmp_path / "broker.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    listener.listen(2)
+
+    def close_connections():
+        for _index in range(2):
+            connection, _address = listener.accept()
+            connection.close()
+
+    closer = threading.Thread(target=close_connections)
+    closer.start()
+    proxy = bridge.LoopbackBridge(str(socket_path), port=0, max_connections=1)
+    proxy.start()
+    client = socket.create_connection(proxy.address, timeout=2)
+
+    deadline = time.monotonic() + 2
+    while not proxy.connections and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert proxy.connections
+    connection_thread = proxy.connections[0]
+    connection_thread.join(timeout=1)
+    released_before_client_close = not connection_thread.is_alive()
+
+    client.close()
+    proxy.close()
+    listener.close()
+    closer.join(timeout=2)
+
+    assert released_before_client_close
+    assert not closer.is_alive()
+
+
+def test_loopback_bridge_closes_when_its_connection_bound_is_full(tmp_path):
+    socket_path = tmp_path / "broker.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    listener.listen(1)
+    accepted = []
+
+    def hold_connection():
+        probe, _address = listener.accept()
+        probe.close()
+        connection, _address = listener.accept()
+        accepted.append(connection)
+        connection.recv(1)
+
+    holder = threading.Thread(target=hold_connection)
+    holder.start()
+    proxy = bridge.LoopbackBridge(str(socket_path), port=0, max_connections=1)
+    proxy.start()
+    first = socket.create_connection(proxy.address, timeout=2)
+    first.sendall(b"x")
+
+    deadline = time.monotonic() + 2
+    while not accepted and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert accepted
+    rejected = socket.create_connection(proxy.address, timeout=2)
+    rejected.sendall(b"GET http://public.example/ HTTP/1.1\r\n\r\n")
+    try:
+        response = rejected.recv(4096)
+    except ConnectionResetError:
+        response = b""
+
+    rejected.close()
+    first.close()
+    accepted[0].close()
+    proxy.close()
+    listener.close()
+    holder.join(timeout=2)
+
+    assert response == b""
+    assert not holder.is_alive()
+
+
 def test_broker_and_bridge_limits_are_explicit_and_consistent():
     assert broker.MAX_CONNECTIONS == bridge.MAX_CONNECTIONS == 16
     assert broker.MAX_HEADER_BYTES == 64 * 1024
     assert broker.MAX_HTTP_BODY_BYTES == 16 * 1024 * 1024
-    assert broker.IDLE_TIMEOUT_SECONDS > 0
-    assert broker.CONNECTION_LIFETIME_SECONDS < broker.BROKER_LIFETIME_SECONDS
+    assert broker.MAX_RESOLVED_TARGETS == 16
+    assert broker.IDLE_TIMEOUT_SECONDS == bridge.IDLE_TIMEOUT_SECONDS > 0
+    assert (
+        broker.CONNECTION_LIFETIME_SECONDS
+        == bridge.CONNECTION_LIFETIME_SECONDS
+        < broker.BROKER_LIFETIME_SECONDS
+    )
 
 
 def test_multiple_simultaneous_connect_tunnels_work_within_bounds(tmp_path):
@@ -497,7 +661,10 @@ def test_broker_rejects_connections_above_the_per_process_bound(tmp_path):
 
     rejected = socket.create_connection(transport.bridge.address, timeout=2)
     rejected.sendall(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
-    response = rejected.recv(4096)
+    try:
+        response = rejected.recv(4096)
+    except ConnectionResetError:
+        response = b""
     rejected.close()
     for client in clients:
         client.close()
@@ -505,7 +672,11 @@ def test_broker_rejects_connections_above_the_per_process_bound(tmp_path):
         origin.close()
     transport.close()
 
-    assert b" 503 " in response
+    # An overloaded broker may close with unread request bytes after its
+    # best-effort 503, which is observed as either the response or EOF. The
+    # authority invariant is that no additional outbound connection is made.
+    assert response == b"" or b" 503 " in response
+    assert len(origins) == 2
 
 
 @pytest.mark.skipif(shutil.which("npm") is None, reason="npm is unavailable")

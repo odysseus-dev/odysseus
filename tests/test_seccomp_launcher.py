@@ -37,6 +37,33 @@ def test_launcher(tmp_path_factory):
     return build_dir / "odysseus-seccomp-launcher-test"
 
 
+@pytest.fixture(scope="module")
+def seccomp_probe(tmp_path_factory):
+    if shutil.which("cc") is None:
+        pytest.skip("a C compiler is required for seccomp probe tests")
+    build_dir = tmp_path_factory.mktemp("seccomp-probe")
+    probe = build_dir / "seccomp-probe"
+    completed = subprocess.run(
+        [
+            "cc",
+            "-std=c11",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(ROOT / "tests" / "seccomp_probe.c"),
+            "-o",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return probe
+
+
 def _run(launcher: Path, *, stage: str | None = None, arguments=None):
     environment = {}
     if stage is not None:
@@ -135,6 +162,45 @@ def test_launcher_injects_filter_and_executes_payload(test_launcher):
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
     assert completed.stderr == ""
+
+
+@pytest.mark.skipif(not BWRAP.is_file(), reason="canonical Bubblewrap is unavailable")
+@pytest.mark.parametrize("probe_name", ["tiocsti", "tiocsti_high_bits"])
+def test_tiocsti_low_bits_are_denied_after_filter_load(
+    test_launcher,
+    seccomp_probe,
+    probe_name,
+):
+    arguments = [
+        str(BWRAP),
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--symlink",
+        "usr/bin",
+        "/bin",
+        "--symlink",
+        "usr/lib",
+        "/lib",
+    ]
+    if Path("/usr/lib64").exists():
+        arguments.extend(["--symlink", "usr/lib64", "/lib64"])
+    arguments.extend(
+        [
+            "--ro-bind",
+            str(seccomp_probe),
+            "/seccomp-probe",
+            "--",
+            "/seccomp-probe",
+            probe_name,
+        ]
+    )
+    completed = _run(
+        test_launcher,
+        arguments=arguments,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.skipif(not BWRAP.is_file(), reason="canonical Bubblewrap is unavailable")

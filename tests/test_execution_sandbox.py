@@ -158,7 +158,14 @@ def test_trusted_executable_rejects_missing_or_writable_install(monkeypatch):
     monkeypatch.setattr("src.execution_sandbox.os.stat", lambda _path: metadata)
     monkeypatch.setattr("src.execution_sandbox.os.path.realpath", lambda path: path)
     monkeypatch.setattr("src.execution_sandbox.os.access", lambda *_args: True)
-    with pytest.raises(SandboxUnavailable, match="root-owned, read-only"):
+    with pytest.raises(
+        SandboxUnavailable,
+        match="root-owned, non-setuid, read-only",
+    ):
+        _trusted_executable("/trusted/launcher", "seccomp launcher")
+
+    metadata.st_mode = stat.S_IFREG | stat.S_ISUID | 0o755
+    with pytest.raises(SandboxUnavailable, match="non-setuid"):
         _trusted_executable("/trusted/launcher", "seccomp launcher")
 
 
@@ -277,6 +284,22 @@ def test_brokered_profile_fails_closed_when_trusted_broker_is_missing(
         )
 
 
+def test_brokered_profile_fails_closed_without_ca_bundle(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        "src.execution_sandbox._CA_CERTIFICATE",
+        "/definitely/missing/ca-certificates.crt",
+    )
+
+    with pytest.raises(SandboxUnavailable, match="CA certificate bundle"):
+        sandbox_command(
+            ["/bin/true"],
+            workspace=str(workspace),
+            network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+        )
+
+
 def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -299,6 +322,71 @@ def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
     assert ["--tmpfs", str(workspace / ".ssh")] in pairs
     assert ["--tmpfs", str(workspace / ".config" / "gh")] in pairs
     assert ["--ro-bind", "/dev/null", str(workspace / ".profile")] in triples
+
+
+def test_sandbox_rejects_preexisting_unix_socket_in_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    socket_path = workspace / "docker.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    try:
+        with pytest.raises(SandboxUnavailable, match="unsupported special file"):
+            sandbox_command(["/bin/true"], workspace=str(workspace))
+    finally:
+        listener.close()
+
+
+def test_sandbox_rejects_nested_mount_in_workspace(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    nested = workspace / "mounted-host-tree"
+    nested.mkdir()
+    mountinfo = (
+        "36 25 0:32 / / rw,relatime - overlay overlay rw\n"
+        f"37 36 0:33 / {nested} rw,relatime - tmpfs tmpfs rw\n"
+    )
+    monkeypatch.setattr(
+        "src.execution_sandbox._MOUNTINFO_PATH",
+        str(tmp_path / "mountinfo"),
+    )
+    (tmp_path / "mountinfo").write_text(mountinfo, encoding="utf-8")
+
+    with pytest.raises(SandboxUnavailable, match="nested mount"):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
+
+
+def test_sandbox_rejects_bind_mounted_regular_file(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace with space"
+    workspace.mkdir()
+    mounted_file = workspace / "innocent.txt"
+    mounted_file.write_text("external", encoding="utf-8")
+    escaped_mount = str(mounted_file).replace(" ", r"\040")
+    mountinfo = (
+        "36 25 0:32 / / rw,relatime - overlay overlay rw\n"
+        f"37 36 0:33 / {escaped_mount} rw,relatime - ext4 /dev/root rw\n"
+    )
+    mountinfo_path = tmp_path / "mountinfo"
+    mountinfo_path.write_text(mountinfo, encoding="utf-8")
+    monkeypatch.setattr(
+        "src.execution_sandbox._MOUNTINFO_PATH",
+        str(mountinfo_path),
+    )
+
+    with pytest.raises(SandboxUnavailable, match="nested mount"):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
+
+
+def test_sandbox_fails_closed_when_mountinfo_is_unavailable(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        "src.execution_sandbox._MOUNTINFO_PATH",
+        str(tmp_path / "missing-mountinfo"),
+    )
+
+    with pytest.raises(SandboxUnavailable, match="mount boundaries"):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
 
 
 def test_sandbox_rejects_broad_workspace():
@@ -580,6 +668,7 @@ def test_sandbox_status_has_one_additional_inner_filter(
         "af_alg",
         "af_vsock",
         "tiocsti",
+        "tiocsti_high_bits",
         "userfaultfd",
         "io_uring_setup",
         "fork",
