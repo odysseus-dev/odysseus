@@ -1384,109 +1384,26 @@ def _assistant_requested_followup(messages: List[Dict]) -> bool:
     return False
 
 
-def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, object]:
-    """Classify only whether this turn deserves domain tool retrieval.
+def _build_tool_selection_context(
+    messages: List[Dict], last_user: str
+) -> Dict[str, object]:
+    """Choose the query used by the single additive tool selector.
 
-    Normal chat should not inherit old Cookbook/email/document context. Recent
-    context is used only for explicit continuations ("yes", "do it", "1").
-    This function does not inject tools directly; selected tools later decide
-    which domain rule packs get appended to the system prompt.
+    This helper only handles conversational continuation and the direct-chat
+    fast path. It does not classify tool domains or grant/remove tools.
     """
     text = str(last_user or "").strip()
     retry_continuation = _is_contextual_retry_continuation(messages, text)
     continuation = _is_explicit_continuation(text) or _assistant_requested_followup(messages) or retry_continuation
     retrieval_query = _recent_context_for_retrieval(messages) if continuation else text
-    q = retrieval_query.lower()
-
-    if not text or bool(_LOW_SIGNAL_RE.match(text)) or _is_casual_low_signal(text):
-        return {
-            "low_signal": True,
-            "continuation": False,
-            "domains": set(),
-            "retrieval_query": text,
-        }
-
-    domains: Set[str] = set()
-
-    def has(*patterns: str) -> bool:
-        return any(re.search(p, q) for p in patterns)
-
-    if has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|workstation|server|qwen|gemma|llama|mistral|minimax)\b"):
-        domains.add("cookbook")
-    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
-        domains.add("email")
-    if has(r"\b(notes?|todos?|to-dos?|checklists?|tasks?|task list|remind me|reminders?|buy|pickup|pick up)\b"):
-        domains.add("notes_calendar_tasks")
-    if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
-        domains.add("notes_calendar_tasks")
-    if has(r"\b(calendar|event|meeting|appointment|schedule)\b"):
-        domains.add("notes_calendar_tasks")
-    _code_write_intent = has(
-        r"\b(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
-        r"ruby|php|swift|kotlin|bash|shell|html|css|sql)\b",
-        r"\b(?:code|script|program|game|function|class|module|app)\b",
-    )
-    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
-        domains.add("documents")
-    if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
-        domains.add("documents")
-    if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
-        domains.add("web")
-    if has(
-        r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
-        r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
-        r"\b(aktualn\w*|bieżąc\w*|biezac\w*|dzisiaj|teraz)\b.*\b(pogod\w*|temperatur\w*)\b",
-    ):
-        domains.add("web")
-    if has(r"\b(research|deep dive|investigate|look into)\b"):
-        domains.add("web")
-    if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
-        domains.add("ui")
-    if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
-        domains.add("sessions")
-    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash)\b"):
-        domains.add("files")
-    if has(
-        r"\b(run|execute|test|debug|fix|save|create|edit|read|open)\b.{0,40}\b("
-        r"python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
-        r"ruby|php|swift|kotlin|bash|shell|html|css|sql|code|script|program|game"
-        r")\b",
-        r"\b("
-        r"python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
-        r"ruby|php|swift|kotlin|bash|shell|html|css|sql"
-        r")\b.{0,40}\b(file|script|program|app)\b",
-    ):
-        domains.add("files")
-    # Managing detached bash jobs: "kill the background job", "stop the job",
-    # "kill that job", "check the job output", "is the bg job done".
-    if (has(r"\b(background|bg)\s+(jobs?|task)\b")
-            or has(r"\b(kill|stop|cancel|terminate|check|tail|show|list)\b.{0,16}\bjobs?\b")
-            or has(r"\bjobs?\b.{0,16}\b(output|status|done|finished|running)\b")):
-        domains.add("files")
-    if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
-        domains.add("settings")
-    if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
-        domains.add("contacts")
-    # API-integration intent — calling a configured service via the api_call
-    # tool. Without this the #3794 repro ("Use the api_call tool to call Home
-    # Assistant GET /api/states") matched no domain, classified as low-signal,
-    # and the tool never reached the schema filter. Detect it explicitly so the
-    # "integrations" domain seeds api_call deterministically (see
-    # _DOMAIN_TOOL_MAP), independent of embedding retrieval.
-    if has(r"\bapi[ _]call\b", r"\bintegrations?\b",
-           r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
-        domains.add("integrations")
-
-    low_signal = not continuation and not domains
     return {
-        "low_signal": low_signal,
+        "low_signal": not text or bool(_LOW_SIGNAL_RE.match(text)) or _is_casual_low_signal(text),
         "continuation": continuation,
-        "domains": domains,
         "retrieval_query": retrieval_query,
     }
 
 
-def _turn_targets_active_document(intent: Dict[str, object], last_user: str, active_document) -> bool:
+def _turn_targets_active_document(last_user: str, active_document) -> bool:
     """Return whether an open document should affect this turn.
 
     The editor can stay open while the user asks unrelated things ("who am I?",
@@ -1504,8 +1421,6 @@ def _turn_targets_active_document(intent: Dict[str, object], last_user: str, act
         or title_l in {"new email", "new mail", "new message"}
         or ("To:" in raw_doc[:400] and "Subject:" in raw_doc[:400] and "\n---\n" in raw_doc)
     )
-    if "documents" in (intent.get("domains") or set()):
-        return True
     text = str(last_user or "").strip().lower()
     if not text:
         return False
@@ -1552,18 +1467,6 @@ def _turn_targets_active_document(intent: Dict[str, object], last_user: str, act
         r")\b",
         text,
     ))
-
-
-def _is_email_document_obj(active_document) -> bool:
-    if active_document is None:
-        return False
-    raw_doc = getattr(active_document, "current_content", "") or ""
-    title_l = (getattr(active_document, "title", "") or "").strip().lower()
-    return (
-        getattr(active_document, "language", None) == "email"
-        or title_l in {"new email", "new mail", "new message"}
-        or ("To:" in raw_doc[:400] and "Subject:" in raw_doc[:400] and "\n---\n" in raw_doc)
-    )
 
 
 def _minimal_saved_memory_message(messages: List[Dict]) -> Optional[Dict]:
@@ -3439,7 +3342,7 @@ async def stream_agent_loop(
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
-    forced_tools: Optional[Set[str]] = None,
+    explicit_tools: Optional[Set[str]] = None,
     uploaded_files: Optional[List[Dict]] = None,
     workload: str = "foreground",
     external_untrusted_context_seen: bool = False,
@@ -3520,34 +3423,35 @@ async def stream_agent_loop(
     if _ody_qwen_finetune_model:
         temperature = _ody_qwen_temperature_cap(temperature)
     _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
-    _intent = _classify_agent_request(messages, _last_user)
-    _low_signal_turn = bool(_intent.get("low_signal"))
+    _selection_context = _build_tool_selection_context(messages, _last_user)
+    _low_signal_turn = bool(_selection_context.get("low_signal"))
     _casual_low_signal_turn = _is_casual_low_signal(_last_user)
     _existing_conversation = _user_turn_count(messages) > 1
-    _active_document_relevant = _turn_targets_active_document(_intent, _last_user, active_document)
-    _active_email_draft_relevant = _active_document_relevant and _is_email_document_obj(active_document)
-    if _active_email_draft_relevant:
-        disabled_tools.update({
-            "list_email_accounts", "list_emails", "read_email", "scan_email_unsubscribes",
-            "mcp__email__list_emails", "mcp__email__read_email", "mcp__email__scan_email_unsubscribes",
-        })
+    _active_document_relevant = _turn_targets_active_document(_last_user, active_document)
     _prompt_active_document = active_document if _active_document_relevant else None
+    _explicit_tools = {
+        tool for tool in (explicit_tools or set()) if tool not in disabled_tools
+    }
     _direct_low_signal = (
         _low_signal_turn
         and not _existing_conversation
-        and not bool(_intent.get("continuation"))
+        and not bool(_selection_context.get("continuation"))
         and not plan_mode
         and not approved_plan
         and not guide_only
         and (_casual_low_signal_turn or not _active_document_relevant)
         and (_casual_low_signal_turn or not active_email)
         and (_casual_low_signal_turn or not workspace)
-        and not forced_tools
+        and not _explicit_tools
         and not relevant_tools
     )
     # Tool retrieval uses the latest message by default. It may inherit recent
     # user turns only for explicit continuations ("yes", "do it", "1").
-    _retrieval_query = str(_intent.get("retrieval_query") or _last_user)
+    _retrieval_query = str(_selection_context.get("retrieval_query") or _last_user)
+    _selection_hints: Set[str] = set()
+    if not guide_only:
+        from src.tool_index import ToolIndex
+        _selection_hints = ToolIndex.get_additive_hints(_retrieval_query)
     if _explicitly_references_missing_workspace(_retrieval_query, workspace):
         msg = (
             "No active workspace is set. Use `/workspace pick` or "
@@ -3569,11 +3473,12 @@ async def stream_agent_loop(
         yield "data: [DONE]\n\n"
         return
     logger.info(
-        "[agent-intent] latest=%r continuation=%s low_signal=%s domains=%s active_doc_relevant=%s retrieval_query=%r",
+        "[tool-selection] latest=%r continuation=%s low_signal=%s hints=%s explicit=%s active_doc_relevant=%s retrieval_query=%r",
         _last_user[:120],
-        bool(_intent.get("continuation")),
+        bool(_selection_context.get("continuation")),
         _low_signal_turn,
-        sorted(_intent.get("domains") or []),
+        sorted(_selection_hints),
+        sorted(_explicit_tools),
         _active_document_relevant,
         _retrieval_query[:200],
     )
@@ -3856,7 +3761,7 @@ async def stream_agent_loop(
 
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
-    _relevant_tools = relevant_tools
+    _relevant_tools = None if relevant_tools is None else set(relevant_tools)
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
@@ -3873,9 +3778,7 @@ async def stream_agent_loop(
             _relevant_tools |= (_DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS)
             logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
         else:
-            # Don't short-circuit: fall through to RAG retrieval below.
-            # Non-English queries are flagged low_signal by the English-only
-            # intent classifier, but fastembed retrieval works across languages.
+            # Don't short-circuit: fall through to retrieval below.
             logger.info("[tool-rag] Low-signal query; will run RAG retrieval")
     if not guide_only and not _relevant_tools:
         try:
@@ -3891,7 +3794,7 @@ async def stream_agent_loop(
                     _TOOL_SELECTION_TIMEOUT_SECONDS,
                 )
                 tool_idx = None
-                _relevant_tools = set(ALWAYS_AVAILABLE)
+                _relevant_tools = set(ALWAYS_AVAILABLE) | _selection_hints
             if tool_idx:
                 if mcp_mgr:
                     try:
@@ -3927,59 +3830,44 @@ async def stream_agent_loop(
             logger.warning(f"[tool-rag] Retrieval failed, using keyword fallback: {e}")
             _relevant_tools = None
 
-    # Fallback: if RAG unavailable, use keyword-based tool selection
-    # instead of sending ALL tools (which overwhelms the model).
+    # Fallback: use the same deterministic hints as ToolIndex instead of a
+    # second, slightly different keyword classifier.
     if not guide_only and not _relevant_tools and _retrieval_query:
-        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
-        _relevant_tools = set(ALWAYS_AVAILABLE)
-        ql = _retrieval_query.lower()
-        for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
-                _relevant_tools.update(tools)
+        from src.tool_index import ALWAYS_AVAILABLE
+        _relevant_tools = set(ALWAYS_AVAILABLE) | _selection_hints
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
-    # If deterministic domain detection fired, seed the corresponding domain
-    # tools into the selected tool set. This is not direct prompt-pack
-    # injection: `_assemble_prompt()` still derives domain rules from the final
-    # tool names. It prevents obvious requests like "last 5 emails" from
-    # collapsing to only ask_user/manage_memory when vector retrieval misses or
-    # times out.
-    if not guide_only and _relevant_tools is not None:
-        for _domain in (_intent.get("domains") or set()):
-            _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
-        if "cookbook" in (_intent.get("domains") or set()):
-            _relevant_tools.update({
-                "list_served_models",
-                "list_downloads",
-                "list_cached_models",
-                "list_cookbook_servers",
-                "list_serve_presets",
-            })
-        if "email" in (_intent.get("domains") or set()):
-            _relevant_tools.add("ui_control")
-        if "web" in (_intent.get("domains") or set()):
-            _relevant_tools.update(WEB_TOOL_NAMES)
-            _blocked_web_tools = sorted(WEB_TOOL_NAMES & disabled_tools)
-            if _blocked_web_tools:
-                logger.info(
-                    "[agent-intent] web domain selected but search tools remain disabled=%s",
-                    _blocked_web_tools,
-                )
-        if "ui" in (_intent.get("domains") or set()):
-            _relevant_tools.add("ui_control")
-        if (
-            (
-                (
-                    workspace
-                    and _looks_like_workspace_coding_request(_retrieval_query or _last_user)
-                )
-                or _looks_like_local_computer_request(_retrieval_query or _last_user)
+    # A bound workspace is itself a useful selection input. If retrieval and
+    # deterministic hints produced only ambient tools, add the read-only file
+    # navigation set so a vague agent request can inspect the active project.
+    # Do this from the selector's output, not from a second prompt classifier.
+    if workspace and _relevant_tools is not None:
+        from src.tool_index import ALWAYS_AVAILABLE
+        if not (_relevant_tools - set(ALWAYS_AVAILABLE)):
+            from src.tool_security import PLAN_MODE_READONLY_TOOLS
+            _relevant_tools.update(
+                _DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS
             )
-            and not _active_document_relevant
-            and not active_email
-        ):
-            _relevant_tools = set(_WORKSPACE_TERMINUS_TOOLS)
-            logger.info("[tool-rag] Workspace file/terminal request; using Odysseus Terminus toolset")
+            logger.info(
+                "[tool-rag] Workspace active with ambient-only selection; "
+                "added read-only file tools"
+            )
+
+    if (
+        not guide_only
+        and _relevant_tools is not None
+        and (
+            (
+                workspace
+                and _looks_like_workspace_coding_request(_retrieval_query or _last_user)
+            )
+            or _looks_like_local_computer_request(_retrieval_query or _last_user)
+        )
+        and not _active_document_relevant
+        and not active_email
+    ):
+        _relevant_tools.update(_WORKSPACE_TERMINUS_TOOLS)
+        logger.info("[tool-rag] Workspace file/terminal request; added Odysseus Terminus tools")
 
     # If this turn targets the open document, keep editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran.
@@ -3987,19 +3875,6 @@ async def stream_agent_loop(
     # panel is open.
     if _relevant_tools is not None and _active_document_relevant:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
-        if _active_email_draft_relevant:
-            # The open compose document already contains the recipient,
-            # subject, source UID, and quoted previous-message excerpt. Reading
-            # the same email again through IMAP/MCP is slow, token-heavy, and
-            # can hang. Keep draft editing tools, drop email fetch tools.
-            _email_fetch_tools = {
-                "list_email_accounts", "list_emails", "read_email", "scan_email_unsubscribes",
-                "mcp__email__list_emails", "mcp__email__read_email", "mcp__email__scan_email_unsubscribes",
-            }
-            removed = sorted(_relevant_tools & _email_fetch_tools)
-            if removed:
-                _relevant_tools.difference_update(_email_fetch_tools)
-                logger.info("[agent-intent] active email draft pruned fetch tools=%s", removed)
 
     # Current-turn chat uploads are real files under the upload/data root. Make
     # the read-side file/document tools visible immediately so the agent can
@@ -4009,16 +3884,6 @@ async def stream_agent_loop(
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
-
-    # Per-request forced tools are stronger than retrieval. Explicit search
-    # settings make web tools visible even when tool RAG misses them;
-    # route-level disabled_tools decides what remains allowed.
-    if not guide_only and forced_tools:
-        forced_set = {t for t in forced_tools if t not in disabled_tools}
-        if _relevant_tools is None:
-            from src.tool_index import ALWAYS_AVAILABLE
-            _relevant_tools = set(ALWAYS_AVAILABLE)
-        _relevant_tools.update(forced_set)
 
     if not guide_only and _relevant_tools is not None:
         _relevant_tools = _expand_browser_mcp_tools(_relevant_tools, mcp_mgr)
@@ -4061,7 +3926,23 @@ async def stream_agent_loop(
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
 
-    _intent_domains = set(_intent.get("domains") or set())
+    # Explicit request controls are a monotonic schema-offering input. They are
+    # applied after every heuristic/retrieval source and only hard policy may
+    # filter them out.
+    if _explicit_tools:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update(_explicit_tools)
+
+    # Fine-tuned route modes depend on what the selector inferred from the
+    # query, not every schema that permissions or a caller added. For example,
+    # explicitly offering Bash must not turn a notes request into file mode.
+    _query_domains = {
+        domain
+        for domain, domain_tools in _DOMAIN_TOOL_MAP.items()
+        if domain_tools & _selection_hints
+    }
     _base_relevant_tools = None if _relevant_tools is None else set(_relevant_tools)
     _runtime_skill_tools: Set[str] = set()
 
@@ -4071,11 +3952,11 @@ async def stream_agent_loop(
             is_ody
             and not _runtime_skill_tools
             and (
-                "documents" in _intent_domains
+                "documents" in _query_domains
                 or _active_document_relevant
                 or _prompt_active_document is not None
             )
-            and "files" not in _intent_domains
+            and "files" not in _query_domains
             and not guide_only
         )
         notes_mode = (
@@ -4083,14 +3964,14 @@ async def stream_agent_loop(
             and not _runtime_skill_tools
             and not doc_mode
             and (
-                "notes_calendar_tasks" in _intent_domains
+                "notes_calendar_tasks" in _query_domains
                 or _looks_like_notes_turn(_last_user)
                 or (
                     _looks_like_notes_calendar_followup(_last_user)
                     and _minimal_recent_notes_tool_context_message(messages) is not None
                 )
             )
-            and "files" not in _intent_domains
+            and "files" not in _query_domains
             and not guide_only
         )
         general_no_tool_mode = (
@@ -4145,9 +4026,6 @@ async def stream_agent_loop(
     if _ody_doc_finetune_mode and _relevant_tools is not None:
         logger.info("[agent-intent] odysseus doc finetune tool clamp=%s", sorted(_relevant_tools))
     elif _ody_notes_finetune_mode and _relevant_tools is not None:
-        disabled_tools.difference_update({
-            "manage_notes", "manage_calendar", "manage_tasks",
-        })
         logger.info("[agent-intent] odysseus notes finetune tool clamp=%s", sorted(_relevant_tools))
     elif _ody_general_no_tool_mode:
         try:
@@ -4156,35 +4034,6 @@ async def stream_agent_loop(
         except Exception:
             pass
         logger.info("[agent-intent] odysseus general no-tool clamp active")
-
-    if (
-        _relevant_tools is not None
-        and _active_document_relevant
-        and "files" not in _intent_domains
-        and not uploaded_files
-        and not workspace
-    ):
-        _doc_irrelevant_file_tools = {
-            "append_file",
-            "bash",
-            "edit_file",
-            "glob",
-            "grep",
-            "ls",
-            "read_file",
-            "replace_file",
-            "run_shell",
-            "write_file",
-        }
-        if _base_relevant_tools is not None:
-            _base_relevant_tools.difference_update(_doc_irrelevant_file_tools)
-        _removed_doc_file_tools = sorted(_relevant_tools & _doc_irrelevant_file_tools)
-        if _removed_doc_file_tools:
-            _relevant_tools.difference_update(_doc_irrelevant_file_tools)
-            logger.info(
-                "[agent-intent] active document turn removed file tools=%s",
-                _removed_doc_file_tools,
-            )
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -5137,14 +4986,6 @@ async def stream_agent_loop(
                             _ody_doc_finetune_mode = answering_state["ody_doc_finetune_mode"]
                             _ody_notes_finetune_mode = answering_state["ody_notes_finetune_mode"]
                             _ody_doc_stream_create_mode = answering_state["ody_doc_stream_create_mode"]
-                            if _ody_notes_finetune_mode:
-                                # Mirror the primary-route clamp: the answering
-                                # candidate's notes mode must re-enable the
-                                # personal managers in the shared execution
-                                # blocklist, or its tool calls are rejected.
-                                disabled_tools.difference_update({
-                                    "manage_notes", "manage_calendar", "manage_tasks",
-                                })
                             data["pinned_for_run"] = True
                         if _apply_candidate_compaction(candidate_index):
                             yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
@@ -5640,10 +5481,6 @@ async def stream_agent_loop(
                 block.tool_type,
                 block.content,
             )
-            _ody_clamped_tool_allowed = (
-                _ody_notes_finetune_mode
-                and block.tool_type in {"manage_notes", "manage_calendar", "manage_tasks"}
-            )
             policy_names = email_tool_policy_names(block.tool_type)
             blocked_by_tool_policy = bool(
                 tool_policy
@@ -5652,10 +5489,7 @@ async def stream_agent_loop(
             blocked_by_disabled_tools = bool(
                 disabled_tools and not policy_names.isdisjoint(disabled_tools)
             )
-            if (
-                (blocked_by_tool_policy or blocked_by_disabled_tools)
-                and not _ody_clamped_tool_allowed
-            ):
+            if blocked_by_tool_policy or blocked_by_disabled_tools:
                 if blocked_by_tool_policy:
                     blocked_name = next(
                         name for name in policy_names if tool_policy.blocks(name)

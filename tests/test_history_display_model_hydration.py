@@ -476,22 +476,6 @@ async def test_model_send_routes_hydrate_before_context_build(monkeypatch, path)
         "_resolve_request_workspace",
         lambda *_args: (None, False),
     )
-    monkeypatch.setattr(chat_routes, "_classify_tool_intent", lambda *_args: None)
-    monkeypatch.setattr(
-        chat_routes,
-        "_is_contextual_web_followup",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(
-        chat_routes,
-        "_is_contextual_browser_followup",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(
-        chat_routes,
-        "_resolve_workspace_from_message_path",
-        lambda *_args: (None, None),
-    )
     monkeypatch.setattr(
         chat_routes,
         "_reconcile_selected_route_from_request",

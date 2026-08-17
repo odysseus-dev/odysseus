@@ -1875,22 +1875,13 @@ import { loadPanel } from './panels.js';
       } catch (_e) { /* best-effort */ }
       // Web toggle: pre-search in Chat mode only. Agent mode should not
       // opportunistically hit SearXNG just because the chat search toggle is
-      // on; explicit web/current-info requests are handled by the backend
-	      // intent gate.
+      // on; in Agent mode the explicit toggle offers web schemas and the
+	      // additive selector decides whether they are relevant.
 	      const toggleState = Storage.loadToggleState();
 	      const isPlanMode = !!toggleState.plan_mode && !(el('research-toggle') && el('research-toggle').checked);
 	      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
       const isIncognito = isIncognitoForSend;
-	      const workspaceAgentIntent = !isIncognito && /\b(fix|debug|implement|change|update|refactor|patch|review|test|run|execute|start|launch|build|lint|typecheck|benchmark|eval|terminal[- ]bench|tbench|repo|repository|codebase|project|app|server|api|frontend|backend|bug|issue|pr|file|folder|directory|source|logs?|trace|stacktrace|traceback|docker|container|tmux|terminal|shell|git|branch|commit|diff|pytest|process|port|endpoint|computer|machine|laptop|device|system)\b/i.test(String(msg || ''));
 	      if (isPlanMode || _pendingApprovedPlan) {
-	        isAgentMode = true;
-	      }
-	      if (!isAgentMode && workspaceAgentIntent) {
-	        isAgentMode = true;
-	      }
-	      // Auto-escalate to agent mode when a document is open — the user expects
-	      // the AI to see the document and have tools to edit it
-	      if (!isIncognito && !isAgentMode && documentModule && activeDocIdForSend) {
 	        isAgentMode = true;
 	      }
 	      fd.append('mode', isAgentMode ? 'agent' : 'chat');
@@ -1912,9 +1903,8 @@ import { loadPanel } from './panels.js';
 	        // Research always runs in chat mode — override agent if set
 	        fd.set('mode', 'chat');
 	        fd.set('plan_mode', 'false');
-	      }
-      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
-      if (workspaceAgentIntent) fd.set('allow_bash', 'true');
+      }
+	      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -1953,8 +1943,7 @@ import { loadPanel } from './panels.js';
       _sendState.abortCtrl = abortCtrl;
       currentAbort = abortCtrl;
 
-	      const _tState = Storage.loadToggleState();
-	      const _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
+	      const _isAgent = isAgentMode;
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
