@@ -247,11 +247,37 @@ def _login_home_roots() -> set[str]:
     return homes
 
 
+def sandbox_workspace_path_is_sensitive(workspace: str) -> bool:
+    """Return whether a workspace root would expose protected metadata."""
+    try:
+        resolved = os.path.realpath(os.path.expanduser(workspace))
+    except (OSError, TypeError, ValueError):
+        return True
+    parts = [part.casefold() for part in Path(resolved).parts]
+    for index, part in enumerate(parts):
+        if (
+            part == ".git"
+            or part in _SENSITIVE_DIR_NAMES
+            or part in _SENSITIVE_FILE_NAMES
+            or part == ".env"
+            or part.startswith(".env.")
+        ):
+            return True
+        if part == ".config" and index + 1 < len(parts) and parts[index + 1] == "gh":
+            return True
+    return False
+
+
 def validate_sandbox_workspace_path(workspace: str) -> tuple[str | None, str]:
     """Apply process-sandbox path policy without creating the directory."""
     if not isinstance(workspace, str) or not workspace.strip():
         return None, "Sandboxed execution requires a workspace."
-    resolved = os.path.realpath(os.path.expanduser(workspace))
+    try:
+        resolved = os.path.realpath(os.path.expanduser(workspace))
+    except (OSError, TypeError, ValueError):
+        return None, "Sandbox workspace path is invalid."
+    if sandbox_workspace_path_is_sensitive(resolved):
+        return None, f"Refusing sensitive sandbox workspace: {resolved}"
     from src.constants import AGENT_WORKSPACE_DIR
 
     managed_workspace = os.path.realpath(AGENT_WORKSPACE_DIR)

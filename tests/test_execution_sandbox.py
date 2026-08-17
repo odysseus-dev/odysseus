@@ -19,6 +19,7 @@ from src.execution_sandbox import (
     full_access_command,
     sandbox_command,
     sandbox_python_executable,
+    validate_sandbox_workspace_path,
 )
 
 
@@ -437,6 +438,37 @@ def test_sandbox_rejects_broad_workspace():
 
     with pytest.raises(SandboxUnavailable):
         sandbox_command(["/bin/true"], workspace="/usr/local/share/agent")
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".codex",
+        ".git",
+        ".config/gh",
+        ".env.local",
+        ".npmrc",
+    ],
+)
+def test_sandbox_rejects_sensitive_workspace_root(tmp_path, relative):
+    workspace = tmp_path / relative
+    workspace.mkdir(parents=True)
+
+    resolved, reason = validate_sandbox_workspace_path(str(workspace))
+
+    assert resolved is None
+    assert "sensitive" in reason.lower()
+    with pytest.raises(SandboxUnavailable):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
+
+
+def test_sandbox_rejects_invalid_workspace_path():
+    resolved, reason = validate_sandbox_workspace_path("bad\x00path")
+
+    assert resolved is None
+    assert "invalid" in reason.lower()
+    with pytest.raises(SandboxUnavailable):
+        sandbox_command(["/bin/true"], workspace="bad\x00path")
 
 
 def test_sandbox_rejects_the_process_home_as_workspace(tmp_path, monkeypatch):

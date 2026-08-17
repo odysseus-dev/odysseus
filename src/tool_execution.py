@@ -284,7 +284,7 @@ def validate_workspace(raw: str) -> tuple[Optional[str], str]:
         return None, "Folder does not exist."
     if not os.path.isdir(resolved):
         return None, "Path is not a folder."
-    if _is_sensitive_path(resolved):
+    if workspace_path_is_sensitive(resolved):
         return None, "Sensitive folders cannot be used as a workspace."
     # Reject filesystem roots: binding / (or a Windows drive/UNC root) as the
     # workspace would make every absolute path "inside" it, collapsing the
@@ -301,7 +301,11 @@ def workspace_path_is_sensitive(raw: str) -> bool:
         resolved = os.path.realpath(os.path.expanduser((raw or "").strip()))
     except (OSError, ValueError):
         return True
-    return bool(resolved) and _is_sensitive_path(resolved)
+    if not resolved or _is_sensitive_path(resolved):
+        return bool(resolved)
+    from src.execution_sandbox import sandbox_workspace_path_is_sensitive
+
+    return sandbox_workspace_path_is_sensitive(resolved)
 
 
 def vet_workspace(raw: str) -> Optional[str]:

@@ -130,6 +130,26 @@ def test_missing_managed_folder_offers_then_creates_and_selects(workspace_api):
     assert workspace_api["get"](request=_request())["path"] == os.path.realpath(project)
 
 
+def test_missing_sensitive_folder_is_not_offered_for_creation(workspace_api):
+    target = workspace_api["managed"] / "project" / ".codex" / "state"
+
+    missing = workspace_api["select"](
+        request=_request(),
+        body=workspace_routes.WorkspaceSelection(path=str(target)),
+    )
+
+    payload = json.loads(missing.body)
+    assert payload["code"] == "folder_missing"
+    assert payload["can_create"] is False
+
+    with pytest.raises(HTTPException):
+        workspace_api["select"](
+            request=_request(),
+            body=workspace_routes.WorkspaceSelection(path=str(target), create=True),
+        )
+    assert not target.exists()
+
+
 def test_missing_folder_outside_managed_root_cannot_be_created(workspace_api, tmp_path):
     outside = tmp_path / "outside" / "project"
 

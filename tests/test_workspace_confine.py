@@ -463,14 +463,25 @@ def test_vet_workspace_accepts_normal_dir(ws):
     assert vet_workspace(ws) == os.path.realpath(ws)
 
 
-def test_vet_workspace_rejects_sensitive_root(tmp_path):
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".ssh",
+        ".codex",
+        ".git",
+        ".config/gh",
+        ".env.local",
+        ".npmrc",
+    ],
+)
+def test_vet_workspace_rejects_sensitive_root(tmp_path, relative):
     # The resolver deny-lists sensitive paths inside the workspace, but the
     # empty-path search root is the workspace itself - a sensitive root must
     # be rejected before it is bound or `ls` with no path would list it.
     from src.tool_execution import vet_workspace
-    ssh_dir = tmp_path / ".ssh"
-    ssh_dir.mkdir()
-    assert vet_workspace(str(ssh_dir)) is None
+    sensitive_dir = tmp_path / relative
+    sensitive_dir.mkdir(parents=True)
+    assert vet_workspace(str(sensitive_dir)) is None
 
 
 def test_vet_workspace_rejects_nondir_and_empty(ws):
