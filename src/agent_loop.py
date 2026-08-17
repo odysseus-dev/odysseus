@@ -35,6 +35,7 @@ from src.execution_sandbox import SandboxNetworkProfile
 from src.tool_security import (
     blocked_tools_for_owner,
     email_tool_policy_names,
+    owner_is_admin_or_single_user,
     plan_mode_disabled_tools,
 )
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
@@ -53,6 +54,7 @@ from src.tool_approvals import (
     document_content_digest,
     tool_approval_store,
 )
+from src.agent_run_policy import AgentRunPolicy, AuthorizationOutcome
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
@@ -3445,6 +3447,7 @@ async def stream_agent_loop(
     workload: str = "foreground",
     external_untrusted_context_seen: bool = False,
     exact_approval: Optional[ExactToolApproval] = None,
+    security_mode: str = "sandbox",
     _is_teacher_run: bool = False,
     history_session=None,
     defer_context_shaping: bool = False,
@@ -3474,6 +3477,16 @@ async def stream_agent_loop(
             exact_approval and exact_approval.allow_remaining_actions
         ),
     )
+    run_policy = AgentRunPolicy.for_mode(security_mode)
+    if (
+        run_policy.execution_profile.value == "host_full_access"
+        and not owner_is_admin_or_single_user(owner)
+    ):
+        logger.warning(
+            "Full-access agent mode rejected by loop backstop for owner=%r",
+            owner,
+        )
+        run_policy = AgentRunPolicy.for_mode("sandbox")
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
@@ -4526,6 +4539,7 @@ async def stream_agent_loop(
             tool_name=approved.tool_name,
             content=approved.content,
             workspace=workspace,
+            security_mode=run_policy.mode,
         )
         if approval_matches:
             yield (
@@ -4559,6 +4573,7 @@ async def stream_agent_loop(
                     workspace=workspace,
                     security_context=run_security,
                     exact_approval=exact_approval,
+                    run_policy=run_policy,
                     network_profile=network_profile,
                 )
             finally:
@@ -5639,9 +5654,9 @@ async def stream_agent_loop(
             else:
                 cmd_display = full_command
 
-            security_decision = run_security.decision_for(
+            authorization = run_policy.authorize(
                 block.tool_type,
-                block.content,
+                run_security,
             )
             _ody_clamped_tool_allowed = (
                 _ody_notes_finetune_mode
@@ -5680,7 +5695,12 @@ async def stream_agent_loop(
                     "Tool blocked before approval by current policy: %s",
                     block.tool_type,
                 )
-            elif not security_decision.allowed:
+            elif authorization.outcome is AuthorizationOutcome.DENY:
+                desc, result = blocked_tool_result(
+                    block.tool_type,
+                    authorization.reason or "Tool denied by run policy.",
+                )
+            elif authorization.outcome is AuthorizationOutcome.REQUIRE_APPROVAL:
                 approval_document = (
                     active_document
                     if block.tool_type
@@ -5754,6 +5774,7 @@ async def stream_agent_loop(
                             block.tool_type,
                             block.content,
                         ),
+                        security_mode=run_policy.mode,
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
                     result = {
@@ -5761,7 +5782,7 @@ async def stream_agent_loop(
                         "exit_code": None,
                         "approval_required": True,
                         "ask_user": pending_approval.public_payload(
-                            reason=security_decision.reason,
+                            reason=authorization.reason,
                         ),
                     }
                     logger.info(
@@ -5793,6 +5814,7 @@ async def stream_agent_loop(
                             progress_cb=_push_progress,
                             workspace=workspace,
                             security_context=run_security,
+                            run_policy=run_policy,
                             network_profile=network_profile,
                         )
                     finally:
@@ -6438,6 +6460,10 @@ async def stream_agent_loop(
                 tool_policy=tool_policy,
                 active_document=active_document,
                 active_email=active_email,
+                security_mode=run_policy.mode.value,
+                external_untrusted_context_seen=(
+                    run_security.external_untrusted_context_seen
+                ),
                 network_profile=network_profile,
             ):
                 yield evt

@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.agent_run_policy import parse_agent_run_mode
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_DECISION,
     DENY_APPROVAL_DECISION,
@@ -117,6 +118,7 @@ def _binding_payload(
     continuation_query: Any,
     effects: tuple[str, ...],
     result_integrity: str,
+    security_mode: Any = "sandbox",
 ) -> dict[str, Any]:
     return {
         "owner": _normalized_owner(owner),
@@ -137,6 +139,7 @@ def _binding_payload(
         "continuation_query": _normalized_continuation_query(continuation_query),
         "effects": list(effects),
         "result_integrity": str(result_integrity),
+        "security_mode": parse_agent_run_mode(security_mode).value,
     }
 
 
@@ -162,6 +165,7 @@ class PendingToolApproval:
     # exposed in the browser payload.
     selected_tools: tuple[str, ...] = ()
     continuation_query: str = ""
+    security_mode: str = "sandbox"
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
@@ -242,6 +246,7 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
+        security_mode: Any = "sandbox",
     ) -> bool:
         if self._claimed:
             return False
@@ -270,6 +275,7 @@ class ExactToolApproval:
             continuation_query=self.pending.continuation_query,
             effects=effects,
             result_integrity=result_integrity,
+            security_mode=security_mode,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -281,6 +287,7 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
+        security_mode: Any = "sandbox",
     ) -> bool:
         with self._lock:
             return self._matches_unlocked(
@@ -289,6 +296,7 @@ class ExactToolApproval:
                 tool_name=tool_name,
                 content=content,
                 workspace=workspace,
+                security_mode=security_mode,
             )
 
     def claim(
@@ -299,6 +307,7 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
+        security_mode: Any = "sandbox",
     ) -> bool:
         with self._lock:
             if not self._matches_unlocked(
@@ -307,6 +316,7 @@ class ExactToolApproval:
                 tool_name=tool_name,
                 content=content,
                 workspace=workspace,
+                security_mode=security_mode,
             ):
                 return False
             self._claimed = True
@@ -352,6 +362,7 @@ class ToolApprovalStore:
         continuation_query: Any = None,
         external_untrusted_context_seen: bool,
         capabilities: ToolCapabilities,
+        security_mode: Any = "sandbox",
     ) -> PendingToolApproval:
         now = time.time()
         effects = tuple(sorted(effect.value for effect in capabilities.effects))
@@ -371,6 +382,7 @@ class ToolApprovalStore:
             continuation_query=continuation_query,
             effects=effects,
             result_integrity=result_integrity,
+            security_mode=security_mode,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -393,6 +405,7 @@ class ToolApprovalStore:
             expires_at=now + self._ttl_seconds,
             selected_tools=tuple(payload["selected_tools"]),
             continuation_query=payload["continuation_query"],
+            security_mode=payload["security_mode"],
         )
         with self._lock:
             self._purge_expired_locked(now)

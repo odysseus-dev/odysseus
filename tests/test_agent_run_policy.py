@@ -1,5 +1,6 @@
 import time
 from collections import namedtuple
+from pathlib import Path
 
 import pytest
 
@@ -14,12 +15,28 @@ from src.tool_approvals import ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_tool
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def enabled_agent_action_gate(monkeypatch):
+    import src.tool_capabilities as tool_capabilities
+
+    monkeypatch.setattr(
+        tool_capabilities,
+        "AGENT_ACTION_APPROVAL_GATE_ENABLED",
+        True,
+    )
+
+
 def test_invalid_run_mode_fails_safe_to_sandbox():
     assert parse_agent_run_mode("made-up") is AgentRunMode.SANDBOX
     assert AgentRunPolicy.for_mode(None).mode is AgentRunMode.SANDBOX
 
 
-def test_ask_requires_exact_approval_for_code_but_not_public_read():
+def test_ask_requires_exact_approval_for_code_but_not_public_read(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("ask")
     context = ToolRunSecurityContext()
 
@@ -27,7 +44,9 @@ def test_ask_requires_exact_approval_for_code_but_not_public_read():
     assert policy.authorize("bash", context).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
 
 
-def test_sandbox_allows_code_before_external_context_then_requires_approval():
+def test_sandbox_allows_code_before_external_context_then_requires_approval(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("sandbox")
     context = ToolRunSecurityContext()
 
@@ -36,14 +55,18 @@ def test_sandbox_allows_code_before_external_context_then_requires_approval():
     assert policy.authorize("bash", context).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
 
 
-def test_sandbox_requires_approval_for_external_side_effects():
+def test_sandbox_requires_approval_for_external_side_effects(
+    enabled_agent_action_gate,
+):
     policy = AgentRunPolicy.for_mode("sandbox")
     context = ToolRunSecurityContext()
 
     assert policy.authorize("send_email", context).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
 
 
-def test_unknown_tool_requires_approval_outside_full_access():
+def test_unknown_tool_requires_approval_outside_full_access(
+    enabled_agent_action_gate,
+):
     context = ToolRunSecurityContext()
 
     assert AgentRunPolicy.for_mode("sandbox").authorize(
@@ -61,6 +84,17 @@ def test_full_access_selects_host_execution_profile():
     assert policy.authorize(
         "bash", ToolRunSecurityContext(external_untrusted_context_seen=True)
     ).outcome is AuthorizationOutcome.ALLOW_HOST
+
+
+def test_disabled_agent_action_gate_allows_actions_in_sandbox_profiles():
+    context = ToolRunSecurityContext(external_untrusted_context_seen=True)
+
+    assert AgentRunPolicy.for_mode("ask").authorize(
+        "bash", context
+    ).outcome is AuthorizationOutcome.ALLOW_SANDBOXED
+    assert AgentRunPolicy.for_mode("sandbox").authorize(
+        "send_email", context
+    ).outcome is AuthorizationOutcome.ALLOW_SANDBOXED
 
 
 def _pending(store, **overrides):
@@ -98,6 +132,14 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         workspace="/tmp/workspace",
         security_mode="ask",
     )
+    assert not grant.claim(
+        owner="alice",
+        session_id="session-1",
+        tool_name="bash",
+        content="printf exact",
+        workspace="/tmp/workspace",
+        security_mode="full_access",
+    )
     assert grant.claim(
         owner="ALICE",
         session_id="session-1",
@@ -116,7 +158,7 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
     )
 
 
-def test_approval_wrong_owner_is_destroyed_without_grant():
+def test_approval_wrong_owner_cannot_consume_grant():
     store = ToolApprovalStore()
     pending = _pending(store)
 
@@ -126,7 +168,7 @@ def test_approval_wrong_owner_is_destroyed_without_grant():
         owner="mallory",
         session_id="session-1",
     ) is None
-    assert store.peek(pending.approval_id) is None
+    assert store.peek(pending.approval_id) is pending
 
 
 def test_deny_destructively_consumes_pending_action():
@@ -169,12 +211,13 @@ def test_public_approval_payload_shows_the_complete_exact_action():
 @pytest.mark.asyncio
 async def test_dispatcher_claims_exact_approval_immediately_before_execution(
     monkeypatch,
+    tmp_path,
 ):
     import src.tool_execution as tool_execution
 
     ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
     store = ToolApprovalStore()
-    pending = _pending(store)
+    pending = _pending(store, workspace=str(tmp_path))
     grant = store.consume(
         pending.approval_id,
         decision="approve",
@@ -196,7 +239,7 @@ async def test_dispatcher_claims_exact_approval_immediately_before_execution(
         ToolBlock("bash", "printf exact"),
         session_id="session-1",
         owner="alice",
-        workspace="/tmp/workspace",
+        workspace=str(tmp_path),
         security_context=ToolRunSecurityContext(
             external_untrusted_context_seen=True
         ),
@@ -277,3 +320,13 @@ async def test_dispatcher_rejects_full_access_for_non_admin(monkeypatch):
 
     assert result["blocked"] is True
     assert "admin" in result["error"].lower()
+
+
+def test_frontend_exposes_sandbox_and_full_access_without_ask_mode():
+    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    chat = (ROOT / "static" / "js" / "chat.js").read_text(encoding="utf-8")
+
+    assert '<option value="sandbox" selected>Sandbox</option>' in index
+    assert '<option value="full_access">Full access</option>' in index
+    assert '<option value="ask">' not in index
+    assert "fd.append('security_mode', securityMode)" in chat

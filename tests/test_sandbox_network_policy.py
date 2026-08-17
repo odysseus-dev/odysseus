@@ -120,11 +120,12 @@ async def test_background_bash_inherits_network_policy(monkeypatch):
     assert seen == [
         (
             "printf networked",
-            {
-                "session_id": "session-1",
-                "cwd": "/tmp/workspace",
-                "network_profile": SandboxNetworkProfile.BROKERED_ONLY,
-            },
+                {
+                    "session_id": "session-1",
+                    "cwd": "/tmp/workspace",
+                    "execution_profile": "workspace_sandbox",
+                    "network_profile": SandboxNetworkProfile.BROKERED_ONLY,
+                },
         )
     ]
 
