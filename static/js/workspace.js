@@ -123,13 +123,14 @@ export async function vetAndSetWorkspace(path) {
   }
 }
 
-export async function clearWorkspace({ quiet = false } = {}) {
+export async function clearWorkspace({ quiet = false, localOnFailure = false } = {}) {
   try {
     await _requestJson('/api/workspace/selection', { method: 'DELETE' });
     setWorkspace('');
     if (!quiet && uiModule && uiModule.showToast) uiModule.showToast('Workspace cleared');
     return true;
   } catch (e) {
+    if (localOnFailure) setWorkspace('');
     if (uiModule && uiModule.showError) uiModule.showError(e.message || 'Could not clear workspace');
     return false;
   }
@@ -331,7 +332,7 @@ export async function openWorkspaceBrowser() {
   try {
     const state = await _getServerSelection();
     if (state.path) setWorkspace(state.path);
-    else if (state.warning) await clearWorkspace({ quiet: true });
+    else if (state.warning) await clearWorkspace({ quiet: true, localOnFailure: true });
     else setWorkspace('');
     _render(await _load(state.path || state.default_path || _defaultPath));
     if (state.warning) _setStatus(state.warning, 'error');
@@ -359,7 +360,7 @@ export function initWorkspace() {
       if (state.path) {
         setWorkspace(state.path);
       } else if (state.warning) {
-        await clearWorkspace({ quiet: true });
+        await clearWorkspace({ quiet: true, localOnFailure: true });
       } else if (cached && !state.warning) {
         // One-time migration from the old browser-only setting.
         const migrated = await vetAndSetWorkspace(cached);

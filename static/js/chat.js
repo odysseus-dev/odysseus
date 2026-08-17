@@ -3231,7 +3231,7 @@ import { loadPanel } from './panels.js';
                 const _wsPath = (json.data && json.data.path) || '';
                 import('./workspace.js').then((m) => {
                   const ws = m.default || m;
-                  if (ws && ws.clearWorkspace) ws.clearWorkspace({ quiet: true });
+                  if (ws && ws.clearWorkspace) ws.clearWorkspace({ quiet: true, localOnFailure: true });
                 });
                 uiModule.showToast(
                   `Workspace ${_wsPath || '(unknown)'} is no longer usable; the saved selection was cleared`,

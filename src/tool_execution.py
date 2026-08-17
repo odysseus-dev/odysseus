@@ -276,7 +276,10 @@ def validate_workspace(raw: str) -> tuple[Optional[str], str]:
     raw = (raw or "").strip()
     if not raw:
         return None, "Enter a folder path."
-    resolved = os.path.realpath(os.path.expanduser(raw))
+    try:
+        resolved = os.path.realpath(os.path.expanduser(raw))
+    except (OSError, ValueError):
+        return None, "Folder path is invalid."
     if not os.path.exists(resolved):
         return None, "Folder does not exist."
     if not os.path.isdir(resolved):
@@ -294,7 +297,10 @@ def validate_workspace(raw: str) -> tuple[Optional[str], str]:
 
 def workspace_path_is_sensitive(raw: str) -> bool:
     """Return whether a present or prospective workspace path is sensitive."""
-    resolved = os.path.realpath(os.path.expanduser((raw or "").strip()))
+    try:
+        resolved = os.path.realpath(os.path.expanduser((raw or "").strip()))
+    except (OSError, ValueError):
+        return True
     return bool(resolved) and _is_sensitive_path(resolved)
 
 

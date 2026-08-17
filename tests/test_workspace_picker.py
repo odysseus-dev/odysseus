@@ -70,6 +70,22 @@ def test_browse_invalid_path_reports_missing_instead_of_falling_back(workspace_a
     assert exc_info.value.detail == "Folder does not exist."
 
 
+def test_invalid_path_reports_validation_error(workspace_api):
+    with pytest.raises(HTTPException) as exc_info:
+        workspace_api["browse"](request=_request(), path="bad\x00path")
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Folder path is invalid."
+
+    with pytest.raises(HTTPException) as exc_info:
+        workspace_api["select"](
+            request=_request(),
+            body=workspace_routes.WorkspaceSelection(path="bad\x00path"),
+        )
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Folder path is invalid."
+
+
 def test_typed_existing_folder_is_selected_and_persisted(workspace_api):
     project = workspace_api["managed"] / "project"
     project.mkdir(parents=True)
@@ -131,6 +147,34 @@ def test_missing_folder_outside_managed_root_cannot_be_created(workspace_api, tm
     assert exc_info.value.status_code == 400
     assert "default workspace" in exc_info.value.detail
     assert not outside.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX no-follow creation regression")
+def test_missing_folder_creation_rejects_symlink_swap(workspace_api, tmp_path, monkeypatch):
+    managed = workspace_api["managed"]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workspace_api["browse"](request=_request(), path="")
+    target = managed / "swapped" / "project"
+
+    original_target = workspace_routes._creation_target
+
+    def swap_after_validation(raw_path):
+        projected, can_create = original_target(raw_path)
+        os.symlink(outside, managed / "swapped", target_is_directory=True)
+        return projected, can_create
+
+    monkeypatch.setattr(workspace_routes, "_creation_target", swap_after_validation)
+
+    with pytest.raises(HTTPException) as exc_info:
+        workspace_api["select"](
+            request=_request(),
+            body=workspace_routes.WorkspaceSelection(path=str(target), create=True),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert not (outside / "project").exists()
+    assert workspace_api["get"](request=_request())["path"] == ""
 
 
 def test_new_folder_button_api_creates_and_refreshes_into_folder(workspace_api):

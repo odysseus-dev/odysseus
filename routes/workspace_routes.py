@@ -57,7 +57,10 @@ def _is_within(path: str, root: str) -> bool:
 
 def _creation_target(raw_path: str) -> tuple[str, bool]:
     """Resolve a missing path and report whether it may be created safely."""
-    expanded = os.path.expanduser((raw_path or "").strip())
+    try:
+        expanded = os.path.expanduser((raw_path or "").strip())
+    except (OSError, ValueError):
+        return "", False
     if not expanded or not os.path.isabs(expanded):
         return "", False
 
@@ -87,6 +90,51 @@ def _creation_target(raw_path: str) -> tuple[str, bool]:
     )
 
 
+def _create_managed_path(target: str) -> str:
+    """Create ``target`` below the managed root without following symlinks.
+
+    The POSIX path walks from an already-open root directory and opens every
+    child with ``O_NOFOLLOW``. This closes the validation-to-creation race in
+    which a writable ancestor could otherwise be replaced with a symlink.
+    Platforms without directory-fd support retain a post-creation containment
+    check and never persist an escaped result.
+    """
+    managed_root = ensure_default_workspace()
+    candidate = os.path.abspath(target)
+    if not _is_within(candidate, managed_root):
+        raise ValueError("Folder is outside the default workspace.")
+    relative = os.path.relpath(candidate, managed_root)
+    if relative == os.curdir:
+        return managed_root
+    parts = Path(relative).parts
+    if any(part in {"", os.curdir, os.pardir} for part in parts):
+        raise ValueError("Folder path is invalid.")
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if os.name == "posix" and nofollow and directory:
+        flags = os.O_RDONLY | directory | nofollow
+        fd = os.open(managed_root, flags)
+        try:
+            for part in parts:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                next_fd = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+        finally:
+            os.close(fd)
+    else:
+        Path(candidate).mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    resolved = os.path.realpath(candidate)
+    if not _is_within(resolved, managed_root) or not os.path.isdir(resolved):
+        raise ValueError("Folder is outside the default workspace.")
+    return resolved
+
+
 def _workspace_validation(path: str) -> tuple[str | None, str]:
     from src.tool_execution import validate_workspace
 
@@ -107,7 +155,13 @@ def _workspace_validation(path: str) -> tuple[str | None, str]:
 
 def _browse_payload(target: str) -> dict:
     resolved, reason = _workspace_validation(target)
-    canonical = os.path.realpath(os.path.expanduser(target))
+    try:
+        canonical = os.path.realpath(os.path.expanduser(target))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=reason or "Folder path is invalid.",
+        ) from exc
     if not os.path.exists(canonical):
         raise HTTPException(status_code=404, detail="Folder does not exist.")
     if not os.path.isdir(canonical):
@@ -207,8 +261,8 @@ def setup_workspace_routes():
             target, can_create = _creation_target(raw)
             if body.create and can_create:
                 try:
-                    Path(target).mkdir(mode=0o700, parents=True, exist_ok=True)
-                except OSError as exc:
+                    target = _create_managed_path(target)
+                except (OSError, RuntimeError, ValueError) as exc:
                     raise HTTPException(status_code=400, detail="Could not create folder.") from exc
                 resolved, reason = _workspace_validation(target)
             elif not body.create:
@@ -269,12 +323,11 @@ def setup_workspace_routes():
         if os.path.exists(target):
             if not os.path.isdir(target):
                 raise HTTPException(status_code=409, detail="A file already uses that name.")
-        else:
-            try:
-                os.mkdir(target, mode=0o700)
-            except OSError as exc:
-                raise HTTPException(status_code=400, detail="Could not create folder.") from exc
-        return {"ok": True, "path": os.path.realpath(target), "browse": _browse_payload(target)}
+        try:
+            target = _create_managed_path(target)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Could not create folder.") from exc
+        return {"ok": True, "path": target, "browse": _browse_payload(target)}
 
     @router.get("/vet")
     def vet(request: Request, path: str = Query(default="")):
