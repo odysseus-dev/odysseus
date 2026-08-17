@@ -85,6 +85,8 @@ unscoped list/create/mutation behavior.
 
 Owner-scoped route code should use `require_user()` or equivalent policy before querying per-owner data. Current note CRUD/reorder/reminder routes do this so an auth-enabled request that reaches the route without identity returns `401` instead of falling into single-user/null-owner compatibility behavior.
 
+Scheduled task actions attribute differently again. `_execute_action` (`src/task_scheduler.py:1231`) invokes the action with `owner=task.owner` read from the stored `ScheduledTask` row, so no request and no resolved principal are in flight. Every trigger path converges there: schedule, event bus, manual run (`routes/task/task_routes.py:865`), the `manage_tasks` agent tool (`src/tools/system.py:469`), and webhook triggers (`routes/task/task_routes.py:1045`), which are unauthenticated by design with the token as the only credential and execute under the stored `task.owner`. Trigger-side ownership checks use the `if user and task.owner != user` shape, so a falsy caller skips them. Action bodies that reach owner-scoped storage must treat `task.owner` as the authority; route-level `require_user()` never runs on this path.
+
 ## API Tokens And Scoped Integrations
 
 `routes/api_token_routes.py` owns token CRUD and scope normalization. Partial updates preserve existing scopes unless new scopes are supplied, write scopes imply the matching read scopes where applicable, and Cookbook scopes are part of the normalized scope set. `app.py` caches active token prefix rows and verifies bearer tokens with bcrypt. API-token requests set `request.state.current_user = "api"` plus token owner/scopes.
