@@ -138,8 +138,11 @@ export function _serverKey(s) {
 }
 
 export function _serverByVal(val) {
-  if (val == null || val === 'local' || val === '') return null;
+  if (val == null) return null;
   const raw = String(val);
+  if (raw === 'local' || raw === '') {
+    return _envState.servers.find(_isLocalEntry) || null;
+  }
   let s = _envState.servers.find(x => _serverKey(x) === raw);
   if (!s) s = _envState.servers.find(x => x.host === raw);
   if (!s) s = _envState.servers.find(x => x.name === raw);
@@ -1896,11 +1899,12 @@ async function _fetchDependencies() {
 
 function _applyServerSelection(val) {
   if (val === 'local') {
+    const local = _serverByVal('local');
     _envState.remoteHost = '';
     _envState.remoteServerKey = '';
-    _envState.env = 'none';
-    _envState.envPath = '';
-    _envState.platform = '';
+    _envState.env = local?.env || 'none';
+    _envState.envPath = local?.envPath || '';
+    _envState.platform = local?.platform || _envState.hostPlatform || '';
   } else {
     const s = _serverByVal(val);
     if (s) {
@@ -1919,7 +1923,7 @@ function _applyServerSelection(val) {
   const _want = _currentServerValue();
   document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
     if (!sel || sel.tagName !== 'SELECT') return;
-    // Option values are host strings now ('local' for the local box).
+    // Option values are stable profile keys ('local' for the local box).
     sel.value = _want;
     // If the host isn't among this select's current options (stale options after
     // the server list changed), the browser leaves the box BLANK/grey even though
@@ -2045,26 +2049,23 @@ function _wireTabEvents(body) {
       servers.push({ name, host, port, env, envPath, color, modelDirs: dirs, downloadDir, platform });
     });
     _envState.servers = servers;
-    // Auto-default: when the user has configured EXACTLY ONE remote server
-    // and hasn't picked one yet, select it. Without this, the dropdown
-    // stays on "Local" so the eventual serve/scan/launch resolves to no
-    // remote host and the backend rejects the call with 403 (Forbidden),
-    // which read to the user as a permission bug.
-    if (!_envState.remoteHost) {
-      const remotes = servers.filter(s => !_isLocalEntry(s));
-      if (remotes.length === 1) {
-        _envState.remoteHost = remotes[0].host;
-        _envState.env = remotes[0].env || 'none';
-        _envState.envPath = remotes[0].envPath || '';
-      }
+    // Refresh the active profile from the just-read form. Local is a real
+    // profile too; treating an empty host as "no server" discarded its venv.
+    // Do not auto-select a lone remote here. An empty host means the user chose
+    // Local, while defaultServer handles intentional automatic selection.
+    const activeSrv = _envState.remoteHost
+      ? (_serverByVal(_envState.remoteServerKey || _envState.remoteHost)
+        || servers.find(s => s.host === _envState.remoteHost))
+      : _serverByVal('local');
+    if (activeSrv) {
+      _envState.env = activeSrv.env || 'none';
+      _envState.envPath = activeSrv.envPath || '';
+      _envState.platform = activeSrv.platform || (!_envState.remoteHost ? (_envState.hostPlatform || '') : '');
     }
-    const activeSrv = servers.find(s => s.host === _envState.remoteHost);
-    _envState.platform = activeSrv?.platform || '';
     localStorage.setItem('cookbook-last-state', JSON.stringify(_envStateForStorage()));
     _saveTasks(_loadTasks());
-    // Reflect the auto-default selection into every server dropdown so the
-    // UI matches the resolved host. Done in a microtask so the dropdowns
-    // exist by the time we set their .value.
+    // Reflect the active profile into every server dropdown. Done in a
+    // microtask so the dropdowns exist by the time we set their value.
     Promise.resolve().then(() => {
       const _want = _currentServerValue();
       document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
@@ -2521,19 +2522,26 @@ function _wireTabEvents(body) {
       // downloads to the wrong server. The dropdown the user sees is the truth.
       const dlSrv = document.getElementById('hwfit-dl-server');
       const srvVal = dlSrv ? dlSrv.value : 'local';
-      let host = '';
-      if (srvVal !== 'local') {
-        host = _serverByVal(srvVal)?.host || '';
+      const _hsrv = _serverByVal(srvVal) || {};
+      const host = srvVal === 'local' ? '' : (_hsrv.host || '');
+      let env = _hsrv.env || 'none';
+      const envPath = _hsrv.envPath || '';
+      if ((!env || env === 'none') && envPath) {
+        env = /(?:^|[\\/])(?:\.?venv|env)(?:[\\/]|$)|[\\/]bin[\\/]activate$|[\\/]Scripts[\\/]Activate\.ps1$/i.test(envPath) ? 'venv' : env;
       }
-      const _hsrv = _envState.servers.find(sv => sv.host === host) || {};
-      let env = host ? (_hsrv.env || 'none') : _envState.env;
-      let envPath = host ? (_hsrv.envPath || '') : _envState.envPath;
       const payload = { repo_id: repo };
       if (ollamaName) payload.backend = 'ollama';
       if (autoInclude || pickerInclude) payload.include = autoInclude || pickerInclude;
       if (_envState.hfToken && !ollamaName) payload.hf_token = _envState.hfToken;
-      if (host) { payload.remote_host = host; const _sp3 = _getPort(host); if (_sp3) payload.ssh_port = _sp3; }
-      const srvPlatform = _getPlatform(host);
+      if (host) {
+        payload.remote_host = host;
+        payload.remote_server_key = _serverKey(_hsrv);
+        if (_hsrv.name) payload.remote_server_name = _hsrv.name;
+        const _sp3 = _hsrv.port || _getPort(host);
+        if (_sp3) payload.ssh_port = _sp3;
+      }
+      if (_hsrv.downloadDir) payload.local_dir = _hsrv.downloadDir;
+      const srvPlatform = _hsrv.platform || _getPlatform(host || 'local');
       if (srvPlatform) payload.platform = srvPlatform;
       if (srvPlatform === 'windows') {
         if (env === 'venv' && envPath) {
@@ -3031,6 +3039,12 @@ function _renderRecipes() {
   if (!_localSeen) {
     _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub', platform: _envState.hostPlatform || '' });
   }
+  if (!_es.remoteHost) {
+    const local = _serverByVal('local');
+    _es.env = local?.env || 'none';
+    _es.envPath = local?.envPath || '';
+    _es.platform = local?.platform || _es.hostPlatform || '';
+  }
   if (_es.remoteHost && !_es.servers.some(s => s.host === _es.remoteHost)) {
     _es.servers.push({ host: _es.remoteHost, env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub' });
     _persistEnvState();
@@ -3395,7 +3409,12 @@ export async function open(opts) {
   if (_envState.defaultServer) {
     const _dk = _envState.defaultServer;
     if (_dk === 'local') {
-      _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
+      const _local = _serverByVal('local');
+      _envState.remoteHost = '';
+      _envState.remoteServerKey = '';
+      _envState.env = _local?.env || 'none';
+      _envState.envPath = _local?.envPath || '';
+      _envState.platform = _local?.platform || _envState.hostPlatform || '';
     } else {
       const _ds = (_envState.servers || []).find(s => s.host === _dk);
       if (_ds) { _envState.remoteHost = _ds.host; _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
