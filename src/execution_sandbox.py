@@ -268,6 +268,28 @@ def sandbox_workspace_path_is_sensitive(workspace: str) -> bool:
     return False
 
 
+def _application_data_workspace_reason(workspace: str) -> str:
+    """Reject app-owned stores while allowing the dedicated managed root."""
+    from src.constants import (
+        AGENT_WORKSPACE_DIR,
+        DATA_DIR,
+        LOGS_DIR,
+        MAIL_ATTACHMENTS_DIR,
+    )
+
+    agent_workspace = os.path.realpath(AGENT_WORKSPACE_DIR)
+    if _is_within(workspace, agent_workspace):
+        return ""
+    protected_roots = {
+        os.path.realpath(DATA_DIR),
+        os.path.realpath(LOGS_DIR),
+        os.path.realpath(MAIL_ATTACHMENTS_DIR),
+    }
+    if any(_is_within(workspace, protected) for protected in protected_roots):
+        return "Odysseus application data cannot be selected as an agent workspace."
+    return ""
+
+
 def validate_sandbox_workspace_path(workspace: str) -> tuple[str | None, str]:
     """Apply process-sandbox path policy without creating the directory."""
     if not isinstance(workspace, str) or not workspace.strip():
@@ -291,6 +313,9 @@ def validate_sandbox_workspace_path(workspace: str) -> tuple[str | None, str]:
     sensitive_root = Path(resolved).name.casefold() in _SENSITIVE_WORKSPACE_ROOT_NAMES
     if sensitive_root:
         return None, f"Refusing sensitive sandbox workspace root: {resolved}"
+    application_data_reason = _application_data_workspace_reason(resolved)
+    if application_data_reason:
+        return None, application_data_reason
     if (
         resolved in _BROAD_WORKSPACE_ROOTS
         or exposes_login_home
@@ -456,14 +481,15 @@ def _is_within(path: str, root: str) -> bool:
 def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
     """Hide application-owned stores even inside a broader selected workspace."""
     from src.constants import (
-        AGENT_WORKSPACE_DIR,
         APP_DB,
         DATA_DIR,
         LOGS_DIR,
         MAIL_ATTACHMENTS_DIR,
     )
 
-    agent_workspace = os.path.realpath(AGENT_WORKSPACE_DIR)
+    application_data_reason = _application_data_workspace_reason(workspace)
+    if application_data_reason:
+        raise SandboxUnavailable(application_data_reason)
     protected_roots = {
         os.path.realpath(DATA_DIR),
         os.path.realpath(LOGS_DIR),
@@ -480,13 +506,6 @@ def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
     args: list[str] = []
     hidden_roots: list[str] = []
     for protected in sorted(top_level_roots):
-        if _is_within(workspace, protected):
-            if _is_within(workspace, agent_workspace):
-                continue
-            raise SandboxUnavailable(
-                "Odysseus application data cannot be selected as an agent "
-                "process workspace."
-            )
         if _is_within(protected, workspace) and os.path.isdir(protected):
             args.extend(("--tmpfs", protected))
             hidden_roots.append(protected)

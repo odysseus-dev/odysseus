@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 import routes.prefs_routes as prefs_routes
 import routes.workspace_routes as workspace_routes
+import src.constants as constants
 
 
 def _request(*, site="same-origin"):
@@ -29,6 +30,10 @@ def workspace_api(monkeypatch, tmp_path):
     managed = tmp_path / "runtime" / "data" / "agent_workspace"
     prefs_file = tmp_path / "runtime" / "data" / "user_prefs.json"
     monkeypatch.setattr(workspace_routes, "AGENT_WORKSPACE_DIR", str(managed))
+    monkeypatch.setattr(constants, "AGENT_WORKSPACE_DIR", str(managed))
+    monkeypatch.setattr(constants, "DATA_DIR", str(managed.parent))
+    monkeypatch.setattr(constants, "LOGS_DIR", str(managed.parent / "logs"))
+    monkeypatch.setattr(constants, "MAIL_ATTACHMENTS_DIR", str(managed.parent / "mail"))
     monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
     monkeypatch.setattr(workspace_routes, "get_current_user", lambda _request: "admin")
     monkeypatch.setattr(
@@ -58,6 +63,16 @@ def test_default_workspace_is_created_and_browsed(workspace_api):
     assert out["default_path"] == os.path.realpath(managed)
     assert out["selectable"] is True
     assert out["can_create_folder"] is True
+
+
+def test_application_data_folder_is_visibly_unselectable(workspace_api):
+    private = workspace_api["managed"].parent / "private"
+    private.mkdir(parents=True)
+
+    out = workspace_api["browse"](request=_request(), path=str(private))
+
+    assert out["selectable"] is False
+    assert "application data" in out["selectable_reason"].lower()
 
 
 def test_browse_invalid_path_reports_missing_instead_of_falling_back(workspace_api):

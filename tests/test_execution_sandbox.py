@@ -723,7 +723,13 @@ def test_sandbox_allows_only_dedicated_workspace_below_data(
     monkeypatch.setattr(constants, "AGENT_WORKSPACE_DIR", str(agent_dir))
     monkeypatch.setattr(constants, "MAIL_ATTACHMENTS_DIR", str(data_dir / "mail"))
 
+    resolved, reason = validate_sandbox_workspace_path(str(agent_dir))
+    assert resolved == os.path.realpath(agent_dir)
+    assert reason == ""
     assert sandbox_command(["/bin/true"], workspace=str(agent_dir))
+    resolved, reason = validate_sandbox_workspace_path(str(private_dir))
+    assert resolved is None
+    assert "application data" in reason.lower()
     with pytest.raises(SandboxUnavailable):
         sandbox_command(["/bin/true"], workspace=str(private_dir))
 
