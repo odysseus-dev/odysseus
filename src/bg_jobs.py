@@ -123,6 +123,10 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     server restart. The process is put in its own session (setsid) so it
     outlives the request/stream that started it.
     """
+    if IS_WINDOWS:
+        raise RuntimeError(
+            "Sandboxed agent execution requires Linux with bubblewrap."
+        )
     _JOBS_DIR.mkdir(parents=True, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]
     log_path = _JOBS_DIR / f"{job_id}.log"

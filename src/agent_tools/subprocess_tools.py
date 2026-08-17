@@ -314,6 +314,15 @@ class BashTool:
         subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
         workspace = agent_cwd()
+        if IS_WINDOWS:
+            return {
+                "error": (
+                    "bash: Sandboxed agent execution requires Linux with "
+                    "bubblewrap."
+                ),
+                "exit_code": 1,
+                "blocked": True,
+            }
         # tmux is a POSIX persistence path. A stray MSYS/Cygwin tmux.exe on
         # native Windows must not bypass the platform-specific launcher.
         if session_id and not IS_WINDOWS and shutil.which("tmux"):
@@ -385,6 +394,15 @@ class PythonTool:
         progress_cb = ctx.get("progress_cb")
         subproc_env = ctx.get("subproc_env")
         workspace = agent_cwd()
+        if IS_WINDOWS:
+            return {
+                "error": (
+                    "python: Sandboxed agent execution requires Linux with "
+                    "bubblewrap."
+                ),
+                "exit_code": 1,
+                "blocked": True,
+            }
         try:
             if IS_WINDOWS:
                 argv = [sys.executable, "-I", "-c", content]
