@@ -28,6 +28,11 @@ from src.tool_security import (
     owner_is_admin_or_single_user,
 )
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
+from src.agent_run_policy import (
+    AgentRunPolicy,
+    AuthorizationOutcome,
+    ExecutionProfile,
+)
 from src.tool_approvals import ExactToolApproval
 from src.execution_sandbox import SandboxNetworkProfile
 from src.tool_policy import ToolPolicy
@@ -464,6 +469,7 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_SANDBOX,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
@@ -473,6 +479,7 @@ async def _call_mcp_tool(
             tool,
             content,
             progress_cb=progress_cb,
+            execution_profile=execution_profile,
             network_profile=network_profile,
         ) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
@@ -487,6 +494,7 @@ async def _call_mcp_tool(
             tool,
             content,
             progress_cb=progress_cb,
+            execution_profile=execution_profile,
             network_profile=network_profile,
         )
         if fallback:
@@ -548,6 +556,7 @@ async def _direct_fallback(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
+    execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_SANDBOX,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Optional[Dict]:
     try:
@@ -555,6 +564,7 @@ async def _direct_fallback(
             "progress_cb": progress_cb,
             "session_id": session_id,
             "owner": owner,
+            "execution_profile": execution_profile.value,
             "network_profile": network_profile,
         }
 
@@ -609,6 +619,7 @@ async def execute_tool_block(
         | _MissingToolSecurityContext
     ) = _MISSING_TOOL_SECURITY_CONTEXT,
     exact_approval: Optional[ExactToolApproval] = None,
+    run_policy: Optional[AgentRunPolicy] = None,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
@@ -631,12 +642,34 @@ async def execute_tool_block(
             "NO_TOOL_SECURITY_CONTEXT"
         )
 
+    execution_profile = ExecutionProfile.WORKSPACE_SANDBOX
+    if run_policy is not None:
+        if (
+            run_policy.execution_profile is ExecutionProfile.HOST_FULL_ACCESS
+            and not owner_is_admin_or_single_user(owner)
+        ):
+            return (
+                f"{getattr(block, 'tool_type', None)}: BLOCKED",
+                {
+                    "error": "Host full-access execution requires an admin user.",
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "agent_run_policy",
+                },
+            )
+        execution_profile = run_policy.execution_profile
+
     approval_claimed = False
     if exact_approval is not None:
         if (
             not isinstance(security_context, ToolRunSecurityContext)
-            or not security_context.external_untrusted_context_seen
-            or not exact_approval.pending.external_untrusted_context_seen
+            or (
+                run_policy is None
+                and (
+                    not security_context.external_untrusted_context_seen
+                    or not exact_approval.pending.external_untrusted_context_seen
+                )
+            )
         ):
             return (
                 f"{getattr(block, 'tool_type', None)}: BLOCKED",
@@ -688,6 +721,7 @@ async def execute_tool_block(
             tool_name=getattr(block, "tool_type", None),
             content=getattr(block, "content", None),
             workspace=workspace,
+            security_mode=(run_policy.mode if run_policy is not None else "sandbox"),
         )
         if not approval_claimed:
             return (
@@ -701,19 +735,41 @@ async def execute_tool_block(
             )
 
     if isinstance(security_context, ToolRunSecurityContext) and not approval_claimed:
-        decision = security_context.decision_for(
-            getattr(block, "tool_type", None),
-            getattr(block, "content", None),
-        )
-        if not decision.allowed:
-            logger.warning(
-                "External-context policy blocked tool=%r",
+        if run_policy is not None:
+            authorization = run_policy.authorize(
                 getattr(block, "tool_type", None),
+                security_context,
             )
-            return blocked_tool_result(
+            if authorization.outcome is AuthorizationOutcome.REQUIRE_APPROVAL:
+                return (
+                    f"{getattr(block, 'tool_type', None)}: APPROVAL REQUIRED",
+                    {
+                        "error": authorization.reason or "Exact user approval required.",
+                        "exit_code": 1,
+                        "blocked": True,
+                        "approval_required": True,
+                        "policy": "agent_run_policy",
+                    },
+                )
+            if authorization.outcome is AuthorizationOutcome.DENY:
+                return blocked_tool_result(
+                    getattr(block, "tool_type", None),
+                    authorization.reason or "Tool denied by run policy.",
+                )
+        else:
+            decision = security_context.decision_for(
                 getattr(block, "tool_type", None),
-                decision.reason or "Tool blocked by external-context policy.",
+                getattr(block, "content", None),
             )
+            if not decision.allowed:
+                logger.warning(
+                    "External-context policy blocked tool=%r",
+                    getattr(block, "tool_type", None),
+                )
+                return blocked_tool_result(
+                    getattr(block, "tool_type", None),
+                    decision.reason or "Tool blocked by external-context policy.",
+                )
 
     token = _active_workspace.set(workspace or None)
     try:
@@ -740,6 +796,7 @@ async def execute_tool_block(
                 if approval_claimed
                 else None
             ),
+            execution_profile=execution_profile,
         )
         if isinstance(security_context, ToolRunSecurityContext):
             security_context.observe_tool_result(
@@ -763,6 +820,7 @@ async def _execute_tool_block_impl(
     approved_document_id: Optional[str] = None,
     approved_document_version: Optional[int] = None,
     approved_document_digest: Optional[str] = None,
+    execution_profile: ExecutionProfile = ExecutionProfile.WORKSPACE_SANDBOX,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -884,6 +942,7 @@ async def _execute_tool_block_impl(
                     _bg_cmd,
                     session_id=session_id,
                     cwd=agent_cwd(),
+                    execution_profile=execution_profile.value,
                     network_profile=network_profile,
                 )
             except Exception as exc:
@@ -941,23 +1000,41 @@ async def _execute_tool_block_impl(
             tool,
             content,
             progress_cb=progress_cb,
+            execution_profile=execution_profile,
             network_profile=network_profile,
         )
     elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+        result = await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            execution_profile=execution_profile,
+        ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool in ("apply_patch", "todowrite"):
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}" if first_line else tool
-        result = await _direct_fallback(tool, content, session_id=session_id, owner=owner) \
+        result = await _direct_fallback(
+            tool,
+            content,
+            session_id=session_id,
+            owner=owner,
+            execution_profile=execution_profile,
+        ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_bg_jobs":
         # Inspect/kill detached `bash` jobs; needs session_id to scope to chat.
         desc = f"manage_bg_jobs: {content.split(chr(10))[0][:80]}"
-        result = await _direct_fallback(tool, content, session_id=session_id, owner=owner) \
+        result = await _direct_fallback(
+            tool,
+            content,
+            session_id=session_id,
+            owner=owner,
+            execution_profile=execution_profile,
+        ) \
             or {"error": "manage_bg_jobs: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
@@ -1011,7 +1088,12 @@ async def _execute_tool_block_impl(
     elif tool in ("manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "manage_settings"):
         # Registry-dispatched (agent_tools.admin_tools); owner threaded for ownership/admin checks.
         desc = tool
-        result = await _direct_fallback(tool, content, owner=owner) \
+        result = await _direct_fallback(
+            tool,
+            content,
+            owner=owner,
+            execution_profile=execution_profile,
+        ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_notes":
         desc = "manage_notes"
@@ -1065,7 +1147,11 @@ async def _execute_tool_block_impl(
         desc = "edit_image"
         result = await do_edit_image(content, owner=owner)
     elif tool == "edit_file":
-        result = await _direct_fallback(tool, content) or {"error": "edit failed", "exit_code": 1}
+        result = await _direct_fallback(
+            tool,
+            content,
+            execution_profile=execution_profile,
+        ) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
     elif tool == "trigger_research":
         desc = "trigger_research"
@@ -1158,6 +1244,7 @@ async def _execute_tool_block_impl(
             tool,
             content,
             progress_cb=progress_cb,
+            execution_profile=execution_profile,
             network_profile=network_profile,
         )
 

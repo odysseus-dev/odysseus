@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
     POST_EXTERNAL_BLOCKED_EFFECTS,
     ToolCapabilities,
@@ -140,6 +141,12 @@ class AgentRunPolicy:
         if self.mode is AgentRunMode.FULL_ACCESS:
             return ToolAuthorization(
                 AuthorizationOutcome.ALLOW_HOST,
+                capabilities=capabilities,
+            )
+
+        if not tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED:
+            return ToolAuthorization(
+                AuthorizationOutcome.ALLOW_SANDBOXED,
                 capabilities=capabilities,
             )
 

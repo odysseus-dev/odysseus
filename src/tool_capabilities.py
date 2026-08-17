@@ -624,7 +624,6 @@ class ToolRunSecurityContext:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     external_untrusted_context_seen: bool = False
     external_sources: list[str] = field(default_factory=list)
-    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     # Task-scope approval sets this for the resumed in-memory run. Chat-scope
     # approval is projected from the server-owned session history marker below.
     # The bypass affects only this automatic gate; current tool policy, ownership,
