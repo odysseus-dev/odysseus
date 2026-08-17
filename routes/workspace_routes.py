@@ -284,8 +284,9 @@ def setup_workspace_routes():
                 status_code=400,
                 detail=reason or "Folder cannot be used as a workspace.",
             )
+        browse_payload = _browse_payload(resolved)
         _save_selected_workspace(owner, resolved)
-        return {"ok": True, "path": resolved, "browse": _browse_payload(resolved)}
+        return {"ok": True, "path": resolved, "browse": browse_payload}
 
     @router.delete("/selection")
     def clear_selection(request: Request):

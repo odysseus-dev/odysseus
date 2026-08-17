@@ -119,6 +119,34 @@ def test_typed_existing_folder_is_selected_and_persisted(workspace_api):
     assert stored["_users"]["admin"]["agent_workspace"] == os.path.realpath(project)
 
 
+def test_selection_is_not_persisted_when_folder_refresh_fails(workspace_api, monkeypatch):
+    original = workspace_api["managed"] / "original"
+    unreadable = workspace_api["managed"] / "unreadable"
+    original.mkdir(parents=True)
+    unreadable.mkdir()
+    workspace_api["select"](
+        request=_request(),
+        body=workspace_routes.WorkspaceSelection(path=str(original)),
+    )
+    real_browse_payload = workspace_routes._browse_payload
+
+    def fail_unreadable(target):
+        if os.path.realpath(target) == os.path.realpath(unreadable):
+            raise HTTPException(status_code=403, detail="Folder cannot be read.")
+        return real_browse_payload(target)
+
+    monkeypatch.setattr(workspace_routes, "_browse_payload", fail_unreadable)
+
+    with pytest.raises(HTTPException) as exc_info:
+        workspace_api["select"](
+            request=_request(),
+            body=workspace_routes.WorkspaceSelection(path=str(unreadable)),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert workspace_api["get"](request=_request())["path"] == os.path.realpath(original)
+
+
 def test_missing_managed_folder_offers_then_creates_and_selects(workspace_api):
     project = workspace_api["managed"] / "new" / "project"
 
