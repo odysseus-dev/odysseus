@@ -55,7 +55,7 @@ Reserved usernames include request-only sentinels `internal-tool`, `api`, `demo`
 
 Public/auth-exempt surfaces are limited to setup, signup/login/logout/status, feature/settings/integration preset reads, health/version/login, `/static/*`, and task webhook trigger paths. `routes/task/task_routes.py` owns validation of `POST /api/tasks/{task_id}/webhook/{token}` path credentials.
 
-Login issues an `HttpOnly`, `SameSite=Lax` cookie, with `SECURE_COOKIES` opt-in and a seven-day max age when "remember" is enabled. TOTP is checked before session issuance. Logout, password changes, user deletion, rename flows, expired sessions, and deleted-user sessions must keep revocation/migration behavior intact.
+Login issues an `HttpOnly`, `SameSite=Lax` cookie with a seven-day max age when "remember" is enabled. `_secure_cookie()` (`routes/auth_routes.py:89`) decides the `Secure` attribute: an explicit `SECURE_COOKIES` of `true` or `false` is authoritative, and any other value, including unset and the present-but-empty value docker-compose injects, derives it from the request, marking the cookie `Secure` when the connection scheme or the first `X-Forwarded-Proto` hop is https. TOTP is checked before session issuance. Logout, password changes, user deletion, rename flows, expired sessions, and deleted-user sessions must keep revocation/migration behavior intact.
 
 Deleting a user revokes that user's browser sessions and API-token rows, then the admin delete route invalidates the in-memory bearer-token cache so already-cached tokens stop authenticating.
 
