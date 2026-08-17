@@ -1107,6 +1107,47 @@ def test_get_api_models_marks_picker_as_pinned_only(monkeypatch):
     assert by_id["anthropic/claude-sonnet-4"]["is_pinned"] is False
 
 
+def test_get_fresh_api_models_does_not_mark_cached_inventory_as_pinned(monkeypatch):
+    ep = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        cached_models=json.dumps(["openai/gpt-image-1", "anthropic/claude-sonnet-4"]),
+        pinned_models=None,
+    )
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints/{ep_id}/models", "GET")
+
+    result = endpoint("ep1", _PinnedFakeRequest(), SimpleNamespace(headers={}))
+
+    assert [row["id"] for row in result] == [
+        "openai/gpt-image-1",
+        "anthropic/claude-sonnet-4",
+    ]
+    assert all(row["picker_requires_pinning"] is True for row in result)
+    assert all(row["is_pinned"] is False for row in result)
+
+
+def test_get_legacy_api_models_preserves_hidden_selection_as_pinned(monkeypatch):
+    ep = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        cached_models=json.dumps(["m1", "m2", "m3"]),
+        hidden_models=json.dumps(["m2"]),
+        pinned_models=None,
+    )
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints/{ep_id}/models", "GET")
+
+    result = endpoint("ep1", _PinnedFakeRequest(), SimpleNamespace(headers={}))
+
+    by_id = {row["id"]: row for row in result}
+    assert by_id["m1"]["is_pinned"] is True
+    assert by_id["m2"]["is_pinned"] is False
+    assert by_id["m3"]["is_pinned"] is True
+
+
 def test_reprobe_preserves_pinned_models(monkeypatch):
     ep = _make_endpoint(pinned_models=json.dumps(["deploy-1"]))
     db = _PinnedFakeDb([ep])

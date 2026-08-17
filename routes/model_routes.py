@@ -2342,9 +2342,7 @@ def setup_model_routes(model_discovery):
                 else:
                     response.headers["X-Model-Refresh-Status"] = "failed"
                     response.headers["X-Model-Refresh-Warning"] = "Model refresh failed or returned no models; kept cached models."
-            pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
-            if picker_requires_pinning and not _has_explicit_pinned_models(ep):
-                pinned = _legacy_visible_api_models(ep)
+            _, pinned = _picker_models_for_endpoint(ep, base, kind)
             pinned_set = set(pinned)
             return [
                 {
