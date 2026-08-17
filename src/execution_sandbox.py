@@ -315,12 +315,14 @@ def sandbox_command(
     workspace: str,
     readonly_files: Mapping[str, str] | None = None,
     extra_environment: Mapping[str, str] | None = None,
+    allow_network: bool = False,
 ) -> list[str]:
-    """Build a positive-mount, networkless bubblewrap command.
+    """Build a positive-mount bubblewrap command.
 
     `readonly_files` maps host source files to absolute paths inside the
     sandbox.  It is intended for server-generated command files, never broad
-    directories.
+    directories. Network access remains isolated unless the caller explicitly
+    enables it.
     """
     if not command or not all(isinstance(part, str) for part in command):
         raise SandboxUnavailable("Sandbox command must be a non-empty argv list.")
@@ -349,6 +351,10 @@ def sandbox_command(
         "usr/lib",
         "/lib",
     ]
+    if allow_network:
+        # Retain only the network namespace; every other namespace requested by
+        # --unshare-all stays isolated.
+        args.append("--share-net")
     if os.path.exists("/usr/lib64"):
         args.extend(("--symlink", "usr/lib64", "/lib64"))
     args.extend(

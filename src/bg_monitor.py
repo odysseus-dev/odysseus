@@ -36,7 +36,7 @@ def _background_result_message(rec):
     return untrusted_context_message("background job output", inject)
 
 
-async def _drain_agent(sess, messages):
+async def _drain_agent(sess, messages, *, allow_network: bool = False):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
@@ -51,6 +51,7 @@ async def _drain_agent(sess, messages):
         session_id=sess.id,
         max_rounds=_FOLLOWUP_MAX_ROUNDS,
         owner=getattr(sess, "owner", None),
+        allow_network=allow_network,
     ):
         if not chunk.startswith("data: "):
             continue
@@ -121,7 +122,11 @@ async def _run_followup(rec: dict) -> bool:
     context = sess.get_context_messages()
     context.append(_background_result_message(rec))
 
-    full, tool_events = await _drain_agent(sess, context)
+    full, tool_events = await _drain_agent(
+        sess,
+        context,
+        allow_network=bool(rec.get("allow_network", False)),
+    )
 
     # Persist ONLY the assistant continuation so it renders as a normal agent
     # turn — a standard chat bubble plus `tool_events` that the frontend

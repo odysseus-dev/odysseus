@@ -2198,6 +2198,10 @@ def setup_chat_routes(
                     elif _explicit_browser_intent:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
 
+                    # For now, Bubblewrap networking follows the existing user
+                    # web toggle. This mapping may change in the future; keep
+                    # every other toggle's behavior unchanged for now.
+                    _allow_sandbox_network = _search_enabled
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,
@@ -2235,6 +2239,7 @@ def setup_chat_routes(
                             )
                         ),
                         exact_approval=exact_tool_approval,
+                        allow_network=_allow_sandbox_network,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

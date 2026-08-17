@@ -115,8 +115,13 @@ def _pid_alive(pid: Optional[int]) -> bool:
     return pid_alive(pid)
 
 
-def launch(command: str, session_id: str, cwd: Optional[str] = None,
-           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
+def launch(
+    command: str,
+    session_id: str,
+    cwd: Optional[str] = None,
+    max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
+    allow_network: bool = False,
+) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
     Output + the final exit code are written to files so status survives a
@@ -168,6 +173,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
             ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
             workspace=cwd or "",
             readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
+            allow_network=allow_network,
         )
         argv = [
             sys.executable,
@@ -201,6 +207,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "ended_at": None,
         "exit_code": None,
         "max_runtime_s": max_runtime_s,
+        "allow_network": bool(allow_network),
         "followed_up": False,       # has the agent been re-invoked with the result?
         "log_path": str(log_path),
         "exit_path": str(exit_path),

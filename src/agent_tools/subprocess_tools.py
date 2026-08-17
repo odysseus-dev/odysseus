@@ -45,12 +45,18 @@ async def _create_bash_subprocess(command: str, **kwargs):
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
-def _tmux_session_name(session_id: Optional[str], workspace: str = "") -> str:
+def _tmux_session_name(
+    session_id: Optional[str],
+    workspace: str = "",
+    *,
+    allow_network: bool = False,
+) -> str:
     raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(session_id or "default")).strip("-")
     workspace_key = hashlib.sha256(
         os.path.realpath(workspace or ".").encode("utf-8", errors="replace")
     ).hexdigest()[:10]
-    return f"ody-agent-sbx-v1-{raw[:60] or 'default'}-{workspace_key}"
+    network_key = "net" if allow_network else "nonet"
+    return f"ody-agent-sbx-v1-{raw[:60] or 'default'}-{workspace_key}-{network_key}"
 
 
 async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
@@ -145,11 +151,15 @@ async def _run_tmux_bash(
     cwd: str,
     timeout: float,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    allow_network: bool = False,
 ) -> Tuple[str, str, Optional[int], bool]:
-    name = _tmux_session_name(session_id, cwd)
+    # Network policy is part of the persistent session identity so a tmux shell
+    # created with networking cannot be reused after the user disables it.
+    name = _tmux_session_name(session_id, cwd, allow_network=allow_network)
     shell_argv = sandbox_command(
         ["/bin/bash", "--noprofile", "--norc"],
         workspace=cwd,
+        allow_network=allow_network,
     )
     await _ensure_tmux_session(name, cwd, shell_argv)
 
@@ -313,6 +323,7 @@ class BashTool:
         progress_cb = ctx.get("progress_cb")
         subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
+        allow_network = bool(ctx.get("allow_network", False))
         workspace = agent_cwd()
         if IS_WINDOWS:
             return {
@@ -332,6 +343,7 @@ class BashTool:
                 cwd=workspace,
                 timeout=DEFAULT_BASH_TIMEOUT,
                 progress_cb=progress_cb,
+                allow_network=allow_network,
             )
             if timed_out:
                 return {
@@ -339,7 +351,11 @@ class BashTool:
                     "exit_code": 124,
                     "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
                     "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-                    "tmux_session": _tmux_session_name(str(session_id), workspace),
+                    "tmux_session": _tmux_session_name(
+                        str(session_id),
+                        workspace,
+                        allow_network=allow_network,
+                    ),
                 }
             output = stdout.rstrip()
             err = stderr.rstrip()
@@ -348,7 +364,11 @@ class BashTool:
             return {
                 "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
                 "exit_code": rc or 0,
-                "tmux_session": _tmux_session_name(str(session_id), workspace),
+                "tmux_session": _tmux_session_name(
+                    str(session_id),
+                    workspace,
+                    allow_network=allow_network,
+                ),
             }
 
         try:
@@ -364,6 +384,7 @@ class BashTool:
                 argv = sandbox_command(
                     ["/bin/bash", "--noprofile", "--norc", "-c", content],
                     workspace=workspace,
+                    allow_network=allow_network,
                 )
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
@@ -393,6 +414,7 @@ class PythonTool:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
         subproc_env = ctx.get("subproc_env")
+        allow_network = bool(ctx.get("allow_network", False))
         workspace = agent_cwd()
         if IS_WINDOWS:
             return {
@@ -411,6 +433,7 @@ class PythonTool:
                 argv = sandbox_command(
                     [sandbox_python_executable(), "-I", "-c", content],
                     workspace=workspace,
+                    allow_network=allow_network,
                 )
                 process_env = environment_for_sandbox_launcher()
         except SandboxUnavailable as exc:

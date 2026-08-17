@@ -3440,6 +3440,7 @@ async def stream_agent_loop(
     _is_teacher_run: bool = False,
     history_session=None,
     defer_context_shaping: bool = False,
+    allow_network: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -4547,6 +4548,7 @@ async def stream_agent_loop(
                     workspace=workspace,
                     security_context=run_security,
                     exact_approval=exact_approval,
+                    allow_network=allow_network,
                 )
             finally:
                 await approved_progress_q.put(None)
@@ -5768,6 +5770,7 @@ async def stream_agent_loop(
                             progress_cb=_push_progress,
                             workspace=workspace,
                             security_context=run_security,
+                            allow_network=allow_network,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
@@ -6412,6 +6415,7 @@ async def stream_agent_loop(
                 tool_policy=tool_policy,
                 active_document=active_document,
                 active_email=active_email,
+                allow_network=allow_network,
             ):
                 yield evt
         except Exception as _esc_err:

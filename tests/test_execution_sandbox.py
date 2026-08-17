@@ -34,13 +34,14 @@ requires_bubblewrap = pytest.mark.skipif(
 )
 
 
-def test_sandbox_argv_is_positive_mount_networkless_and_clearenv(tmp_path):
+def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
     argv = sandbox_command(["/bin/bash", "-c", "true"], workspace=str(workspace))
 
     assert "--unshare-all" in argv
+    assert "--share-net" not in argv
     assert "--clearenv" in argv
     assert "/usr/bin/prlimit" in argv
     assert "--nproc=256" in argv
@@ -55,6 +56,21 @@ def test_sandbox_argv_is_positive_mount_networkless_and_clearenv(tmp_path):
     ]
     assert environment_for_sandbox_launcher() == {}
     assert "OPENAI_API_KEY" not in argv
+
+
+def test_sandbox_argv_shares_only_network_when_explicitly_enabled(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    argv = sandbox_command(
+        ["/bin/bash", "-c", "true"],
+        workspace=str(workspace),
+        allow_network=True,
+    )
+
+    assert "--unshare-all" in argv
+    assert "--share-net" in argv
+    assert "--clearenv" in argv
 
 
 def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
@@ -289,6 +305,56 @@ def test_sandbox_network_namespace_has_no_external_route(tmp_path):
         )
 
     assert completed.returncode == 0, completed.stderr
+
+
+@requires_bubblewrap
+def test_sandbox_can_share_network_namespace_when_enabled(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        code = (
+            "import socket; "
+            "s=socket.socket(); s.settimeout(1); "
+            f"s.connect(('127.0.0.1', {port}))"
+        )
+        argv = sandbox_command(
+            ["/usr/bin/python3", "-I", "-c", code],
+            workspace=str(workspace),
+            allow_network=True,
+        )
+
+        completed = subprocess.run(
+            argv,
+            cwd=str(workspace),
+            env={},
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_tmux_session_identity_includes_network_policy(tmp_path):
+    from src.agent_tools.subprocess_tools import _tmux_session_name
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    isolated = _tmux_session_name("session-1", str(workspace))
+    networked = _tmux_session_name(
+        "session-1",
+        str(workspace),
+        allow_network=True,
+    )
+
+    assert isolated != networked
+    assert isolated.endswith("-nonet")
+    assert networked.endswith("-net")
 
 
 @requires_bubblewrap
