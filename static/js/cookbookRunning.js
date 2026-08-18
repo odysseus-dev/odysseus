@@ -1062,14 +1062,31 @@ function _winSessionStopTreePs(task) {
   const sid = task.sessionId;
   const pidPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.pid')`;
   const artifactPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.*')`;
-  // Capture the full Win32 tree before killing anything. taskkill /T follows
-  // native Windows process relationships more reliably than recursive
-  // Stop-Process through Git Bash. Trying every captured PID also covers the
-  // case where the recorded wrapper exited but llama-server still points at
-  // that former parent. Keep the PID and logs when any process survives so the
-  // UI can retry instead of losing its only handle to the live GPU process.
-  const stopTree = `$targets = [System.Collections.Generic.List[int]]::new(); function Add-Tree([int]$Id) { Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Add-Tree ([int]$_.ProcessId) }; if (-not $targets.Contains($Id)) { $targets.Add($Id) } }`;
-  return `${stopTree}; $p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -notmatch '^\\d+$') { Write-Error 'Missing Windows session PID'; exit 1 }; Add-Tree ([int]$p); foreach ($target in @($targets)) { if (Get-Process -Id $target -ErrorAction SilentlyContinue) { & taskkill.exe /PID $target /T /F 2>$null | Out-Null } }; Start-Sleep -Milliseconds 250; $alive = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if ($alive.Count -gt 0) { Write-Error ('Processes still alive: ' + ($alive -join ',')); exit 1 }; Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0`;
+  // The LISTENING serve port is the source of truth for "is the model still
+  // up", not the recorded PID. That PID is only a Git Bash wrapper in the
+  // launch chain, never llama-server.exe itself: a native binary started
+  // through the bash runner (or a ~/bin shim that `exec`s it) is reparented
+  // into a separate Win32 subtree, so a tree walk from the wrapper PID can miss
+  // the live GPU process and then wrongly report a clean stop. Kill the port
+  // owner first (that is the real server), fold in the recorded wrapper tree to
+  // clean up logs/children, then verify against the port — never the wrapper
+  // alone. Keep the PID/artifacts while the port stays bound so the UI retries
+  // instead of losing its only handle to the live GPU process.
+  const portMatch = task?.payload?._cmd?.match(/--port[=\s]+(\d+)/);
+  const port = portMatch ? portMatch[1] : '';
+  const addTree = `$targets = [System.Collections.Generic.List[int]]::new(); function Add-Tree([int]$Id) { if ($Id -le 0) { return }; Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Add-Tree ([int]$_.ProcessId) }; if (-not $targets.Contains($Id)) { $targets.Add($Id) } }`;
+  const portOwners = port
+    ? `$port = ${port}; foreach ($o in @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique)) { Add-Tree ([int]$o) }; `
+    : `$port = 0; `;
+  const recordedPid = `$p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Add-Tree ([int]$p) }; `;
+  const portBound = `($port -gt 0 -and @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue).Count -gt 0)`;
+  return `${addTree}; ${portOwners}${recordedPid}`
+    + `if ($targets.Count -eq 0) { if ($port -le 0) { Write-Error 'No serve port or recorded PID to stop'; exit 1 }; if (${portBound}) { Write-Error ('Serve port ' + $port + ' bound but owner unresolved'); exit 1 }; Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0 }; `
+    + `foreach ($target in @($targets)) { if (Get-Process -Id $target -ErrorAction SilentlyContinue) { & taskkill.exe /PID $target /T /F 2>$null | Out-Null } }; `
+    + `Start-Sleep -Milliseconds 250; `
+    + `if (${portBound}) { Write-Error ('Serve port ' + $port + ' still bound after kill'); exit 1 }; `
+    + `$alive = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if ($alive.Count -gt 0) { Write-Error ('Processes still alive: ' + ($alive -join ',')); exit 1 }; `
+    + `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0`;
 }
 
 export function _tmuxGracefulKill(task) {
