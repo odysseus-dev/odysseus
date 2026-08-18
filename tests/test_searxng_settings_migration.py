@@ -8,6 +8,14 @@ from pathlib import Path
 import pytest
 import yaml
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "SearXNG settings migration relies on POSIX-only os.fchown and "
+        "os.O_DIRECTORY; the migration script runs only inside the Linux "
+        "SearXNG container and is not exercised on native Windows."
+    ),
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATION = ROOT / "scripts" / "migrate_searxng_settings.py"
