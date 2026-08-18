@@ -622,6 +622,7 @@ def test_sandbox_hides_host_and_environment_at_runtime(
         "test ! -s .env; "
         "test ! -e /home; "
         "test -r /proc/self/status; "
+        "test \"$$\" -eq 1; "
         "touch allowed.txt; "
         "if touch .git/blocked 2>/dev/null; then exit 91; fi"
     )
