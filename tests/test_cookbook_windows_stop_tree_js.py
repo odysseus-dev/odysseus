@@ -26,7 +26,18 @@ def test_windows_graceful_kill_uses_verified_native_process_tree_helper():
     assert "taskkill.exe /PID $target /T /F" in helper
     assert "$alive.Count -gt 0" in helper
     assert "exit 1" in helper
-    assert helper.index("$alive.Count -gt 0") < helper.index("Remove-Item")
+    # Final artifact cleanup happens only after the liveness verification.
+    assert helper.index("$alive.Count -gt 0") < helper.rindex("Remove-Item")
+    # The listening owner of the serve port is the real llama-server.exe, not
+    # the recorded Git Bash wrapper, so it is the authoritative kill target and
+    # is resolved before the wrapper-PID fallback is folded in.
+    assert "task?.payload?._cmd?.match(/--port" in helper
+    assert "Get-NetTCPConnection -LocalPort $port -State Listen" in helper
+    assert "Select-Object -ExpandProperty OwningProcess" in helper
+    assert helper.index("Get-NetTCPConnection") < helper.index("Get-Content")
+    # Verification is against the port: a still-bound serve port fails the stop
+    # even when the recorded wrapper PID is already dead.
+    assert "still bound after kill" in helper
     assert "${_shQuote(command)}" in wrapper
     assert "_winSessionStopTreePs(task)" in win_session
     assert "_winPowerShellCmd(task, ps)" in win_session
@@ -48,6 +59,9 @@ def test_remote_windows_stop_tree_payload_survives_shell_parsing():
         "Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) "
         "-ErrorAction SilentlyContinue | ForEach-Object { Add-Tree ([int]$_.ProcessId) }; "
         "if (-not $targets.Contains($Id)) { $targets.Add($Id) } }; "
+        "$port = 8000; foreach ($o in @(Get-NetTCPConnection -LocalPort $port -State Listen "
+        "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess "
+        "| Sort-Object -Unique)) { Add-Tree ([int]$o) }; "
         "$p = Get-Content '$env:TEMP\\odysseus-sessions\\serve_abc.pid' "
         "-ErrorAction SilentlyContinue; "
         "Add-Tree ([int]$p); "
@@ -64,6 +78,9 @@ def test_remote_windows_stop_tree_payload_survives_shell_parsing():
     assert "$env:TEMP" in argv[-1]
     assert "$p" in argv[-1]
     assert "taskkill.exe /PID $target /T /F" in argv[-1]
+    # The pipe-heavy port-owner lookup must survive SSH single-quoting + shlex.
+    assert "Get-NetTCPConnection -LocalPort $port -State Listen" in argv[-1]
+    assert "Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique" in argv[-1]
 
 
 def test_persisted_local_task_platform_drives_windows_stop_routing():
