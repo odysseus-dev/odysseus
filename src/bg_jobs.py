@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 import sys
 import time
@@ -36,8 +35,6 @@ from core.atomic_io import atomic_write_json
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
-    find_bash,
-    git_bash_path,
     kill_process_tree,
     pid_alive,
 )
@@ -64,6 +61,7 @@ _RETENTION_S = 3600  # 1 hour after follow-up
 
 _DETACHED_SANDBOX_WRAPPER = """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -72,8 +70,15 @@ argv = json.loads(sys.argv[1])
 log_path = Path(sys.argv[2])
 exit_path = Path(sys.argv[3])
 code = 1
+
+def write_private_text(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
+
 try:
-    with log_path.open("wb") as output:
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(log_fd, "wb") as output:
         completed = subprocess.run(
             argv,
             stdin=subprocess.DEVNULL,
@@ -85,10 +90,13 @@ try:
         code = int(completed.returncode)
 except Exception as exc:
     try:
-        log_path.write_text(f"sandbox launch failed: {exc}\\n", encoding="utf-8")
+        write_private_text(log_path, f"sandbox launch failed: {exc}\\n")
     except Exception:
         pass
-exit_path.write_text(str(code), encoding="utf-8")
+try:
+    write_private_text(exit_path, str(code))
+except Exception:
+    pass
 """.strip()
 
 
@@ -116,6 +124,74 @@ def _pid_alive(pid: Optional[int]) -> bool:
     return pid_alive(pid)
 
 
+def _make_jobs_dir_private() -> None:
+    _JOBS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        _JOBS_DIR.chmod(0o700)
+    except (AttributeError, NotImplementedError):
+        pass
+
+
+def _write_private_file(path: Path, content: str) -> None:
+    fd = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
+def _remove_job_record(job_id: str) -> None:
+    try:
+        jobs = _load()
+        if job_id not in jobs:
+            return
+        jobs.pop(job_id, None)
+        try:
+            _save(jobs)
+        except BaseException:
+            atomic_write_json(str(_STORE), jobs, indent=2)
+    except BaseException:
+        pass
+
+
+def _remove_job_artifacts(
+    job_id: str,
+    created_paths: list[Path],
+    preexisting_paths: set[Path] = frozenset(),
+) -> None:
+    paths = set(created_paths)
+    try:
+        paths.update(_JOBS_DIR.glob(f"{job_id}.*"))
+    except OSError:
+        pass
+    paths.difference_update(preexisting_paths)
+    for path in paths:
+        try:
+            path.unlink()
+        except (FileNotFoundError, IsADirectoryError, OSError):
+            pass
+
+
+def _kill_untracked_process(proc: subprocess.Popen) -> None:
+    try:
+        _kill(proc.pid)
+    except BaseException:
+        pass
+    try:
+        proc.wait(timeout=2)
+    except BaseException:
+        pass
+
+
 def launch(
     command: str,
     session_id: str,
@@ -133,43 +209,21 @@ def launch(
         raise RuntimeError(
             "Sandboxed agent execution requires Linux with bubblewrap."
         )
-    _JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    _make_jobs_dir_private()
     job_id = uuid.uuid4().hex[:12]
     log_path = _JOBS_DIR / f"{job_id}.log"
     exit_path = _JOBS_DIR / f"{job_id}.exit"
+    cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+    try:
+        preexisting_paths = set(_JOBS_DIR.glob(f"{job_id}.*"))
+    except OSError:
+        preexisting_paths = set()
+    created_paths: list[Path] = [cmd_path, log_path, exit_path]
+    proc: subprocess.Popen | None = None
+    record_saved = False
 
-    if IS_WINDOWS:
-        bash = find_bash()
-        if bash:
-            cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-            cmd_path.write_text(command + "\n", encoding="utf-8")
-            lp, xp, cp = (
-                shlex.quote(git_bash_path(path))
-                for path in (log_path, exit_path, cmd_path)
-            )
-            script_path = _JOBS_DIR / f"{job_id}.sh"
-            script_path.write_text(
-                f"bash {cp} > {lp} 2>&1\n"
-                f"echo $? > {xp}\n",
-                encoding="utf-8",
-            )
-            argv = [bash, str(script_path)]
-        else:
-            child_path = _JOBS_DIR / f"{job_id}.child.cmd"
-            child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")
-            script_path = _JOBS_DIR / f"{job_id}.cmd"
-            script_path.write_text(
-                "@echo off\r\n"
-                f'call "{child_path}" > "{log_path}" 2>&1\r\n'
-                f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
-                encoding="utf-8",
-            )
-            argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
-        process_cwd = cwd or None
-        process_env = None
-    else:
-        cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-        cmd_path.write_text(command + "\n", encoding="utf-8")
+    try:
+        _write_private_file(cmd_path, command + "\n")
         sandbox_argv = sandbox_command(
             ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
             workspace=cwd or "",
@@ -185,38 +239,43 @@ def launch(
             str(log_path),
             str(exit_path),
         ]
-        process_cwd = None
-        process_env = environment_for_sandbox_launcher()
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            cwd=None,
+            env=environment_for_sandbox_launcher(),
+            **detached_popen_kwargs(),  # detach from the request lifecycle (setsid)
+        )
 
-    proc = subprocess.Popen(
-        argv,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        cwd=process_cwd,
-        env=process_env,
-        **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
-    )
-
-    rec = {
-        "id": job_id,
-        "session_id": session_id,
-        "command": command,
-        "status": "running",       # running | done | failed
-        "pid": proc.pid,
-        "started_at": time.time(),
-        "ended_at": None,
-        "exit_code": None,
-        "max_runtime_s": max_runtime_s,
-        "network_profile": network_profile.value,
-        "followed_up": False,       # has the agent been re-invoked with the result?
-        "log_path": str(log_path),
-        "exit_path": str(exit_path),
-    }
-    jobs = _load()
-    jobs[job_id] = rec
-    _save(jobs)
-    return rec
+        rec = {
+            "id": job_id,
+            "session_id": session_id,
+            "command": command,
+            "status": "running",       # running | done | failed
+            "pid": proc.pid,
+            "started_at": time.time(),
+            "ended_at": None,
+            "exit_code": None,
+            "max_runtime_s": max_runtime_s,
+            "network_profile": network_profile.value,
+            "followed_up": False,       # has the agent been re-invoked with the result?
+            "log_path": str(log_path),
+            "exit_path": str(exit_path),
+        }
+        jobs = _load()
+        jobs[job_id] = rec
+        _save(jobs)
+        record_saved = True
+        return rec
+    except BaseException:
+        if proc is not None and not record_saved:
+            _kill_untracked_process(proc)
+        if not record_saved:
+            _remove_job_record(job_id)
+        _remove_job_artifacts(job_id, created_paths, preexisting_paths)
+        raise
 
 
 def _read_output(rec: Dict[str, Any]) -> str:
