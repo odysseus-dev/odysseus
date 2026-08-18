@@ -4,9 +4,12 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from src.sqlite_paths import (
+    normalize_sqlite_url as _normalize_sqlite_url_impl,
+    sqlite_db_path as _sqlite_db_path_impl,
+)
 from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, inspect, text
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
@@ -45,28 +48,7 @@ def _default_database_url() -> str:
 
 
 def _normalize_sqlite_url(url: str) -> str:
-    """Resolve relative ordinary SQLite paths without rewriting URI filenames."""
-    try:
-        parsed = make_url(url)
-    except Exception:
-        return url
-
-    if parsed.get_backend_name() != "sqlite":
-        return url
-
-    db_path = parsed.database
-    if (
-        not db_path
-        or db_path == ":memory:"
-        or str(db_path).lower().startswith("file:")
-        or os.path.isabs(str(db_path))
-    ):
-        return url
-
-    absolute_path = (Path(get_app_root()) / str(db_path)).resolve().as_posix()
-    return parsed.set(database=absolute_path).render_as_string(
-        hide_password=False
-    )
+    return _normalize_sqlite_url_impl(url, app_root=get_app_root())
 
 
 # Get database URL from environment, default to SQLite in DATA_DIR
@@ -86,50 +68,7 @@ _SQLITE_SIDECARS = ("-journal", "-wal", "-shm")
 
 
 def _sqlite_db_path(url) -> Optional[str]:
-    """Return the filesystem path for a file-backed SQLite URL.
-
-    SQLite query parameters such as ``mode=memory`` only affect filename
-    semantics when SQLAlchemy enables URI handling with ``uri=true``. Ordinary
-    file URLs must therefore remain file-backed even when they contain a query
-    parameter named ``mode``.
-
-    For SQLite ``file:`` URIs, an empty authority or ``localhost`` identifies a
-    local path. Other authorities are retained as UNC-style paths.
-    """
-    if url.get_backend_name() != "sqlite":
-        return None
-
-    db_path = url.database
-    if not db_path or db_path == ":memory:":
-        return None
-
-    db_path = str(db_path)
-    query = {
-        str(key).lower(): str(value).strip().lower()
-        for key, value in dict(getattr(url, "query", {}) or {}).items()
-    }
-    uri_enabled = query.get("uri") in {"1", "true", "yes", "on"}
-    is_file_uri = db_path.lower().startswith("file:")
-
-    if not uri_enabled or not is_file_uri:
-        return db_path
-
-    if (
-        db_path.lower().startswith("file::memory:")
-        or query.get("mode") == "memory"
-    ):
-        return None
-
-    parsed = urlparse(db_path)
-    fs_path = parsed.path or ""
-    if not fs_path or fs_path == ":memory:":
-        return None
-
-    authority = parsed.netloc
-    if authority and authority.lower() != "localhost":
-        fs_path = f"//{authority}{fs_path}"
-
-    return unquote(fs_path)
+    return _sqlite_db_path_impl(url)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

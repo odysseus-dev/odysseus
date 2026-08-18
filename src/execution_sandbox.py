@@ -14,7 +14,6 @@ import sys
 from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
-from urllib.parse import unquote
 
 
 class SandboxUnavailable(RuntimeError):
@@ -414,32 +413,27 @@ def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
             args.extend(("--tmpfs", protected))
             hidden_roots.append(protected)
 
-    protected_files = {os.path.realpath(APP_DB)}
+    protected_database_paths = {os.path.realpath(APP_DB)}
     configured_database = os.environ.get("DATABASE_URL", "").strip()
-    sqlite_prefix = "sqlite:///"
-    if configured_database.startswith(sqlite_prefix):
-        try:
-            database_path = unquote(
-                configured_database[len(sqlite_prefix):].split("?", 1)[0]
-            )
-            if (
-                database_path
-                and database_path != ":memory:"
-                and not database_path.casefold().startswith("file:")
-            ):
-                if not os.path.isabs(database_path):
-                    from src.runtime_paths import get_app_root
+    if configured_database:
+        from src.runtime_paths import get_app_root
+        from src.sqlite_paths import resolve_sqlite_db_path
 
-                    database_path = os.path.join(get_app_root(), database_path)
-                protected_files.add(os.path.realpath(database_path))
-        except (TypeError, ValueError):
-            pass
-    for protected in sorted(protected_files):
-        for candidate in (protected, f"{protected}-journal", f"{protected}-shm", f"{protected}-wal"):
-            if any(_is_within(candidate, hidden) for hidden in hidden_roots):
-                continue
-            if _is_within(candidate, workspace) and os.path.isfile(candidate):
-                args.extend(("--ro-bind", "/dev/null", candidate))
+        database_path = resolve_sqlite_db_path(
+            configured_database,
+            app_root=get_app_root(),
+        )
+        if database_path is not None:
+            protected_database_paths.add(database_path)
+
+    for database_path in sorted(protected_database_paths):
+        if _is_within(database_path, workspace) and not any(
+            _is_within(database_path, hidden) for hidden in hidden_roots
+        ):
+            raise SandboxUnavailable(
+                "The selected workspace contains an Odysseus SQLite database. "
+                "Choose a narrower workspace."
+            )
     return args, hidden_roots
 
 

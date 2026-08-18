@@ -449,6 +449,7 @@ def test_sandbox_hides_odysseus_data_inside_broader_workspace(
     monkeypatch.setattr(constants, "LOGS_DIR", str(logs_dir))
     monkeypatch.setattr(constants, "AGENT_WORKSPACE_DIR", str(agent_dir))
     monkeypatch.setattr(constants, "MAIL_ATTACHMENTS_DIR", str(data_dir / "mail"))
+    monkeypatch.setattr(constants, "APP_DB", str(data_dir / "app.db"))
 
     argv = sandbox_command(
         [
@@ -460,8 +461,10 @@ def test_sandbox_hides_odysseus_data_inside_broader_workspace(
     )
 
     pairs = [argv[index:index + 2] for index in range(len(argv) - 1)]
+    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
     assert ["--tmpfs", str(data_dir)] in pairs
     assert ["--tmpfs", str(logs_dir)] in pairs
+    assert ["--ro-bind", "/dev/null", str(data_dir / "app.db")] not in triples
     completed = subprocess.run(
         argv,
         cwd=str(workspace),
@@ -474,37 +477,107 @@ def test_sandbox_hides_odysseus_data_inside_broader_workspace(
     assert completed.returncode == 0, completed.stderr
 
 
-def test_sandbox_masks_configured_sqlite_database_inside_workspace(
+def test_sandbox_rejects_configured_sqlite_database_inside_workspace(
     tmp_path,
     monkeypatch,
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     database = workspace / "custom.db"
-    database.write_text("private", encoding="utf-8")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database}")
 
-    argv = sandbox_command(["/bin/true"], workspace=str(workspace))
+    with pytest.raises(
+        SandboxUnavailable,
+        match="selected workspace contains an Odysseus SQLite database",
+    ):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
 
-    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
-    assert ["--ro-bind", "/dev/null", str(database)] in triples
 
 
-def test_sandbox_resolves_relative_configured_sqlite_database(
+def test_sandbox_rejects_relative_configured_sqlite_database(
     tmp_path,
     monkeypatch,
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    database = workspace / "relative.db"
-    database.write_text("private", encoding="utf-8")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///relative.db")
     monkeypatch.setattr("src.runtime_paths.get_app_root", lambda: str(workspace))
 
-    argv = sandbox_command(["/bin/true"], workspace=str(workspace))
+    with pytest.raises(
+        SandboxUnavailable,
+        match="selected workspace contains an Odysseus SQLite database",
+    ):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
 
-    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
-    assert ["--ro-bind", "/dev/null", str(database)] in triples
+
+@pytest.mark.parametrize(
+    "url_builder",
+    [
+        pytest.param(lambda db: f"sqlite:///{db}", id="sqlite-absolute"),
+        pytest.param(lambda db: f"sqlite+pysqlite:///{db}", id="driver-absolute"),
+        pytest.param(lambda _db: "sqlite:///relative.db", id="sqlite-relative"),
+        pytest.param(lambda _db: "sqlite+pysqlite:///relative.db", id="driver-relative"),
+        pytest.param(
+            lambda db: f"sqlite:///file:{db}?uri=true",
+            id="sqlite-file-uri",
+        ),
+        pytest.param(
+            lambda db: f"sqlite+pysqlite:///file:{db}?mode=rwc&uri=true",
+            id="driver-file-uri",
+        ),
+        pytest.param(
+            lambda db: f"sqlite+pysqlite:///file://localhost{db}?uri=true",
+            id="localhost-file-uri",
+        ),
+    ],
+)
+def test_sandbox_rejects_every_file_backed_sqlite_url_shape(
+    tmp_path,
+    monkeypatch,
+    url_builder,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = workspace / "future.db"
+    monkeypatch.setenv("DATABASE_URL", url_builder(str(database)))
+    monkeypatch.setattr("src.runtime_paths.get_app_root", lambda: str(workspace))
+
+    assert not database.exists()
+    with pytest.raises(
+        SandboxUnavailable,
+        match="selected workspace contains an Odysseus SQLite database",
+    ):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
+
+
+def test_sandbox_allows_in_memory_and_postgresql_databases(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    for database_url in (
+        "sqlite:///:memory:",
+        "sqlite+pysqlite:///file:memdb1?mode=memory&cache=shared&uri=true",
+        "postgresql+psycopg2://user:pass@example.invalid/app",
+    ):
+        monkeypatch.setenv("DATABASE_URL", database_url)
+        assert sandbox_command(["/bin/true"], workspace=str(workspace))
+
+
+def test_default_agent_workspace_remains_usable(monkeypatch, tmp_path):
+    import src.constants as constants
+
+    data_dir = tmp_path / "data"
+    agent_workspace = data_dir / "agent_workspace"
+    data_dir.mkdir()
+    agent_workspace.mkdir()
+    monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(constants, "AGENT_WORKSPACE_DIR", str(agent_workspace))
+    monkeypatch.setattr(constants, "LOGS_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(constants, "MAIL_ATTACHMENTS_DIR", str(data_dir / "mail"))
+    monkeypatch.setattr(constants, "APP_DB", str(data_dir / "app.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert sandbox_command(["/bin/true"], workspace=str(agent_workspace))
 
 
 def test_sandbox_allows_only_dedicated_workspace_below_data(
