@@ -40,7 +40,6 @@ def _stable_bubblewrap_lookup(monkeypatch):
         lambda: "/usr/local/libexec/odysseus-egress-bridge",
     )
 
-
 requires_bubblewrap = pytest.mark.skipif(
     shutil.which("bwrap") is None or shutil.which("make") is None,
     reason="bubblewrap and make are required for sandbox runtime assertions",
@@ -75,6 +74,8 @@ def runtime_seccomp_launcher(monkeypatch, compiled_seccomp_launcher, tmp_path):
         "src.execution_sandbox._seccomp_launcher_binary",
         lambda: str(compiled_seccomp_launcher),
     )
+
+
     preflight_workspace = tmp_path / "sandbox-preflight"
     preflight_workspace.mkdir()
     completed = subprocess.run(
@@ -104,6 +105,8 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
     workspace.mkdir()
 
     argv = sandbox_command(["/bin/bash", "-c", "true"], workspace=str(workspace))
+
+
 
     assert argv[:2] == [
         "/usr/local/libexec/odysseus-seccomp-launcher",
@@ -895,16 +898,186 @@ def test_tmux_session_identity_includes_network_policy(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    isolated = _tmux_session_name("session-1", str(workspace))
+    policy_key = "a" * 16
+    isolated = _tmux_session_name(
+        "session-1",
+        str(workspace),
+        policy_key=policy_key,
+    )
+    isolated_again = _tmux_session_name(
+        "session-1",
+        str(workspace),
+        policy_key=policy_key,
+    )
     brokered = _tmux_session_name(
         "session-1",
         str(workspace),
         network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+        policy_key=policy_key,
     )
 
+    assert isolated == isolated_again
     assert isolated != brokered
-    assert isolated.endswith("-networkless")
-    assert brokered.endswith("-brokered-only")
+    assert isolated.startswith("ody-agent-sbx-v2-")
+    assert isolated.endswith(f"-networkless-{policy_key}")
+    assert brokered.endswith(f"-brokered-only-{policy_key}")
+
+
+def test_tmux_policy_fingerprint_changes_for_workspace_protection(tmp_path):
+    from src.agent_tools.subprocess_tools import (
+        _tmux_policy_key,
+        _tmux_session_name,
+    )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def session_name():
+        shell_argv = sandbox_command(
+            ["/bin/bash", "--noprofile", "--norc"],
+            workspace=str(workspace),
+        )
+        return _tmux_session_name(
+            "session-1",
+            str(workspace),
+            policy_key=_tmux_policy_key(os.stat(workspace), shell_argv),
+        )
+
+    baseline = session_name()
+    (workspace / ".env").write_text("SECRET=value", encoding="utf-8")
+    with_env = session_name()
+    (workspace / ".ssh").mkdir()
+    with_ssh = session_name()
+    (workspace / ".git").mkdir()
+    with_git = session_name()
+
+    assert baseline != with_env
+    assert with_env != with_ssh
+    assert with_ssh != with_git
+
+
+def test_tmux_policy_fingerprint_changes_when_workspace_inode_changes(tmp_path):
+    from src.agent_tools.subprocess_tools import (
+        _tmux_policy_key,
+        _tmux_session_name,
+    )
+
+    workspace = tmp_path / "workspace"
+    replacement = tmp_path / "replacement"
+    workspace.mkdir()
+    replacement.mkdir()
+    shell_argv = ["/bin/bash", "--noprofile", "--norc"]
+    old_stat = os.stat(workspace)
+    old_name = _tmux_session_name(
+        "session-1",
+        str(workspace),
+        policy_key=_tmux_policy_key(old_stat, shell_argv),
+    )
+
+    old_workspace = tmp_path / "workspace-old"
+    workspace.rename(old_workspace)
+    replacement.rename(workspace)
+    new_stat = os.stat(workspace)
+    new_name = _tmux_session_name(
+        "session-1",
+        str(workspace),
+        policy_key=_tmux_policy_key(new_stat, shell_argv),
+    )
+
+    assert (old_stat.st_dev, old_stat.st_ino) != (new_stat.st_dev, new_stat.st_ino)
+    assert old_name != new_name
+
+
+@pytest.mark.asyncio
+async def test_tmux_cleanup_kills_only_stale_logical_sessions(monkeypatch, tmp_path):
+    from src.agent_tools import subprocess_tools
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    prefix = subprocess_tools._tmux_session_prefix("session-1", str(workspace))
+    current = f"{prefix}-current"
+    stale = f"{prefix}-old"
+    legacy_v1 = subprocess_tools._tmux_legacy_session_name(
+        "session-1",
+        str(workspace),
+        network_profile=SandboxNetworkProfile.NETWORKLESS,
+    )
+    legacy_pre_sandbox = subprocess_tools._tmux_pre_sandbox_session_name(
+        "session-1"
+    )
+    killed = []
+
+    async def fake_names():
+        return [
+            current,
+            stale,
+            legacy_v1,
+            legacy_pre_sandbox,
+            "ody-agent-sbx-v2-other-workspace-networkless-old",
+        ]
+
+    async def fake_kill(name):
+        killed.append(name)
+
+    monkeypatch.setattr(subprocess_tools, "_tmux_session_names", fake_names)
+    monkeypatch.setattr(subprocess_tools, "_tmux_kill_session", fake_kill)
+
+    await subprocess_tools._cleanup_stale_tmux_sessions(
+        prefix,
+        (legacy_v1, legacy_pre_sandbox),
+        current,
+    )
+
+    assert killed == sorted([stale, legacy_v1, legacy_pre_sandbox])
+
+
+@pytest.mark.asyncio
+async def test_tmux_policy_failure_terminates_existing_logical_sessions(
+    monkeypatch,
+    tmp_path,
+):
+    from src.agent_tools import subprocess_tools
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session_id = "session-1"
+    prefix = subprocess_tools._tmux_session_prefix(
+        session_id,
+        str(workspace),
+    )
+    stale_v2 = f"{prefix}-old-policy"
+    legacy_v1 = subprocess_tools._tmux_legacy_session_name(
+        session_id,
+        str(workspace),
+        network_profile=SandboxNetworkProfile.NETWORKLESS,
+    )
+    legacy_pre_sandbox = subprocess_tools._tmux_pre_sandbox_session_name(
+        session_id
+    )
+    killed = []
+
+    def reject_policy(*_args, **_kwargs):
+        raise SandboxUnavailable("workspace policy changed")
+
+    async def fake_names():
+        return [stale_v2, legacy_v1, legacy_pre_sandbox, "unrelated-session"]
+
+    async def fake_kill(name):
+        killed.append(name)
+
+    monkeypatch.setattr(subprocess_tools, "sandbox_command", reject_policy)
+    monkeypatch.setattr(subprocess_tools, "_tmux_session_names", fake_names)
+    monkeypatch.setattr(subprocess_tools, "_tmux_kill_session", fake_kill)
+
+    with pytest.raises(SandboxUnavailable, match="workspace policy changed"):
+        await subprocess_tools._run_tmux_bash(
+            "printf blocked",
+            session_id=session_id,
+            cwd=str(workspace),
+            timeout=1,
+        )
+
+    assert killed == sorted([stale_v2, legacy_v1, legacy_pre_sandbox])
 
 
 @requires_bubblewrap
@@ -923,31 +1096,84 @@ def test_tmux_bash_shell_runs_inside_same_sandbox(
     outside = tmp_path / "outside-secret"
     outside.write_text("secret", encoding="utf-8")
     session_id = f"sandbox-test-{uuid.uuid4().hex}"
-    session_name = _tmux_session_name(session_id, str(workspace))
+    session_name = None
 
     async def run():
+        nonlocal session_name
         try:
-            return await _run_tmux_bash(
+            result = await _run_tmux_bash(
                 f"test ! -e {outside!s} && pwd && touch tmux-write.txt",
                 session_id=session_id,
                 cwd=str(workspace),
                 timeout=10,
             )
+            session_name = result[4]
+            return result
         finally:
-            await _run_exec(
-                "tmux",
-                "kill-session",
-                "-t",
-                session_name,
-                timeout=3,
-            )
+            if session_name:
+                await _run_exec("tmux", "kill-session", "-t", session_name, timeout=3)
 
-    stdout, stderr, returncode, timed_out = asyncio.run(run())
+    stdout, stderr, returncode, timed_out, session_name = asyncio.run(run())
 
     assert timed_out is False
     assert returncode == 0, stderr
     assert str(workspace) in stdout
     assert (workspace / "tmux-write.txt").exists()
+
+
+@requires_bubblewrap
+def test_tmux_bash_rotates_when_env_appears(
+    tmp_path,
+    runtime_seccomp_launcher,
+):
+    from src.agent_tools.subprocess_tools import _run_exec, _run_tmux_bash
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session_id = f"sandbox-rotation-{uuid.uuid4().hex}"
+    session_names = []
+
+    async def run():
+        first = await _run_tmux_bash(
+            "test ! -s .env && printf first",
+            session_id=session_id,
+            cwd=str(workspace),
+            timeout=10,
+        )
+        session_names.append(first[4])
+        (workspace / ".env").write_text("marker-secret", encoding="utf-8")
+        second = await _run_tmux_bash(
+            "test ! -s .env && printf second",
+            session_id=session_id,
+            cwd=str(workspace),
+            timeout=10,
+        )
+        session_names.append(second[4])
+        sessions, _, _ = await _run_exec(
+            "tmux",
+            "list-sessions",
+            "-F",
+            "#{session_name}",
+            timeout=3,
+        )
+        return first, second, sessions.splitlines()
+
+    try:
+        first, second, sessions = asyncio.run(run())
+    finally:
+        async def cleanup():
+            for name in session_names:
+                await _run_exec("tmux", "kill-session", "-t", name, timeout=3)
+
+        asyncio.run(cleanup())
+
+    assert first[3] is False
+    assert second[3] is False
+    assert first[0].endswith("first")
+    assert second[0].endswith("second")
+    assert session_names[0] != session_names[1]
+    assert session_names[0] not in sessions
+    assert session_names[1] in sessions
 
 
 @requires_bubblewrap

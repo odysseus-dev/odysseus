@@ -39,7 +39,7 @@ async def _create_bash_subprocess(command: str, **kwargs):
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
-def _tmux_session_name(
+def _tmux_session_prefix(
     session_id: Optional[str],
     workspace: str = "",
     *,
@@ -50,7 +50,49 @@ def _tmux_session_name(
         os.path.realpath(workspace or ".").encode("utf-8", errors="replace")
     ).hexdigest()[:10]
     network_key = network_profile.value.replace("_", "-")
+    return f"ody-agent-sbx-v2-{raw[:60] or 'default'}-{workspace_key}-{network_key}"
+
+
+def _tmux_legacy_session_name(
+    session_id: Optional[str],
+    workspace: str,
+    *,
+    network_profile: SandboxNetworkProfile,
+) -> str:
+    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(session_id or "default")).strip("-")
+    workspace_key = hashlib.sha256(
+        os.path.realpath(workspace or ".").encode("utf-8", errors="replace")
+    ).hexdigest()[:10]
+    network_key = network_profile.value.replace("_", "-")
     return f"ody-agent-sbx-v1-{raw[:60] or 'default'}-{workspace_key}-{network_key}"
+
+
+def _tmux_pre_sandbox_session_name(session_id: Optional[str]) -> str:
+    """Return the exact tmux name used before the sandboxed v1 format."""
+    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(session_id or "default")).strip("-")
+    return f"ody-agent-{raw[:80] or 'default'}"
+
+
+def _tmux_session_name(
+    session_id: Optional[str],
+    workspace: str,
+    *,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
+    policy_key: str,
+) -> str:
+    if not isinstance(policy_key, str) or not policy_key.strip():
+        raise ValueError("tmux sandbox sessions require a policy key")
+    safe_policy_key = re.sub(r"[^A-Za-z0-9_.-]+", "-", policy_key).strip("-")
+    if not safe_policy_key:
+        raise ValueError("tmux sandbox sessions require a policy key")
+    return f"{_tmux_session_prefix(session_id, workspace, network_profile=network_profile)}-{safe_policy_key}"
+
+
+def _tmux_policy_key(workspace_stat: os.stat_result, shell_argv: list[str]) -> str:
+    encoded = "\0".join(
+        [str(workspace_stat.st_dev), str(workspace_stat.st_ino), *shell_argv]
+    ).encode("utf-8", errors="surrogateescape")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
@@ -78,6 +120,61 @@ async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
 async def _tmux_has_session(name: str) -> bool:
     _, _, rc = await _run_exec("tmux", "has-session", "-t", name, timeout=3)
     return rc == 0
+
+
+async def _tmux_session_names() -> list[str]:
+    out, err, rc = await _run_exec(
+        "tmux",
+        "list-sessions",
+        "-F",
+        "#{session_name}",
+        timeout=5,
+    )
+    if rc == 0:
+        return [line.strip() for line in out.splitlines() if line.strip()]
+    detail = f"{out}\n{err}".casefold()
+    if "no server running" in detail or "failed to connect to server" in detail:
+        return []
+    raise RuntimeError(f"failed to list tmux sessions: {(err or out).strip()}")
+
+
+async def _tmux_kill_session(name: str) -> None:
+    out, err, rc = await _run_exec("tmux", "kill-session", "-t", name, timeout=5)
+    if rc == 0:
+        return
+    detail = f"{out}\n{err}".casefold()
+    if (
+        "no server running" in detail
+        or "session not found" in detail
+        or "can't find session" in detail
+    ):
+        return
+    raise RuntimeError(f"failed to terminate stale tmux session {name}: {(err or out).strip()}")
+
+
+async def _cleanup_stale_tmux_sessions(
+    prefix: str,
+    legacy_names: tuple[str, ...],
+    current_name: Optional[str],
+) -> None:
+    """Terminate stale sessions for one logical workspace/network identity.
+
+    ``current_name=None`` means fresh policy construction failed, so every v2
+    session for this logical identity is stale and must be terminated.
+    """
+    existing = await _tmux_session_names()
+    legacy = set(legacy_names)
+    stale = {
+        name
+        for name in existing
+        if name in legacy
+        or (
+            name.startswith(f"{prefix}-")
+            and (current_name is None or name != current_name)
+        )
+    }
+    for name in sorted(stale):
+        await _tmux_kill_session(name)
 
 
 async def _tmux_capture(name: str) -> str:
@@ -159,57 +256,87 @@ async def _run_tmux_bash(
     timeout: float,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
-) -> Tuple[str, str, Optional[int], bool]:
-    # The launch snapshot is part of the persistent session identity, so a
-    # tmux shell can never be reused under a different network profile.
-    name = _tmux_session_name(session_id, cwd, network_profile=network_profile)
-    shell_argv = sandbox_command(
-        ["/bin/bash", "--noprofile", "--norc"],
-        workspace=cwd,
+) -> Tuple[str, str, Optional[int], bool, str]:
+    canonical_cwd = os.path.realpath(cwd)
+    prefix = _tmux_session_prefix(
+        session_id,
+        canonical_cwd,
         network_profile=network_profile,
     )
-    await _ensure_tmux_session(name, cwd, shell_argv)
-
-    stamp = f"{int(time.time() * 1000)}-{abs(hash(content)) % 1000000}"
-    start_marker = f"__ODYSSEUS_CMD_START_{stamp}__"
-    end_prefix = f"__ODYSSEUS_CMD_END_{stamp}__:"
-    wrapped = (
-        f"printf '\\n{start_marker}\\n'\n"
-        f"{content}\n"
-        f"__ody_rc=$?\n"
-        f"printf '\\n{end_prefix}%s\\n' \"$__ody_rc\"\n"
+    legacy_names = (
+        _tmux_legacy_session_name(
+            session_id,
+            canonical_cwd,
+            network_profile=network_profile,
+        ),
+        _tmux_pre_sandbox_session_name(session_id),
     )
-    for line in wrapped.splitlines():
-        await _tmux_send_line(name, line)
+    lock = _TMUX_LOCKS.setdefault(prefix, asyncio.Lock())
 
-    started = time.time()
-    last_tail = ""
-    while True:
-        capture = await _tmux_capture(name)
-        body, done = _output_after_marker(capture, start_marker, end_prefix)
-        tail = "\n".join(body.splitlines()[-PROGRESS_TAIL_LINES:])
-        if progress_cb and tail != last_tail:
-            last_tail = tail
-            try:
-                await progress_cb({
-                    "elapsed_s": round(time.time() - started, 1),
-                    "tail": tail,
-                    "tmux_session": name,
-                })
-            except Exception:
-                pass
-        if done:
-            rc = _extract_marker_rc(capture, end_prefix)
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", rc, False
-        if time.time() - started > timeout:
-            try:
-                await _run_exec("tmux", "send-keys", "-t", name, "C-c", timeout=3)
-            except Exception:
-                pass
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", 124, True
-        await asyncio.sleep(0.5)
+    async with lock:
+        try:
+            shell_argv = sandbox_command(
+                ["/bin/bash", "--noprofile", "--norc"],
+                workspace=canonical_cwd,
+                network_profile=network_profile,
+            )
+            workspace_stat = os.stat(canonical_cwd)
+        except (OSError, RuntimeError, SandboxUnavailable):
+            # A previously valid persistent shell must not survive after the
+            # workspace can no longer produce an acceptable sandbox policy.
+            await _cleanup_stale_tmux_sessions(prefix, legacy_names, None)
+            raise
+
+        policy_key = _tmux_policy_key(workspace_stat, shell_argv)
+        name = _tmux_session_name(
+            session_id,
+            canonical_cwd,
+            network_profile=network_profile,
+            policy_key=policy_key,
+        )
+        await _cleanup_stale_tmux_sessions(prefix, legacy_names, name)
+        await _ensure_tmux_session(name, canonical_cwd, shell_argv)
+
+        stamp = f"{int(time.time() * 1000)}-{abs(hash(content)) % 1000000}"
+        start_marker = f"__ODYSSEUS_CMD_START_{stamp}__"
+        end_prefix = f"__ODYSSEUS_CMD_END_{stamp}__:"
+        wrapped = (
+            f"printf '\\n{start_marker}\\n'\n"
+            f"{content}\n"
+            f"__ody_rc=$?\n"
+            f"printf '\\n{end_prefix}%s\\n' \"$__ody_rc\"\n"
+        )
+        for line in wrapped.splitlines():
+            await _tmux_send_line(name, line)
+
+        started = time.time()
+        last_tail = ""
+        while True:
+            capture = await _tmux_capture(name)
+            body, done = _output_after_marker(capture, start_marker, end_prefix)
+            tail = "\n".join(body.splitlines()[-PROGRESS_TAIL_LINES:])
+            if progress_cb and tail != last_tail:
+                last_tail = tail
+                try:
+                    await progress_cb({
+                        "elapsed_s": round(time.time() - started, 1),
+                        "tail": tail,
+                        "tmux_session": name,
+                    })
+                except Exception:
+                    pass
+            if done:
+                rc = _extract_marker_rc(capture, end_prefix)
+                cleaned = _clean_tmux_command_output(body, wrapped)
+                return cleaned, "", rc, False, name
+            if time.time() - started > timeout:
+                try:
+                    await _run_exec("tmux", "send-keys", "-t", name, "C-c", timeout=3)
+                except Exception:
+                    pass
+                cleaned = _clean_tmux_command_output(body, wrapped)
+                return cleaned, "", 124, True, name
+            await asyncio.sleep(0.5)
 
 
 def _clean_tmux_command_output(text: str, wrapped_command: str) -> str:
@@ -386,25 +513,24 @@ class BashTool:
         # tmux is a POSIX persistence path. A stray MSYS/Cygwin tmux.exe on
         # native Windows must not bypass the platform-specific launcher.
         if session_id and not IS_WINDOWS and shutil.which("tmux"):
-            stdout, stderr, rc, timed_out = await _run_tmux_bash(
-                content,
-                session_id=str(session_id),
-                cwd=workspace,
-                timeout=DEFAULT_BASH_TIMEOUT,
-                progress_cb=progress_cb,
-                network_profile=network_profile,
-            )
+            try:
+                stdout, stderr, rc, timed_out, tmux_session = await _run_tmux_bash(
+                    content,
+                    session_id=str(session_id),
+                    cwd=workspace,
+                    timeout=DEFAULT_BASH_TIMEOUT,
+                    progress_cb=progress_cb,
+                    network_profile=network_profile,
+                )
+            except (OSError, RuntimeError, SandboxUnavailable) as exc:
+                return {"error": f"bash: {exc}", "exit_code": 1, "blocked": True}
             if timed_out:
                 return {
                     "error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — sent Ctrl-C to tmux session",
                     "exit_code": 124,
                     "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
                     "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
-                    "tmux_session": _tmux_session_name(
-                        str(session_id),
-                        workspace,
-                        network_profile=network_profile,
-                    ),
+                    "tmux_session": tmux_session,
                 }
             output = stdout.rstrip()
             err = stderr.rstrip()

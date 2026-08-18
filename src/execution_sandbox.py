@@ -309,6 +309,8 @@ def _workspace_overlays(
     args: list[str] = []
     scanned = 0
     for root, dirs, files in os.walk(workspace, followlinks=False):
+        dirs.sort()
+        files.sort()
         scanned += len(dirs) + len(files)
         if scanned > _MAX_WORKSPACE_SCAN_ENTRIES:
             raise SandboxUnavailable(
