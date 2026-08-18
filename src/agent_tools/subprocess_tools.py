@@ -3,7 +3,6 @@ import hashlib
 import os
 import re
 import shutil
-import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
@@ -24,18 +23,11 @@ PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
 TMUX_CAPTURE_LINES = 2000
 _TMUX_ENV_SCRUBBER = "/usr/bin/env"
+_TMUX_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
-    """Start the agent shell with Bash semantics on every supported OS.
-
-    ``asyncio.create_subprocess_shell`` delegates to ``cmd.exe`` on native
-    Windows.  That contradicts the Bash tool contract and makes POSIX commands
-    such as ``pwd``, ``ls -la``, and ``cat`` unreliable even when the launcher
-    has found Git Bash.  Pass the selected workspace as a structural ``cwd``
-    argument; Git Bash inherits that native Windows directory and exposes it
-    using its normal ``/c/...`` representation.
-    """
+    """Start the compatibility Bash subprocess path for direct callers."""
     if IS_WINDOWS:
         bash = find_bash()
         if not bash:
@@ -377,7 +369,6 @@ class BashTool:
         if isinstance(content, dict):
             content = str(content.get("command") or content.get("cmd") or content.get("code") or "")
         progress_cb = ctx.get("progress_cb")
-        subproc_env = ctx.get("subproc_env")
         session_id = ctx.get("session_id")
         network_profile = ctx.get(
             "network_profile", SandboxNetworkProfile.NETWORKLESS
@@ -422,35 +413,22 @@ class BashTool:
             return {
                 "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
                 "exit_code": rc or 0,
-                "tmux_session": _tmux_session_name(
-                    str(session_id),
-                    workspace,
-                    network_profile=network_profile,
-                ),
+                    "tmux_session": tmux_session,
             }
 
         try:
-            if IS_WINDOWS:
-                proc = await _create_bash_subprocess(
-                    content,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=subproc_env,
-                    cwd=workspace,
-                )
-            else:
-                argv = sandbox_command(
-                    ["/bin/bash", "--noprofile", "--norc", "-c", content],
-                    workspace=workspace,
-                    network_profile=network_profile,
-                )
-                proc = await asyncio.create_subprocess_exec(
-                    *argv,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=environment_for_sandbox_launcher(),
-                    cwd=workspace,
-                )
+            argv = sandbox_command(
+                ["/bin/bash", "--noprofile", "--norc", "-c", content],
+                workspace=workspace,
+                network_profile=network_profile,
+            )
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=environment_for_sandbox_launcher(),
+                cwd=workspace,
+            )
         except (RuntimeError, SandboxUnavailable) as exc:
             return {"error": f"bash: {exc}", "exit_code": 1, "blocked": True}
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
@@ -474,7 +452,6 @@ class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
-        subproc_env = ctx.get("subproc_env")
         network_profile = ctx.get(
             "network_profile", SandboxNetworkProfile.NETWORKLESS
         )
@@ -489,16 +466,12 @@ class PythonTool:
                 "blocked": True,
             }
         try:
-            if IS_WINDOWS:
-                argv = [sys.executable, "-I", "-c", content]
-                process_env = subproc_env
-            else:
-                argv = sandbox_command(
-                    [sandbox_python_executable(), "-I", "-c", content],
-                    workspace=workspace,
-                    network_profile=network_profile,
-                )
-                process_env = environment_for_sandbox_launcher()
+            argv = sandbox_command(
+                [sandbox_python_executable(), "-I", "-c", content],
+                workspace=workspace,
+                network_profile=network_profile,
+            )
+            process_env = environment_for_sandbox_launcher()
         except SandboxUnavailable as exc:
             return {"error": f"python: {exc}", "exit_code": 1, "blocked": True}
         try:
