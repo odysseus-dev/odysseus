@@ -68,6 +68,7 @@ from src.tool_policy import (
     is_web_search_explicitly_denied,
     web_search_enabled_for_turn,
 )
+from src.tool_approvals import tool_approval_store
 
 logger = logging.getLogger(__name__)
 
@@ -1037,6 +1038,18 @@ def setup_chat_routes(
         group_internal = str(form_data.get("group_internal", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        tool_approval_id = (
+            form_data.get("tool_approval_id")
+            or (body or {}).get("tool_approval_id")
+        )
+        tool_approval_decision = (
+            form_data.get("tool_approval_decision")
+            or (body or {}).get("tool_approval_decision")
+        )
+        exact_tool_approval = None
+        pending_tool_approval = None
+        retired_tool_approval_taint = False
+        tool_approval_continuation = False
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
@@ -1183,6 +1196,74 @@ def setup_chat_routes(
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             owner = effective_user(request)
+            if tool_approval_id:
+                pending_tool_approval = tool_approval_store.peek(tool_approval_id)
+                normalized_owner = str(owner or "").strip().casefold()
+                if (
+                    pending_tool_approval is None
+                    or pending_tool_approval.owner != normalized_owner
+                    or pending_tool_approval.session_id != str(session)
+                ):
+                    raise HTTPException(
+                        409,
+                        "This tool approval is invalid, expired, or belongs to another thread.",
+                    )
+                decision = str(tool_approval_decision or "").strip().lower()
+                if decision not in {"approve", "deny"}:
+                    raise HTTPException(400, "Invalid tool approval decision.")
+                if plan_mode:
+                    raise HTTPException(
+                        409,
+                        "Tool approvals cannot be consumed while plan mode is active.",
+                    )
+                exact_tool_approval = tool_approval_store.consume(
+                    tool_approval_id,
+                    decision=decision,
+                    owner=owner,
+                    session_id=session,
+                )
+                tool_approval_continuation = True
+                if decision == "approve" and exact_tool_approval is None:
+                    raise HTTPException(
+                        409,
+                        "This tool approval could not be consumed.",
+                    )
+                if decision == "approve":
+                    message = (
+                        f"Approved the exact {pending_tool_approval.tool_name} action "
+                        "shown above once."
+                    )
+                    # The sealed server record, not mutable composer state,
+                    # restores the original action workspace.
+                    workspace = pending_tool_approval.workspace or None
+                    workspace_rejected = None
+                    if pending_tool_approval.document_id:
+                        active_doc_id = pending_tool_approval.document_id
+                    # The approval click is the per-turn opt-in for this exact
+                    # sealed action. Restore only the coarse request toggle
+                    # that would otherwise disable it because the synthetic
+                    # "Approved…" message no longer resembles the original
+                    # shell/web request. Current privilege, global-disable,
+                    # incognito, compare, and tool-policy gates still run.
+                    if pending_tool_approval.tool_name == "bash":
+                        allow_bash = "true"
+                    if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
+                        allow_web_search = "true"
+                        _search_enabled = True
+                else:
+                    message = (
+                        f"Denied the {pending_tool_approval.tool_name} action shown above."
+                    )
+                chat_mode = "agent"
+            else:
+                # A normal user message supersedes the card that was waiting
+                # in this thread. Retire its opaque grant, but preserve the
+                # originating provenance for this turn so dismissing a card
+                # cannot make the same model-requested action authoritative.
+                retired_tool_approval_taint = tool_approval_store.retire_for_session(
+                    owner=owner,
+                    session_id=session,
+                )
             _reconcile_selected_route_from_request(request, sess, session, form_data, owner=owner)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
@@ -1250,14 +1331,24 @@ def setup_chat_routes(
         resolve_session_auth(sess, session, owner=effective_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
-        do_research = str(use_research).lower() == "true"
-        if not do_research:
+        # An approval response resumes the sealed agent action.  Do not let
+        # mutable form fields, or a stale research_pending session marker,
+        # consume the one-use grant on the unrelated research path.
+        do_research = (
+            not tool_approval_continuation
+            and str(use_research).lower() == "true"
+        )
+        if not do_research and not tool_approval_continuation:
             if get_session_mode(session) == 'research_pending':
                 do_research = True
                 logger.info(f"Session {session} in research_pending — auto-triggering research")
 
         att_ids = []
-        if body and isinstance(body.get("attachments"), list):
+        if tool_approval_continuation:
+            # Browser composer state is unrelated to the action that was
+            # reviewed.  The original turn remains in session history.
+            att_ids = []
+        elif body and isinstance(body.get("attachments"), list):
             att_ids = [str(x) for x in body["attachments"]]
         elif attachments:
             try:
@@ -2289,6 +2380,15 @@ def setup_chat_routes(
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
                         defer_context_shaping=_foreground_policy.enabled,
+                        external_untrusted_context_seen=bool(
+                            retired_tool_approval_taint
+                            or (
+                                tool_approval_continuation
+                                and pending_tool_approval
+                                and pending_tool_approval.external_untrusted_context_seen
+                            )
+                        ),
+                        exact_approval=exact_tool_approval,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

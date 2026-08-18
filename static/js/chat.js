@@ -8,18 +8,18 @@
 import Storage from './storage.js';
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
-import chatRenderer from './chatRenderer.js?v=20260722emailfastindex1';
-import chatStream from './chatStream.js';
+import chatRenderer from './chatRenderer.js?v=20260815toolapproval4';
+import chatStream from './chatStream.js?v=20260815approvalsave1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
 import searchModule from './search.js';
-import documentModule from './document.js?v=20260722emailfastindex1';
-import * as emailInbox from './emailInbox.js?v=20260722emailfastindex1';
+import documentModule from './document.js?v=20260815approvalsave1';
+import * as emailInbox from './emailInbox.js?v=20260815approvalsave1';
 import codeRunnerModule from './codeRunner.js';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260722emailfastindex1';
+import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260815approvalsave1';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
@@ -35,6 +35,7 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
+import { loadPanel } from './panels.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -59,6 +60,41 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
   let _contextHeaderSeq = 0;
   let _contextHeaderData = null;
   let _contextHeaderBound = false;
+  let _pendingToolApproval = null;
+
+  function _submitToolApprovalWhenIdle(approvalId, label) {
+    if (
+      !_pendingToolApproval
+      || _pendingToolApproval.approval_id !== approvalId
+    ) return;
+    if (isStreaming || _sendInFlight) {
+      setTimeout(() => _submitToolApprovalWhenIdle(approvalId, label), 120);
+      return;
+    }
+    const input = document.getElementById('message');
+    if (input) {
+      _pendingToolApproval.draft = input.value || '';
+      input.value = label;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const sendButton = document.querySelector('.send-btn');
+    if (sendButton) sendButton.click();
+  }
+
+  document.addEventListener('odysseus:tool-approval', (event) => {
+    const detail = event && event.detail ? event.detail : {};
+    const decision = String(detail.decision || '').toLowerCase();
+    if (!detail.approval_id || !['approve', 'deny'].includes(decision)) return;
+    _pendingToolApproval = {
+      approval_id: String(detail.approval_id),
+      decision,
+      document_id: String(detail.document_id || ''),
+    };
+    _submitToolApprovalWhenIdle(
+      _pendingToolApproval.approval_id,
+      detail.label || (decision === 'approve' ? 'Allow once' : 'Deny'),
+    );
+  });
 
   function _fmtContextNumber(n) {
     const v = Number(n || 0);
@@ -1234,6 +1270,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     if (_sendInFlight) return;
     const _sendPerf = _createChatSendPerf();
     _sendInFlight = true;
+    const approvalForSend = _pendingToolApproval;
     _setForegroundChatBusy(true);
     // Instant visual feedback so the user sees their click was accepted
     // even before the streaming button state kicks in below.
@@ -1248,7 +1285,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     };
 
     // --- Setup mode: intercept next message (but let slash commands through) ---
-    {
+    if (!approvalForSend) {
       const el = uiModule.el;
       const rawMsg = (el('message').value || '').trim();
       const currentSetupMode = slashCommands.getSetupMode();
@@ -1278,7 +1315,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
 
     // --- Slash commands: execute directly without AI (no session needed) ---
-    if (isCommand(msg.trim())) {
+    if (!approvalForSend && isCommand(msg.trim())) {
       const handled = await handleSlashCommand(msg.trim());
       if (handled) {
         el('message').value = '';
@@ -1409,7 +1446,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     }
 
     // --- API key guard: warn if message looks like an API key ---
-    if (API_KEY_RE.test(msg.trim())) {
+    if (!approvalForSend && API_KEY_RE.test(msg.trim())) {
       if (!await window.styledConfirm('This looks like an API key. Sending it to the AI could expose it.\n\nDid you mean to use /setup instead?', { confirmText: 'Send anyway', danger: true })) {
         _releaseSendFlag();
         return;
@@ -1544,7 +1581,9 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       if (sessionModule.clearStreamComplete) sessionModule.clearStreamComplete(sessionModule.getCurrentSessionId());
 
       // Check for document selection context before consuming display override
-      const docSel = documentModule && documentModule.getSelectionContext();
+      const docSel = !approvalForSend && documentModule
+        ? documentModule.getSelectionContext()
+        : null;
       if (docSel) {
         const sels = Array.isArray(docSel) ? docSel : [docSel];
         const lineRefs = sels.map(s =>
@@ -1564,7 +1603,9 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       // stuck flag can't silently eat the next turn's recovery budget.
       if (!skipBubble) { _autoNudges = 0; _autoContinuePending = false; }
       else if (_autoContinuePending) { _autoContinuePending = false; }
-      const _pendingAttachInfo = fileHandlerModule.getPendingCount() ? fileHandlerModule.getPendingInfo() : null;
+      const _pendingAttachInfo = !approvalForSend && fileHandlerModule.getPendingCount()
+        ? fileHandlerModule.getPendingInfo()
+        : null;
       // Pre-read importable file contents before upload clears pending files
       const IMPORTABLE_EXT = /\.(txt|py|js|ts|html|htm|css|md|json|csv|yml|yaml|sh|sql|rs|go|java|c|cpp|h|rb|php|xml|jsx|tsx|log|toml|ini|conf|env|vue|svelte|scss|sass|less)$/i;
       const _importableFiles = [];
@@ -1582,7 +1623,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         _userMsgEl = addMessage('user', userDisplay, null, _pendingAttachInfo ? { attachments: _pendingAttachInfo } : null);
       }
       _sendPerf.mark('user_bubble_visible');
-      messageInput.value = '';
+      messageInput.value = approvalForSend ? (approvalForSend.draft || '') : '';
       messageInput.style.height = '';
       messageInput.dispatchEvent(new Event('input'));
       // Mobile: dismiss the on-screen keyboard after sending. iOS in
@@ -1616,13 +1657,15 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       }
 
       let ids = [];
-      try {
-        _sendPerf.mark('upload_begin');
-        ids = await fileHandlerModule.uploadPending({ sessionId: sessionModule.getCurrentSessionId() });
-        _sendPerf.mark('upload_done');
-      } catch(e) {
-        console.error('upload failed', e);
-        _sendPerf.mark('upload_failed');
+      if (!approvalForSend) {
+        try {
+          _sendPerf.mark('upload_begin');
+          ids = await fileHandlerModule.uploadPending({ sessionId: sessionModule.getCurrentSessionId() });
+          _sendPerf.mark('upload_done');
+        } catch(e) {
+          console.error('upload failed', e);
+          _sendPerf.mark('upload_failed');
+        }
       }
       if (_pendingAttachInfo && !ids.length && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) {
         if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
@@ -1639,10 +1682,10 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       // edited OCR text via the server-side .vision cache). Always CONSUME the
       // slot — even when empty / errored — so the regen ids can't bleed into
       // an unrelated next message if uploadPending() above had thrown.
-      if (_pendingRegenAttachments && _pendingRegenAttachments.length) {
+      if (!approvalForSend && _pendingRegenAttachments && _pendingRegenAttachments.length) {
         ids = ids.concat(_pendingRegenAttachments);
       }
-      _pendingRegenAttachments = null;
+      if (!approvalForSend) _pendingRegenAttachments = null;
 
       // The optimistic user bubble was rendered before the upload assigned ids,
       // so image previews couldn't show (the renderer needs att.id). Now that
@@ -1723,14 +1766,50 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       if (activeEmailComposerCtx?.docId) {
         activeDocIdForSend = activeEmailComposerCtx.docId;
       }
-      if (documentModule && activeDocIdForSend) {
+      const shouldSaveActiveDoc = !approvalForSend || (
+        approvalForSend.document_id
+        && approvalForSend.document_id === activeDocIdForSend
+      );
+      if (documentModule && activeDocIdForSend && shouldSaveActiveDoc) {
         try {
           _sendPerf.mark('doc_save_begin');
-          await documentModule.saveDocument();
+          const documentSaved = await documentModule.saveDocument({
+            silent: !!approvalForSend,
+          });
           _sendPerf.mark('doc_save_done');
+          if (approvalForSend && documentSaved === false) {
+            if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
+            if (
+              _pendingToolApproval
+              && _pendingToolApproval.approval_id === approvalForSend.approval_id
+            ) {
+              _pendingToolApproval = null;
+            }
+            uiModule.showError && uiModule.showError(
+              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
+            );
+            updateSubmitButton('idle', submitBtn);
+            _releaseSendFlag();
+            return;
+          }
         } catch(e) {
           console.warn('doc auto-save failed', e);
           _sendPerf.mark('doc_save_failed');
+          if (approvalForSend) {
+            if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
+            if (
+              _pendingToolApproval
+              && _pendingToolApproval.approval_id === approvalForSend.approval_id
+            ) {
+              _pendingToolApproval = null;
+            }
+            uiModule.showError && uiModule.showError(
+              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
+            );
+            updateSubmitButton('idle', submitBtn);
+            _releaseSendFlag();
+            return;
+          }
         }
       }
 
@@ -1760,18 +1839,30 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      if (approvalForSend) {
+        fd.append('tool_approval_id', approvalForSend.approval_id);
+        fd.append('tool_approval_decision', approvalForSend.decision);
+        if (
+          _pendingToolApproval
+          && _pendingToolApproval.approval_id === approvalForSend.approval_id
+        ) {
+          _pendingToolApproval = null;
+        }
+      }
       if (selectedRouteForSend.model) fd.append('selected_model', selectedRouteForSend.model);
       if (selectedRouteForSend.endpoint_url) fd.append('selected_endpoint_url', selectedRouteForSend.endpoint_url);
       if (selectedRouteForSend.endpoint_id) fd.append('selected_endpoint_id', selectedRouteForSend.endpoint_id);
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
-      if (documentModule && activeDocIdForSend) {
-        try {
-          _sendPerf.mark('doc_silent_save_begin');
-          await documentModule.saveDocument({ silent: true });
-          _sendPerf.mark('doc_silent_save_done');
-        } catch (_e) {
-          _sendPerf.mark('doc_silent_save_failed');
+      if (documentModule && activeDocIdForSend && shouldSaveActiveDoc) {
+        if (!approvalForSend) {
+          try {
+            _sendPerf.mark('doc_silent_save_begin');
+            await documentModule.saveDocument({ silent: true });
+            _sendPerf.mark('doc_silent_save_done');
+          } catch (_e) {
+            _sendPerf.mark('doc_silent_save_failed');
+          }
         }
         fd.append('active_doc_id', activeDocIdForSend);
       }
@@ -1825,7 +1916,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
       if (isAgentMode) {
         fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false');
       }
-	      if (el('research-toggle').checked) {
+	      if (!approvalForSend && el('research-toggle').checked) {
 	        fd.append('use_research', 'true');
 	        // Research always runs in chat mode — override agent if set
 	        fd.set('mode', 'chat');
@@ -2159,9 +2250,6 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
         _roundDisplayProjector.reset();
         _replyDisplayProjector.reset();
         _docFenceOpened = false;
-        _docFenceContentStart = -1;
-        _docFenceCandidateStart = -1;
-        _docFenceCandidateMarker = '';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
@@ -2251,9 +2339,6 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
 
       // Document streaming state (text-fence detection)
       let _docFenceOpened = false;
-      let _docFenceContentStart = -1;
-      let _docFenceCandidateStart = -1;
-      let _docFenceCandidateMarker = '';
       const _thinkingAnalysisGate = createThinkingAnalysisGate({
         startsWithReasoningPrefix: markdownModule.startsWithReasoningPrefix,
       });
@@ -2848,42 +2933,11 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
 	                roundText += _delta;
 	                _roundDisplayProjector.append(_delta, roundText);
 
-	                // --- Text-fence doc streaming (for models that don't use native tool calls) ---
-                if (!_docFenceOpened && documentModule) {
-                  // Only inspect the newly appended boundary. Re-scanning the
-                  // full round for every reasoning delta is quadratic even
-                  // before thinking normalization runs.
-                  const fenceMarkers = ['```document\n', '```documen\n', '```create_document\n'];
-                  const fenceScanStart = Math.max(0, roundText.length - _delta.length - 24);
-                  if (_docFenceCandidateStart < 0) {
-                    for (const candidate of fenceMarkers) {
-                      const candidateIdx = roundText.indexOf(candidate, fenceScanStart);
-                      if (candidateIdx >= 0 && (_docFenceCandidateStart < 0 || candidateIdx < _docFenceCandidateStart)) {
-                        _docFenceCandidateMarker = candidate;
-                        _docFenceCandidateStart = candidateIdx;
-                      }
-                    }
-                  }
-                  if (_docFenceCandidateStart >= 0) {
-                    const afterFence = roundText.slice(_docFenceCandidateStart + _docFenceCandidateMarker.length);
-                    const fenceLines = afterFence.split('\n');
-                    if (fenceLines.length >= 1 && fenceLines[0].trim()) {
-                      _docFenceOpened = true;
-                      const title = fenceLines[0].trim();
-                      // Keep in sync with backend _KNOWN_LANGS in src/tool_implementations.py
-                      const knownLangs = ['python','py','javascript','js','typescript','ts','html','css','json','yaml','bash','sql','rust','go','java','c','cpp','markdown','text','plain','ruby','swift','kotlin','php','email','csv','xml','toml','ini'];
-                      const isLang = fenceLines.length >= 2 && knownLangs.includes(fenceLines[1].trim().toLowerCase());
-                      const lang = isLang ? fenceLines[1].trim() : '';
-                      _docFenceContentStart = _docFenceCandidateStart + _docFenceCandidateMarker.length + title.length + 1 + (isLang ? fenceLines[1].length + 1 : 0);
-                      documentModule.streamDocOpen(title, lang);
-                    }
-                  }
-                }
-                if (_docFenceOpened && _docFenceContentStart > 0 && documentModule) {
-                  let raw = roundText.slice(_docFenceContentStart);
-                  const closeIdx = raw.indexOf('\n```');
-                  if (closeIdx >= 0) raw = raw.slice(0, closeIdx);
-                  documentModule.streamDocDelta(raw);
+                // Raw model text is not authorization to mutate the editor.
+                // Detect document fences only for chat projection/status; the
+                // server emits doc_stream_* after successful dispatch.
+                if (!_docFenceOpened) {
+                  _docFenceOpened = /```(?:create_document|documen(?:t)?)\s*\n/i.test(roundText);
                 }
 
                 // Detect thinking-in-progress:
@@ -3803,9 +3857,6 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
                 _roundDisplayProjector.reset();
                 _replyDisplayProjector.reset();
                 _docFenceOpened = false;
-                _docFenceContentStart = -1;
-                _docFenceCandidateStart = -1;
-                _docFenceCandidateMarker = '';
                 const box = document.getElementById('chat-history');
                 const newWrap = document.createElement('div');
                 newWrap.className = 'msg msg-ai msg-continuation streaming';
@@ -6563,7 +6614,7 @@ import { createTerminalStreamError, isRecoverableStreamError } from './chatStrea
     // Images → Gallery editor.
     if (isImage) {
       try {
-        const gx = await import('./galleryEditor.js');
+        const gx = await loadPanel('editor');
         if (gx.openEditor) { gx.openEditor(url, id, null, name); return; }
       } catch (e) { console.warn('gallery open failed', e); }
       window.open(url, '_blank');

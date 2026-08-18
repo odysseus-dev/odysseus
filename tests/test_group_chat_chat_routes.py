@@ -159,11 +159,12 @@ async def test_nonstream_chat_mirrors_direct_child_whispers_once(
             uprefs={},
         )
 
-    async def llm_call(*_args, **_kwargs):
-        return "hello back"
+    async def llm_call(candidates, *_args, **_kwargs):
+        selected = candidates[0]
+        return "hello back", selected, selected[1]
 
     monkeypatch.setattr(chat_routes, "build_chat_context", build_context)
-    monkeypatch.setattr(chat_routes, "llm_call_async", llm_call)
+    monkeypatch.setattr(chat_routes, "llm_call_async_with_route_fallback", llm_call)
     monkeypatch.setattr(chat_routes, "run_post_response_tasks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cdb, "update_session_last_accessed", lambda *_args: None)
     monkeypatch.setattr(
@@ -191,7 +192,9 @@ async def test_nonstream_chat_mirrors_direct_child_whispers_once(
         ChatRequest(message="hello", session="child", group_internal=group_internal),
     )
 
-    assert response == {"response": "hello back"}
+    assert response["response"] == "hello back"
+    assert response["requested_model"] == "test-model"
+    assert response["model"] == "test-model"
     if group_internal:
         assert parent.history == []
     else:

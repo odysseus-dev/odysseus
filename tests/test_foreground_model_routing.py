@@ -16,6 +16,7 @@ import routes.chat_routes as chat_routes
 import routes.chat_helpers as chat_helpers
 import routes.prefs_routes as prefs_routes
 from src.request_models import ChatRequest
+from src.tool_approvals import document_content_digest
 from src.foreground_model_routing import (
     FOREGROUND_AVAILABILITY_STATUSES,
     MAX_FOREGROUND_FALLBACKS,
@@ -38,6 +39,9 @@ class _EmptyQuery:
 
     def order_by(self, *args, **kwargs):
         return self
+
+    def all(self):
+        return []
 
     def first(self):
         return None
@@ -93,6 +97,7 @@ def _chat_stream_endpoint(
     agent_chunks=None,
     chat_chunks=None,
     capture_completion=False,
+    capture_context=False,
     endpoint_url="https://selected.example/v1",
 ):
     def add_message(message):
@@ -136,6 +141,8 @@ def _chat_stream_endpoint(
     )
 
     async def fake_build_context(*args, **kwargs):
+        if capture_context:
+            captured["build_context"] = kwargs
         return context
 
     async def fake_chat_stream(candidates, messages, **kwargs):
@@ -154,6 +161,13 @@ def _chat_stream_endpoint(
             "primary": (endpoint_url, model, kwargs.get("headers")),
             "fallbacks": kwargs.get("fallbacks"),
         }
+        if kwargs.get("external_untrusted_context_seen"):
+            captured["agent_external_untrusted_context_seen"] = True
+        if kwargs.get("exact_approval") is not None:
+            captured["exact_approval"] = kwargs["exact_approval"]
+            captured["approval_disabled_tools"] = set(
+                kwargs.get("disabled_tools") or ()
+            )
         if agent_chunks is not None:
             for chunk in agent_chunks:
                 if isinstance(chunk, BaseException):
@@ -250,6 +264,189 @@ async def test_chat_stream_route_keeps_selected_model_strict_with_legacy_data(mo
         assert captured == {"chat": [selected]}
     else:
         assert captured == {"agent": {"primary": selected, "fallbacks": []}}
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_consumes_exact_tool_approval_for_own_session(monkeypatch):
+    from src.tool_capabilities import capabilities_for_action
+
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", captured)
+    tool_content = '{"content":"replacement"}'
+    pending = chat_routes.tool_approval_store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="update_document",
+        content=tool_content,
+        workspace=None,
+        document_id="document-7",
+        document_version=4,
+        document_digest=document_content_digest("original"),
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("update_document", tool_content),
+    )
+    request = _RouteRequest("agent")
+    request._form.update(
+        {
+            "tool_approval_id": pending.approval_id,
+            "tool_approval_decision": "approve",
+            "active_doc_id": "document-changed-in-browser",
+            "compare_mode": "false",
+        }
+    )
+
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    grant = captured["exact_approval"]
+    assert grant.pending == pending
+    assert chat_routes.tool_approval_store.peek(pending.approval_id) is None
+    assert grant.matches(
+        owner="alice",
+        session_id="session-1",
+        tool_name="update_document",
+        content=tool_content,
+        workspace=None,
+    )
+    assert "update_document" not in captured["approval_disabled_tools"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_approval_restores_exact_shell_turn_toggle(monkeypatch):
+    from src.tool_capabilities import capabilities_for_action
+
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", captured)
+    pending = chat_routes.tool_approval_store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf exact",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf exact"),
+    )
+    request = _RouteRequest("chat")
+    request._form.update(
+        {
+            "allow_bash": "false",
+            "tool_approval_id": pending.approval_id,
+            "tool_approval_decision": "approve",
+        }
+    )
+
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    assert captured["exact_approval"].pending == pending
+    assert "bash" not in captured["approval_disabled_tools"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_denial_keeps_originating_run_tainted(monkeypatch):
+    from src.tool_capabilities import capabilities_for_action
+
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", captured)
+    pending = chat_routes.tool_approval_store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf retry",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf retry"),
+    )
+    request = _RouteRequest("agent")
+    request._form.update(
+        {
+            "tool_approval_id": pending.approval_id,
+            "tool_approval_decision": "deny",
+        }
+    )
+
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    assert "exact_approval" not in captured
+    assert captured["agent_external_untrusted_context_seen"] is True
+    assert chat_routes.tool_approval_store.peek(pending.approval_id) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_normal_reply_retires_pending_action_but_keeps_taint(
+    monkeypatch,
+):
+    from src.tool_capabilities import capabilities_for_action
+
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", captured)
+    pending = chat_routes.tool_approval_store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf retry",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf retry"),
+    )
+
+    response = await endpoint(_RouteRequest("agent"))
+    async for _ in response.body_iterator:
+        pass
+
+    assert "exact_approval" not in captured
+    assert captured["agent_external_untrusted_context_seen"] is True
+    assert chat_routes.tool_approval_store.peek(pending.approval_id) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_approval_ignores_research_and_new_attachments(monkeypatch):
+    from src.tool_capabilities import capabilities_for_action
+
+    captured = {}
+    endpoint = _chat_stream_endpoint(
+        monkeypatch,
+        "agent",
+        captured,
+        capture_context=True,
+    )
+    monkeypatch.setattr(chat_routes, "get_session_mode", lambda _session_id: "research_pending")
+    pending = chat_routes.tool_approval_store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf exact",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf exact"),
+    )
+    request = _RouteRequest("agent")
+    request._form.update(
+        {
+            "attachments": '["unrelated-upload"]',
+            "use_research": "true",
+            "tool_approval_id": pending.approval_id,
+            "tool_approval_decision": "approve",
+        }
+    )
+
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    assert captured["exact_approval"].pending == pending
+    assert captured["build_context"]["att_ids"] == []
+    assert "agent" in captured
+    assert "chat" not in captured
 
 
 @pytest.mark.asyncio
@@ -2040,6 +2237,7 @@ def test_multi_round_agent_uses_only_selected_model(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal round_number
         round_number += 1
@@ -2176,7 +2374,10 @@ def test_late_agent_fallback_records_each_round_and_stays_pinned(monkeypatch):
         yield "data: [DONE]\n\n"
 
     async def fake_execute(block, *args, **kwargs):
-        return "bash", {"output": "ok", "exit_code": 0}
+        # Keep this routing-only test untainted with a content-free fixture.
+        # Any model-visible shell error is workspace-derived and correctly
+        # reaches the exact-approval boundary on the next action.
+        return "bash", {"exit_code": 1}
 
     monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
     monkeypatch.setattr(agent_loop, "execute_tool_block", fake_execute)
@@ -2262,6 +2463,7 @@ def test_agent_terminal_later_round_error_stops_after_completed_tool(
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
@@ -2878,7 +3080,10 @@ def test_force_answer_recovery_persists_and_bills_pinned_fallback_route(
         yield "data: [DONE]\n\n"
 
     async def fake_execute(block, *args, **kwargs):
-        return "bash", {"output": "same result", "exit_code": 0}
+        # The repeated-call recovery is the subject here, not provenance. Use
+        # a content-free failure; model-visible shell errors correctly arm the
+        # exact-approval gate.
+        return "bash", {"exit_code": 1}
 
     async def fake_synthesis(**kwargs):
         synthesis_calls.append(kwargs)

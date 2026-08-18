@@ -12,6 +12,7 @@ Three focused tests:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -66,6 +67,51 @@ async def test_scheduler_agent_loop_path(monkeypatch):
     assert "## Current date and time" in msgs[1]["content"]
     assert msgs[2]["role"] == "user"
     assert msgs[2]["content"] == "run the digest"
+
+
+async def test_scheduler_retires_unattended_exact_approval(monkeypatch):
+    from src.task_scheduler import TaskScheduler
+    from src.tool_approvals import tool_approval_store
+    from src.tool_capabilities import capabilities_for_action
+
+    pending = tool_approval_store.create(
+        owner="admin",
+        session_id="s",
+        origin_run_id="scheduled-run",
+        tool_name="bash",
+        content="printf exact",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf exact"),
+    )
+    approval = pending.public_payload()
+
+    async def fake_stream_agent_loop(*args, **kwargs):
+        yield "data: " + json.dumps({
+            "type": "tool_output",
+            "tool": "bash",
+            "output": "Waiting for an exact user approval.",
+            "ask_user": approval,
+        }) + "\n\n"
+
+    monkeypatch.setattr(
+        "src.agent_loop.stream_agent_loop",
+        fake_stream_agent_loop,
+    )
+    monkeypatch.setattr(
+        "src.task_endpoint.resolve_task_candidates",
+        lambda **kwargs: [],
+    )
+    result = await TaskScheduler(session_manager=None)._run_agent_loop(
+        "http://ep/v1",
+        "model",
+        _make_task(),
+        "s",
+    )
+
+    assert "paused safely" in result
+    assert "That action was not executed" in result
+    assert tool_approval_store.peek(pending.approval_id) is None
 
 
 # ---------------------------------------------------------------------------
