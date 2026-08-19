@@ -184,6 +184,16 @@ class AgentRunPolicy:
                 capabilities,
             )
 
+        if (
+            tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED
+            and ToolEffect.READ_PRIVATE in capabilities.effects
+        ):
+            return ToolAuthorization(
+                AuthorizationOutcome.REQUIRE_APPROVAL,
+                "Private reads require an exact user approval in Sandbox mode.",
+                capabilities,
+            )
+
         if _sandbox_approval_effects(capabilities):
             return ToolAuthorization(
                 AuthorizationOutcome.REQUIRE_APPROVAL,
