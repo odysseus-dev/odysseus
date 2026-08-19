@@ -10,10 +10,37 @@ export function createChatAutoScroller({
   let enabled = true;
   let frameId = null;
   let box = null;
+  let expectedScrollTop = null;
+
+  function handleBoxScroll() {
+    if (!box) return;
+    if (
+      expectedScrollTop !== null
+      && Math.abs(box.scrollTop - expectedScrollTop) <= 1
+    ) {
+      expectedScrollTop = null;
+      return;
+    }
+    expectedScrollTop = null;
+    if (enabled) setEnabled(false);
+  }
 
   function resolveBox() {
-    if (!box || !box.isConnected) box = getBox();
+    if (!box || !box.isConnected) {
+      if (box && box.removeEventListener) {
+        box.removeEventListener('scroll', handleBoxScroll);
+      }
+      box = getBox();
+      if (box && box.addEventListener) {
+        box.addEventListener('scroll', handleBoxScroll, { passive: true });
+      }
+    }
     return box;
+  }
+
+  function writeScrollTop(targetBox, nextScrollTop) {
+    expectedScrollTop = nextScrollTop;
+    targetBox.scrollTop = nextScrollTop;
   }
 
   function step() {
@@ -27,12 +54,12 @@ export function createChatAutoScroller({
     const current = targetBox.scrollTop;
     const diff = target - current;
     if (Math.abs(diff) <= 1) {
-      targetBox.scrollTop = target;
+      writeScrollTop(targetBox, target);
       return;
     }
 
     const factor = isCompactViewport() ? 0.4 : 0.2;
-    targetBox.scrollTop = current + diff * factor;
+    writeScrollTop(targetBox, current + diff * factor);
     frameId = requestFrame(step);
   }
 
@@ -44,11 +71,15 @@ export function createChatAutoScroller({
   function scrollInstant() {
     const targetBox = resolveBox();
     if (!targetBox) return;
-    targetBox.scrollTop = Math.max(0, targetBox.scrollHeight - targetBox.clientHeight);
+    writeScrollTop(
+      targetBox,
+      Math.max(0, targetBox.scrollHeight - targetBox.clientHeight),
+    );
   }
 
   function setEnabled(nextEnabled) {
     enabled = !!nextEnabled;
+    if (!enabled) expectedScrollTop = null;
     if (!enabled && frameId !== null) {
       cancelFrame(frameId);
       frameId = null;
