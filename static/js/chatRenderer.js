@@ -2327,6 +2327,35 @@ export function removeAskUserCards(root) {
   scope.querySelectorAll('.ask-user-card').forEach((node) => node.remove());
 }
 
+// While a choice card is visible, let plain 1–3 activate the corresponding
+// rendered option. Reuse the option's click path so regular questions and
+// sealed tool approvals keep their existing submission semantics.
+function _handleAskUserShortcut(event) {
+  if (
+    event.defaultPrevented
+    || event.repeat
+    || event.isComposing
+    || event.ctrlKey
+    || event.altKey
+    || event.metaKey
+    || event.shiftKey
+  ) return;
+  if (!/^[1-3]$/.test(event.key)) return;
+
+  const target = event.target;
+  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+
+  const card = document.querySelector('#chat-history .ask-user-card');
+  if (!card) return;
+  const option = card.querySelectorAll('.ask-user-option')[Number(event.key) - 1];
+  if (!option || option.disabled) return;
+
+  event.preventDefault();
+  option.click();
+}
+
+document.addEventListener('keydown', _handleAskUserShortcut);
+
 /**
  * Render an ask_user payload as a durable choice card.
  *

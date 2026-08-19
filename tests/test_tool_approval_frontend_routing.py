@@ -27,3 +27,22 @@ def test_ask_user_close_button_uses_one_css_glyph():
     assert "closeBtn.setAttribute('aria-label', 'Dismiss question');" in renderer
     assert "closeBtn.textContent = '×';" not in renderer
     assert ".modal-close::before" in styles
+
+
+def test_ask_user_number_shortcuts_reuse_option_click_path():
+    root = Path(__file__).resolve().parents[1]
+    renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+    start = renderer.index("function _handleAskUserShortcut(event)")
+    end = renderer.index("document.addEventListener('keydown', _handleAskUserShortcut);", start)
+    shortcut = renderer[start:end]
+
+    assert "if (!/^[1-3]$/.test(event.key)) return;" in shortcut
+    assert "event.repeat" in shortcut
+    assert "event.ctrlKey" in shortcut
+    assert "event.altKey" in shortcut
+    assert "event.metaKey" in shortcut
+    assert "event.shiftKey" in shortcut
+    assert "input, textarea, select, [contenteditable=\"true\"]" in shortcut
+    assert "card.querySelectorAll('.ask-user-option')[Number(event.key) - 1]" in shortcut
+    assert "event.preventDefault();" in shortcut
+    assert "option.click();" in shortcut
