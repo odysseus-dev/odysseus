@@ -1,8 +1,10 @@
 import time
 from collections import namedtuple
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from src.agent_run_policy import (
     AgentRunMode,
@@ -347,3 +349,243 @@ def test_frontend_exposes_sandbox_and_full_access_without_ask_mode():
     assert '<option value="full_access">Full access</option>' in index
     assert '<option value="ask">' not in index
     assert "fd.append('security_mode', securityMode)" in chat
+
+
+class _ChatStreamRequest:
+    def __init__(self, *, user: str, security_mode: str):
+        self.user = user
+        self.headers = {"content-type": "application/json"}
+        self.cookies = {}
+        self.app = SimpleNamespace(
+            state=SimpleNamespace(auth_manager=None),
+        )
+        self._body = {
+            "message": "exercise the route policy",
+            "session": "session-1",
+            "mode": "agent",
+            "security_mode": security_mode,
+        }
+
+    async def json(self):
+        return self._body
+
+    async def form(self):
+        return {}
+
+
+def _chat_stream_endpoint(router):
+    for route in router.routes:
+        if route.path == "/api/chat_stream" and "POST" in route.methods:
+            return route.endpoint
+    raise AssertionError("POST /api/chat_stream route not registered")
+
+
+@pytest.fixture
+def chat_stream_security_route(monkeypatch):
+    import routes.chat_routes as chat_routes
+
+    session = SimpleNamespace(
+        id="session-1",
+        owner="admin",
+        model="test-model",
+        endpoint_url="http://model.invalid/v1",
+        headers={},
+        name="test-session",
+        history=[],
+        security_mode="sandbox",
+    )
+    stored_modes = []
+    stream_kwargs = {}
+    started_streams = {}
+
+    class _Query:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def order_by(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class _Db:
+        def query(self, *_args, **_kwargs):
+            return _Query()
+
+        def close(self):
+            return None
+
+    class _ToolPolicy:
+        block_all_tool_calls = False
+
+        def blocks(self, *_args, **_kwargs):
+            return False
+
+        def all_disabled_names(self):
+            return set()
+
+    session_manager = SimpleNamespace(
+        get_session=lambda session_id: session if session_id == session.id else None,
+        save_sessions=lambda: None,
+    )
+    context = SimpleNamespace(
+        user="admin",
+        messages=[{"role": "user", "content": "exercise the route policy"}],
+        web_sources=[],
+        rag_sources=[],
+        used_memories=[],
+        uprefs={},
+        uploaded_files=[],
+        preprocessed=SimpleNamespace(attachment_meta=[]),
+        auto_opened_docs=[],
+        preset=SimpleNamespace(character_name="", temperature=0, max_tokens=1),
+        context_length=0,
+        was_compacted=False,
+        context_trimmed=False,
+        preface=[],
+    )
+
+    monkeypatch.setattr(chat_routes, "_set_user_time_from_request", lambda _request: None)
+    monkeypatch.setattr(chat_routes, "_verify_session_owner", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "effective_user", lambda request: request.user)
+    monkeypatch.setattr(
+        chat_routes,
+        "owner_is_admin_or_single_user",
+        lambda owner: owner == "admin",
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "get_session_security_mode",
+        lambda _session_id: session.security_mode,
+    )
+
+    def _set_session_security_mode(_session_id, mode):
+        stored_modes.append(mode)
+        session.security_mode = mode
+        return True
+
+    monkeypatch.setattr(chat_routes, "set_session_security_mode", _set_session_security_mode)
+    monkeypatch.setattr(chat_routes, "set_session_mode", lambda *_args: None)
+    monkeypatch.setattr(chat_routes, "get_session_mode", lambda _session_id: "chat")
+    monkeypatch.setattr(chat_routes.tool_approval_store, "retire_for_session", lambda **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_reconcile_selected_route_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_clear_orphaned_session_endpoint", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_recover_empty_session_model", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_is_contextual_web_followup", lambda *_args: False)
+    monkeypatch.setattr(chat_routes, "_is_contextual_browser_followup", lambda *_args: False)
+    monkeypatch.setattr(chat_routes, "_resolve_workspace_from_message_path", lambda *_args: ("", ""))
+    monkeypatch.setattr(chat_routes, "_enforce_chat_privileges", lambda *_args: None)
+    monkeypatch.setattr(chat_routes, "resolve_session_auth", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_is_image_generation_session", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_classify_tool_intent", lambda _message: None)
+    monkeypatch.setattr(chat_routes, "web_search_enabled_for_turn", lambda *_args: False)
+    monkeypatch.setattr(chat_routes, "build_effective_tool_policy", lambda **_kwargs: _ToolPolicy())
+    monkeypatch.setattr(
+        chat_routes,
+        "resolve_foreground_model_policy",
+        lambda **_kwargs: SimpleNamespace(
+            enabled=False,
+            eligible_statuses=(),
+            fallback_on_empty=False,
+        ),
+    )
+    monkeypatch.setattr(chat_routes, "_allowed_models_for_request", lambda _request: [])
+    async def _build_chat_context(*_args, **_kwargs):
+        return context
+
+    monkeypatch.setattr(chat_routes, "build_chat_context", _build_chat_context)
+    monkeypatch.setattr(chat_routes, "SessionLocal", lambda: _Db())
+    monkeypatch.setattr(chat_routes, "_owner_session_filter", lambda query, _owner: query)
+    monkeypatch.setattr(chat_routes, "build_foreground_model_candidates", lambda *_args, **_kwargs: ["candidate"])
+    monkeypatch.setattr(
+        chat_routes,
+        "build_foreground_route_descriptors",
+        lambda *_args, **_kwargs: [{"endpoint_id": "test-endpoint", "endpoint_label": "Test"}],
+    )
+    monkeypatch.setattr(
+        "src.settings.get_setting",
+        lambda _key, default=None: default,
+    )
+
+    async def _fake_stream_agent_loop(*_args, **kwargs):
+        stream_kwargs.update(kwargs)
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(chat_routes, "stream_agent_loop", _fake_stream_agent_loop)
+
+    def _start(_session_id, stream):
+        started_streams["stream"] = stream
+        return SimpleNamespace(run_id="route-test-run")
+
+    async def _empty_subscription():
+        if False:
+            yield ""
+
+    monkeypatch.setattr(chat_routes.agent_runs, "start", _start)
+    monkeypatch.setattr(
+        chat_routes.agent_runs,
+        "subscribe",
+        lambda *_args: _empty_subscription(),
+    )
+
+    router = chat_routes.setup_chat_routes(
+        session_manager,
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+    return SimpleNamespace(
+        endpoint=_chat_stream_endpoint(router),
+        request=lambda user, mode: _ChatStreamRequest(
+            user=user,
+            security_mode=mode,
+        ),
+        stored_modes=stored_modes,
+        stream_kwargs=stream_kwargs,
+        started_streams=started_streams,
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_invalid_security_mode_before_persisting(
+    chat_stream_security_route,
+):
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_stream_security_route.endpoint(
+            chat_stream_security_route.request("admin", "not-a-mode")
+        )
+
+    assert exc_info.value.status_code == 400
+    assert chat_stream_security_route.stored_modes == []
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_non_admin_full_access_before_persisting(
+    chat_stream_security_route,
+):
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_stream_security_route.endpoint(
+            chat_stream_security_route.request("alice", "full_access")
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "admin" in str(exc_info.value.detail).lower()
+    assert chat_stream_security_route.stored_modes == []
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_persists_and_uses_allowed_full_access_mode(
+    chat_stream_security_route,
+):
+    response = await chat_stream_security_route.endpoint(
+        chat_stream_security_route.request("admin", "full_access")
+    )
+    assert response is not None
+    assert chat_stream_security_route.stored_modes == ["full_access"]
+
+    async for _chunk in chat_stream_security_route.started_streams["stream"]:
+        pass
+
+    assert chat_stream_security_route.stream_kwargs["security_mode"] == "full_access"
