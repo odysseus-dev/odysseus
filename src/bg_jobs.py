@@ -1,4 +1,4 @@
-"""Background job execution for the agent's `bash` tool.
+"""Sandboxed background job execution for the agent's `bash` tool.
 
 Long commands (installs, ffmpeg, model downloads) should NOT block the chat
 stream — a multi-minute held SSE connection is fragile (model-stops-early,
@@ -14,16 +14,21 @@ Design goals:
   * Bounded: a hard max-runtime marks a runaway job failed and STILL triggers
     a follow-up ("timed out"), so you always hear back.
 
-This module only owns launch + state. The monitor / agent re-invocation lives
-in the caller (so this stays import-light and unit-testable).
+This module only owns launch + state. Model commands execute through the
+server-selected process boundary: the default workspace Sandbox or explicitly
+confirmed Full Access, both retaining the private network policy. A tiny isolated
+Python wrapper outside that boundary only records output and the exit code. The
+monitor / agent re-invocation lives in the caller (so this stays import-light and
+unit-testable).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import shlex
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -31,14 +36,25 @@ from typing import Any, Dict, List, Optional
 
 from core.atomic_io import atomic_write_json
 from core.platform_compat import (
+    IS_WINDOWS,
     detached_popen_kwargs,
-    find_bash,
-    git_bash_path,
     kill_process_tree,
     pid_alive,
 )
 
 from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
+from src.execution_sandbox import (
+    SandboxNetworkProfile,
+    environment_for_sandbox_launcher,
+    full_access_command,
+    sandbox_command,
+)
+from src.process_execution import (
+    FULL_ACCESS_WARNING,
+    ProcessExecutionMode,
+    configured_process_execution_mode,
+    process_capability,
+)
 
 _JOBS_DIR = Path(BG_JOBS_DIR)
 _STORE = Path(BG_JOBS_FILE)
@@ -52,6 +68,59 @@ _MAX_OUTPUT_CHARS = 16000
 # files) is kept before pruning, so neither the store nor data/bg_jobs/ grows
 # without bound. The agent has already consumed the result by then.
 _RETENTION_S = 3600  # 1 hour after follow-up
+
+_DETACHED_SANDBOX_WRAPPER = """
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+plan_path = Path(sys.argv[1])
+expected_digest = sys.argv[2]
+log_path = Path(sys.argv[3])
+exit_path = Path(sys.argv[4])
+code = 1
+
+def write_private_text(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
+
+try:
+    plan_bytes = plan_path.read_bytes()
+    actual_digest = hashlib.sha256(plan_bytes).hexdigest()
+    if actual_digest != expected_digest:
+        raise RuntimeError("detached process plan digest mismatch")
+    plan = json.loads(plan_bytes)
+    if plan.get("version") != 1 or not isinstance(plan.get("argv"), list):
+        raise RuntimeError("invalid detached process plan")
+    argv = plan["argv"]
+    if not argv or not all(isinstance(part, str) for part in argv):
+        raise RuntimeError("invalid detached process argv")
+    child_env = {}
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(log_fd, "wb") as output:
+        completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            env=child_env,
+            check=False,
+        )
+        code = int(completed.returncode)
+except Exception as exc:
+    try:
+        write_private_text(log_path, f"process launch failed: {exc}\\n")
+    except Exception:
+        pass
+try:
+    write_private_text(exit_path, str(code))
+except Exception:
+    pass
+""".strip()
 
 
 def _load() -> Dict[str, Dict[str, Any]]:
@@ -78,85 +147,197 @@ def _pid_alive(pid: Optional[int]) -> bool:
     return pid_alive(pid)
 
 
-def launch(command: str, session_id: str, cwd: Optional[str] = None,
-           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
+def _make_jobs_dir_private() -> None:
+    _JOBS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        _JOBS_DIR.chmod(0o700)
+    except (AttributeError, NotImplementedError):
+        pass
+
+
+def _write_private_file(path: Path, content: str) -> None:
+    fd = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
+def _remove_job_record(job_id: str) -> None:
+    try:
+        jobs = _load()
+        if job_id not in jobs:
+            return
+        jobs.pop(job_id, None)
+        try:
+            _save(jobs)
+        except BaseException:
+            atomic_write_json(str(_STORE), jobs, indent=2)
+    except BaseException:
+        pass
+
+
+def _remove_job_artifacts(
+    job_id: str,
+    created_paths: list[Path],
+    preexisting_paths: set[Path] = frozenset(),
+) -> None:
+    paths = set(created_paths)
+    try:
+        paths.update(_JOBS_DIR.glob(f"{job_id}.*"))
+    except OSError:
+        pass
+    paths.difference_update(preexisting_paths)
+    for path in paths:
+        try:
+            path.unlink()
+        except (FileNotFoundError, IsADirectoryError, OSError):
+            pass
+
+
+def _kill_untracked_process(proc: subprocess.Popen) -> None:
+    try:
+        _kill(proc.pid)
+    except BaseException:
+        pass
+    try:
+        proc.wait(timeout=2)
+    except BaseException:
+        pass
+
+
+def launch(
+    command: str,
+    session_id: str,
+    cwd: Optional[str] = None,
+    max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
+) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
     Output + the final exit code are written to files so status survives a
     server restart. The process is put in its own session (setsid) so it
     outlives the request/stream that started it.
     """
-    _JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    if IS_WINDOWS:
+        raise RuntimeError(
+            "Sandboxed agent execution requires Linux with bubblewrap."
+        )
+    _make_jobs_dir_private()
     job_id = uuid.uuid4().hex[:12]
     log_path = _JOBS_DIR / f"{job_id}.log"
     exit_path = _JOBS_DIR / f"{job_id}.exit"
+    cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+    plan_path = _JOBS_DIR / f"{job_id}.plan.json"
+    try:
+        preexisting_paths = set(_JOBS_DIR.glob(f"{job_id}.*"))
+    except OSError:
+        preexisting_paths = set()
+    created_paths: list[Path] = [cmd_path, plan_path, log_path, exit_path]
+    proc: subprocess.Popen | None = None
+    record_saved = False
 
-    # The user command goes in its OWN script file, run as a child `bash`. This
-    # is what isolates it: an `exit` inside it only ends that child (so the
-    # wrapper still records the exit code), and — unlike textually wrapping the
-    # command in `( … )` — the wrapper can't be broken by an unbalanced paren or
-    # a trailing line-continuation in the command. `$?` is the child's real
-    # exit status.
-    bash = find_bash()
-    if bash:
-        # POSIX, or Windows with Git Bash/WSL. The user command goes in its OWN
-        # script file, run as a child `bash` — an `exit` inside it only ends
-        # that child (so the wrapper still records the exit code), and an
-        # unbalanced paren / trailing line-continuation in the command can't
-        # break the wrapper. `$?` is the child's real exit status. Paths are
-        # emitted as POSIX (forward-slash) + shell-quoted so Git Bash on Windows
-        # handles drive paths and spaces correctly.
-        cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-        cmd_path.write_text(command + "\n", encoding="utf-8")
-        lp, xp, cp = (shlex.quote(git_bash_path(p)) for p in (log_path, exit_path, cmd_path))
-        script_path = _JOBS_DIR / f"{job_id}.sh"
-        script_path.write_text(
-            f"bash {cp} > {lp} 2>&1\n"
-            f"echo $? > {xp}\n",
-            encoding="utf-8",
+    try:
+        _write_private_file(cmd_path, command + "\n")
+        execution_mode = configured_process_execution_mode()
+        capability = process_capability().for_mode(execution_mode)
+        if not capability.supports(network_profile):
+            raise RuntimeError(
+                f"{execution_mode.value} process boundary unavailable: "
+                + capability.reason_for(network_profile)
+            )
+        if execution_mode is ProcessExecutionMode.SANDBOX:
+            process_argv = sandbox_command(
+                ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
+                workspace=cwd or "",
+                readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
+                network_profile=network_profile,
+            )
+        else:
+            process_argv = full_access_command(
+                ["/bin/bash", "--noprofile", "--norc", str(cmd_path)],
+                working_directory=cwd or "",
+                network_profile=network_profile,
+            )
+        wrapper_environment = environment_for_sandbox_launcher()
+
+        plan_bytes = json.dumps(
+            {
+                "version": 1,
+                "argv": process_argv,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        plan_digest = hashlib.sha256(plan_bytes).hexdigest()
+        _write_private_file(plan_path, plan_bytes.decode("utf-8"))
+
+        argv = [
+            sys.executable,
+            "-I",
+            "-c",
+            _DETACHED_SANDBOX_WRAPPER,
+            str(plan_path),
+            plan_digest,
+            str(log_path),
+            str(exit_path),
+        ]
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            cwd=None,
+            env=wrapper_environment,
+            **detached_popen_kwargs(),  # detach from the request lifecycle (setsid)
         )
-        argv = [bash, str(script_path)]
-    else:
-        # Windows without any bash installed: cmd.exe wrapper. The command runs
-        # in its own child .cmd so %ERRORLEVEL% is the command's real exit code.
-        child_path = _JOBS_DIR / f"{job_id}.child.cmd"
-        child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")
-        script_path = _JOBS_DIR / f"{job_id}.cmd"
-        script_path.write_text(
-            "@echo off\r\n"
-            f'call "{child_path}" > "{log_path}" 2>&1\r\n'
-            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
-            encoding="utf-8",
-        )
-        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
 
-    proc = subprocess.Popen(
-        argv,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        cwd=cwd or None,
-        **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
-    )
-
-    rec = {
-        "id": job_id,
-        "session_id": session_id,
-        "command": command,
-        "status": "running",       # running | done | failed
-        "pid": proc.pid,
-        "started_at": time.time(),
-        "ended_at": None,
-        "exit_code": None,
-        "max_runtime_s": max_runtime_s,
-        "followed_up": False,       # has the agent been re-invoked with the result?
-        "log_path": str(log_path),
-        "exit_path": str(exit_path),
-    }
-    jobs = _load()
-    jobs[job_id] = rec
-    _save(jobs)
-    return rec
+        rec = {
+            "id": job_id,
+            "session_id": session_id,
+            "command": command,
+            "status": "running",       # running | done | failed
+            "pid": proc.pid,
+            "started_at": time.time(),
+            "ended_at": None,
+            "exit_code": None,
+            "max_runtime_s": max_runtime_s,
+            "network_profile": network_profile.value,
+            "execution_mode": execution_mode.value,
+            "network_enforcement": (
+                "brokered_http_https"
+                if network_profile is SandboxNetworkProfile.BROKERED_ONLY
+                else "networkless"
+            ),
+            "warning": (
+                FULL_ACCESS_WARNING
+                if execution_mode is ProcessExecutionMode.FULL_ACCESS
+                else ""
+            ),
+            "followed_up": False,       # has the agent been re-invoked with the result?
+            "log_path": str(log_path),
+            "exit_path": str(exit_path),
+        }
+        jobs = _load()
+        jobs[job_id] = rec
+        _save(jobs)
+        record_saved = True
+        return rec
+    except BaseException:
+        if proc is not None and not record_saved:
+            _kill_untracked_process(proc)
+        if not record_saved:
+            _remove_job_record(job_id)
+        _remove_job_artifacts(job_id, created_paths, preexisting_paths)
+        raise
 
 
 def _read_output(rec: Dict[str, Any]) -> str:
@@ -294,4 +475,10 @@ def result_text(rec: Dict[str, Any]) -> str:
         head = "Background job process died unexpectedly (no exit code)."
     else:
         head = f"Background job finished with exit code {rec.get('exit_code')}."
-    return f"{head}\nCommand: {rec.get('command')}\n\nOutput:\n{out or '(no output)'}"
+    authority = f"Execution mode: {rec.get('execution_mode', 'sandbox')}"
+    if rec.get("warning"):
+        authority += f"\nWARNING: {rec['warning']}"
+    return (
+        f"{head}\n{authority}\nCommand: {rec.get('command')}"
+        f"\n\nOutput:\n{out or '(no output)'}"
+    )
