@@ -38,12 +38,12 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
             os.fsync(f.fileno())
         os.replace(tmp, path)
     finally:
-        # If replace succeeds, `tmp` is gone. If anything failed, clean it up.
-        if os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
+        # Directly unlink to avoid a check-then-act race condition.
+        # Swallows FileNotFoundError (on success path) and other cleanup OSErrors.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def atomic_write_text(path: str, text: str) -> None:
@@ -59,9 +59,9 @@ def atomic_write_text(path: str, text: str) -> None:
             os.fsync(f.fileno())
         os.replace(tmp, path)
     finally:
-        # If replace succeeds, `tmp` is gone. If anything failed, clean it up.
-        if os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
+        # Directly unlink to avoid a check-then-act race condition.
+        # Swallows FileNotFoundError (on success path) and other cleanup OSErrors.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
