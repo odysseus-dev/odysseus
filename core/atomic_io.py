@@ -30,7 +30,7 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.tmp.{uuid.uuid4().hex}"
-    
+
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=indent)
@@ -51,7 +51,7 @@ def atomic_write_text(path: str, text: str) -> None:
         raise TypeError("atomic_write_text expects a string")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.tmp.{uuid.uuid4().hex}"
-    
+
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
