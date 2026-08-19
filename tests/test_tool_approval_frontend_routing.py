@@ -46,3 +46,15 @@ def test_ask_user_number_shortcuts_reuse_option_click_path():
     assert "card.querySelectorAll('.ask-user-option')[Number(event.key) - 1]" in shortcut
     assert "event.preventDefault();" in shortcut
     assert "option.click();" in shortcut
+
+
+def test_ask_user_renderer_accepts_scoped_root_and_submit_callback():
+    root = Path(__file__).resolve().parents[1]
+    renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+
+    assert "const chatBox = renderOptions.root || document.getElementById('chat-history');" in renderer
+    assert "const onSubmit = typeof renderOptions.onSubmit === 'function'" in renderer
+    assert "kind: 'answer'" in renderer
+    assert "kind: 'tool_approval'" in renderer
+    assert "if (accepted !== false) card.remove();" in renderer
+    assert "document.dispatchEvent(new CustomEvent('odysseus:tool-approval', { detail }))" in renderer

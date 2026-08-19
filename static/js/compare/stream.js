@@ -1,7 +1,7 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
 import { addFinishBadge } from './vote.js';
-import { getModelCost, safeDisplayImageSrc } from '../chatRenderer.js';
+import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js';
@@ -24,11 +24,130 @@ function _safeHttpHref(raw) {
 // ── Lazy-registered functions from compare.js (avoids circular deps) ──
 let _rerollPane = null;
 let _autoPreviewHtml = null;
+let _setSendBtn = null;
 
 /** Register external functions that live in compare.js. */
-function registerStreamActions({ rerollPane, autoPreviewHtml }) {
+function registerStreamActions({ rerollPane, autoPreviewHtml, setSendBtn }) {
   _rerollPane = rerollPane;
   _autoPreviewHtml = autoPreviewHtml;
+  _setSendBtn = setSendBtn;
+}
+
+function _paneSessionIsCurrent(paneIdx, sessionId) {
+  return Boolean(
+    state.isActive
+    && state._paneSessionIds[paneIdx] === sessionId
+    && document.getElementById('cmp-history-' + paneIdx)
+  );
+}
+
+function _setCompareBusy(active) {
+  state._streaming = Boolean(active);
+  if (_setSendBtn) _setSendBtn(active ? 'stop' : 'send');
+  document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach((button) => {
+    button.disabled = Boolean(active);
+    button.style.opacity = active ? '0.25' : '0.7';
+    button.style.pointerEvents = active ? 'none' : '';
+  });
+}
+
+function _syncCompareBusyFromPanes() {
+  _setCompareBusy((state._abortControllers || []).some(Boolean));
+}
+
+function _appendPaneMessage(hist, role, text) {
+  const message = document.createElement('div');
+  message.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
+  const roleEl = document.createElement('div');
+  roleEl.className = 'role';
+  roleEl.textContent = role === 'user' ? 'You' : 'AI';
+  const body = document.createElement('div');
+  body.className = 'body';
+  body.textContent = text || '';
+  message.appendChild(roleEl);
+  message.appendChild(body);
+  hist.appendChild(message);
+  return message;
+}
+
+function _createPaneContinuationMessage(hist) {
+  const message = _appendPaneMessage(hist, 'assistant', '');
+  const body = message.querySelector('.body');
+  if (spinnerModule) {
+    const spinner = spinnerModule.create('Continuing...', 'right');
+    body.appendChild(spinner.createElement());
+    spinner.start();
+    message._spinner = spinner;
+  }
+  return message;
+}
+
+function _resumePaneChoiceWhenIdle(paneIdx, sessionId, originController, submission) {
+  if (!_paneSessionIsCurrent(paneIdx, sessionId)) return false;
+
+  const startedAt = Date.now();
+  const resume = () => {
+    if (!_paneSessionIsCurrent(paneIdx, sessionId)) return;
+    const activeController = state._abortControllers[paneIdx];
+    if (activeController === originController) {
+      if (Date.now() - startedAt < 10000) setTimeout(resume, 25);
+      return;
+    }
+    // A reroll/model replacement already owns this pane. Never send the stale
+    // choice into that replacement stream or session UI.
+    if (activeController) return;
+
+    const hist = document.getElementById('cmp-history-' + paneIdx);
+    if (!hist) return;
+    hist.querySelectorAll('.ask-user-card').forEach((card) => card.remove());
+
+    const isApproval = submission.kind === 'tool_approval';
+    const message = isApproval ? '' : String(submission.text || submission.label || '');
+    if (!isApproval) _appendPaneMessage(hist, 'user', message);
+    const aiMessage = _createPaneContinuationMessage(hist);
+    hist.scrollTop = hist.scrollHeight;
+
+    const resumeOptions = { skipBadge: true };
+    if (isApproval) {
+      resumeOptions.toolApproval = {
+        approval_id: String(submission.approval_id || ''),
+        decision: String(submission.decision || '').toLowerCase(),
+      };
+    }
+
+    _setCompareBusy(true);
+    streamToPane(paneIdx, sessionId, message, aiMessage, resumeOptions)
+      .catch((error) => {
+        console.error('Compare pane continuation failed:', error);
+        if (uiModule) uiModule.showError('Compare continuation failed: ' + error.message);
+      })
+      .finally(_syncCompareBusyFromPanes);
+  };
+
+  setTimeout(resume, 0);
+  return true;
+}
+
+function _renderPaneAskUserCard(paneIdx, sessionId, payload, hist, aiMsgEl, originController) {
+  if (!hist || !hist.isConnected || !_paneSessionIsCurrent(paneIdx, sessionId)) return null;
+  if (aiMsgEl && aiMsgEl._spinner) {
+    if (aiMsgEl._spinner.element) aiMsgEl._spinner.destroy();
+    aiMsgEl._spinner = null;
+  }
+  const card = renderAskUserCard(payload, {
+    root: hist,
+    onSubmit: (submission) => _resumePaneChoiceWhenIdle(
+      paneIdx,
+      sessionId,
+      originController,
+      submission,
+    ),
+  });
+  if (card) {
+    card.dataset.comparePane = String(paneIdx);
+    card.dataset.compareSession = String(sessionId);
+  }
+  return card;
 }
 
 /** Format milliseconds as human-readable duration (e.g. "120ms", "1.23s", "4.5s"). */
@@ -164,6 +283,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
   let metrics = null;
   let timedOut = false;
   let streamOk = false;
+  let awaitingChoice = false;
   let currentToolBlock = null;  // track active agent tool block
   // Idle timeout — abort only if no data is received for this many seconds.
   // Long generations (SVG, big code) are fine as long as the stream stays
@@ -219,6 +339,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     const fd = new FormData();
     fd.append('message', message);
     fd.append('session', sessionId);
+    if (opts.toolApproval) {
+      fd.append('tool_approval_id', opts.toolApproval.approval_id || '');
+      fd.append('tool_approval_decision', opts.toolApproval.decision || '');
+    }
 
     // Compare mode determines what tools/features are enabled
     const isAgent = state._compareMode === 'agent';
@@ -321,6 +445,36 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
                 aiMsgEl._spinner = newSpinner;
               }
             }
+
+          // ── Pane-local question / approval selector ──
+          } else if (json.type === 'ask_user') {
+            awaitingChoice = true;
+            _renderPaneAskUserCard(
+              paneIdx,
+              sessionId,
+              json.data || {},
+              hist,
+              aiMsgEl,
+              ac,
+            );
+            if (hist) hist.scrollTop = hist.scrollHeight;
+
+          // Deny ends as a tiny resolution-only stream, so replace the
+          // continuation spinner with an explicit pane-local result.
+          } else if (json.type === 'tool_approval_resolved') {
+            if (aiMsgEl._spinner) {
+              if (aiMsgEl._spinner.element) aiMsgEl._spinner.destroy();
+              aiMsgEl._spinner = null;
+            }
+            accumulated = json.decision === 'deny' ? 'Denied.' : 'Approval recorded.';
+            let target = aiMsgEl._textEl;
+            if (!target) {
+              target = document.createElement('div');
+              target.className = 'compare-text-content';
+              aiBody.appendChild(target);
+              aiMsgEl._textEl = target;
+            }
+            target.textContent = accumulated;
 
           // ── Tool start (bash, web search agent tool) ──
           } else if (json.type === 'tool_start') {
@@ -640,19 +794,21 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       // TTFT removed from the header per user request — just show total time.
       _timerEl.textContent = _formatMs(_totalMs);
     }
-    state._abortControllers[paneIdx] = null;
+    if (state._abortControllers[paneIdx] === ac) {
+      state._abortControllers[paneIdx] = null;
+    }
     // Hide stop button, show response action buttons
     const _paneElFinal = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
     if (_paneElFinal) {
       const _stopBtnFinal = _paneElFinal.querySelector('.pane-stop-btn');
       if (_stopBtnFinal) _stopBtnFinal.style.display = 'none';
-      if (accumulated.trim()) {
+      if (!awaitingChoice && accumulated.trim()) {
         _paneElFinal.querySelectorAll('.pane-needs-response').forEach(b => b.style.display = '');
       }
     }
     state._paneMetrics[paneIdx] = metrics;
     state._paneElapsed[paneIdx] = _totalMs;
-    if (!opts.skipBadge) {
+    if (!opts.skipBadge && !awaitingChoice) {
       if (streamOk) {
         state._finishOrder++;
         if (state._parallel) {
@@ -682,7 +838,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
     }
     // Auto-grade against expected answer — stamps ✓ or ✗ on the pane header.
-    if (streamOk && state._expectedAnswer) {
+    if (streamOk && !awaitingChoice && state._expectedAnswer) {
       _stampGradeBadge(paneIdx, accumulated, state._expectedAnswer);
     }
     // Show copy/reroll buttons now that response exists

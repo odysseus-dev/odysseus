@@ -2345,7 +2345,10 @@ function _handleAskUserShortcut(event) {
   const target = event.target;
   if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
 
-  const card = document.querySelector('#chat-history .ask-user-card');
+  const focusedCard = document.activeElement?.closest?.('.ask-user-card') || null;
+  const mainCard = document.querySelector('#chat-history .ask-user-card');
+  const compareCards = document.querySelectorAll('.compare-pane .ask-user-card');
+  const card = focusedCard || mainCard || (compareCards.length === 1 ? compareCards[0] : null);
   if (!card) return;
   const option = card.querySelectorAll('.ask-user-option')[Number(event.key) - 1];
   if (!option || option.disabled) return;
@@ -2367,10 +2370,13 @@ export function renderAskUserCard(payload, options) {
   const aq = payload || {};
   if (aq.resolved) return null;
   const opts = Array.isArray(aq.options) ? aq.options : [];
-  const chatBox = document.getElementById('chat-history');
+  const renderOptions = options || {};
+  const chatBox = renderOptions.root || document.getElementById('chat-history');
+  const onSubmit = typeof renderOptions.onSubmit === 'function'
+    ? renderOptions.onSubmit
+    : null;
   if (!chatBox || !aq.question || opts.length < 2) return null;
 
-  const renderOptions = options || {};
   removeAskUserCards(chatBox);
 
   const card = document.createElement('div');
@@ -2429,6 +2435,17 @@ export function renderAskUserCard(payload, options) {
 
   const send = (text) => {
     if (!text) return;
+    if (onSubmit) {
+      const accepted = onSubmit({
+        kind: 'answer',
+        text,
+        label: text,
+        payload: aq,
+        card,
+      });
+      if (accepted !== false) card.remove();
+      return;
+    }
     card.remove();
     const input = uiModule.el('message');
     if (input) input.value = text;
@@ -2462,17 +2479,26 @@ export function renderAskUserCard(payload, options) {
       row.type = 'button';
       row.addEventListener('click', () => {
         if (isToolApproval) {
-          card.remove();
-          document.dispatchEvent(new CustomEvent('odysseus:tool-approval', {
-            detail: {
-              approval_id: aq.approval_id,
-              decision: String((opt && opt.value) || '').toLowerCase(),
-              label,
-              document_id: aq.action && aq.action.document_id
-                ? String(aq.action.document_id)
-                : '',
-            },
-          }));
+          const detail = {
+            approval_id: aq.approval_id,
+            decision: String((opt && opt.value) || '').toLowerCase(),
+            label,
+            document_id: aq.action && aq.action.document_id
+              ? String(aq.action.document_id)
+              : '',
+          };
+          if (onSubmit) {
+            const accepted = onSubmit({
+              kind: 'tool_approval',
+              ...detail,
+              payload: aq,
+              card,
+            });
+            if (accepted !== false) card.remove();
+          } else {
+            card.remove();
+            document.dispatchEvent(new CustomEvent('odysseus:tool-approval', { detail }));
+          }
         } else {
           send(label);
         }
