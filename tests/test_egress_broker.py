@@ -599,6 +599,31 @@ def test_broker_and_bridge_limits_are_explicit_and_consistent():
     )
 
 
+def test_egress_makefile_keeps_trusted_install_contract():
+    makefile = (
+        Path(__file__).resolve().parents[1] / "security" / "egress" / "Makefile"
+    ).read_text(encoding="utf-8")
+
+    assert "INSTALL_OWNER ?= root" in makefile
+    assert "INSTALL_GROUP ?= root" in makefile
+    assert (
+        'PYTHON_PATH := $(shell realpath "$$(command -v $(PYTHON))")' in makefile
+    )
+    assert "sed -i '1c\\#!$(PYTHON_PATH) -I'" in makefile
+    assert (
+        "install -o $(INSTALL_OWNER) -g $(INSTALL_GROUP) -m 0755" in makefile
+    )
+    assert (
+        "chown $(INSTALL_OWNER):$(INSTALL_GROUP) "
+        "$(INSTALL_DIR)/odysseus-egress-broker "
+        "$(INSTALL_DIR)/odysseus-egress-bridge" in makefile
+    )
+    assert (
+        "chmod 0755 $(INSTALL_DIR)/odysseus-egress-broker "
+        "$(INSTALL_DIR)/odysseus-egress-bridge" in makefile
+    )
+
+
 def test_multiple_simultaneous_connect_tunnels_work_within_bounds(tmp_path):
     origins = []
     origin_threads = []
