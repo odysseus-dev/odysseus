@@ -31,6 +31,7 @@ from src.context_compactor import (
 )
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
+from src.execution_sandbox import SandboxNetworkProfile
 from src.tool_security import (
     blocked_tools_for_owner,
     email_tool_policy_names,
@@ -3440,6 +3441,7 @@ async def stream_agent_loop(
     _is_teacher_run: bool = False,
     history_session=None,
     defer_context_shaping: bool = False,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -4547,6 +4549,7 @@ async def stream_agent_loop(
                     workspace=workspace,
                     security_context=run_security,
                     exact_approval=exact_approval,
+                    network_profile=network_profile,
                 )
             finally:
                 await approved_progress_q.put(None)
@@ -5768,6 +5771,7 @@ async def stream_agent_loop(
                             progress_cb=_push_progress,
                             workspace=workspace,
                             security_context=run_security,
+                            network_profile=network_profile,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
@@ -6412,6 +6416,7 @@ async def stream_agent_loop(
                 tool_policy=tool_policy,
                 active_document=active_document,
                 active_email=active_email,
+                network_profile=network_profile,
             ):
                 yield evt
         except Exception as _esc_err:

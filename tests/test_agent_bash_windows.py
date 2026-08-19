@@ -53,7 +53,7 @@ async def test_windows_bash_without_git_bash_fails_clearly(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bash_tool_returns_install_hint_when_git_bash_is_missing(monkeypatch):
+async def test_bash_tool_fails_closed_without_linux_sandbox(monkeypatch):
     monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
     monkeypatch.setattr(subprocess_tools, "find_bash", lambda: None)
 
@@ -63,12 +63,12 @@ async def test_bash_tool_returns_install_hint_when_git_bash_is_missing(monkeypat
     )
 
     assert result["exit_code"] == 1
-    assert "install Git for Windows" in result["error"]
+    assert result["blocked"] is True
+    assert "requires Linux with bubblewrap" in result["error"]
 
 
 @pytest.mark.asyncio
 async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
-    captured = {}
     workspace = r"D:\Workspaces\Project with spaces"
 
     monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
@@ -82,26 +82,49 @@ async def test_windows_bash_does_not_use_a_stray_tmux_executable(monkeypatch):
     async def fail_tmux(*_args, **_kwargs):
         pytest.fail("native Windows must not enter the POSIX tmux path")
 
-    async def fake_create(command, **kwargs):
-        captured["command"] = command
-        captured["kwargs"] = kwargs
-        return object()
-
-    async def fake_stream(_process, **_kwargs):
-        return "ok", "", 0, False
+    async def fail_create(*_args, **_kwargs):
+        pytest.fail("Windows execution must fail closed before process creation")
 
     monkeypatch.setattr(subprocess_tools, "_run_tmux_bash", fail_tmux)
-    monkeypatch.setattr(subprocess_tools, "_create_bash_subprocess", fake_create)
-    monkeypatch.setattr(subprocess_tools, "_run_subprocess_streaming", fake_stream)
+    monkeypatch.setattr(subprocess_tools, "_create_bash_subprocess", fail_create)
 
     result = await subprocess_tools.BashTool().execute(
         "pwd",
         {"subproc_env": {}, "session_id": "chat-1"},
     )
 
-    assert result == {"output": "ok", "exit_code": 0}
-    assert captured["command"] == "pwd"
-    assert captured["kwargs"]["cwd"] == workspace
+    assert result["blocked"] is True
+    assert "requires Linux with bubblewrap" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_windows_python_fails_closed_without_linux_sandbox(monkeypatch):
+    monkeypatch.setattr(subprocess_tools, "IS_WINDOWS", True)
+
+    async def fail_spawn(*_args, **_kwargs):
+        pytest.fail("Windows execution must fail closed before process creation")
+
+    monkeypatch.setattr(subprocess_tools.asyncio, "create_subprocess_exec", fail_spawn)
+
+    result = await subprocess_tools.PythonTool().execute("print('no')", {})
+
+    assert result["blocked"] is True
+    assert "requires Linux with bubblewrap" in result["error"]
+
+
+def test_windows_background_job_fails_closed_before_writing_files(
+    tmp_path,
+    monkeypatch,
+):
+    from src import bg_jobs
+
+    monkeypatch.setattr(bg_jobs, "IS_WINDOWS", True)
+    monkeypatch.setattr(bg_jobs, "_JOBS_DIR", tmp_path / "jobs")
+
+    with pytest.raises(RuntimeError, match="requires Linux with bubblewrap"):
+        bg_jobs.launch("echo no", session_id="chat-1", cwd=str(tmp_path))
+
+    assert not (tmp_path / "jobs").exists()
 
 
 @pytest.mark.asyncio
