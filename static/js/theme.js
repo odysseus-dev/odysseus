@@ -141,6 +141,26 @@ function _relativeLuminance(hex) {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
+// Pick a readable foreground for an arbitrary background: white unless it
+// would fall below ~3:1, in which case near-black. Shared by every
+// accent-painted surface so each one is judged against the background it
+// actually renders, not a global accent.
+function _readableOn(bgHex) {
+  const contrastWithWhite = 1.05 / (_relativeLuminance(bgHex) + 0.05);
+  return contrastWithWhite < 3 ? '#171717' : '#fff';
+}
+
+// sRGB mix matching CSS color-mix(in srgb, a pct%, b). Needed where a
+// surface's background is itself a mix, e.g. the new-chat send button.
+function _mixSrgb(aHex, bHex, aPct) {
+  const a = hexToRgb(aHex) || { r: 0, g: 0, b: 0 };
+  const b = hexToRgb(bHex) || { r: 0, g: 0, b: 0 };
+  const w = Math.max(0, Math.min(1, aPct));
+  const ch = (x, y) => Math.round(x * w + y * (1 - w));
+  const hex = (n) => n.toString(16).padStart(2, '0');
+  return `#${hex(ch(a.r, b.r))}${hex(ch(a.g, b.g))}${hex(ch(a.b, b.b))}`;
+}
+
 function hexToHSL(hex) {
   const rgb = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
   const r = rgb.r / 255;
@@ -273,10 +293,10 @@ export function applyColors(colors) {
   s.setProperty('--panel', colors.panel);
   s.setProperty('--border', colors.border);
   if (colors.red) s.setProperty('--red', colors.red);
-  // Contrast of white against --red. Below ~3:1 (a light or strongly
-  // saturated accent) dark text is far more legible than white.
-  const _whiteOnRed = 1.05 / (_relativeLuminance(colors.red || '#e06c75') + 0.05);
-  s.setProperty('--on-accent', _whiteOnRed < 3 ? '#171717' : '#fff');
+  // Foreground for surfaces painted with --red itself. Surfaces with an
+  // independently configurable background get their own token below,
+  // once the advanced overrides have been resolved.
+  s.setProperty('--on-accent', _readableOn(colors.red || '#e06c75'));
 
   // Keep the mobile browser toolbar / status bar matched to the theme bg
   // (same as the early head-script does on first paint).
@@ -302,6 +322,22 @@ export function applyColors(colors) {
   for (const { key, css } of ADV_KEYS) {
     s.setProperty(css, adv[key] || defaults[key]);
   }
+
+  // The send button's background is independently configurable
+  // (--send-btn-bg / --send-btn-hover), so a foreground derived from
+  // --red can be wrong for it: a dark accent with a light custom send
+  // button would keep white text on a light surface. Pair each of its
+  // rendered backgrounds with its own foreground instead.
+  const _sendBg = adv.sendBtnBg || defaults.sendBtnBg;
+  const _sendHoverBg = adv.sendBtnHover || defaults.sendBtnHover;
+  s.setProperty('--on-send-btn', _readableOn(_sendBg));
+  s.setProperty('--on-send-btn-hover', _readableOn(_sendHoverBg));
+  // The new-chat state blends the hover colour 85% into --panel, so it
+  // is a third distinct surface.
+  s.setProperty(
+    '--on-send-btn-newchat-hover',
+    _readableOn(_mixSrgb(_sendHoverBg, colors.panel || '#111111', 0.85)),
+  );
 
   // Update favicon to match theme accent color
   _updateFavicon(colors.red || '#e06c75');

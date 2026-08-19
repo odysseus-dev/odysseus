@@ -28,6 +28,11 @@
      needs dark text where a darker one is fine with white. This
      default only covers first paint, before theme.js runs. */
   --on-accent: #fff;
+  /* Surfaces whose background is independently configurable get their own
+     foreground, recomputed in theme.js once those overrides resolve. */
+  --on-send-btn: #fff;
+  --on-send-btn-hover: #fff;
+  --on-send-btn-newchat-hover: #fff;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
@@ -2830,7 +2835,7 @@ body.bg-pattern-sparkles {
          against ChatGPT-style themes where the stored override leaked
          to white and rendered the send button invisible. */
       background: var(--send-btn-bg, var(--red));
-      color: var(--on-accent);
+      color: var(--on-send-btn);
       border: none;
       border-radius: 8px;
       min-width: 32px;
@@ -2906,7 +2911,7 @@ body.bg-pattern-sparkles {
     }
     .send-btn:hover {
       background: var(--send-btn-hover, color-mix(in srgb, var(--red) 80%, white));
-      color: var(--on-accent);
+      color: var(--on-send-btn-hover);
     }
     .send-btn.mic-mode,
     .send-btn.newchat-mode {
@@ -2921,7 +2926,7 @@ body.bg-pattern-sparkles {
     .send-btn.mic-mode:hover,
     .send-btn.newchat-mode:hover {
       background: color-mix(in srgb, var(--send-btn-hover, var(--send-btn-bg, var(--red))) 85%, var(--panel, #2a2a2a));
-      color: var(--on-accent);
+      color: var(--on-send-btn-newchat-hover);
     }
     /* Hover: just spin the + 90° (no size change). The "New chat" affordance
        is the tooltip (title="New chat") plus the icon rotation.
@@ -26928,7 +26933,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   position: relative;
   top: -2px;
   background: var(--send-btn-bg, var(--red));
-  color: var(--on-accent);
+  color: var(--on-send-btn);
   border: none;
   border-radius: 8px;
   min-width: 32px;
