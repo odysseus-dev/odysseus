@@ -25,14 +25,22 @@ export function createChatAutoScroller({
     if (enabled) setEnabled(false);
   }
 
+  function handleContentLoad() {
+    if (enabled) scroll();
+  }
+
   function resolveBox() {
     if (!box || !box.isConnected) {
       if (box && box.removeEventListener) {
         box.removeEventListener('scroll', handleBoxScroll);
+        box.removeEventListener('load', handleContentLoad, true);
       }
       box = getBox();
       if (box && box.addEventListener) {
         box.addEventListener('scroll', handleBoxScroll, { passive: true });
+        // Descendant image/media load events do not bubble, so capture them.
+        // If auto-follow is still enabled, restart after late height growth.
+        box.addEventListener('load', handleContentLoad, true);
       }
     }
     return box;
