@@ -610,7 +610,7 @@ class BashTool:
             return blocked_process_result(
                 "bash",
                 execution_mode,
-                "Sandbox mode requires Linux with Bubblewrap.",
+                "Sandbox mode requires Linux with bubblewrap.",
             )
         capability = process_capability().sandbox
         if not capability.supports(network_profile):
@@ -814,7 +814,7 @@ class PythonTool:
             return blocked_process_result(
                 "python",
                 execution_mode,
-                "Sandbox mode requires Linux with Bubblewrap.",
+                "Sandbox mode requires Linux with bubblewrap.",
             )
         capability = process_capability().sandbox
         if not capability.supports(network_profile):

@@ -137,7 +137,7 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
     assert "--cpu=3600" in argv
     assert "--fsize=4294967296" in argv
     assert "--nofile=1024" in argv
-    assert "--as=8589934592" in argv
+    assert "--as=4294967296" in argv
     assert ["--ro-bind", "/", "/"] not in [
         argv[index:index + 3] for index in range(len(argv) - 2)
     ]
