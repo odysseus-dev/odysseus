@@ -602,6 +602,20 @@ def _session_is_research_spinoff(sess) -> bool:
     return False
 
 
+def _without_latest_matching_user_message(
+    messages: list[dict[str, Any]],
+    content: Any,
+) -> list[dict[str, Any]]:
+    """Return a copy without the newest matching user transcript event."""
+    filtered = list(messages)
+    for index in range(len(filtered) - 1, -1, -1):
+        item = filtered[index]
+        if item.get("role") == "user" and item.get("content") == content:
+            del filtered[index]
+            break
+    return filtered
+
+
 async def build_chat_context(
     sess,
     request,
@@ -624,6 +638,8 @@ async def build_chat_context(
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
     defer_context_shaping: bool = False,
+    continuation_context_message: str | None = None,
+    exclude_current_user_from_context: bool = False,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -666,7 +682,12 @@ async def build_chat_context(
         getattr(chat_handler, "upload_handler", None),
         getattr(sess, "owner", None),
     )
-    casual_low_signal = _is_casual_low_signal(message)
+    context_message = (
+        str(continuation_context_message).strip()
+        if continuation_context_message
+        else message
+    )
+    casual_low_signal = _is_casual_low_signal(context_message)
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
@@ -703,7 +724,15 @@ async def build_chat_context(
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
     # the sync path uses text_for_context.
-    _ctx_msg = preprocessed.enhanced_message if use_enhanced_message else preprocessed.text_for_context
+    _ctx_msg = (
+        context_message
+        if continuation_context_message
+        else (
+            preprocessed.enhanced_message
+            if use_enhanced_message
+            else preprocessed.text_for_context
+        )
+    )
     _preface_kwargs = dict(
         message=_ctx_msg,
         session=sess,
@@ -746,6 +775,15 @@ async def build_chat_context(
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
     messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+    if exclude_current_user_from_context:
+        # Approval clicks are persisted as owner-visible transcript events, but
+        # they are not a new task instruction. Remove only the just-persisted
+        # synthetic user entry from the model prompt so memory/RAG/skills and
+        # active-document routing still see the interrupted request.
+        messages = _without_latest_matching_user_message(
+            messages,
+            preprocessed.user_content,
+        )
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the

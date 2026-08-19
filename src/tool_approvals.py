@@ -33,6 +33,39 @@ def _normalized_workspace(workspace: Any) -> str:
     return os.path.realpath(os.path.expanduser(workspace))
 
 
+_MAX_APPROVAL_SELECTED_TOOLS = 512
+_MAX_APPROVAL_TOOL_NAME_CHARS = 512
+_MAX_APPROVAL_CONTINUATION_QUERY_CHARS = 4000
+
+
+def _normalized_selected_tools(selected_tools: Any) -> tuple[str, ...]:
+    if isinstance(selected_tools, str):
+        selected_tools = (selected_tools,)
+    try:
+        values = selected_tools or ()
+        names = sorted(
+            {
+                name.strip()
+                for name in values
+                if (
+                    isinstance(name, str)
+                    and name.strip()
+                    and len(name.strip()) <= _MAX_APPROVAL_TOOL_NAME_CHARS
+                )
+            }
+        )
+        return tuple(names[:_MAX_APPROVAL_SELECTED_TOOLS])
+    except TypeError:
+        return ()
+
+
+def _normalized_continuation_query(value: Any) -> str:
+    # The query is server-derived from the interrupted run and already lives in
+    # session history. Keep the pending copy bounded because approvals are held
+    # in memory until consumed or expired.
+    return str(value or "").strip()[:_MAX_APPROVAL_CONTINUATION_QUERY_CHARS]
+
+
 def _canonical_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,
@@ -60,6 +93,8 @@ def _binding_payload(
     document_version: Any,
     document_digest: Any,
     external_untrusted_context_seen: bool,
+    selected_tools: Any,
+    continuation_query: Any,
     effects: tuple[str, ...],
     result_integrity: str,
 ) -> dict[str, Any]:
@@ -76,6 +111,8 @@ def _binding_payload(
         ),
         "document_digest": str(document_digest or "").strip().lower(),
         "external_untrusted_context_seen": bool(external_untrusted_context_seen),
+        "selected_tools": list(_normalized_selected_tools(selected_tools)),
+        "continuation_query": _normalized_continuation_query(continuation_query),
         "effects": list(effects),
         "result_integrity": str(result_integrity),
     }
@@ -99,12 +136,16 @@ class PendingToolApproval:
     digest: str
     created_at: float
     expires_at: float
+    # Server-only continuation state. Both fields are digest-bound and never
+    # exposed in the browser payload.
+    selected_tools: tuple[str, ...] = ()
+    continuation_query: str = ""
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
             "kind": "tool_approval",
             "approval_id": self.approval_id,
-            "question": "Allow this exact action once?",
+            "question": "Allow this action?",
             "description": reason or (
                 "Untrusted context influenced this run, so this action needs "
                 "your explicit approval."
@@ -114,6 +155,15 @@ class PendingToolApproval:
                     "label": "Allow once",
                     "value": "approve",
                     "description": "Execute only the sealed action shown here.",
+                },
+                {
+                    "label": "Allow for this task",
+                    "value": "approve_task",
+                    "description": (
+                        "Execute this action and skip this automatic approval "
+                        "gate for later actions in the resumed task. Other "
+                        "tool, account, workspace, and sandbox restrictions apply."
+                    ),
                 },
                 {
                     "label": "Deny",
@@ -140,6 +190,7 @@ class ExactToolApproval:
     """A consumed grant that the dispatcher can claim exactly once."""
 
     pending: PendingToolApproval
+    allow_remaining_actions: bool = False
     _claimed: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -175,6 +226,8 @@ class ExactToolApproval:
             external_untrusted_context_seen=(
                 self.pending.external_untrusted_context_seen
             ),
+            selected_tools=self.pending.selected_tools,
+            continuation_query=self.pending.continuation_query,
             effects=effects,
             result_integrity=result_integrity,
         )
@@ -255,6 +308,8 @@ class ToolApprovalStore:
         document_id: Any = None,
         document_version: Any = None,
         document_digest: Any = None,
+        selected_tools: Any = None,
+        continuation_query: Any = None,
         external_untrusted_context_seen: bool,
         capabilities: ToolCapabilities,
     ) -> PendingToolApproval:
@@ -272,6 +327,8 @@ class ToolApprovalStore:
             document_version=document_version,
             document_digest=document_digest,
             external_untrusted_context_seen=external_untrusted_context_seen,
+            selected_tools=selected_tools,
+            continuation_query=continuation_query,
             effects=effects,
             result_integrity=result_integrity,
         )
@@ -294,6 +351,8 @@ class ToolApprovalStore:
             digest=_canonical_digest(payload),
             created_at=now,
             expires_at=now + self._ttl_seconds,
+            selected_tools=tuple(payload["selected_tools"]),
+            continuation_query=payload["continuation_query"],
         )
         with self._lock:
             self._purge_expired_locked(now)
@@ -348,9 +407,13 @@ class ToolApprovalStore:
                 # another owner's pending action.
                 return None
             self._pending.pop(approval_key, None)
-        if str(decision or "").strip().lower() != "approve":
+        normalized_decision = str(decision or "").strip().lower()
+        if normalized_decision not in {"approve", "approve_task"}:
             return None
-        return ExactToolApproval(pending)
+        return ExactToolApproval(
+            pending,
+            allow_remaining_actions=(normalized_decision == "approve_task"),
+        )
 
     def peek(self, approval_id: Any) -> PendingToolApproval | None:
         now = time.time()

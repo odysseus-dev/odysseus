@@ -84,15 +84,18 @@ import { loadPanel } from './panels.js';
   document.addEventListener('odysseus:tool-approval', (event) => {
     const detail = event && event.detail ? event.detail : {};
     const decision = String(detail.decision || '').toLowerCase();
-    if (!detail.approval_id || !['approve', 'deny'].includes(decision)) return;
+    if (!detail.approval_id || !['approve', 'approve_task', 'deny'].includes(decision)) return;
     _pendingToolApproval = {
       approval_id: String(detail.approval_id),
       decision,
       document_id: String(detail.document_id || ''),
     };
+    const fallbackLabel = decision === 'approve_task'
+      ? 'Allow for this task'
+      : (decision === 'approve' ? 'Allow once' : 'Deny');
     _submitToolApprovalWhenIdle(
       _pendingToolApproval.approval_id,
-      detail.label || (decision === 'approve' ? 'Allow once' : 'Deny'),
+      detail.label || fallbackLabel,
     );
   });
 

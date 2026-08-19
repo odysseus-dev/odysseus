@@ -1077,7 +1077,7 @@ def setup_chat_routes(
                         "This tool approval is invalid, expired, or belongs to another thread.",
                     )
                 decision = str(tool_approval_decision or "").strip().lower()
-                if decision not in {"approve", "deny"}:
+                if decision not in {"approve", "approve_task", "deny"}:
                     raise HTTPException(400, "Invalid tool approval decision.")
                 if plan_mode:
                     raise HTTPException(
@@ -1091,24 +1091,34 @@ def setup_chat_routes(
                     session_id=session,
                 )
                 tool_approval_continuation = True
-                if decision == "approve" and exact_tool_approval is None:
+                if (
+                    decision in {"approve", "approve_task"}
+                    and exact_tool_approval is None
+                ):
                     raise HTTPException(
                         409,
                         "This tool approval could not be consumed.",
                     )
-                if decision == "approve":
-                    message = (
-                        f"Approved the exact {pending_tool_approval.tool_name} action "
-                        "shown above once."
-                    )
+                if decision in {"approve", "approve_task"}:
+                    if decision == "approve_task":
+                        message = (
+                            f"Approved the exact {pending_tool_approval.tool_name} action "
+                            "and remaining actions for this task."
+                        )
+                    else:
+                        message = (
+                            f"Approved the exact {pending_tool_approval.tool_name} action "
+                            "shown above once."
+                        )
                     # The sealed server record, not mutable composer state,
                     # restores the original action workspace.
                     workspace = pending_tool_approval.workspace or None
                     workspace_rejected = None
                     if pending_tool_approval.document_id:
                         active_doc_id = pending_tool_approval.document_id
-                    # The approval click is the per-turn opt-in for this exact
-                    # sealed action. Restore only the coarse request toggle
+                    # The approval click is the opt-in for the exact sealed
+                    # action. The task option additionally carries a server-only,
+                    # in-memory gate bypass. Restore only the coarse request toggle
                     # that would otherwise disable it because the synthetic
                     # "Approved…" message no longer resembles the original
                     # shell/web request. Current privilege, global-disable,
@@ -1261,6 +1271,14 @@ def setup_chat_routes(
             agent_mode=(chat_mode == "agent"),
             allow_tool_preprocessing=allow_tool_preprocessing,
             defer_context_shaping=foreground_policy.enabled,
+            continuation_context_message=(
+                pending_tool_approval.continuation_query
+                if exact_tool_approval
+                and pending_tool_approval
+                and pending_tool_approval.continuation_query
+                else None
+            ),
+            exclude_current_user_from_context=bool(exact_tool_approval),
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
@@ -2223,6 +2241,13 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        relevant_tools=(
+                            set(pending_tool_approval.selected_tools)
+                            if exact_tool_approval
+                            and pending_tool_approval
+                            and pending_tool_approval.selected_tools
+                            else None
+                        ),
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
                         defer_context_shaping=_foreground_policy.enabled,

@@ -618,6 +618,10 @@ class ToolRunSecurityContext:
     external_untrusted_context_seen: bool = False
     external_sources: list[str] = field(default_factory=list)
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Set only by an explicit "Allow for this task" continuation. This bypasses
+    # the automatic post-external-context gate for this in-memory run; current
+    # tool policy, ownership, workspace confinement, and sandboxing still apply.
+    approval_gate_bypassed: bool = False
 
     def observe_messages(self, messages: Iterable[dict]) -> None:
         """Promote any server-labelled untrusted prompt context into the gate."""
@@ -625,6 +629,8 @@ class ToolRunSecurityContext:
             self.external_untrusted_context_seen = True
 
     def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
+        if self.approval_gate_bypassed:
+            return ToolGateDecision(True)
         if not self.external_untrusted_context_seen:
             return ToolGateDecision(True)
         capabilities = capabilities_for_action(tool_name, content)

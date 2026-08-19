@@ -3460,7 +3460,10 @@ async def stream_agent_loop(
                 and exact_approval.pending.external_untrusted_context_seen
             )
             or messages_contain_external_untrusted_context(messages)
-        )
+        ),
+        approval_gate_bypassed=bool(
+            exact_approval and exact_approval.allow_remaining_actions
+        ),
     )
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
@@ -5698,6 +5701,16 @@ async def stream_agent_loop(
                         "policy": "exact_tool_approval_target",
                     }
                 else:
+                    # The approval click becomes a synthetic user turn. Seal the
+                    # actual server-selected candidates now so that continuation
+                    # does not lose memory, skills, MCP, documents, or other
+                    # ToolIndex/RAG-selected tools by classifying that synthetic text.
+                    approval_selected_tools = set(_relevant_tools or ())
+                    approval_selected_tools.update(
+                        name for name in _tool_names_sent if name
+                    )
+                    approval_selected_tools.add(block.tool_type)
+                    approval_selected_tools.difference_update(disabled_tools)
                     pending_approval = tool_approval_store.create(
                         owner=owner,
                         session_id=session_id,
@@ -5725,6 +5738,8 @@ async def stream_agent_loop(
                         external_untrusted_context_seen=(
                             run_security.external_untrusted_context_seen
                         ),
+                        selected_tools=approval_selected_tools,
+                        continuation_query=_retrieval_query or _last_user,
                         capabilities=capabilities_for_action(
                             block.tool_type,
                             block.content,
