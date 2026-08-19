@@ -2328,8 +2328,11 @@ export function removeAskUserCards(root) {
 }
 
 // While a choice card is visible, let plain 1–3 activate the corresponding
-// rendered option. Reuse the option's click path so regular questions and
-// sealed tool approvals keep their existing submission semantics.
+// rendered option. Reuse the option's click path so the question keeps its
+// existing submission semantics. Tool approval cards are excluded: that card
+// exists to make consent deliberate after untrusted context influenced the
+// run, and its first option is the widest grant, so a stray digit must not
+// answer it.
 function _handleAskUserShortcut(event) {
   if (
     event.defaultPrevented
@@ -2350,6 +2353,7 @@ function _handleAskUserShortcut(event) {
   const compareCards = document.querySelectorAll('.compare-pane .ask-user-card');
   const card = focusedCard || mainCard || (compareCards.length === 1 ? compareCards[0] : null);
   if (!card) return;
+  if (card.dataset.askUserKind === 'tool_approval') return;
   const option = card.querySelectorAll('.ask-user-option')[Number(event.key) - 1];
   if (!option || option.disabled) return;
 
@@ -2385,6 +2389,7 @@ export function renderAskUserCard(payload, options) {
   card.tabIndex = -1;
   const multi = !!aq.multi;
   const isToolApproval = aq.kind === 'tool_approval' && !!aq.approval_id;
+  card.dataset.askUserKind = isToolApproval ? 'tool_approval' : 'question';
   const emojiText = (value) => svgifyEmoji(uiModule.esc(String(value)));
 
   const head = document.createElement('div');

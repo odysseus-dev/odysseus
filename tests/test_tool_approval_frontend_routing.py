@@ -48,6 +48,23 @@ def test_ask_user_number_shortcuts_reuse_option_click_path():
     assert "option.click();" in shortcut
 
 
+def test_digit_shortcuts_never_answer_a_tool_approval_card():
+    """A stray digit must not grant a scope the user did not deliberately pick."""
+
+    root = Path(__file__).resolve().parents[1]
+    renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+    start = renderer.index("function _handleAskUserShortcut(event)")
+    end = renderer.index("document.addEventListener('keydown', _handleAskUserShortcut);", start)
+    shortcut = renderer[start:end]
+
+    assert "if (card.dataset.askUserKind === 'tool_approval') return;" in shortcut
+    # The renderer has to label the card for that guard to ever fire.
+    assert (
+        "card.dataset.askUserKind = isToolApproval ? 'tool_approval' : 'question';"
+        in renderer
+    )
+
+
 def test_ask_user_renderer_accepts_scoped_root_and_submit_callback():
     root = Path(__file__).resolve().parents[1]
     renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
