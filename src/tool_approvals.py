@@ -38,23 +38,35 @@ _MAX_APPROVAL_TOOL_NAME_CHARS = 512
 _MAX_APPROVAL_CONTINUATION_QUERY_CHARS = 4000
 
 
-def _normalized_selected_tools(selected_tools: Any) -> tuple[str, ...]:
+def _normalized_selected_tools(
+    selected_tools: Any,
+    *,
+    required_tool: Any = None,
+) -> tuple[str, ...]:
     if isinstance(selected_tools, str):
         selected_tools = (selected_tools,)
     try:
         values = selected_tools or ()
-        names = sorted(
-            {
-                name.strip()
-                for name in values
-                if (
-                    isinstance(name, str)
-                    and name.strip()
-                    and len(name.strip()) <= _MAX_APPROVAL_TOOL_NAME_CHARS
-                )
-            }
-        )
-        return tuple(names[:_MAX_APPROVAL_SELECTED_TOOLS])
+        names = {
+            name.strip()
+            for name in values
+            if (
+                isinstance(name, str)
+                and name.strip()
+                and len(name.strip()) <= _MAX_APPROVAL_TOOL_NAME_CHARS
+            )
+        }
+        required_name = str(required_tool or "").strip()
+        if required_name and len(required_name) <= _MAX_APPROVAL_TOOL_NAME_CHARS:
+            names.add(required_name)
+        ordered = sorted(names)
+        if len(ordered) <= _MAX_APPROVAL_SELECTED_TOOLS:
+            return tuple(ordered)
+        kept = ordered[:_MAX_APPROVAL_SELECTED_TOOLS]
+        if required_name and required_name in names and required_name not in kept:
+            kept[-1] = required_name
+            kept.sort()
+        return tuple(kept)
     except TypeError:
         return ()
 
@@ -111,7 +123,9 @@ def _binding_payload(
         ),
         "document_digest": str(document_digest or "").strip().lower(),
         "external_untrusted_context_seen": bool(external_untrusted_context_seen),
-        "selected_tools": list(_normalized_selected_tools(selected_tools)),
+        "selected_tools": list(
+            _normalized_selected_tools(selected_tools, required_tool=tool_name)
+        ),
         "continuation_query": _normalized_continuation_query(continuation_query),
         "effects": list(effects),
         "result_integrity": str(result_integrity),
