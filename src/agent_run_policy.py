@@ -192,23 +192,24 @@ class AgentRunPolicy:
                 capabilities,
             )
 
-        if security_context.sensitive_data_context_seen and (
-            capabilities.effects & POST_SENSITIVE_BLOCKED_EFFECTS
-        ):
-            return ToolAuthorization(
-                AuthorizationOutcome.REQUIRE_APPROVAL,
-                "Workspace or private data influenced this thread; this exact egress action requires user approval.",
-                capabilities,
-            )
+        if tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED:
+            if security_context.sensitive_data_context_seen and (
+                capabilities.effects & POST_SENSITIVE_BLOCKED_EFFECTS
+            ):
+                return ToolAuthorization(
+                    AuthorizationOutcome.REQUIRE_APPROVAL,
+                    "Workspace or private data influenced this thread; this exact egress action requires user approval.",
+                    capabilities,
+                )
 
-        if security_context.any_untrusted_context_seen and (
-            capabilities.effects & POST_UNTRUSTED_BLOCKED_EFFECTS
-        ):
-            return ToolAuthorization(
-                AuthorizationOutcome.REQUIRE_APPROVAL,
-                "Untrusted context influenced this thread; this exact action requires user approval.",
-                capabilities,
-            )
+            if security_context.any_untrusted_context_seen and (
+                capabilities.effects & POST_UNTRUSTED_BLOCKED_EFFECTS
+            ):
+                return ToolAuthorization(
+                    AuthorizationOutcome.REQUIRE_APPROVAL,
+                    "Untrusted context influenced this thread; this exact action requires user approval.",
+                    capabilities,
+                )
 
         return ToolAuthorization(
             AuthorizationOutcome.ALLOW_SANDBOXED,
