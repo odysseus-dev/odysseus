@@ -1174,6 +1174,11 @@ def setup_chat_routes(
                         "Tool approval %s was consumed but its persisted card could not be marked resolved",
                         tool_approval_id,
                     )
+                if decision == "deny":
+                    return StreamingResponse(
+                        _tool_approval_resolution_stream(decision),
+                        media_type="text/event-stream",
+                    )
                 # Approval is a control-plane continuation, not a new user turn.
                 # Reuse the sealed interrupted request only for internal context,
                 # retrieval, and policy reconstruction; never persist or display it.
