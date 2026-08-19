@@ -62,13 +62,13 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 ### Agent Run Authority
 
-Model output requests an action; it does not authorize one. `src/tool_capabilities.py` classifies each built-in tool's effects and result integrity, while `src/agent_run_policy.py` combines those fixed classifications with the thread's server-owned security mode. The temporary automatic per-action approval gate is currently disabled and its remaining implementation is explicitly marked for removal.
+Model output requests an action; it does not authorize one. `src/tool_capabilities.py` classifies each built-in tool's effects and result integrity, while `src/agent_run_policy.py` combines those fixed classifications with the thread's server-owned security mode. The temporary blanket gate that armed after any untrusted tool result is disabled; mode-owned authority checks remain active.
 
-- **Sandbox (default):** process execution stays inside the workspace sandbox. The disabled per-action gate does not interrupt model-requested actions with approval cards.
+- **Sandbox (default):** process execution stays inside the workspace sandbox. Brokered public reads, private/workspace operations, and contained execution can continue without a new approval merely because earlier context was untrusted. Unknown tools, arbitrary network egress, external side effects, admin changes, and destructive actions still require an exact approval.
 - **Full access:** an admin or intentional single-user deployment may explicitly opt into direct execution with that user's normal OS permissions. This is never the default, and route, agent-loop, and dispatcher gates reject it for non-admin users.
-- **Ask (legacy, not exposed):** retained only while the disabled approval implementation awaits removal and currently uses the same workspace-sandbox execution profile without automatic approval cards.
+- **Ask (not exposed in the current selector):** uses the workspace sandbox and requires an exact approval for every risky action.
 
-The dormant action-approval implementation uses opaque, expiring, one-use server records bound to the owner, session, origin run, exact tool name and input, workspace, security mode, effect classification, and external-context state. It does not create automatic agent-action approvals while disabled. The separate review step for saving a teacher-generated reusable skill remains active.
+Exact approvals are opaque, expiring, one-use server records bound to the owner, session, origin run, exact tool name and input, workspace, security mode, effect classification, and external-context state. The browser submits only the opaque approval ID and the user's approve/deny decision. The separate review step for saving a teacher-generated reusable skill remains active.
 
 ## Security Headers
 
