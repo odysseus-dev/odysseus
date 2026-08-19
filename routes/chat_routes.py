@@ -1189,15 +1189,14 @@ def setup_chat_routes(
                 workspace_rejected = None
                 if pending_tool_approval.document_id:
                     active_doc_id = pending_tool_approval.document_id
-                if decision != "deny":
-                    # Restore only the coarse request toggle needed by the exact
-                    # sealed action. Current privilege, global-disable, incognito,
-                    # compare, and tool-policy gates still run.
-                    if pending_tool_approval.tool_name == "bash":
-                        allow_bash = "true"
-                    if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
-                        allow_web_search = "true"
-                        _search_enabled = True
+                # Restore only the coarse request toggle needed by the exact
+                # sealed action. Current privilege, global-disable, incognito,
+                # compare, and tool-policy gates still run.
+                if pending_tool_approval.tool_name == "bash":
+                    allow_bash = "true"
+                if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
+                    allow_web_search = "true"
+                    _search_enabled = True
                 chat_mode = "agent"
             else:
                 # A normal user message supersedes the card that was waiting
