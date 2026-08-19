@@ -221,9 +221,11 @@ class ExactToolApproval:
 
     pending: PendingToolApproval
     scope: ToolApprovalScope = ToolApprovalScope.TASK
-    # Kept as the compatibility seam consumed by agent_loop. Both supported
-    # allow choices now cover the complete resumed task; one-action scope was
-    # removed because it immediately re-entered the same gate on the next round.
+    # The seam consumed by agent_loop. Both chat-card allow choices cover the
+    # complete resumed task, because one-action scope there immediately
+    # re-entered the same gate on the next round. Callers with no resumable
+    # chat still get SINGLE_ACTION, which leaves the gate armed behind the
+    # sealed action.
     allow_remaining_actions: bool = True
     _claimed: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -428,7 +430,17 @@ class ToolApprovalStore:
         decision: Any,
         owner: Any,
         session_id: Any,
+        allow_continuation: bool = True,
     ) -> ExactToolApproval | None:
+        """Consume a pending approval.
+
+        ``allow_continuation`` is the caller's assertion that it owns a
+        resumable conversation the granted scope can apply to. Callers without
+        one (the skill tester, unattended audits) pass ``False`` and get the
+        original one-use grant, so a button labelled "Allow once" cannot widen
+        into a run-long bypass just because the chat card reuses the same wire
+        value.
+        """
         now = time.time()
         with self._lock:
             self._purge_expired_locked(now)
@@ -449,6 +461,12 @@ class ToolApprovalStore:
         scope = scope_for_decision(normalized_decision)
         if scope is None:
             return None
+        if not allow_continuation:
+            return ExactToolApproval(
+                pending,
+                scope=ToolApprovalScope.SINGLE_ACTION,
+                allow_remaining_actions=False,
+            )
         return ExactToolApproval(
             pending,
             scope=scope,

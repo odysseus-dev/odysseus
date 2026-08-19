@@ -1603,6 +1603,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             decision=decision,
             owner=user,
             session_id=None,
+            # The button here says "Allow once" and there is no chat to carry a
+            # scope into, so the gate must re-arm behind the sealed action.
+            allow_continuation=False,
         )
 
         if decision == "approve" and exact_approval is None:

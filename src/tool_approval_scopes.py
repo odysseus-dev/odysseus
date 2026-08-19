@@ -18,6 +18,10 @@ CHAT_SESSION_APPROVAL_CONTEXT_MARKER = "_tool_approval_chat_session_granted"
 
 
 class ToolApprovalScope(str, Enum):
+    # Surfaces without a resumable chat (the skill tester, unattended audits)
+    # keep the original one-use meaning: the sealed action runs and the gate
+    # re-arms immediately for anything after it.
+    SINGLE_ACTION = "single_action"
     TASK = "task"
     CHAT_SESSION = "chat_session"
 
