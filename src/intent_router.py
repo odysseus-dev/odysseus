@@ -547,6 +547,9 @@ _router_lock = threading.Lock()
 _executor: concurrent.futures.ThreadPoolExecutor | None = None
 _executor_lock = threading.Lock()
 _inflight_lock = threading.Lock()
+_inflight_hard_deadline = 0.0
+_MIN_HARD_LEASE_SECONDS = 0.1
+_HARD_LEASE_MULTIPLIER = 4.0
 
 
 def get_intent_router() -> IntentRouter:
@@ -560,18 +563,53 @@ def get_intent_router() -> IntentRouter:
     return _router
 
 
-def _get_intent_router_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Return a single-worker executor so timed-out calls cannot fan out."""
+def _new_intent_router_executor() -> concurrent.futures.ThreadPoolExecutor:
+    return concurrent.futures.ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="intent-router",
+    )
 
-    global _executor
-    if _executor is None:
-        with _executor_lock:
-            if _executor is None:
-                _executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=1,
-                    thread_name_prefix="intent-router",
-                )
-    return _executor
+
+def _claim_intent_router_worker(
+    timeout_seconds: float,
+) -> tuple[concurrent.futures.ThreadPoolExecutor, threading.Lock] | None:
+    """Claim the worker, retiring a lease that has outlived its hard deadline."""
+
+    global _executor, _inflight_lock, _inflight_hard_deadline
+    retired_executor = None
+    now = time.perf_counter()
+    with _executor_lock:
+        claim_lock = _inflight_lock
+        if not claim_lock.acquire(blocking=False):
+            if not _inflight_hard_deadline or now < _inflight_hard_deadline:
+                return None
+            retired_executor = _executor
+            _executor = _new_intent_router_executor()
+            _inflight_lock = threading.Lock()
+            claim_lock = _inflight_lock
+            claim_lock.acquire()
+        elif _executor is None:
+            _executor = _new_intent_router_executor()
+
+        _inflight_hard_deadline = now + max(
+            _MIN_HARD_LEASE_SECONDS,
+            max(0.0, timeout_seconds) * _HARD_LEASE_MULTIPLIER,
+        )
+        executor = _executor
+
+    if retired_executor is not None:
+        retired_executor.shutdown(wait=False, cancel_futures=True)
+    return executor, claim_lock
+
+
+def _release_intent_router_claim(claim_lock: threading.Lock) -> None:
+    """Release only the lease generation owned by the completed worker call."""
+
+    global _inflight_hard_deadline
+    with _executor_lock:
+        if _inflight_lock is claim_lock:
+            _inflight_hard_deadline = 0.0
+    claim_lock.release()
 
 
 def _classify_claimed(
@@ -579,13 +617,14 @@ def _classify_claimed(
     text: str,
     *,
     top_k: int,
+    claim_lock: threading.Lock,
 ) -> IntentRoute:
-    """Classify one claimed request and release the process-wide slot."""
+    """Classify one claimed request and release its worker generation."""
 
     try:
         return router.classify(text, top_k=top_k)
     finally:
-        _inflight_lock.release()
+        _release_intent_router_claim(claim_lock)
 
 
 async def classify_intent_route(
@@ -610,7 +649,8 @@ async def classify_intent_route(
         )
     )
     started = time.perf_counter()
-    if not _inflight_lock.acquire(blocking=False):
+    worker = _claim_intent_router_worker(max(0.0, timeout) / 1000)
+    if worker is None:
         return IntentRoute(
             constraints=extract_intent_constraints(text),
             source="busy",
@@ -618,27 +658,29 @@ async def classify_intent_route(
             elapsed_ms=(time.perf_counter() - started) * 1000,
             error="IntentRouterBusy",
         )
+    executor, claim_lock = worker
 
     try:
         try:
             selected_router = router or get_intent_router()
             loop = asyncio.get_running_loop()
             future = loop.run_in_executor(
-                _get_intent_router_executor(),
+                executor,
                 functools.partial(
                     _classify_claimed,
                     selected_router,
                     text,
                     top_k=top_k,
+                    claim_lock=claim_lock,
                 ),
             )
         except Exception:
-            _inflight_lock.release()
+            _release_intent_router_claim(claim_lock)
             raise
-        # Keep the worker future alive after the request-time timeout so the
-        # claimed slot is always released by _classify_claimed. Cancelling a
-        # queued executor future before it starts would otherwise strand the
-        # process-wide gate permanently.
+        # Keep the worker future alive after the request-time timeout. A call
+        # that merely runs long retains its lease briefly so concurrent requests
+        # fail fast as busy. If the worker never returns, a later request can
+        # retire that expired generation and continue on a fresh executor.
         route = await asyncio.wait_for(asyncio.shield(future), timeout=timeout / 1000)
         return replace(route, rollout_mode=selected_mode)
     except TimeoutError:
