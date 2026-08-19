@@ -26950,6 +26950,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-ai-command-run:hover {
   background: var(--send-btn-hover, color-mix(in srgb, var(--red) 80%, white));
+  color: var(--on-send-btn-hover);
 }
 .ge-ai-command-close {
   width: 28px;
