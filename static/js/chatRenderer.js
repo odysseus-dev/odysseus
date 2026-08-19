@@ -2358,7 +2358,6 @@ export function renderAskUserCard(payload, options) {
   closeBtn.type = 'button';
   closeBtn.className = 'modal-close ask-user-close';
   closeBtn.setAttribute('aria-label', 'Dismiss question');
-  closeBtn.textContent = '×';
   closeBtn.addEventListener('click', () => {
     card.remove();
     const input = uiModule.el('message');
