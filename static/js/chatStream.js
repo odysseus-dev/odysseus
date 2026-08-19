@@ -9,6 +9,19 @@ import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
 import documentModule from './document.js?v=20260815approvalsave1';
 
+// Tool approvals are control-plane submits for the current chat. chat.js
+// deliberately leaves the composer untouched, which means the shared submit
+// button can still be painted as "New chat" when its synthetic .click() fires.
+// Normalize only that transient button mode before the chat.js approval
+// listener runs; the approval id/session binding remains server-authoritative.
+document.addEventListener('odysseus:tool-approval', () => {
+  const sendButton = document.querySelector('.send-btn');
+  if (sendButton && sendButton.dataset.mode === 'newchat') {
+    sendButton.dataset.mode = '';
+    sendButton.classList.remove('newchat-mode', 'newchat-expanded');
+  }
+}, true);
+
 /**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
  * Extracted from the duplicated ui_control + tool_output.ui_event handlers.
