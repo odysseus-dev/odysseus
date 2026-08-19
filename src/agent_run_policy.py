@@ -165,6 +165,12 @@ class AgentRunPolicy:
                 capabilities=capabilities,
             )
 
+        if not tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED:
+            return ToolAuthorization(
+                AuthorizationOutcome.ALLOW_SANDBOXED,
+                capabilities=capabilities,
+            )
+
         if tool_name in _INERT_COMPATIBILITY_TOOL_NAMES:
             return ToolAuthorization(
                 AuthorizationOutcome.ALLOW_SANDBOXED,
