@@ -12,6 +12,7 @@ the get_workspace tool, no-leak across calls, and the admin-gated browse route.
 """
 import json
 import os
+import shutil
 import tempfile
 from types import SimpleNamespace
 
@@ -267,6 +268,11 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    shutil.which("bwrap") is None
+    or not os.path.isfile("/usr/local/libexec/odysseus-seccomp-launcher"),
+    reason="the shipped Bubblewrap and trusted launcher are required",
+)
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
