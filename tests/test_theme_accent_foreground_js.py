@@ -83,15 +83,19 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
 
       const onAccent = _readableOn(red);
       const onAccentPrimary = _readableOn(accentPrimary);
+      const accentPrimaryHover = _mixSrgb(accentPrimary, '#ffffff', 0.85);
+      const onAccentPrimaryHover = _readableOn(accentPrimaryHover);
       const onSend = _readableOn(sendBg);
       const onSendHover = _readableOn(sendHover);
       const newchatBg = _mixSrgb(sendHover, panel, 0.85);
       const onNewchat = _readableOn(newchatBg);
 
       console.log(JSON.stringify({{
-        onAccent, onAccentPrimary, onSend, onSendHover, onNewchat, newchatBg,
+        onAccent, onAccentPrimary, accentPrimaryHover, onAccentPrimaryHover,
+        onSend, onSendHover, onNewchat, newchatBg,
         accentContrast: contrast(red, onAccent),
         accentPrimaryContrast: contrast(accentPrimary, onAccentPrimary),
+        accentPrimaryHoverContrast: contrast(accentPrimaryHover, onAccentPrimaryHover),
         sendContrast: contrast(sendBg, onSend),
         sendHoverContrast: contrast(sendHover, onSendHover),
         newchatContrast: contrast(newchatBg, onNewchat),
@@ -103,6 +107,7 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
     # The accent and the send button disagree: that disagreement is the bug.
     assert out["onAccent"] == "#fff"
     assert out["onAccentPrimary"] == "#171717"
+    assert out["onAccentPrimaryHover"] == "#171717"
     assert out["onSend"] == "#171717"
     assert out["onSendHover"] == "#171717"
 
@@ -110,7 +115,14 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
     assert out["naiveSendContrast"] < 3, out
 
     # Every surface clears the 3:1 floor against the background it renders.
-    for key in ("accentContrast", "accentPrimaryContrast", "sendContrast", "sendHoverContrast", "newchatContrast"):
+    for key in (
+        "accentContrast",
+        "accentPrimaryContrast",
+        "accentPrimaryHoverContrast",
+        "sendContrast",
+        "sendHoverContrast",
+        "newchatContrast",
+    ):
         assert out[key] >= 3, (key, out[key])
 
 
@@ -127,3 +139,15 @@ def test_no_rule_pairs_on_accent_with_an_independent_background():
         ):
             offenders.append(match.group(1).strip())
     assert not offenders, offenders
+
+
+def test_primary_hover_states_use_the_derived_hover_pair():
+    """Hover fills must not rely on a filter while retaining base text."""
+    css = _STYLE_CSS.read_text(encoding="utf-8")
+    assert ".confirm-btn-primary:hover { filter:brightness(1.15); }" not in css
+    thumb_hover = re.search(r"\.thumb\.thumb-image button:hover\s*\{([^}]*)\}", css)
+    assert thumb_hover, "thumbnail hover rule disappeared"
+    assert "filter" not in thumb_hover.group(1)
+    assert "background:var(--accent-primary-hover); color:var(--on-accent-primary-hover)" in css
+    assert "background: var(--accent-primary-hover);" in css
+    assert "color: var(--on-accent-primary-hover);" in css

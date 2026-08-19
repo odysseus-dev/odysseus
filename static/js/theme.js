@@ -328,6 +328,9 @@ export function applyColors(colors) {
   const _accentPrimary = adv.accentPrimary || colors.red || '#e06c75';
   s.setProperty('--accent-primary', _accentPrimary);
   s.setProperty('--on-accent-primary', _readableOn(_accentPrimary));
+  const _accentPrimaryHover = _mixSrgb(_accentPrimary, '#ffffff', 0.85);
+  s.setProperty('--accent-primary-hover', _accentPrimaryHover);
+  s.setProperty('--on-accent-primary-hover', _readableOn(_accentPrimaryHover));
 
   // The send button's background is independently configurable
   // (--send-btn-bg / --send-btn-hover), so a foreground derived from

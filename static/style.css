@@ -34,6 +34,8 @@
   --on-send-btn-hover: #fff;
   --on-send-btn-newchat-hover: #fff;
   --on-accent-primary: #fff;
+  --accent-primary-hover: #e5828a;
+  --on-accent-primary-hover: #171717;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
@@ -5928,7 +5930,7 @@ body.bg-pattern-sparkles {
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
     .confirm-btn-primary { background:var(--accent-primary, var(--red, #4a9eff)); color: var(--on-accent-primary); border-color:transparent; }
-    .confirm-btn-primary:hover { filter:brightness(1.15); }
+    .confirm-btn-primary:hover { background:var(--accent-primary-hover); color:var(--on-accent-primary-hover); }
     .confirm-btn-danger { background:var(--color-danger); color:#fff; border-color:transparent; }
     .confirm-btn-danger:hover { background:var(--color-error); }
     #cookbook-gguf-delete-overlay {
@@ -9073,11 +9075,12 @@ button.hamburger {
   font-size: 15px;
   line-height: 1;
   z-index: 3;
-  transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+  transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 .thumb.thumb-image button:hover {
   transform: scale(1.12);
-  filter: brightness(1.12);
+  background: var(--accent-primary-hover);
+  color: var(--on-accent-primary-hover);
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 .thumb.thumb-image button:active {
@@ -32001,7 +32004,8 @@ button .spinner-whirlpool {
   border-color: var(--accent-primary, var(--red)) !important;
 }
 .schedule-send-confirm:hover {
-  background: color-mix(in srgb, var(--accent-primary, var(--red)) 85%, white) !important;
+  background: var(--accent-primary-hover) !important;
+  color: var(--on-accent-primary-hover) !important;
 }
 
 /* Senders embed inline colors in their HTML that clash with the app's
