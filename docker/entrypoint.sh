@@ -135,6 +135,15 @@ export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 # vLLM and helper scripts land here because /app is the non-root user's HOME.
 export PATH="/app/.local/bin:$PATH"
 
+# The deployment boundary is part of the supported Docker contract. Run the
+# check after dropping to the configured service user, before setup or uvicorn,
+# so a missing host profile or broken namespace cannot silently become an
+# unrestricted application runtime.
+if ! "$GOSU_BIN" "$ODY_USER" /usr/local/bin/odysseus-sandbox-self-test; then
+    echo "Odysseus sandbox boot check failed; refusing to start without the supported container boundary." >&2
+    exit 78
+fi
+
 # Run first-time setup as the app user so data/ files get the right ownership.
 # setup.py is idempotent — skips auth.json / .env if they already exist.
 # || true so a setup failure never prevents the container from starting.

@@ -28,6 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     npm \
     chromium \
+    bubblewrap \
+    libseccomp2 \
+    libseccomp-dev \
+    util-linux \
     tmux \
     openssh-client \
     gosu \
@@ -35,6 +39,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     libxcb1 \
     libmagic1 \
+    ca-certificates \
+    && BWRAP_POLICY_VERSION=0.11.0 \
+    && BWRAP_POLICY_PACKAGE=0.11.0-2+deb13u1 \
+    && BWRAP_ACTUAL="$(bwrap --version)" \
+    && BWRAP_PACKAGE="$(dpkg-query -W -f='${Version}' bubblewrap)" \
+    && if [ "$BWRAP_ACTUAL" != "bubblewrap ${BWRAP_POLICY_VERSION}" ]; then \
+         echo "unsupported Bubblewrap version: $BWRAP_ACTUAL (expected ${BWRAP_POLICY_VERSION})" >&2; \
+         exit 1; \
+       fi \
+    && if [ "$BWRAP_PACKAGE" != "$BWRAP_POLICY_PACKAGE" ]; then \
+         echo "unsupported Bubblewrap package: $BWRAP_PACKAGE (expected $BWRAP_POLICY_PACKAGE)" >&2; \
+         exit 1; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
@@ -95,6 +112,14 @@ RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
 # Copy app code
 COPY . .
 
+# Build and install the trusted runtime helpers from the focused security
+# foundations. These install root-owned immutable launch points outside /app;
+# the deployment self-test below refuses to start if any helper is missing or
+# writable by the dropped service user.
+RUN make -C security/seccomp install \
+    && make -C security/egress install \
+    && rm -rf security/seccomp/build
+
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search
 
@@ -105,7 +130,9 @@ RUN mkdir -p data logs services/cache/search
 # update them) silently fails on EPERM, breaking skill extraction,
 # prefs persistence, mail attachments, etc.
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/sandbox-self-test.sh /usr/local/bin/odysseus-sandbox-self-test
+RUN chown root:root /usr/local/bin/entrypoint.sh /usr/local/bin/odysseus-sandbox-self-test \
+    && chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/odysseus-sandbox-self-test
 
 EXPOSE 7000
 
