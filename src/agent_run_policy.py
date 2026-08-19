@@ -88,6 +88,24 @@ _SANDBOX_ALWAYS_APPROVE_EFFECTS = frozenset(
     }
 )
 
+# `mcp` is an inert legacy parser/instrumentation placeholder. The dispatcher
+# has no generic MCP execution branch; real MCP calls use qualified
+# `mcp__server__tool` names and are classified separately. Letting this exact
+# sentinel reach dispatch preserves compatibility without authorizing an
+# unknown qualified MCP capability.
+_INERT_COMPATIBILITY_TOOL_NAMES = frozenset({"mcp"})
+
+
+def _sandbox_approval_effects(capabilities: ToolCapabilities) -> frozenset[ToolEffect]:
+    """Return effects that still cross Sandbox's contained authority boundary."""
+    approval_effects = capabilities.effects & _SANDBOX_ALWAYS_APPROVE_EFFECTS
+    if ToolEffect.BROKERED_NETWORK_READ in capabilities.effects:
+        # Brokered public reads remain constrained by the server's URL and
+        # network policy. Treating their implementation egress as arbitrary
+        # egress would turn ordinary web/RAG flows into approval loops.
+        approval_effects -= {ToolEffect.NETWORK_EGRESS}
+    return approval_effects
+
 
 def parse_agent_run_mode(value: Any) -> AgentRunMode:
     """Parse a client/database value, failing safely to the sandbox default."""
@@ -144,7 +162,7 @@ class AgentRunPolicy:
                 capabilities=capabilities,
             )
 
-        if not tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED:
+        if tool_name in _INERT_COMPATIBILITY_TOOL_NAMES:
             return ToolAuthorization(
                 AuthorizationOutcome.ALLOW_SANDBOXED,
                 capabilities=capabilities,
@@ -164,20 +182,24 @@ class AgentRunPolicy:
                 capabilities,
             )
 
-        if capabilities.effects & _SANDBOX_ALWAYS_APPROVE_EFFECTS:
+        if _sandbox_approval_effects(capabilities):
             return ToolAuthorization(
                 AuthorizationOutcome.REQUIRE_APPROVAL,
-                "This action can affect an external system and requires an exact user approval.",
+                "This action crosses the sandbox boundary and requires an exact user approval.",
                 capabilities,
             )
 
         if (
-            security_context.external_untrusted_context_seen
+            tool_capabilities.AGENT_ACTION_APPROVAL_GATE_ENABLED
+            and security_context.external_untrusted_context_seen
             and capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
         ):
             return ToolAuthorization(
                 AuthorizationOutcome.REQUIRE_APPROVAL,
-                "External untrusted context influenced this run; this exact action requires user approval.",
+                (
+                    "External untrusted context influenced this run; "
+                    "this exact action requires user approval."
+                ),
                 capabilities,
             )
 

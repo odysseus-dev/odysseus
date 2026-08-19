@@ -86,15 +86,32 @@ def test_full_access_selects_host_execution_profile():
     ).outcome is AuthorizationOutcome.ALLOW_HOST
 
 
-def test_disabled_agent_action_gate_allows_actions_in_sandbox_profiles():
+def test_disabled_legacy_gate_keeps_run_mode_policy_active():
     context = ToolRunSecurityContext(external_untrusted_context_seen=True)
 
     assert AgentRunPolicy.for_mode("ask").authorize(
         "bash", context
-    ).outcome is AuthorizationOutcome.ALLOW_SANDBOXED
+    ).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
     assert AgentRunPolicy.for_mode("sandbox").authorize(
         "send_email", context
-    ).outcome is AuthorizationOutcome.ALLOW_SANDBOXED
+    ).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
+    assert AgentRunPolicy.for_mode("sandbox").authorize(
+        "mcp__unknown__surprise", context
+    ).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
+    sandbox_policy = AgentRunPolicy.for_mode("sandbox")
+    for tool_name in ("bash", "manage_memory", "manage_skills"):
+        assert (
+            sandbox_policy.authorize(tool_name, context).outcome
+            is AuthorizationOutcome.ALLOW_SANDBOXED
+        )
+
+
+def test_sandbox_allows_brokered_reads_without_approving_arbitrary_egress():
+    policy = AgentRunPolicy.for_mode("sandbox")
+    context = ToolRunSecurityContext(external_untrusted_context_seen=True)
+
+    assert policy.authorize("web_fetch", context).outcome is AuthorizationOutcome.ALLOW_SANDBOXED
+    assert policy.authorize("pipeline", context).outcome is AuthorizationOutcome.REQUIRE_APPROVAL
 
 
 def _pending(store, **overrides):
