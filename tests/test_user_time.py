@@ -210,6 +210,27 @@ def test_calendar_relative_time_parser_handles_dotted_pm(monkeypatch):
     assert parsed == "2026-06-02T13:30:00+10:00"
 
 
+def test_calendar_parser_prefers_iana_timezone_over_conflicting_offset(monkeypatch):
+    import routes.calendar_routes as calendar_routes
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 1, 9, 16, tzinfo=timezone.utc)
+            if tz is not None:
+                return value.astimezone(tz)
+            return value.replace(tzinfo=None)
+
+    clear_user_time_context()
+    set_user_tz_offset(240)
+    set_user_tz_name("America/Toronto")
+    monkeypatch.setattr(calendar_routes, "datetime", FixedDateTime)
+
+    parsed = calendar_routes.parse_due_for_user("tomorrow at 1:30 p.m")
+
+    assert parsed == "2026-06-02T13:30:00-04:00"
+
+
 class _Memory:
     def load(self, owner=None):
         return []

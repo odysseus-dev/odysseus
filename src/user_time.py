@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Dict, Optional
 
 
@@ -77,7 +77,7 @@ def _zoneinfo_from_name():
         return None
 
 
-def user_timezone() -> timezone:
+def user_timezone() -> tzinfo:
     """Return the best known user timezone.
 
     A valid IANA name wins over x-tz-offset. The offset is a fixed number and
