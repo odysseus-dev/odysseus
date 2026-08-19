@@ -89,6 +89,65 @@ def _stream_failure_status(chunk: str) -> Optional[int]:
     return None
 
 
+def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
+    """Persist a consumed approval decision on its existing tool event."""
+
+    approval_key = str(approval_id or "")
+    normalized_decision = str(decision or "").strip().lower()
+    if not approval_key or normalized_decision not in {"approve", "approve_task", "deny"}:
+        return False
+
+    message_id = None
+    resolved_metadata = None
+    for item in reversed(getattr(sess, "history", []) or []):
+        metadata = getattr(item, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        tool_events = metadata.get("tool_events")
+        if not isinstance(tool_events, list):
+            continue
+        for event in reversed(tool_events):
+            ask_user = event.get("ask_user") if isinstance(event, dict) else None
+            if not isinstance(ask_user, dict):
+                continue
+            if str(ask_user.get("approval_id") or "") != approval_key:
+                continue
+            ask_user["resolved"] = normalized_decision
+            message_id = metadata.get("_db_id")
+            resolved_metadata = {
+                key: value for key, value in metadata.items() if key != "_db_id"
+            }
+            break
+        if resolved_metadata is not None:
+            break
+
+    if resolved_metadata is None or not message_id:
+        return False
+
+    db = SessionLocal()
+    try:
+        db_message = db.query(DBChatMessage).filter(
+            DBChatMessage.id == message_id,
+            DBChatMessage.session_id == str(getattr(sess, "id", "")),
+        ).first()
+        if db_message is None:
+            return False
+        db_message.meta_data = json.dumps(resolved_metadata)
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to persist tool approval resolution")
+        return False
+    finally:
+        db.close()
+
+
+async def _tool_approval_resolution_stream(decision: str) -> AsyncGenerator[str, None]:
+    yield f"data: {json.dumps({'type': 'tool_approval_resolved', 'decision': decision})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 def _chat_candidate_request_factory(
     messages,
     fallback_context_length: int = 0,
@@ -1050,14 +1109,14 @@ def setup_chat_routes(
             )
 
         try:
-            # Attachment-only sends: skip the message-required check when the
-            # user has attached one or more files (the attachment IS the action).
+            # Attachment-only sends and approval controls may omit message text.
             _has_atts = (
                 bool(body and isinstance(body.get("attachments"), list) and body["attachments"])
                 or bool(form_data.get("attachments"))
             )
             message, session = coerce_message_and_session(
-                body, message, session, session_manager, allow_empty=_has_atts,
+                body, message, session, session_manager,
+                allow_empty=(_has_atts or bool(tool_approval_id)),
             )
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
@@ -1099,39 +1158,39 @@ def setup_chat_routes(
                         409,
                         "This tool approval could not be consumed.",
                     )
-                if decision in {"approve", "approve_task"}:
-                    if decision == "approve_task":
-                        message = (
-                            f"Approved the exact {pending_tool_approval.tool_name} action "
-                            "and remaining actions for this task."
-                        )
-                    else:
-                        message = (
-                            f"Approved the exact {pending_tool_approval.tool_name} action "
-                            "shown above once."
-                        )
-                    # The sealed server record, not mutable composer state,
-                    # restores the original action workspace.
-                    workspace = pending_tool_approval.workspace or None
-                    workspace_rejected = None
-                    if pending_tool_approval.document_id:
-                        active_doc_id = pending_tool_approval.document_id
-                    # The approval click is the opt-in for the exact sealed
-                    # action. The task option additionally carries a server-only,
-                    # in-memory gate bypass. Restore only the coarse request toggle
-                    # that would otherwise disable it because the synthetic
-                    # "Approved…" message no longer resembles the original
-                    # shell/web request. Current privilege, global-disable,
-                    # incognito, compare, and tool-policy gates still run.
-                    if pending_tool_approval.tool_name == "bash":
-                        allow_bash = "true"
-                    if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
-                        allow_web_search = "true"
-                        _search_enabled = True
-                else:
-                    message = (
-                        f"Denied the {pending_tool_approval.tool_name} action shown above."
+                if not _mark_tool_approval_resolved(
+                    sess,
+                    tool_approval_id,
+                    decision,
+                ):
+                    logger.warning(
+                        "Tool approval %s was consumed but its persisted card could not be marked resolved",
+                        tool_approval_id,
                     )
+                if decision == "deny":
+                    return StreamingResponse(
+                        _tool_approval_resolution_stream(decision),
+                        media_type="text/event-stream",
+                    )
+
+                # Approval is a control-plane continuation, not a new user turn.
+                # Reuse the sealed interrupted request only for internal context,
+                # retrieval, and policy reconstruction; never persist or display it.
+                message = pending_tool_approval.continuation_query
+                # The sealed server record, not mutable composer state,
+                # restores the original action workspace.
+                workspace = pending_tool_approval.workspace or None
+                workspace_rejected = None
+                if pending_tool_approval.document_id:
+                    active_doc_id = pending_tool_approval.document_id
+                # Restore only the coarse request toggle needed by the exact
+                # sealed action. Current privilege, global-disable, incognito,
+                # compare, and tool-policy gates still run.
+                if pending_tool_approval.tool_name == "bash":
+                    allow_bash = "true"
+                if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
+                    allow_web_search = "true"
+                    _search_enabled = True
                 chat_mode = "agent"
             else:
                 # A normal user message supersedes the card that was waiting
@@ -1278,7 +1337,7 @@ def setup_chat_routes(
                 and pending_tool_approval.continuation_query
                 else None
             ),
-            exclude_current_user_from_context=bool(exact_tool_approval),
+            persist_user_message=not tool_approval_continuation,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
@@ -1681,7 +1740,11 @@ def setup_chat_routes(
                 if foreground_policy.enabled
                 else ctx.messages
             )
-            messages = _ensure_current_request_is_latest_user(context_source, message)
+            messages = (
+                list(context_source)
+                if tool_approval_continuation
+                else _ensure_current_request_is_latest_user(context_source, message)
+            )
 
             # Auto-compact notification
             if ctx.was_compacted:
@@ -2152,7 +2215,10 @@ def setup_chat_routes(
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
-                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    allow_background_extraction=(
+                                        not tool_policy.block_all_tool_calls
+                                        and not tool_approval_continuation
+                                    ),
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -2426,8 +2492,14 @@ def setup_chat_routes(
                                     agent_tool_calls=_agent_tool_calls,
                                     skills_manager=skills_manager,
                                     owner=_user,
-                                    extract_skills=user_requested_agent,
-                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    extract_skills=(
+                                        user_requested_agent
+                                        and not tool_approval_continuation
+                                    ),
+                                    allow_background_extraction=(
+                                        not tool_policy.block_all_tool_calls
+                                        and not tool_approval_continuation
+                                    ),
                                 )
                             _stream_set(session, status="done")
                             yield chunk

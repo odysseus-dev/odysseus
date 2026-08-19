@@ -2336,6 +2336,7 @@ export function removeAskUserCards(root) {
  */
 export function renderAskUserCard(payload, options) {
   const aq = payload || {};
+  if (aq.resolved) return null;
   const opts = Array.isArray(aq.options) ? aq.options : [];
   const chatBox = document.getElementById('chat-history');
   if (!chatBox || !aq.question || opts.length < 2) return null;
@@ -2628,7 +2629,7 @@ export function addMessage(role, content, modelName, metadata) {
             box.appendChild(threadWrap);
           }
           for (const ev of roundTools) {
-            if (ev.ask_user) pendingAskUser = ev.ask_user;
+            if (ev.ask_user && !ev.ask_user.resolved) pendingAskUser = ev.ask_user;
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (ev.output && ev.output.trim()) {

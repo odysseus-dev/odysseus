@@ -602,20 +602,6 @@ def _session_is_research_spinoff(sess) -> bool:
     return False
 
 
-def _without_latest_matching_user_message(
-    messages: list[dict[str, Any]],
-    content: Any,
-) -> list[dict[str, Any]]:
-    """Return a copy without the newest matching user transcript event."""
-    filtered = list(messages)
-    for index in range(len(filtered) - 1, -1, -1):
-        item = filtered[index]
-        if item.get("role") == "user" and item.get("content") == content:
-            del filtered[index]
-            break
-    return filtered
-
-
 async def build_chat_context(
     sess,
     request,
@@ -639,7 +625,7 @@ async def build_chat_context(
     allow_tool_preprocessing: bool = True,
     defer_context_shaping: bool = False,
     continuation_context_message: str | None = None,
-    exclude_current_user_from_context: bool = False,
+    persist_user_message: bool = True,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -663,14 +649,14 @@ async def build_chat_context(
     # Add user message to history. Nobody/incognito uses a request-local
     # transcript store instead of session history so stale saved chats cannot
     # bleed into context and the turn is not persisted.
-    if incognito:
+    if persist_user_message and incognito:
         user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
-    else:
+    elif persist_user_message:
         add_user_message(sess, chat_handler, preprocessed, incognito=False)
 
     # Fire events
-    if not incognito:
+    if persist_user_message and not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
@@ -775,15 +761,6 @@ async def build_chat_context(
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
     messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
-    if exclude_current_user_from_context:
-        # Approval clicks are persisted as owner-visible transcript events, but
-        # they are not a new task instruction. Remove only the just-persisted
-        # synthetic user entry from the model prompt so memory/RAG/skills and
-        # active-document routing still see the interrupted request.
-        messages = _without_latest_matching_user_message(
-            messages,
-            preprocessed.user_content,
-        )
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the

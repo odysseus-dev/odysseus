@@ -1,10 +1,11 @@
 """Task-scoped exact approval continuation coverage for issue #6112."""
 
+import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
-from routes.chat_helpers import _without_latest_matching_user_message
 from src.tool_approvals import ExactToolApproval, ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
 
@@ -134,40 +135,120 @@ def test_private_continuation_state_is_canonical_bounded_and_digest_bound():
     ) is False
 
 
+def test_consumed_card_resolution_updates_memory_and_persisted_metadata(monkeypatch):
+    from routes import chat_routes
+
+    ask_user = {"approval_id": "approval-1"}
+    metadata = {
+        "_db_id": "message-1",
+        "tool_events": [{"ask_user": ask_user}],
+    }
+    sess = SimpleNamespace(
+        id="session-1",
+        history=[SimpleNamespace(metadata=metadata)],
+    )
+    db_message = SimpleNamespace(meta_data=None)
+
+    class Column:
+        def __eq__(self, value):
+            return value
+
+    class FakeDBMessage:
+        id = Column()
+        session_id = Column()
+
+    class FakeQuery:
+        def filter(self, *conditions):
+            return self
+
+        def first(self):
+            return db_message
+
+    class FakeDB:
+        committed = False
+        rolled_back = False
+        closed = False
+
+        def query(self, model):
+            assert model is FakeDBMessage
+            return FakeQuery()
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    db = FakeDB()
+    monkeypatch.setattr(chat_routes, "DBChatMessage", FakeDBMessage)
+    monkeypatch.setattr(chat_routes, "SessionLocal", lambda: db)
+
+    assert chat_routes._mark_tool_approval_resolved(
+        sess,
+        "approval-1",
+        "approve_task",
+    ) is True
+    assert ask_user["resolved"] == "approve_task"
+    persisted = json.loads(db_message.meta_data)
+    assert persisted["tool_events"][0]["ask_user"]["resolved"] == "approve_task"
+    assert "_db_id" not in persisted
+    assert db.committed is True
+    assert db.rolled_back is False
+    assert db.closed is True
+
+
+def test_deny_resolution_stream_is_control_only():
+    from routes.chat_routes import _tool_approval_resolution_stream
+
+    async def collect():
+        return [chunk async for chunk in _tool_approval_resolution_stream("deny")]
+
+    chunks = asyncio.run(collect())
+    assert chunks[-1] == "data: [DONE]\n\n"
+    event = json.loads(chunks[0][len("data: "):])
+    assert event == {"type": "tool_approval_resolved", "decision": "deny"}
+    assert "Denied the" not in "".join(chunks)
+
+
 def test_route_context_agent_frontend_and_cache_bust_wire_the_contract():
     root = Path(__file__).resolve().parents[1]
     route = (root / "routes/chat_routes.py").read_text(encoding="utf-8")
     helpers = (root / "routes/chat_helpers.py").read_text(encoding="utf-8")
     agent = (root / "src/agent_loop.py").read_text(encoding="utf-8")
     frontend = (root / "static/js/chat.js").read_text(encoding="utf-8")
+    renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+    app = (root / "static/app.js").read_text(encoding="utf-8")
     index = (root / "static/index.html").read_text(encoding="utf-8")
 
     assert 'decision not in {"approve", "approve_task", "deny"}' in route
     assert "set(pending_tool_approval.selected_tools)" in route
     assert "pending_tool_approval.continuation_query" in route
-    assert "exclude_current_user_from_context=bool(exact_tool_approval)" in route
+    assert "persist_user_message=not tool_approval_continuation" in route
+    assert "_mark_tool_approval_resolved(" in route
+    assert "_tool_approval_resolution_stream(decision)" in route
+    assert "Approved the exact" not in route
+    assert "Denied the" not in route
     assert "continuation_context_message: str | None = None" in helpers
-    assert "_without_latest_matching_user_message(" in helpers
+    assert "persist_user_message: bool = True" in helpers
+    assert "_without_latest_matching_user_message(" not in helpers
     assert "selected_tools=approval_selected_tools" in agent
     assert "continuation_query=_retrieval_query or _last_user" in agent
     assert "approval_gate_bypassed=bool(" in agent
     assert "['approve', 'approve_task', 'deny']" in frontend
-    assert "chat.js?v=20260819approvaltask1" in index
+    assert "input.value = label" not in frontend
+    assert "const msg = approvalForSend ? '' : el('message').value;" in frontend
+    assert "const skipBubble = _hideUserBubble || !!approvalForSend;" in frontend
+    assert "fd.append('message', approvalForSend ? '' : _finalMsgWithInject);" in frontend
+    assert "json.type === 'tool_approval_resolved'" in frontend
+    assert "if (aq.resolved) return null;" in renderer
+    assert "ev.ask_user && !ev.ask_user.resolved" in renderer
 
-
-def test_context_helper_removes_only_the_newest_matching_user_event():
-    messages = [
-        {"role": "user", "content": "original task"},
-        {"role": "assistant", "content": "approval card"},
-        {"role": "user", "content": "Allow once"},
-        {"role": "user", "content": "different later data message"},
-    ]
-
-    filtered = _without_latest_matching_user_message(messages, "Allow once")
-
-    assert messages[-2]["content"] == "Allow once"
-    assert [item["content"] for item in filtered] == [
-        "original task",
-        "approval card",
-        "different later data message",
-    ]
+    version = "20260819approvalcontrol1"
+    assert f"chat.js?v={version}" in app
+    assert f"chat.js?v={version}" in index
+    assert f"chatRenderer.js?v={version}" in frontend
+    assert f"chatRenderer.js?v={version}" in app
+    assert f"chatRenderer.js?v={version}" in index
