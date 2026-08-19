@@ -1,8 +1,9 @@
-"""Opaque, exact, one-use approvals for tainted model-requested actions.
+"""Opaque exact-action approvals with explicit task and chat scopes.
 
-The model may propose an action after untrusted context, but only the server
-stores and later executes the exact approved tool input.  Browser-visible
-fields are display copies, never authority.
+The server still seals and claims the first displayed action exactly once. The
+selected scope then bypasses only the automatic post-external-context approval
+gate for the rest of the resumed task or chat session. Browser-visible fields
+are display copies, never authority.
 """
 
 from __future__ import annotations
@@ -16,6 +17,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.tool_approval_scopes import (
+    CHAT_SESSION_APPROVAL_DECISION,
+    DENY_APPROVAL_DECISION,
+    TASK_APPROVAL_DECISION,
+    ToolApprovalScope,
+    scope_for_decision,
+)
 from src.tool_capabilities import ToolCapabilities, capabilities_for_action
 
 
@@ -159,30 +167,38 @@ class PendingToolApproval:
         return {
             "kind": "tool_approval",
             "approval_id": self.approval_id,
-            "question": "Allow this action?",
+            # The browser already owns this chat id. Persisting it with the
+            # resolved card lets history-derived session grants remain bound to
+            # this exact chat and prevents inheritance by a forked session.
+            "session_id": self.session_id,
+            "question": "Allow this task to continue?",
             "description": reason or (
-                "Untrusted context influenced this run, so this action needs "
-                "your explicit approval."
+                "Untrusted context influenced this run, so continuing with "
+                "otherwise-gated actions needs your explicit approval."
             ),
             "options": [
                 {
-                    "label": "Allow once",
-                    "value": "approve",
-                    "description": "Execute only the sealed action shown here.",
+                    "label": "Allow for this task",
+                    "value": TASK_APPROVAL_DECISION,
+                    "description": (
+                        "Execute the sealed action and allow every otherwise-gated "
+                        "action needed to finish this request. Current tool, account, "
+                        "workspace, and sandbox restrictions still apply."
+                    ),
                 },
                 {
-                    "label": "Allow for this task",
-                    "value": "approve_task",
+                    "label": "Allow for this chat session",
+                    "value": CHAT_SESSION_APPROVAL_DECISION,
                     "description": (
-                        "Execute this action and skip this automatic approval "
-                        "gate for later actions in the resumed task. Other "
-                        "tool, account, workspace, and sandbox restrictions apply."
+                        "Execute the sealed action and stop asking at this gate for "
+                        "later requests in this chat. Current tool, account, workspace, "
+                        "and sandbox restrictions still apply."
                     ),
                 },
                 {
                     "label": "Deny",
-                    "value": "deny",
-                    "description": "Do not execute it.",
+                    "value": DENY_APPROVAL_DECISION,
+                    "description": "Do not execute the proposed action.",
                 },
             ],
             "action": {
@@ -201,12 +217,20 @@ class PendingToolApproval:
 
 @dataclass
 class ExactToolApproval:
-    """A consumed grant that the dispatcher can claim exactly once."""
+    """A consumed exact first action plus an explicit continuation scope."""
 
     pending: PendingToolApproval
-    allow_remaining_actions: bool = False
+    scope: ToolApprovalScope = ToolApprovalScope.TASK
+    # Kept as the compatibility seam consumed by agent_loop. Both supported
+    # allow choices now cover the complete resumed task; one-action scope was
+    # removed because it immediately re-entered the same gate on the next round.
+    allow_remaining_actions: bool = True
     _claimed: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    @property
+    def grants_chat_session(self) -> bool:
+        return self.scope is ToolApprovalScope.CHAT_SESSION
 
     def _matches_unlocked(
         self,
@@ -422,11 +446,13 @@ class ToolApprovalStore:
                 return None
             self._pending.pop(approval_key, None)
         normalized_decision = str(decision or "").strip().lower()
-        if normalized_decision not in {"approve", "approve_task"}:
+        scope = scope_for_decision(normalized_decision)
+        if scope is None:
             return None
         return ExactToolApproval(
             pending,
-            allow_remaining_actions=(normalized_decision == "approve_task"),
+            scope=scope,
+            allow_remaining_actions=True,
         )
 
     def peek(self, approval_id: Any) -> PendingToolApproval | None:
