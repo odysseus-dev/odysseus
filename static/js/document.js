@@ -3838,7 +3838,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           </div>
           <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
             <button class="memory-toolbar-btn" id="att-warn-cancel">Go back</button>
-            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:var(--on-accent);border-color:var(--accent-primary,var(--red));">Send anyway</button>
+            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:var(--on-accent-primary);border-color:var(--accent-primary,var(--red));">Send anyway</button>
           </div>
         </div>
       `;

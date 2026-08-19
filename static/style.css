@@ -33,6 +33,7 @@
   --on-send-btn: #fff;
   --on-send-btn-hover: #fff;
   --on-send-btn-newchat-hover: #fff;
+  --on-accent-primary: #fff;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
@@ -4321,7 +4322,7 @@ body.bg-pattern-sparkles {
       padding: 2px 8px;
       font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
       background: var(--accent-primary, var(--red));
-      color: var(--on-accent);
+      color: var(--on-accent-primary);
       border-radius: 0 0 4px 0;
       z-index: 2;
       pointer-events: none;
@@ -5926,7 +5927,7 @@ body.bg-pattern-sparkles {
     }
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
-    .confirm-btn-primary { background:var(--accent-primary, var(--red, #4a9eff)); color: var(--on-accent); border-color:transparent; }
+    .confirm-btn-primary { background:var(--accent-primary, var(--red, #4a9eff)); color: var(--on-accent-primary); border-color:transparent; }
     .confirm-btn-primary:hover { filter:brightness(1.15); }
     .confirm-btn-danger { background:var(--color-danger); color:#fff; border-color:transparent; }
     .confirm-btn-danger:hover { background:var(--color-error); }
@@ -9065,7 +9066,7 @@ button.hamburger {
   border: 2px solid var(--bg);
   border-radius: 50%;
   background: var(--accent-primary, var(--red));
-  color: var(--on-accent);
+  color: var(--on-accent-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9188,7 +9189,7 @@ button.hamburger {
     border: 2px solid var(--bg);
     border-radius: 50%;
     background: var(--accent-primary, var(--red));
-    color: var(--on-accent);
+    color: var(--on-accent-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -16144,7 +16145,7 @@ span[id$="-logo"] svg:not([width]) {
     border: none;
     border-radius: 999px;
     background: var(--accent-primary, var(--red));
-    color: var(--on-accent);
+    color: var(--on-accent-primary);
     font-family: inherit;
     font-size: 15px;
     font-weight: 600;
@@ -18729,7 +18730,7 @@ body.gallery-selecting .gallery-dl-btn,
 .vision-editor-btn:hover { border-color: color-mix(in srgb, var(--fg) 40%, var(--border)); }
 .vision-editor-btn-primary {
   background: var(--accent-primary, var(--red));
-  color: var(--on-accent); border-color: transparent;
+  color: var(--on-accent-primary); border-color: transparent;
 }
 .vision-editor-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
@@ -21299,7 +21300,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-serve-launch {
   background: var(--accent-primary, var(--red));
-  color: var(--on-accent);
+  color: var(--on-accent-primary);
   border: 1px solid var(--accent-primary, var(--red));
   border-radius: 4px;
   font-weight: 700;
@@ -31996,7 +31997,7 @@ button .spinner-whirlpool {
 }
 .schedule-send-confirm {
   background: var(--accent-primary, var(--red)) !important;
-  color: var(--on-accent) !important;
+  color: var(--on-accent-primary) !important;
   border-color: var(--accent-primary, var(--red)) !important;
 }
 .schedule-send-confirm:hover {
@@ -33230,7 +33231,7 @@ body.doc-find-active mark.doc-find-mark.current {
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
   background: var(--accent-primary, var(--red));
-  color: var(--on-accent);
+  color: var(--on-accent-primary);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
@@ -39338,7 +39339,7 @@ body.research-panel-view #research-divider { display:none; }
   margin-left:auto;
   display:flex; align-items:center; gap:5px;
   padding:6px 16px; border:none; border-radius:6px;
-  background:var(--accent-primary, var(--red)); color: var(--on-accent);
+  background:var(--accent-primary, var(--red)); color: var(--on-accent-primary);
   font-size:12px; font-weight:600; cursor:pointer;
   transition:opacity 0.15s;
 }

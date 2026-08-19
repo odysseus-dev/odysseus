@@ -47,7 +47,7 @@ def _run_node(script: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def test_send_button_foreground_follows_its_own_background():
+def test_accent_foregrounds_follow_their_own_backgrounds():
     if not shutil.which("node"):
         pytest.skip("node is not installed")
 
@@ -76,19 +76,22 @@ def test_send_button_foreground_follows_its_own_background():
       }};
       // Dark accent, deliberately light custom send button.
       const red = '#e06c75';
+      const accentPrimary = '#f2c14e';
       const sendBg = '#f2c14e';
       const sendHover = '#f7d488';
       const panel = '#111111';
 
       const onAccent = _readableOn(red);
+      const onAccentPrimary = _readableOn(accentPrimary);
       const onSend = _readableOn(sendBg);
       const onSendHover = _readableOn(sendHover);
       const newchatBg = _mixSrgb(sendHover, panel, 0.85);
       const onNewchat = _readableOn(newchatBg);
 
       console.log(JSON.stringify({{
-        onAccent, onSend, onSendHover, onNewchat, newchatBg,
+        onAccent, onAccentPrimary, onSend, onSendHover, onNewchat, newchatBg,
         accentContrast: contrast(red, onAccent),
+        accentPrimaryContrast: contrast(accentPrimary, onAccentPrimary),
         sendContrast: contrast(sendBg, onSend),
         sendHoverContrast: contrast(sendHover, onSendHover),
         newchatContrast: contrast(newchatBg, onNewchat),
@@ -99,6 +102,7 @@ def test_send_button_foreground_follows_its_own_background():
 
     # The accent and the send button disagree: that disagreement is the bug.
     assert out["onAccent"] == "#fff"
+    assert out["onAccentPrimary"] == "#171717"
     assert out["onSend"] == "#171717"
     assert out["onSendHover"] == "#171717"
 
@@ -106,18 +110,20 @@ def test_send_button_foreground_follows_its_own_background():
     assert out["naiveSendContrast"] < 3, out
 
     # Every surface clears the 3:1 floor against the background it renders.
-    for key in ("accentContrast", "sendContrast", "sendHoverContrast", "newchatContrast"):
+    for key in ("accentContrast", "accentPrimaryContrast", "sendContrast", "sendHoverContrast", "newchatContrast"):
         assert out[key] >= 3, (key, out[key])
 
 
-def test_no_rule_pairs_on_accent_with_a_send_button_background():
-    """A send-button background must never be paired with --on-accent."""
+def test_no_rule_pairs_on_accent_with_an_independent_background():
+    """An independently configurable background must not use --on-accent."""
     css = _STYLE_CSS.read_text(encoding="utf-8")
     offenders = []
     for match in re.finditer(r"([^\n{}]+)\{([^{}]*)\}", css):
         body = match.group(2)
         if "var(--on-accent)" in body and (
-            "--send-btn-bg" in body or "--send-btn-hover" in body
+            "--send-btn-bg" in body
+            or "--send-btn-hover" in body
+            or "--accent-primary" in body
         ):
             offenders.append(match.group(1).strip())
     assert not offenders, offenders

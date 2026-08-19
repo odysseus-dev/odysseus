@@ -323,6 +323,12 @@ export function applyColors(colors) {
     s.setProperty(css, adv[key] || defaults[key]);
   }
 
+  // Primary-accent surfaces can be independently overridden from --red, so
+  // derive their foreground from the background they actually use.
+  const _accentPrimary = adv.accentPrimary || colors.red || '#e06c75';
+  s.setProperty('--accent-primary', _accentPrimary);
+  s.setProperty('--on-accent-primary', _readableOn(_accentPrimary));
+
   // The send button's background is independently configurable
   // (--send-btn-bg / --send-btn-hover), so a foreground derived from
   // --red can be wrong for it: a dark accent with a light custom send
