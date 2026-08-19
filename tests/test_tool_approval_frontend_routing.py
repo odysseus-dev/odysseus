@@ -58,3 +58,29 @@ def test_ask_user_renderer_accepts_scoped_root_and_submit_callback():
     assert "kind: 'tool_approval'" in renderer
     assert "if (accepted !== false) card.remove();" in renderer
     assert "document.dispatchEvent(new CustomEvent('odysseus:tool-approval', { detail }))" in renderer
+
+
+def test_every_changed_approval_module_is_cache_busted_together():
+    """A stale module here silently reinterprets the approval click.
+
+    chat.js leaves the composer empty and clicks the polymorphic send button,
+    so a browser that pairs the new chat.js with a cached chatStream.js has no
+    interceptor and lands on the New chat branch instead. The same holds for
+    the compare pane modules, which chatRenderer now shares a keydown listener
+    with.
+    """
+
+    root = Path(__file__).resolve().parents[1]
+    version = "20260819approvalcontrol1"
+    index = (root / "static/index.html").read_text(encoding="utf-8")
+    app = (root / "static/app.js").read_text(encoding="utf-8")
+    chat = (root / "static/js/chat.js").read_text(encoding="utf-8")
+    compare_index = (root / "static/js/compare/index.js").read_text(encoding="utf-8")
+    compare_stream = (root / "static/js/compare/stream.js").read_text(encoding="utf-8")
+
+    assert f"chatStream.js?v={version}" in index
+    assert f"chatStream.js?v={version}" in chat
+    assert f"compare/index.js?v={version}" in app
+    assert f"stream.js?v={version}" in compare_index
+    # One chatRenderer instance, so the ask_user keydown listener binds once.
+    assert f"chatRenderer.js?v={version}" in compare_stream
