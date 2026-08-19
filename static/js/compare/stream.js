@@ -82,6 +82,26 @@ function _createPaneContinuationMessage(hist) {
   return message;
 }
 
+function _restorePaneAskUserCard(paneIdx, sessionId, submission, originController) {
+  const hist = document.getElementById('cmp-history-' + paneIdx);
+  const restored = _renderPaneAskUserCard(
+    paneIdx,
+    sessionId,
+    submission.payload || {},
+    hist,
+    null,
+    originController,
+  );
+  if (uiModule) {
+    uiModule.showError(
+      restored
+        ? 'This pane is still streaming — choose again once it settles.'
+        : 'Compare pane is still streaming; the choice was not sent.',
+    );
+  }
+  return restored;
+}
+
 function _resumePaneChoiceWhenIdle(paneIdx, sessionId, originController, submission) {
   if (!_paneSessionIsCurrent(paneIdx, sessionId)) return false;
 
@@ -90,7 +110,14 @@ function _resumePaneChoiceWhenIdle(paneIdx, sessionId, originController, submiss
     if (!_paneSessionIsCurrent(paneIdx, sessionId)) return;
     const activeController = state._abortControllers[paneIdx];
     if (activeController === originController) {
-      if (Date.now() - startedAt < 10000) setTimeout(resume, 25);
+      if (Date.now() - startedAt < 10000) {
+        setTimeout(resume, 25);
+        return;
+      }
+      // The originating stream never released the pane. The card was already
+      // removed when the choice was accepted, so put it back rather than
+      // swallowing a decision the user made.
+      _restorePaneAskUserCard(paneIdx, sessionId, submission, originController);
       return;
     }
     // A reroll/model replacement already owns this pane. Never send the stale

@@ -37,3 +37,25 @@ def test_compare_continuation_does_not_lose_or_replace_pane_ownership():
     assert "registerStreamActions({ rerollPane, autoPreviewHtml: _autoPreviewHtml, setSendBtn: _setSendBtn });" in index
     assert "const compareStillStreaming = state._abortControllers.some(Boolean);" in index
     assert "_setSendBtn(compareStillStreaming ? 'stop' : 'send');" in index
+
+
+def test_compare_restores_the_card_instead_of_dropping_a_timed_out_choice():
+    """The card is removed the moment a choice is accepted.
+
+    If the originating stream still owns the pane when the resume deadline
+    passes, the decision has nowhere to go — so the card has to come back
+    rather than the click vanishing silently.
+    """
+
+    root = Path(__file__).resolve().parents[1]
+    stream = (root / "static/js/compare/stream.js").read_text(encoding="utf-8")
+
+    assert "function _restorePaneAskUserCard(" in stream
+    assert "_restorePaneAskUserCard(paneIdx, sessionId, submission, originController);" in stream
+    assert "submission.payload || {}" in stream
+
+    start = stream.index("function _resumePaneChoiceWhenIdle(")
+    end = stream.index("function _renderPaneAskUserCard(", start)
+    resume = stream[start:end]
+    # The deadline must not fall through to a bare return any more.
+    assert "if (Date.now() - startedAt < 10000) setTimeout(resume, 25);" not in resume
