@@ -1,0 +1,1261 @@
+/* ===== enhanced-base.css ===== */
+/* ============================================ */
+/* Odysseus UI-Enhancement Base Tokens          */
+/* Single source of truth for the shared        */
+/* design-taste-frontend tokens reused by the    */
+/* chat / memory / theme / settings enhancement  */
+/* stylesheets. LINK THIS FIRST in index.html.   */
+/* ============================================ */
+
+:root {
+  /* ── Motion ── */
+  --ui-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ui-t-fast: 0.15s;
+  --ui-t-smooth: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Accent shorthand ──
+   * Tracks the active theme accent (--accent), falling back to --red so
+   * surfaces that omit --accent still get the brand colour. */
+  --ui-accent: var(--accent, var(--red));
+
+  /* ── Focus ring ──
+   * The one shared outline every enhanced surface references. */
+  --ui-focus-ring: 2px solid var(--ui-accent);
+}
+
+/* ===== chat-enhanced.css ===== */
+/* ============================================ */
+/* Odysseus Chat Message Enhancements           */
+/* Applied design-taste-frontend principles     */
+/* ============================================ */
+
+/* Enhanced message bubbles with refined spacing,
+   improved typography, and subtle interactions */
+
+/* Root variables for message-specific refinements */
+:root {
+  /* Message bubble refinements */
+  --msg-radius-user: 18px;
+  --msg-radius-ai: 18px;
+  --msg-padding-y: 10px;
+  --msg-padding-x: 12px;
+  --msg-gap-role-body: 6px;
+  --msg-max-width: 85%;
+  --msg-min-width: 80px;
+  
+  /* Typography refinements */
+  --msg-role-size: 0.875rem; /* 14px */
+  --msg-body-size: 0.95rem; /* 15px */
+  --msg-line-height: 1.5;
+  
+  /* Interaction states */
+  --msg-hover-transition: var(--ui-t-fast);
+  --msg-focus-ring: var(--ui-focus-ring);
+}
+
+/* Enhanced base message styling */
+.msg {
+  margin: 8px 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: fit-content;
+  max-width: var(--msg-max-width);
+  min-width: var(--msg-min-width);
+  border-radius: 12px; /* Kept from original for container */
+  padding: var(--msg-padding-y) var(--msg-padding-x);
+  line-height: var(--msg-line-height);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  animation: msg-enter 0.3s ease-out both;
+  /* Enhanced: subtle shadow for depth */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: box-shadow var(--msg-hover-transition),
+              transform var(--msg-hover-transition);
+}
+
+/* Enhanced hover state - subtle lift */
+.msg:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+/* Enhanced focus state for accessibility */
+.msg:focus-within {
+  outline: var(--msg-focus-ring);
+  outline-offset: -2px;
+}
+
+/* User message bubble - refined */
+.msg-user {
+  align-items: flex-end;
+  margin-left: auto;
+  margin-right: 8px;
+  /* Enhanced: more refined background */
+  background: var(--user-bubble-bg, color-mix(in srgb, var(--fg) 8%, var(--bg)));
+  border: 1px solid var(--bubble-border, var(--border));
+  border-radius: var(--msg-radius-user) var(--msg-radius-user) 0 var(--msg-radius-user);
+  align-self: flex-end;
+  width: fit-content;
+  max-width: var(--msg-max-width);
+  min-width: var(--msg-min-width);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  /* Enhanced: subtle inner glow on hover */
+  transition: background-color var(--msg-hover-transition),
+              border-color var(--msg-hover-transition);
+}
+
+.msg-user:hover {
+  background: color-mix(in srgb, var(--fg) 10%, var(--bg));
+  border-color: var(--bubble-border);
+}
+
+/* AI message bubble - refined */
+.msg-ai {
+  align-items: flex-start;
+  margin-right: auto;
+  margin-left: 8px;
+  /* Enhanced: more refined background */
+  background: var(--ai-bubble-bg, var(--panel));
+  border: 1px solid var(--bubble-border, var(--border));
+  border-radius: var(--msg-radius-ai) var(--msg-radius-ai) var(--msg-radius-ai) 0;
+  align-self: flex-start;
+  width: 85%; /* Kept original for now, could be fit-content */
+  max-width: var(--msg-max-width);
+  min-width: var(--msg-min-width);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  transition: min-height 0.25s ease-out,
+              background-color var(--msg-hover-transition),
+              border-color var(--msg-hover-transition);
+}
+
+.msg-ai:hover {
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  border-color: var(--bubble-border);
+}
+
+/* Role styling - enhanced typography */
+.msg .role {
+  font-weight: 600;
+  margin-bottom: var(--msg-gap-role-body);
+  display: flex;
+  align-items: center;
+  gap: var(--msg-gap-role-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--msg-role-size);
+  /* Enhanced: better color contrast */
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+
+/* Role dot - enhanced */
+.msg .role::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--model-dot, color-mix(in srgb, var(--fg) 30%, transparent));
+  flex-shrink: 0;
+  transition: background-color var(--msg-hover-transition);
+}
+
+.msg-user .role {
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+
+.msg-user .role::before {
+  background: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
+/* Enhanced body typography */
+.msg .body {
+  width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: var(--msg-line-height);
+  font-size: var(--msg-body-size);
+  margin: 0;
+  overflow: hidden;
+  max-width: 100%;
+  /* Enhanced: better text rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.msg .body > * {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.msg .body > *:first-child {
+  margin-top: 0;
+}
+
+.msg .body > *:last-child {
+  margin-bottom: 0;
+}
+
+.msg .body p:empty {
+  display: none;
+}
+
+/* Enhanced text colors */
+.msg-user .body {
+  color: var(--fg);
+}
+
+.msg-ai .body {
+  color: var(--fg);
+  /* Enhanced: slightly softer for AI messages */
+  color-mix(in srgb, var(--fg) 95%, transparent);
+}
+
+/* Enhanced timestamp styling */
+.msg .timestamp {
+  font-size: 0.75rem; /* 12px */
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.msg-user .timestamp {
+  justify-content: flex-end;
+}
+
+.msg-ai .timestamp {
+  justify-content: flex-start;
+}
+
+/* Enhanced link styling within messages */
+.msg .body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition: color var(--msg-hover-transition),
+              text-decoration-color var(--msg-hover-transition);
+}
+
+.msg .body a:hover {
+  color: color-mix(in srgb, var(--accent) 80%, white);
+  text-decoration-color: var(--accent);
+}
+
+/* Enhanced code block styling */
+.msg .body pre,
+.msg .body code {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.9em;
+  overflow-x: auto;
+}
+
+.msg .body pre {
+  margin: 8px 0;
+  padding: 12px 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+/* Enhanced quote styling */
+.msg .body blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  padding-left: 12px;
+  margin: 12px 0;
+  color: color-mix(in srgb, var(--fg) 80%, transparent);
+  font-style: italic;
+}
+
+/* Enhanced list styling */
+.msg .body ul,
+.msg .body ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.msg .body li {
+  margin: 4px 0;
+  position: relative;
+}
+
+.msg .body li::before {
+  content: '•';
+  position: absolute;
+  left: -12px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+
+/* Enhanced focus states for interactive elements in messages */
+.msg .body button,
+.msg .body input,
+.msg .body select,
+.msg .body textarea {
+  &:focus-visible {
+    outline: var(--msg-focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Enhanced empty state placeholder */
+.msg .body .placeholder {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-style: italic;
+}
+
+/* Message footer enhancements */
+.msg-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  gap: 8px;
+  font-size: 0.75rem; /* 12px */
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+
+.msg-footer .msg-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.msg-footer .msg-actions button {
+  background: transparent;
+  border: none;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background-color var(--msg-hover-transition),
+              color var(--msg-hover-transition);
+}
+
+.msg-footer .msg-actions button:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+.msg-footer .msg-actions button:active {
+  transform: translateY(1px);
+}
+
+/* Message footer - copy/regen buttons */
+.msg-footer .btn-copy,
+.msg-footer .btn-regen {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  transition: all var(--msg-hover-transition);
+}
+
+.msg-footer .btn-copy:hover,
+.msg-footer .btn-regen:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.msg-footer .btn-copy:active,
+.msg-footer .btn-regen:active {
+  transform: translateY(1px);
+}
+
+/* Enhanced responsiveness */
+@media (max-width: 768px) {
+  .msg {
+    max-width: 90%;
+    margin: 6px 0;
+  }
+  
+  .msg-user,
+  .msg-ai {
+    max-width: 90%;
+  }
+  
+  .msg .role {
+    font-size: 0.8125rem; /* 13px */
+  }
+  
+  .msg .body {
+    font-size: 0.875rem; /* 14px */
+  }
+}
+
+/* Reduced motion support - respect user preferences */
+@media (prefers-reduced-motion: reduce) {
+  .msg {
+    animation: none;
+    transition: none;
+  }
+  
+  .msg:hover,
+  .msg-user:hover,
+  .msg-ai:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+/* Dark mode specific enhancements */
+@media (prefers-color-scheme: dark) {
+  /* Already handled by CSS variables, but can fine-tune */
+  .msg {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  
+  .msg:hover {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  }
+}
+
+/* ===== memory-enhanced.css ===== */
+/* ============================================ */
+/* Odysseus Memory Modal Enhancements           */
+/* Applied design-taste-frontend principles      */
+/* (subtle depth, refined hover/focus, motion)  */
+/* Scoped to #memory-modal so other modals are  */
+/* untouched. Fidelity to existing tokens:       */
+/*   --bg --fg --panel --border --red --accent   */
+/* ============================================ */
+
+/* Root variables for memory-specific refinements */
+:root {
+  /* Modal framing */
+  --mem-modal-radius: 14px;
+  --mem-modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+
+  /* Card refinements */
+  --mem-card-radius: 10px;
+  --mem-card-pad: 14px;
+  --mem-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  --mem-card-shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.20);
+
+  /* Tab strip */
+  --mem-tab-radius: 8px;
+
+  /* Motion / focus / accent — aliased to the shared base tokens */
+  --mem-ease: var(--ui-ease);
+  --mem-t-fast: var(--ui-t-fast);
+  --mem-t-smooth: var(--ui-t-smooth);
+  --mem-focus-ring: var(--ui-focus-ring);
+  --mem-accent: var(--ui-accent);
+}
+
+/* ---- Modal framing: depth + refined radius ---- */
+#memory-modal .modal-content.memory-modal-content {
+  border-radius: var(--mem-modal-radius);
+  box-shadow: var(--mem-modal-shadow);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  /* Smooth entrance for the whole panel */
+  animation: mem-modal-enter 0.28s var(--mem-ease) both;
+}
+
+@keyframes mem-modal-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Header: quiet divider, slightly more breathing room */
+#memory-modal .modal-header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+}
+
+#memory-modal .modal-header h4 {
+  letter-spacing: -0.01em;
+}
+
+/* Close button — refined hover, no layout shift */
+#memory-modal .close-btn {
+  border-radius: 8px;
+  transition: background-color var(--mem-t-fast), color var(--mem-t-fast), transform var(--mem-t-fast);
+}
+#memory-modal .close-btn:hover {
+  background: color-mix(in srgb, var(--mem-accent) 12%, transparent);
+  color: var(--mem-accent);
+}
+#memory-modal .close-btn:active {
+  transform: scale(0.92);
+}
+
+/* ---- Tab strip: soft track + pill hover, accent underline ---- */
+#memory-modal .memory-tabs {
+  gap: 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+}
+
+#memory-modal .memory-tab {
+  border-radius: var(--mem-tab-radius) var(--mem-tab-radius) 0 0;
+  opacity: 0.55;
+  position: relative;
+  transition: opacity var(--mem-t-fast), color var(--mem-t-fast),
+              background-color var(--mem-t-fast), border-color var(--mem-t-fast);
+}
+#memory-modal .memory-tab:hover {
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+#memory-modal .memory-tab.active {
+  opacity: 1;
+  color: var(--mem-accent);
+  /* Quiet pill tint behind the active tab for clearer hierarchy */
+  background: color-mix(in srgb, var(--mem-accent) 9%, transparent);
+}
+/* Keep the existing accent underline only on the active tab */
+#memory-modal .memory-tab.active {
+  border-bottom-color: var(--mem-accent);
+}
+
+/* ---- Admin cards: depth, breathing room, hover lift ---- */
+#memory-modal .admin-card {
+  border-radius: var(--mem-card-radius);
+  padding: var(--mem-card-pad);
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--fg) 11%, var(--border));
+  box-shadow: var(--mem-card-shadow);
+  transition: box-shadow var(--mem-t-smooth), border-color var(--mem-t-smooth),
+              transform var(--mem-t-smooth);
+}
+#memory-modal .admin-card:hover {
+  box-shadow: var(--mem-card-shadow-hover);
+  border-color: color-mix(in srgb, var(--fg) 16%, var(--border));
+}
+
+/* Card heading: tighter, calmer divider */
+#memory-modal .admin-card h2 {
+  letter-spacing: -0.02em;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  padding-bottom: 7px;
+  margin-bottom: 9px;
+}
+
+/* Helper / sub text: a touch more line-height for readability */
+#memory-modal .admin-toggle-sub,
+#memory-modal .memory-desc {
+  line-height: 1.55;
+}
+
+/* ---- Toggle switch: smoother, focused, glowing when on ---- */
+#memory-modal .admin-switch {
+  /* No layout change — purely visual feedback below */
+}
+#memory-modal .admin-slider {
+  transition: background var(--mem-t-smooth), box-shadow var(--mem-t-fast);
+}
+#memory-modal .admin-slider::before {
+  transition: transform var(--mem-t-smooth), box-shadow var(--mem-t-fast);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+#memory-modal .admin-switch input:checked + .admin-slider {
+  background: var(--mem-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mem-accent) 22%, transparent);
+}
+#memory-modal .admin-switch:focus-within .admin-slider {
+  outline: var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Toolbar buttons: refined hover lift + active press ---- */
+#memory-modal .memory-toolbar-btn {
+  border-radius: 7px;
+  transition: all var(--mem-t-fast);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10);
+}
+#memory-modal .memory-toolbar-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--fg) 24%, var(--border));
+  color: var(--fg);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
+}
+#memory-modal .memory-toolbar-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+#memory-modal .memory-toolbar-btn.active {
+  background: color-mix(in srgb, var(--mem-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--mem-accent) 45%, transparent);
+  color: var(--mem-accent);
+}
+#memory-modal .memory-toolbar-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 55%, transparent);
+}
+#memory-modal .memory-toolbar-btn:focus-visible {
+  outline: var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Search / text inputs: glow focus, smoother ---- */
+#memory-modal .memory-search-input,
+#memory-modal .memory-add-input {
+  border-radius: 7px;
+  transition: border-color var(--mem-t-fast), box-shadow var(--mem-t-fast),
+              background-color var(--mem-t-fast);
+}
+#memory-modal .memory-search-input:focus,
+#memory-modal .memory-add-input:focus {
+  outline: none;
+  border-color: var(--mem-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mem-accent) 18%, transparent);
+}
+#memory-modal .memory-search-input:focus-visible,
+#memory-modal .memory-add-input:focus-visible {
+  outline: none;
+  border-color: var(--mem-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mem-accent) 18%, transparent);
+}
+
+/* ---- Memory items: entrance, hover lift, focus ring ---- */
+#memory-modal .memory-item {
+  border-radius: 9px;
+  box-shadow: var(--mem-card-shadow);
+  transition: background-color var(--mem-t-fast), border-color var(--mem-t-fast),
+              box-shadow var(--mem-t-smooth), transform var(--mem-t-smooth);
+  animation: mem-item-enter 0.32s var(--mem-ease) both;
+}
+@keyframes mem-item-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+#memory-modal .memory-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+  box-shadow: var(--mem-card-shadow-hover);
+  transform: translateY(-1px);
+}
+#memory-modal .memory-item:focus-within {
+  outline: var(--mem-focus-ring);
+  outline-offset: -2px;
+}
+/* Pinned items keep their left accent; refine the tint */
+#memory-modal .memory-pinned:hover {
+  background: color-mix(in srgb, var(--mem-accent) 5%, transparent);
+  border-left-color: var(--mem-accent);
+}
+
+/* Item menu / action buttons: refined hover */
+#memory-modal .memory-menu-btn:focus-visible,
+#memory-modal .memory-item-btn:focus-visible {
+  outline: var(--mem-focus-ring);
+  outline-offset: 1px;
+}
+
+/* ---- Category chips: pill hover + active ---- */
+#memory-modal .memory-cat-chip {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  cursor: pointer;
+  transition: all var(--mem-t-fast);
+}
+#memory-modal .memory-cat-chip:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 22%, var(--border));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#memory-modal .memory-cat-chip.active {
+  color: var(--mem-accent);
+  border-color: color-mix(in srgb, var(--mem-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--mem-accent) 12%, transparent);
+}
+#memory-modal .memory-cat-chip:focus-visible {
+  outline: var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Confirm buttons (Add Skill etc.) ---- */
+#memory-modal .confirm-btn {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all var(--mem-t-fast);
+}
+#memory-modal .confirm-btn-primary {
+  background: color-mix(in srgb, var(--mem-accent) 92%, black);
+  color: #fff;
+  border-color: transparent;
+}
+#memory-modal .confirm-btn-primary:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--mem-accent) 30%, transparent);
+}
+#memory-modal .confirm-btn-primary:active {
+  transform: translateY(0);
+}
+#memory-modal .confirm-btn-secondary:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+#memory-modal .confirm-btn:focus-visible {
+  outline: var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- IO buttons (Import / Export / Add Skill) ---- */
+#memory-modal .theme-io-btn {
+  border-radius: 7px;
+  transition: all var(--mem-t-fast);
+}
+#memory-modal .theme-io-btn:hover {
+  background: color-mix(in srgb, var(--mem-accent) 12%, transparent);
+  color: var(--mem-accent);
+}
+#memory-modal .theme-io-btn:focus-visible {
+  outline: var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Range slider (skill confidence) ---- */
+#memory-modal input[type="range"].preset-range {
+  accent-color: var(--mem-accent);
+  cursor: pointer;
+}
+#memory-modal input[type="range"].preset-range:focus-visible {
+  outline: var(--mem-focus-ring);
+  outline-offset: 3px;
+}
+
+/* ---- Number input (max skills) ---- */
+#memory-modal #skill-max-input {
+  border-radius: 7px;
+  transition: border-color var(--mem-t-fast), box-shadow var(--mem-t-fast);
+}
+#memory-modal #skill-max-input:focus {
+  outline: none;
+  border-color: var(--mem-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mem-accent) 18%, transparent);
+}
+
+/* ---- Respect reduced-motion preferences ---- */
+@media (prefers-reduced-motion: reduce) {
+  #memory-modal .modal-content.memory-modal-content,
+  #memory-modal .memory-item {
+    animation: none;
+    transition: none;
+  }
+  #memory-modal .admin-card:hover,
+  #memory-modal .memory-item:hover,
+  #memory-modal .memory-toolbar-btn:hover,
+  #memory-modal .confirm-btn-primary:hover {
+    transform: none;
+  }
+}
+
+/* ===== theme-enhanced.css ===== */
+/* ============================================ */
+/* Odysseus Theme Popup Enhancements            */
+/* Applied design-taste-frontend principles      */
+/* (subtle depth, refined hover/focus, motion)  */
+/* Scoped to #theme-modal / #theme-popup so      */
+/* other modals are untouched. Fidelity to the   */
+/* existing token: --accent, var(--red)          */
+/* ============================================ */
+
+:root {
+  /* Modal framing */
+  --th-popup-radius: 14px;
+  --th-popup-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+
+  /* Motion / focus / accent — aliased to the shared base tokens */
+  --th-ease: var(--ui-ease);
+  --th-t-fast: var(--ui-t-fast);
+  --th-t-smooth: var(--ui-t-smooth);
+  --th-focus-ring: var(--ui-focus-ring);
+  --th-accent: var(--ui-accent);
+}
+
+/* ---- Popup framing: depth + refined radius ---- */
+#theme-popup.modal-content {
+  border-radius: var(--th-popup-radius);
+  box-shadow: var(--th-popup-shadow);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  animation: th-popup-enter 0.28s var(--th-ease) both;
+}
+/* The popup is also reachable as #theme-popup alone in some layouts */
+#theme-popup {
+  border-radius: var(--th-popup-radius);
+}
+
+@keyframes th-popup-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Header: quiet divider, breathing room */
+#theme-popup .modal-header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+}
+#theme-popup .modal-header h4 {
+  letter-spacing: -0.01em;
+}
+
+/* Close button — refined hover/press */
+#theme-popup .close-btn {
+  border-radius: 8px;
+  transition: background-color var(--th-t-fast), color var(--th-t-fast), transform var(--th-t-fast);
+}
+#theme-popup .close-btn:hover {
+  background: color-mix(in srgb, var(--th-accent) 12%, transparent);
+  color: var(--th-accent);
+}
+#theme-popup .close-btn:active {
+  transform: scale(0.92);
+}
+
+/* ---- Tab strip: soft pill hover, accent underline kept ---- */
+#theme-popup .admin-tabs {
+  gap: 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+}
+#theme-popup .admin-tab {
+  border-radius: 8px 8px 0 0;
+  position: relative;
+  transition: color var(--th-t-fast), background-color var(--th-t-fast),
+              border-color var(--th-t-fast);
+}
+#theme-popup .admin-tab:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+#theme-popup .admin-tab.active {
+  color: var(--th-accent);
+  background: color-mix(in srgb, var(--th-accent) 9%, transparent);
+  border-bottom-color: var(--th-accent);
+}
+#theme-popup .admin-tab:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* ---- Theme swatches: refined depth + smoother interaction ---- */
+#theme-popup .theme-grid {
+  gap: 8px;
+}
+#theme-popup .theme-swatch {
+  border-radius: 10px;
+  padding: 7px 5px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: border-color var(--th-t-fast), transform var(--th-t-smooth),
+              box-shadow var(--th-t-smooth), background-color var(--th-t-fast);
+}
+#theme-popup .theme-swatch:hover {
+  transform: translateY(-2px) scale(1.02);
+  border-color: color-mix(in srgb, var(--fg) 22%, var(--border));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.20);
+}
+#theme-popup .theme-swatch:active {
+  transform: translateY(0) scale(1.0);
+}
+#theme-popup .theme-swatch.active {
+  border-color: var(--th-accent);
+  background: color-mix(in srgb, var(--th-accent) 7%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--th-accent) 30%, transparent),
+              0 4px 12px rgba(0, 0, 0, 0.18);
+}
+#theme-popup .theme-swatch:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Swatch colour dots — slightly softer ring */
+#theme-popup .theme-swatch-colors span {
+  border: 1.5px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+
+/* ---- Customize: color rows ---- */
+#theme-popup .theme-custom {
+  gap: 6px 12px;
+}
+#theme-popup .color-row {
+  padding: 2px 0;
+}
+#theme-popup .color-row label {
+  opacity: 0.75;
+  transition: opacity var(--th-t-fast);
+}
+#theme-popup .color-row:hover label {
+  opacity: 1;
+}
+
+/* Native color inputs keep their round shape; add a focus ring */
+#theme-popup .color-row input[type="color"],
+#theme-popup .color-row input.cp-swatch-input {
+  border-radius: 50%;
+  transition: box-shadow var(--th-t-fast), transform var(--th-t-fast);
+}
+#theme-popup .color-row input[type="color"]:focus-visible,
+#theme-popup .color-row input.cp-swatch-input:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Reset colour button — lift visibility on hover, accent on changed */
+#theme-popup .color-reset-btn {
+  transition: opacity var(--th-t-fast), color var(--th-t-fast), transform var(--th-t-fast);
+}
+#theme-popup .color-reset-btn.changed {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+#theme-popup .color-reset-btn.changed:hover {
+  color: var(--th-accent);
+  transform: rotate(-30deg);
+}
+#theme-popup .color-reset-btn:focus-visible {
+  opacity: 1;
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Delete-theme (X) button — keep the pop, add focus ring */
+#theme-popup .theme-delete-btn {
+  transition: transform var(--th-t-smooth), background var(--th-t-fast);
+}
+#theme-popup .theme-delete-btn:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Save / Import / Export / Generate buttons ---- */
+#theme-popup .theme-save-row button,
+#theme-popup .theme-io-btn,
+#theme-popup .harmony-generate-btn {
+  border-radius: 7px;
+  transition: all var(--th-t-fast);
+}
+#theme-popup .theme-save-row button:hover {
+  background: color-mix(in srgb, var(--th-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--th-accent) 45%, transparent);
+  transform: translateY(-1px);
+}
+#theme-popup .theme-save-row button:active {
+  transform: translateY(0);
+}
+#theme-popup .theme-io-btn:hover {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--fg) 22%, var(--border));
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#theme-popup .harmony-generate-btn:hover {
+  background: color-mix(in srgb, var(--th-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--th-accent) 45%, transparent);
+}
+#theme-popup .theme-save-row button:focus-visible,
+#theme-popup .theme-io-btn:focus-visible,
+#theme-popup .harmony-generate-btn:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Text inputs (save name, import area) ---- */
+#theme-popup .theme-save-row input,
+#theme-popup .theme-import-area {
+  border-radius: 7px;
+  transition: border-color var(--th-t-fast), box-shadow var(--th-t-fast), background-color var(--th-t-fast);
+}
+#theme-popup .theme-save-row input:focus,
+#theme-popup .theme-import-area:focus {
+  outline: none;
+  border-color: var(--th-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--th-accent) 18%, transparent);
+}
+
+/* ---- Font & Density selects ---- */
+#theme-popup .theme-fd-select {
+  border-radius: 7px;
+  transition: border-color var(--th-t-fast), box-shadow var(--th-t-fast);
+}
+#theme-popup .theme-fd-select:focus {
+  outline: none;
+  border-color: var(--th-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--th-accent) 18%, transparent);
+}
+#theme-popup .theme-fd-select:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+
+/* ---- Range slider (font size / density / zoom) ---- */
+#theme-popup .theme-fd-range {
+  accent-color: var(--th-accent);
+}
+#theme-popup .theme-fd-range:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 4px;
+}
+
+/* ---- Advanced toggle: smoother, accent arrow ---- */
+#theme-popup .theme-adv-toggle {
+  border-radius: 8px;
+  transition: opacity var(--th-t-fast), background-color var(--th-t-smooth), border-color var(--th-t-fast);
+}
+#theme-popup .theme-adv-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--th-accent) 35%, transparent);
+}
+#theme-popup .theme-adv-toggle:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+#theme-popup .theme-adv-toggle .theme-adv-arrow {
+  color: var(--th-accent);
+}
+#theme-popup .theme-adv-clear-btn {
+  border-radius: 7px;
+  transition: opacity var(--th-t-fast), background-color var(--th-t-fast);
+}
+#theme-popup .theme-adv-clear-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#theme-popup .theme-adv-clear-btn:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Reset button ---- */
+#theme-popup #theme-reset-btn {
+  border-radius: 8px;
+  transition: opacity var(--th-t-fast), background-color var(--th-t-fast), border-color var(--th-t-fast);
+}
+#theme-popup #theme-reset-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--th-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--th-accent) 35%, transparent);
+}
+#theme-popup #theme-reset-btn:focus-visible {
+  outline: var(--th-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Harmony preview strip — softer border radius */
+#theme-popup .harmony-preview {
+  border-radius: 8px;
+}
+
+/* ---- Respect reduced-motion preferences ---- */
+@media (prefers-reduced-motion: reduce) {
+  #theme-popup.modal-content {
+    animation: none;
+    transition: none;
+  }
+  #theme-popup .theme-swatch:hover,
+  #theme-popup .theme-save-row button:hover,
+  #theme-popup .theme-io-btn:hover,
+  #theme-popup .theme-delete-btn:hover {
+    transform: none;
+  }
+}
+
+/* ===== settings-enhanced.css ===== */
+/* ============================================ */
+/* Odysseus Settings Modal Enhancements         */
+/* Applied design-taste-frontend principles      */
+/* (subtle depth, refined hover/focus, motion)  */
+/* Scoped to #settings-modal so other modals are */
+/* untouched. Fidelity to existing token: --red  */
+/* ============================================ */
+
+:root {
+  /* Modal framing */
+  --set-modal-radius: 14px;
+  --set-modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+
+  /* Nav rail */
+  --set-nav-radius: 8px;
+
+  /* Motion / focus / accent — aliased to the shared base tokens */
+  --set-ease: var(--ui-ease);
+  --set-t-fast: var(--ui-t-fast);
+  --set-t-smooth: var(--ui-t-smooth);
+  --set-focus-ring: var(--ui-focus-ring);
+  --set-accent: var(--ui-accent);
+}
+
+/* ---- Modal framing: depth + refined radius ---- */
+#settings-modal .settings-modal-content {
+  border-radius: var(--set-modal-radius);
+  box-shadow: var(--set-modal-shadow);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  animation: set-modal-enter 0.28s var(--set-ease) both;
+}
+
+@keyframes set-modal-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Header: quiet divider, breathing room */
+#settings-modal .settings-modal-content .modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+}
+#settings-modal .modal-header h4 {
+  letter-spacing: -0.01em;
+}
+
+/* Close button — refined hover/press */
+#settings-modal .close-btn {
+  border-radius: 8px;
+  transition: background-color var(--set-t-fast), color var(--set-t-fast), transform var(--set-t-fast);
+}
+#settings-modal .close-btn:hover {
+  background: color-mix(in srgb, var(--set-accent) 12%, transparent);
+  color: var(--set-accent);
+}
+#settings-modal .close-btn:active {
+  transform: scale(0.92);
+}
+
+/* ---- Layout: subtle rail surface distinction ---- */
+#settings-modal .settings-sidebar {
+  border-radius: 0; /* rail sits flush to the rounded modal; left corners handled by overflow */
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+#settings-modal .settings-sidebar-divider {
+  opacity: 0.6;
+}
+
+/* ---- Nav rail items: pill hover, accent active ---- */
+#settings-modal .settings-nav-item {
+  border-radius: var(--set-nav-radius);
+  position: relative;
+  transition: background-color var(--set-t-fast), color var(--set-t-fast),
+              transform var(--set-t-smooth);
+}
+#settings-modal .settings-nav-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+#settings-modal .settings-nav-item:active {
+  transform: translateY(1px);
+}
+#settings-modal .settings-nav-item.active {
+  background: color-mix(in srgb, var(--set-accent) 13%, transparent);
+  color: var(--set-accent);
+  box-shadow: inset 2px 0 0 var(--set-accent);
+}
+#settings-modal .settings-nav-item:focus-visible {
+  outline: var(--set-focus-ring);
+  outline-offset: -2px;
+}
+#settings-modal .settings-sidebar-label {
+  letter-spacing: 1px;
+  opacity: 0.4;
+}
+
+/* ---- Panels: keep the admin-card depth consistent ---- */
+#settings-modal .settings-panels {
+  padding: 18px 22px;
+  scroll-behavior: smooth;
+}
+#settings-modal .admin-card {
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: box-shadow var(--set-t-smooth), border-color var(--set-t-smooth);
+}
+#settings-modal .admin-card:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  border-color: color-mix(in srgb, var(--fg) 16%, var(--border));
+}
+#settings-modal .admin-card h2 {
+  letter-spacing: -0.02em;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  padding-bottom: 7px;
+}
+
+/* ---- Selects: accent glow on focus ---- */
+#settings-modal .settings-select {
+  border-radius: 7px;
+  transition: border-color var(--set-t-fast), box-shadow var(--set-t-fast), background-color var(--set-t-fast);
+}
+#settings-modal .settings-select:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+#settings-modal .settings-select:focus {
+  outline: none;
+  border-color: var(--set-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--set-accent) 18%, transparent);
+}
+#settings-modal .settings-select:focus-visible {
+  outline: none;
+  border-color: var(--set-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--set-accent) 18%, transparent);
+}
+
+/* ---- Labels ---- */
+#settings-modal .settings-label {
+  color: color-mix(in srgb, var(--fg) 80%, transparent);
+}
+
+/* ---- Toggle switches (reuse the admin-switch already in the modal) ---- */
+#settings-modal .admin-switch:focus-within .admin-slider {
+  outline: var(--set-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Shortcut keycaps: refined, accent-tinted, focusable ---- */
+#settings-modal .shortcut-key {
+  border-radius: 5px;
+  transition: background-color var(--set-t-fast), border-color var(--set-t-fast), transform var(--set-t-fast);
+}
+#settings-modal .shortcut-key:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+#settings-modal .shortcut-key:active {
+  transform: translateY(1px);
+}
+#settings-modal .shortcut-key kbd {
+  border-radius: 4px;
+  transition: background-color var(--set-t-fast), border-color var(--set-t-fast);
+}
+#settings-modal .shortcut-key:focus-visible {
+  outline: var(--set-focus-ring);
+  outline-offset: 2px;
+}
+#settings-modal .shortcut-action-btn {
+  border-radius: 5px;
+  transition: all var(--set-t-fast);
+}
+#settings-modal .shortcut-action-btn:focus-visible {
+  outline: var(--set-focus-ring);
+  outline-offset: 2px;
+}
+#settings-modal .shortcut-row {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+#settings-modal .shortcut-category {
+  letter-spacing: 0.6px;
+  opacity: 0.45;
+}
+
+/* ---- Respect reduced-motion preferences ---- */
+@media (prefers-reduced-motion: reduce) {
+  #settings-modal .settings-modal-content {
+    animation: none;
+    transition: none;
+  }
+  #settings-modal .settings-nav-item:active,
+  #settings-modal .shortcut-key:active {
+    transform: none;
+  }
+}

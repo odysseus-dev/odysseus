@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>odysseus design preview - enhanced</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;500;600;700;800;900&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --base: #020617;
+      --surface: #0f172a;
+      --elevated: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --border: rgba(148,163,184,0.15);
+      --shadow: rgba(0,0,0,0.35);
+      --success: #34d399;
+      --warning: #fbbf24;
+      --error: #f87171;
+      --info: #38bdf8;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 10px;
+      --radius-full: 9999px;
+      --transition-base: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    .light {
+      --base: #f8fafc;
+      --surface: #ffffff;
+      --elevated: #e2e8f0;
+      --text: #020617;
+      --muted: #475569;
+      --border: rgba(15,23,42,0.12);
+      --shadow: rgba(0,0,0,0.08);
+    }
+    
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--base);
+      color: var(--text);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .display { font-family: 'Cabinet Grotesk', 'Geist', ui-sans-serif, system-ui, sans-serif; }
+    
+    /* Enhanced header with subtle elevation */
+    header.topbar {
+      position: sticky; top: 0; z-index: 50;
+      border-bottom: 1px solid var(--border);
+      background: rgba(2,6,23,0.75);
+      backdrop-filter: blur(12px);
+      transition: background-color var(--transition-base);
+    }
+    .light header.topbar { 
+      background: rgba(248,250,252,0.75); 
+    }
+    
+    .topbar-inner {
+      max-width: 1280px; margin: 0 auto; padding: 14px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .brand { 
+      font-family: 'Cabinet Grotesk', 'Geist', sans-serif; 
+      font-weight: 800; 
+      letter-spacing: -0.02em; 
+    }
+    .nav { 
+      display: flex; gap: 18px; align-items: center; 
+    }
+    .nav a {
+      color: var(--muted); 
+      text-decoration: none; 
+      font-weight: 500; 
+      font-size: 12px;
+      padding: 6px 10px; 
+      border-radius: var(--radius-md);
+      transition: all var(--transition-base);
+    }
+    .nav a:hover { 
+      color: var(--text); 
+      background: var(--surface); 
+    }
+    .nav a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    
+    .chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid var(--border); 
+      background: var(--surface);
+      padding: 6px 10px; 
+      border-radius: var(--radius-full); 
+      font-size: 12px; 
+      color: var(--muted);
+      transition: all var(--transition-base);
+    }
+    .chip:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(56,189,248,0.05);
+    }
+    .dot { 
+      width: 8px; height: 8px; 
+      border-radius: var(--radius-full); 
+      background: var(--accent);
+    }
+    
+    /* Enhanced container with better spacing */
+    .container { 
+      max-width: 1280px; 
+      margin: 0 auto; 
+      padding: 32px 24px 80px;
+    }
+    
+    /* Hero section with improved depth */
+    .hero {
+      margin: 28px 0 36px;
+      padding: 36px 32px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(180deg, var(--surface), var(--base));
+      position: relative;
+      overflow: hidden;
+      transition: all var(--transition-base);
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        135deg,
+        transparent,
+        rgba(255,255,255,0.03),
+        transparent
+      );
+      pointer-events: none;
+    }
+    .hero h1 {
+      font-family: 'Cabinet Grotesk', 'Geist', sans-serif;
+      font-weight: 800; 
+      letter-spacing: -0.03em; 
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.2;
+      position: relative;
+      z-index: 1;
+    }
+    .hero p { 
+      margin: 0; 
+      color: var(--muted); 
+      max-width: 720px;
+      line-height: 1.6;
+      position: relative;
+      z-index: 1;
+    }
+    .hero .cta-group {
+      margin-top: 18px; 
+      display: flex; 
+      gap: 10px; 
+      flex-wrap: wrap;
+      position: relative;
+      z-index: 1;
+    }
+    
+    /* Section styling with better visual separation */
+    .section {
+      margin: 36px 0 48px;
+      position: relative;
+    }
+    .section::before {
+      content: '';
+      position: absolute;
+      top: -18px;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        var(--border),
+        transparent
+      );
+    }
+    .section h2 {
+      font-family: 'Cabinet Grotesk', 'Geist', sans-serif;
+      font-weight: 700; 
+      font-size: 18px; 
+      margin: 0 0 6px;
+      color: var(--text);
+      position: relative;
+    }
+    .section .lead { 
+      color: var(--muted); 
+      margin: 0 0 18px; 
+      font-size: 13px;
+      max-width: 600px;
+      line-height: 1.6;
+    }
+    
+    /* Grid system */
+    .grid { display: grid; gap: 18px; }
+    .grid-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    
+    /* Enhanced cards with subtle elevation */
+    .card {
+      border: 1px solid var(--border); 
+      border-radius: var(--radius-lg); 
+      background: var(--surface);
+      overflow: hidden;
+      transition: all var(--transition-base);
+      position: relative;
+    }
+    .card:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .card:focus-within {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .card-body { padding: 18px; }
+    .card-title { 
+      font-weight: 700; 
+      font-size: 13px; 
+      margin: 0 0 6px; 
+      color: var(--text);
+    }
+    .card-meta { 
+      color: var(--muted); 
+      font-size: 12px; 
+    }
+    
+    /* Enhanced buttons */
+    .btn {
+      display: inline-flex; 
+      align-items: center; 
+      justify-content: center; 
+      gap: 8px;
+      padding: 10px 14px; 
+      border-radius: 8px; 
+      border: 1px solid var(--border);
+      background: var(--surface); 
+      color: var(--text); 
+      font-weight: 600; 
+      font-size: 13px;
+      text-decoration: none; 
+      cursor: pointer;
+      transition: all var(--transition-base);
+      position: relative;
+      overflow: hidden;
+    }
+    .btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255,255,255,0.1),
+        transparent
+      );
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .btn:hover::before {
+      opacity: 1;
+    }
+    .btn:hover { 
+      border-color: var(--accent); 
+      color: var(--accent); 
+    }
+    .btn:active {
+      transform: translateY(1px);
+    }
+    .btn-primary { 
+      background: var(--accent); 
+      color: #020617; 
+      border-color: transparent; 
+    }
+    .btn-primary:hover { 
+      filter: brightness(1.05); 
+      color: #020617; 
+    }
+    .btn-primary:active {
+      transform: translateY(1px);
+    }
+    
+    /* Palette section */
+    .palette { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); 
+      gap: 14px; 
+    }
+    .swatch {
+      border: 1px solid var(--border); 
+      border-radius: var(--radius-lg); 
+      overflow: hidden; 
+      background: var(--surface);
+      transition: all var(--transition-base);
+    }
+    .swatch:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .swatch-preview { height: 64px; }
+    .swatch-meta { padding: 12px; }
+    .swatch-name { 
+      font-weight: 700; 
+      font-size: 12px; 
+    }
+    .swatch-hex { 
+      color: var(--muted); 
+      font-size: 12px; 
+    }
+    
+    /* Font specimens */
+    .font-specimen { 
+      border: 1px solid var(--border); 
+      border-radius: var(--radius-lg); 
+      background: var(--surface); 
+      padding: 18px;
+      transition: all var(--transition-base);
+    }
+    .font-specimen:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .font-row { 
+      display: grid; 
+      grid-template-columns: 1fr 1fr; 
+      gap: 18px; 
+    }
+    @media (max-width: 760px) { 
+      .font-row { grid-template-columns: 1fr; } 
+    }
+    .font-block { 
+      margin: 0; 
+      line-height: 1.25; 
+    }
+    .font-label { 
+      font-size: 11px; 
+      color: var(--muted); 
+      margin-top: 8px; 
+    }
+    
+    /* Mock workspace */
+    .mock { 
+      border: 1px solid var(--border); 
+      border-radius: var(--radius-lg); 
+      background: var(--surface); 
+      overflow: hidden; 
+    }
+    .mock-head { 
+      padding: 12px 14px; 
+      border-bottom: 1px solid var(--border); 
+      display: flex; 
+      align-items: center; 
+      justify-content: space-between; 
+    }
+    .mock-body { padding: 16px; }
+    
+    .toggle-row { 
+      display: flex; 
+      align-items: center; 
+      justify-content: space-between; 
+      gap: 12px; 
+    }
+    .toggle {
+      width: 44px; 
+      height: 26px; 
+      border-radius: var(--radius-full); 
+      border: 1px solid var(--border);
+      background: var(--elevated); 
+      position: relative; 
+      cursor: pointer;
+      transition: all var(--transition-base);
+    }
+    .toggle::after {
+      content: ''; 
+      position: absolute; 
+      top: 3px; 
+      left: 3px; 
+      width: 18px; 
+      height: 18px; 
+      border-radius: var(--radius-full); 
+      background: var(--text);
+      transition: left var(--transition-base);
+    }
+    .light .toggle { 
+      background: #cbd5e1; 
+    }
+    .light .toggle::after { 
+      left: 22px; 
+    }
+    .toggle:hover {
+      background-color: var(--accent);
+    }
+    .toggle:hover::after {
+      background: #020617;
+    }
+    
+    footer { 
+      border-top: 1px solid var(--border); 
+      padding: 24px; 
+      color: var(--muted); 
+      font-size: 12px; 
+    }
+    
+    /* Table styling */
+    table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      font-size: 13px; 
+    }
+    th, td { 
+      text-align: left; 
+      padding: 10px 8px; 
+      border-bottom: 1px solid var(--border); 
+    }
+    th { 
+      color: var(--muted); 
+      font-weight: 600; 
+      font-size: 12px; 
+    }
+    
+    /* Focus styles for accessibility */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    :focus-visible:not(.btn) {
+      outline-color: var(--accent);
+    }
+    
+    /* Animation utilities */
+    .motion-reduce {
+      transition: none !important;
+      animation: none !important;
+    }
+    
+    /* Dark mode specific adjustments */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --base: #020617;
+        --surface: #0f172a;
+        --elevated: #334155;
+      }
+    }
+    
+    /* Light mode specific adjustments */
+    @media (prefers-color-scheme: light) {
+      :root {
+        --base: #f8fafc;
+        --surface: #ffffff;
+        --elevated: #e2e8f0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">odysseus</div>
+      <nav class="nav">
+        <a href="#fonts">Fonts</a>
+        <a href="#colors">Color</a>
+        <a href="#components">Components</a>
+        <a href="#mock">Workspace mock</a>
+        <span class="chip"><span class="dot"></span>self-hosted</span>
+        <button class="btn" id="themeToggle" type="button">Light mode</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h1>Self-hosted AI workspace</h1>
+      <p>Chat, agents, research, documents, email, notes, calendar, and local model workflows in one calm, serious interface.</p>
+      <div class="cta-group">
+        <a class="btn btn-primary" href="#">New session</a>
+        <a class="btn" href="#">Open workspace</a>
+      </div>
+    </section>
+
+    <section class="section" id="fonts">
+      <h2>Typography</h2>
+      <p class="lead">Display, body, data, and code specimens under the proposed system.</p>
+      <div class="grid grid-3">
+        <div class="font-specimen">
+          <p class="font-block display" style="font-size:30px; font-weight:800;">Cabinet Grotesk</p>
+          <p class="font-label">Display / Hero</p>
+        </div>
+        <div class="font-specimen">
+          <p class="font-block" style="font-size:18px; font-weight:500;">Geist — interface density, long-session readability</p>
+          <p class="font-label">Body / UI / Labels</p>
+        </div>
+        <div class="font-specimen">
+          <p class="font-block mono" style="font-size:13px;">const session = await runtime.createSession({ mode: 'agent' });</p>
+          <p class="font-label">Code / Data</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="colors">
+      <h2>Color</h2>
+      <p class="lead">Restrained dark-first palette with one accent color for interactive signal.</p>
+      <div class="palette">
+        <div class="swatch">
+          <div class="swatch-preview" style="background:#020617;"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Base</div>
+            <div class="swatch-hex">#020617</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-preview" style="background:#0f172a;"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Surface</div>
+            <div class="swatch-hex">#0f172a</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-preview" style="background:#334155;"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Elevated</div>
+            <div class="swatch-hex">#334155</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-preview" style="background:#38bdf8;"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Accent</div>
+            <div class="swatch-hex">#38bdf8</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:18px;">
+        <div class="card">
+          <div class="card-body">
+            <p class="card-title">Semantic colors</p>
+            <p class="card-meta">Use sparingly for status, not decoration.</p>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+              <span class="chip"><span class="dot" style="background:#34d399;"></span>success #34d399</span>
+              <span class="chip"><span class="dot" style="background:#fbbf24;"></span>warning #fbbf24</span>
+              <span class="chip"><span class="dot" style="background:#f87171;"></span>error #f87171</span>
+              <span class="chip"><span class="dot" style="background:#38bdf8;"></span>info #38bdf8</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <p class="card-title">Contrast guidance</p>
+            <p class="card-meta">Text on base/surface must meet WCAG AA. Keep accent on dark only.</p>
+            <table>
+              <tr><th>Role</th><th>Example</th><th>Use</th></tr>
+              <tr><td class="mono">body text</td><td>#e2e8f0</td><td>On surface / elevated</td></tr>
+              <tr><td class="mono">muted text</td><td>#94a3b8</td><td>Secondary labels</td></tr>
+              <tr><td class="mono">interactive</td><td>#38bdf8</td><td>Links, focus, active</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="components">
+      <h2>Components</h2>
+      <p class="lead">Buttons, cards, inputs, chips, and alerts in proposed tokens.</p>
+      <div class="grid grid-3">
+        <div class="card">
+          <div class="card-body">
+            <p class="card-title">Buttons</p>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+              <a class="btn btn-primary" href="#">Primary</a>
+              <a class="btn" href="#">Secondary</a>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <p class="card-title">Form</p>
+            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:6px;">Endpoint</label>
+            <input type="text" value="http://localhost:7000" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--base); color:var(--text); font-family:inherit;" />
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <p class="card-title">Alerts</p>
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:6px;">
+              <span class="chip"><span class="dot" style="background:var(--success);"></span>Container healthy</span>
+              <span class="chip"><span class="dot" style="background:var(--warning);"></span>Rate limit near threshold</span>
+              <span class="chip"><span class="dot" style="background:var(--error);"></span>Session expired</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="mock">
+      <h2>Workspace mock</h2>
+      <p class="lead">A realistic odysseus-style session list and message surface.</p>
+      <div class="mock">
+        <div class="mock-head">
+          <div>
+            <div style="font-weight:700; font-size:13px;">Sessions</div>
+            <div style="color:var(--muted); font-size:12px;">12 total · 3 active</div>
+          </div>
+          <a class="btn btn-primary" href="#">New chat</a>
+        </div>
+        <div class="mock-body">
+          <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden;">
+            <div style="padding:14px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div style="font-weight:700; font-size:13px;">Agent loop migration</div>
+                <div style="color:var(--muted); font-size:12px;">FastAPI · 1h ago</div>
+              </div>
+              <span class="chip"><span class="dot" style="background:var(--success);"></span>agent</span>
+            </div>
+            <div style="padding:10px 16px; color:var(--muted); font-size:13px;">
+              <div style="margin-bottom:8px;"><span style="color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em;">User</span> Run the migration manifest and report anything that blocks.</div>
+              <div><span style="color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em;">Assistant</span> I checked the manifest. One route still points to the old router.</div>
+            </div>
+            <div style="padding:10px 16px; border-top:1px solid var(--border); display:flex; gap:8px;">
+              <input type="text" placeholder="Reply..." style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--base); color:var(--text); font-family:inherit;" />
+              <button class="btn btn-primary" type="button">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="container">
+    odysseus design preview · calm, serious workspace aesthetic
+  </footer>
+
+  <script>
+    const toggle = document.getElementById('themeToggle');
+    toggle.addEventListener('click', () => {
+      document.body.classList.toggle('light');
+      toggle.textContent = document.body.classList.contains('light') ? 'Dark mode' : 'Light mode';
+    });
+  </script>
+</body>
+</html>

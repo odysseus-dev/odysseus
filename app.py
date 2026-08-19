@@ -1151,6 +1151,21 @@ async def _startup_event():
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
+    # Optional background browser recipes: Meet / LinkedIn etc.
+    # Gated by ODYSSEUS_BROWSER_RECIPES env var; non-critical.
+    async def _startup_browser_recipes():
+        try:
+            recipes = os.environ.get("ODYSSEUS_BROWSER_RECIPES", "").strip()
+            if not recipes:
+                return
+            from src.browser_recipes import browser_recipe_runtime
+            await browser_recipe_runtime.start()
+            logger.info("Browser recipes started: %s", recipes)
+        except Exception as e:
+            logger.warning("Browser recipe startup failed (non-critical): %s", e)
+
+    _startup_tasks.append(asyncio.create_task(_startup_browser_recipes()))
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():

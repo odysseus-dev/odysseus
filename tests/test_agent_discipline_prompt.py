@@ -50,14 +50,23 @@ def test_discipline_constant_defined():
     assert isinstance(_AGENT_DISCIPLINE, str)
     assert "Task discipline" in _AGENT_DISCIPLINE
     assert "Prompt-injection defense" in _AGENT_DISCIPLINE
+    assert "Planner module" in _AGENT_DISCIPLINE
+    assert "Browser agent rules" in _AGENT_DISCIPLINE
+    assert "Knowledge module" in _AGENT_DISCIPLINE
+    assert "Datasource priority" in _AGENT_DISCIPLINE
 
 
 def test_discipline_in_full_prompt():
     out = _assemble_prompt({"bash", "edit_document"}, compact=False)
     assert _AGENT_DISCIPLINE in out
     assert "## Task discipline" in out
+    assert "## Planner module" in out
+    assert "## Browser agent rules" in out
 
 
 def test_discipline_in_compact_prompt():
     out = _assemble_prompt({"bash"}, compact=True)
     assert _AGENT_DISCIPLINE in out
+    assert "## Task discipline" in out
+    assert "## Planner module" in out
+    assert "## Browser agent rules" in out

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>odysseus — workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;500;600;700;800&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --base: #020617;
+      --surface: #0f172a;
+      --elevated: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --border: rgba(148,163,184,0.15);
+      --success: #34d399;
+      --warning: #fbbf24;
+      --error: #f87171;
+      --info: #38bdf8;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 10px;
+      --max: 1280px;
+      --gap: 16px;
+    }
+    .light {
+      --base: #f8fafc;
+      --surface: #ffffff;
+      --elevated: #e2e8f0;
+      --text: #020617;
+      --muted: #475569;
+      --border: rgba(15,23,42,0.12);
+      --shadow: 0 10px 30px rgba(0,0,0,.08);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1200px 800px at 10% -10%, rgba(56,189,248,.08), transparent 40%),
+                  radial-gradient(1200px 800px at 110% 20%, rgba(148,163,184,.06), transparent 40%),
+                  var(--base);
+      color: var(--text);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .display { font-family: 'Cabinet Grotesk', 'Geist', ui-sans-serif, system-ui, sans-serif; }
+
+    header.topbar {
+      position: sticky; top: 0; z-index: 50;
+      border-bottom: 1px solid var(--border);
+      background: rgba(2,6,23,0.75);
+      backdrop-filter: blur(12px);
+    }
+    .light header.topbar { background: rgba(248,250,252,0.75); }
+    .topbar-inner {
+      max-width: var(--max); margin: 0 auto; padding: 14px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .brand { font-family: 'Cabinet Grotesk', 'Geist', sans-serif; font-weight: 800; letter-spacing: -0.02em; }
+    .nav { display: flex; gap: 18px; align-items: center; }
+    .nav a {
+      color: var(--muted); text-decoration: none; font-weight: 500; font-size: 12px;
+      padding: 6px 10px; border-radius: 6px;
+    }
+    .nav a:hover { color: var(--text); background: var(--surface); }
+    .nav a.active { color: var(--text); background: var(--surface); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px;
+      text-decoration: none; cursor: pointer;
+    }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-primary { background: var(--accent); color: #020617; border-color: transparent; }
+    .btn-primary:hover { filter: brightness(1.05); color: #020617; }
+    .btn-ghost { background: transparent; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid var(--border); background: var(--surface);
+      padding: 6px 10px; border-radius: 999px; font-size: 12px; color: var(--muted);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); }
+
+    .layout { max-width: var(--max); margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 280px 1fr; gap: 18px; height: calc(100vh - 61px); }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; height: auto; } }
+
+    .panel {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: linear-gradient(180deg, var(--surface), var(--base));
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .panel-title { font-weight: 700; font-size: 13px; }
+    .panel-sub { color: var(--muted); font-size: 12px; }
+    .panel-body { padding: 14px 16px; }
+
+    .list { display: flex; flex-direction: column; }
+    .list-item {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      padding: 12px 10px; border-bottom: 1px solid var(--border);
+    }
+    .list-item:last-child { border-bottom: none; }
+    .list-item strong { font-weight: 600; font-size: 13px; }
+    .list-item .meta { color: var(--muted); font-size: 12px; }
+
+    .chat { display: flex; flex-direction: column; height: 100%; }
+    .messages { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 860px; width: 100%; }
+    .msg.user { align-self: flex-end; }
+    .msg.assistant { align-self: flex-start; }
+    .bubble {
+      border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+      background: linear-gradient(180deg, rgba(15,23,42,.9), rgba(2,6,23,.9));
+      box-shadow: var(--shadow);
+    }
+    .light .bubble { background: linear-gradient(180deg, #ffffff, #f8fafc); }
+    .msg.user .bubble { background: linear-gradient(180deg, rgba(56,189,248,.12), rgba(56,189,248,.06)); border-color: rgba(56,189,248,.35); }
+    .light .msg.user .bubble { background: linear-gradient(180deg, rgba(56,189,248,.08), rgba(56,189,248,.04)); }
+    .bubble p { margin: 0 0 8px; }
+    .bubble code {
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px;
+      background: rgba(148,163,184,.08); padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border);
+    }
+    .bubble pre { margin: 10px 0 0; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: rgba(2,6,23,.35); overflow: auto; }
+    .light .bubble pre { background: #f1f5f9; }
+    .bubble pre code { background: transparent; padding: 0; border: 0; }
+
+    .composer {
+      padding: 14px 16px; border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center;
+    }
+    .composer input {
+      flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--base); color: var(--text); font-family: inherit; font-size: 14px;
+    }
+    .light .composer input { background: #ffffff; }
+
+    .metabar { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
+    .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+
+    footer.foot {
+      max-width: var(--max); margin: 0 auto; padding: 18px 24px;
+      color: var(--muted); font-size: 12px; border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between;
+    }
+
+    .status { display: inline-flex; gap: 8px; align-items: center; }
+    .status::before { content: ''; width: 8px; height: 8px; border-radius: 999px; background: var(--success); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div style="display:flex; align-items:center; gap:14px;">
+        <div class="brand">odysseus</div>
+        <nav class="nav">
+          <a class="active" href="#">Workspace</a>
+          <a href="#">Sessions</a>
+          <a href="#">Research</a>
+          <a href="#">Documents</a>
+          <a href="#">Calendar</a>
+        </nav>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span class="chip"><span class="dot"></span>localhost:7000</span>
+        <button class="btn btn-ghost" id="themeToggle" type="button">Light mode</button>
+        <button class="btn btn-primary" type="button">New session</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Sessions</div>
+          <div class="panel-sub">12 total · 3 active</div>
+        </div>
+        <button class="btn btn-ghost" type="button">Filter</button>
+      </div>
+      <div class="list">
+        <div class="list-item">
+          <div>
+            <strong>Agent loop migration</strong>
+            <div class="meta">FastAPI · 1h ago · <span class="mono">gpt-4o</span></div>
+          </div>
+          <span class="pill status"></span>
+        </div>
+        <div class="list-item">
+          <div>
+            <strong>Research: Suno prompt pack</strong>
+            <div class="meta">research · 3h ago · <span class="mono">claude</span></div>
+          </div>
+          <span class="pill" style="color:var(--success);border-color:rgba(52,211,153,.35);">done</span>
+        </div>
+        <div class="list-item">
+          <div>
+            <strong>Document: release notes</strong>
+            <div class="meta">docs · yesterday · <span class="mono">local</span></div>
+          </div>
+          <span class="pill" style="color:var(--warning);border-color:rgba(251,191,36,.35);">draft</span>
+        </div>
+        <div class="list-item">
+          <div>
+            <strong>Email triage</strong>
+            <div class="meta">email · 2d ago · <span class="mono">tool</span></div>
+          </div>
+          <span class="pill" style="color:var(--muted);">archived</span>
+        </div>
+      </div>
+      <div class="panel-body" style="border-top:1px solid var(--border);">
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div style="font-weight:700; font-size:13px;">Model</div>
+          <div class="metabar">
+            <span class="chip">Provider <span class="mono" style="color:var(--text);">openai</span></span>
+            <span class="chip">Endpoint <span class="mono" style="color:var(--text);">/v1</span></span>
+          </div>
+          <div style="margin-top:4px;">
+            <div style="color:var(--muted); font-size:12px; margin-bottom:6px;">Context</div>
+            <div style="height:6px; border-radius:999px; background:rgba(148,163,184,.15); overflow:hidden;">
+              <div style="width:62%; height:100%; background:linear-gradient(90deg,#38bdf8,#34d399);"></div>
+            </div>
+            <div class="mono" style="font-size:11px; color:var(--muted); margin-top:6px;">18,432 / 32,000 tokens</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="panel chat">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Agent loop migration</div>
+          <div class="panel-sub">FastAPI · agent mode · created 2h ago</div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-ghost" type="button">Share</button>
+          <button class="btn btn-ghost" type="button">Export</button>
+        </div>
+      </div>
+      <div class="messages" id="messages">
+        <div class="msg user">
+          <div class="bubble">
+            <p>Run the migration manifest and report anything that blocks. If a route still points to the old router, stop and surface it.</p>
+          </div>
+        </div>
+        <div class="msg assistant">
+          <div class="bubble">
+            <p>Checked the manifest. One route still points to the old router and the migration guard is off in <code>core/auth.py</code>.</p>
+            <p>Findings:</p>
+            <pre><code class="mono">- router mismatch: routes/chat.py → legacy handler
+- missing lock: config migration without a lock
+- suggested fix: update import + add lock</code></pre>
+          </div>
+        </div>
+        <div class="msg user">
+          <div class="bubble">
+            <p>Good. Apply the minimal patch and rerun the focused migration test.</p>
+          </div>
+        </div>
+        <div class="msg assistant">
+          <div class="bubble">
+            <p>Applied the minimal patch. Rerunning focused tests now. I’ll report only failures.</p>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <input type="text" id="composerInput" placeholder="Reply…" autocomplete="off" />
+        <button class="btn btn-primary" id="sendBtn" type="button">Send</button>
+      </div>
+    </main>
+  </div>
+
+  <footer class="foot">
+    <div>odysseus • self-hosted AI workspace</div>
+    <div class="mono">http://localhost:7000 • AGPL-3.0</div>
+  </footer>
+
+  <script>
+    const toggle = document.getElementById('themeToggle');
+    const sendBtn = document.getElementById('sendBtn');
+    const input = document.getElementById('composerInput');
+    const messages = document.getElementById('messages');
+    toggle.addEventListener('click', () => {
+      document.body.classList.toggle('light');
+      toggle.textContent = document.body.classList.contains('light') ? 'Dark mode' : 'Light mode';
+    });
+    sendBtn.addEventListener('click', () => {
+      const text = input.value.trim();
+      if (!text) return;
+      const row = document.createElement('div');
+      row.className = 'msg user';
+      row.innerHTML = '<div class="bubble"><p>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</p></div>';
+      messages.appendChild(row);
+      input.value = '';
+      messages.scrollTop = messages.scrollHeight;
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendBtn.click();
+    });
+  </script>
+</body>
+</html>
