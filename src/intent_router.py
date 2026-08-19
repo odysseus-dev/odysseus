@@ -468,8 +468,8 @@ class IntentRouter:
                     encoded = encoder.encode(prototypes, normalize_embeddings=True)
                 matrix = _normalise_rows(encoded, expected_rows=len(prototypes))
                 self._encoder = encoder
-                self._prototype_matrix = matrix
                 self._prototype_owners = tuple(owners)
+                self._prototype_matrix = matrix
 
         return self._encoder, self._prototype_matrix, self._prototype_owners
 
