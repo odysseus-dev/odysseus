@@ -976,6 +976,7 @@ def setup_chat_routes(
         exact_tool_approval = None
         pending_tool_approval = None
         retired_tool_approval_taint = False
+        external_untrusted_context_seen = False
         tool_approval_continuation = False
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
@@ -1135,6 +1136,12 @@ def setup_chat_routes(
                         409,
                         "This tool approval is invalid, expired, or belongs to another thread.",
                     )
+                pending_taint = bool(
+                    pending_tool_approval.external_untrusted_context_seen
+                )
+                external_untrusted_context_seen = (
+                    external_untrusted_context_seen or pending_taint
+                )
                 decision = str(tool_approval_decision or "").strip().lower()
                 if decision not in {"approve", "approve_task", "deny"}:
                     raise HTTPException(400, "Invalid tool approval decision.")
@@ -1167,12 +1174,6 @@ def setup_chat_routes(
                         "Tool approval %s was consumed but its persisted card could not be marked resolved",
                         tool_approval_id,
                     )
-                if decision == "deny":
-                    return StreamingResponse(
-                        _tool_approval_resolution_stream(decision),
-                        media_type="text/event-stream",
-                    )
-
                 # Approval is a control-plane continuation, not a new user turn.
                 # Reuse the sealed interrupted request only for internal context,
                 # retrieval, and policy reconstruction; never persist or display it.
@@ -1183,14 +1184,15 @@ def setup_chat_routes(
                 workspace_rejected = None
                 if pending_tool_approval.document_id:
                     active_doc_id = pending_tool_approval.document_id
-                # Restore only the coarse request toggle needed by the exact
-                # sealed action. Current privilege, global-disable, incognito,
-                # compare, and tool-policy gates still run.
-                if pending_tool_approval.tool_name == "bash":
-                    allow_bash = "true"
-                if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
-                    allow_web_search = "true"
-                    _search_enabled = True
+                if decision != "deny":
+                    # Restore only the coarse request toggle needed by the exact
+                    # sealed action. Current privilege, global-disable, incognito,
+                    # compare, and tool-policy gates still run.
+                    if pending_tool_approval.tool_name == "bash":
+                        allow_bash = "true"
+                    if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
+                        allow_web_search = "true"
+                        _search_enabled = True
                 chat_mode = "agent"
             else:
                 # A normal user message supersedes the card that was waiting
@@ -1200,6 +1202,9 @@ def setup_chat_routes(
                 retired_tool_approval_taint = tool_approval_store.retire_for_session(
                     owner=owner,
                     session_id=session,
+                )
+                external_untrusted_context_seen = (
+                    external_untrusted_context_seen or retired_tool_approval_taint
                 )
             _reconcile_selected_route_from_request(request, sess, session, form_data, owner=owner)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
@@ -2317,14 +2322,7 @@ def setup_chat_routes(
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
                         defer_context_shaping=_foreground_policy.enabled,
-                        external_untrusted_context_seen=bool(
-                            retired_tool_approval_taint
-                            or (
-                                tool_approval_continuation
-                                and pending_tool_approval
-                                and pending_tool_approval.external_untrusted_context_seen
-                            )
-                        ),
+                        external_untrusted_context_seen=external_untrusted_context_seen,
                         exact_approval=exact_tool_approval,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
