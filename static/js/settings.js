@@ -1552,6 +1552,171 @@ async function initAgentSettings() {
 
 }
 
+function syncProcessExecutionBanner(data) {
+  const mode = data?.mode || 'sandbox';
+  let banner = document.getElementById('process-full-access-banner');
+  if (mode !== 'full_access') {
+    if (banner) banner.remove();
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'process-full-access-banner';
+    banner.setAttribute('role', 'status');
+    Object.assign(banner.style, {
+      position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)',
+      zIndex: '99999', padding: '7px 14px', borderRadius: '6px',
+      background: 'var(--red, #ff5555)', color: '#fff', fontSize: '11px',
+      fontWeight: '700', letterSpacing: '0.02em', pointerEvents: 'none',
+      boxShadow: '0 2px 14px rgba(0,0,0,0.45)',
+    });
+    document.body.appendChild(banner);
+  }
+  banner.textContent = 'FULL ACCESS PROCESS MODE — FILESYSTEM AUTHORITY EXPANDED; NETWORK PRIVATE, INTERNET BROKERED IF ENABLED';
+}
+
+async function initProcessExecutionSettings() {
+  const toggle = el('set-process-full-access-toggle');
+  const statusEl = el('set-process-execution-status');
+  const warningEl = el('set-process-full-access-warning');
+  const msgEl = el('set-process-execution-msg');
+  if (!toggle || !statusEl || !warningEl || !msgEl || !window._isAdmin) return;
+
+  let current = null;
+
+  function profileFor(mode) {
+    const capability = current?.capability || {};
+    return mode === 'full_access'
+      ? (capability.full_access || {})
+      : (capability.sandbox || {});
+  }
+
+  function render(data) {
+    current = data || current || {};
+    syncProcessExecutionBanner(current);
+    const mode = current.mode || 'sandbox';
+    const profile = profileFor(mode);
+    toggle.checked = mode === 'full_access';
+    warningEl.textContent = current.full_access_warning || '';
+    warningEl.classList.toggle('hidden', mode !== 'full_access');
+
+    if (mode === 'full_access') {
+      if (!profile.networkless) {
+        statusEl.textContent = 'Full Access selected, but its retained network boundary is unavailable. Process tools are blocked: ' +
+          (profile.networkless_reason || 'capability probe failed');
+      } else if (!profile.brokered) {
+        statusEl.textContent = 'Full Access is available for networkless work; brokered process Internet is unavailable: ' +
+          (profile.brokered_reason || 'broker capability probe failed');
+      } else {
+        statusEl.textContent = 'Full Access enabled temporarily. Filesystem authority is expanded; process Internet remains brokered.';
+      }
+      statusEl.style.color = 'var(--red)';
+      return;
+    }
+
+    if (profile.networkless && profile.brokered) {
+      statusEl.textContent = 'Sandbox and brokered Internet capabilities verified.';
+      statusEl.style.color = 'var(--green,#50fa7b)';
+    } else if (profile.networkless) {
+      statusEl.textContent = 'Sandbox verified, but brokered process Internet is unavailable: ' +
+        (profile.brokered_reason || 'broker capability probe failed');
+      statusEl.style.color = 'var(--red)';
+    } else {
+      statusEl.textContent = 'Sandbox unavailable. Process tools are blocked: ' +
+        (profile.networkless_reason || 'capability probe failed');
+      statusEl.style.color = 'var(--red)';
+    }
+  }
+
+  async function load() {
+    const response = await fetch('/api/auth/process-execution', {
+      credentials: 'same-origin',
+    });
+    if (!response.ok) throw new Error('Could not load process execution mode');
+    render(await response.json());
+  }
+
+  async function save(mode, confirmation = '') {
+    const response = await fetch('/api/auth/process-execution', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, confirmation }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Could not change process execution mode');
+    render(data);
+  }
+
+  try {
+    await load();
+  } catch (error) {
+    toggle.disabled = true;
+    statusEl.textContent = error.message;
+    statusEl.style.color = 'var(--red)';
+    return;
+  }
+
+  toggle.addEventListener('change', async () => {
+    const requestedFullAccess = toggle.checked;
+    toggle.disabled = true;
+    msgEl.textContent = '';
+    try {
+      if (requestedFullAccess) {
+        toggle.checked = false;
+        const fullCapability = current?.capability?.full_access || {};
+        if (!fullCapability.networkless) {
+          render(current);
+          msgEl.textContent = 'Full Access cannot retain the required private-network boundary on this host: ' +
+            (fullCapability.networkless_reason || 'capability probe failed');
+          msgEl.style.color = 'var(--red)';
+          return;
+        }
+        const warning = current?.full_access_warning ||
+          'Full Access expands filesystem authority while retaining the process network boundary.';
+        const approved = await (uiModule?.styledConfirm
+          ? uiModule.styledConfirm(
+              warning + '\n\nContinue to the typed confirmation?',
+              { confirmText: 'Continue', cancelText: 'Cancel' }
+            )
+          : Promise.resolve(window.confirm(warning)));
+        if (!approved) {
+          render(current);
+          return;
+        }
+        const phrase = current?.confirmation_phrase || 'ENABLE FULL ACCESS';
+        const typed = window.prompt(
+          'Type ' + phrase + ' exactly to enable Full Access until Odysseus restarts.'
+        );
+        if (typed !== phrase) {
+          render(current);
+          msgEl.textContent = 'Full Access was not enabled.';
+          msgEl.style.color = 'var(--red)';
+          return;
+        }
+        await save('full_access', typed);
+        msgEl.textContent = 'Full Access enabled until restart.';
+        msgEl.style.color = 'var(--red)';
+      } else {
+        await save('sandbox');
+        const sandbox = current?.capability?.sandbox || {};
+        msgEl.textContent = sandbox.networkless
+          ? 'Sandbox mode enabled.'
+          : 'Sandbox mode enabled; process tools remain blocked.';
+        msgEl.style.color = sandbox.networkless
+          ? 'var(--green,#50fa7b)'
+          : 'var(--red)';
+      }
+    } catch (error) {
+      render(current);
+      msgEl.textContent = error.message;
+      msgEl.style.color = 'var(--red)';
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+}
+
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
    ═══════════════════════════════════════════ */
@@ -1949,6 +2114,25 @@ async function initShortcuts() {
   render();
 }
 
+// Full Access is transient server state, not browser state. Read it once on
+// page load so a reload cannot hide the high-authority indicator. Non-admins
+// receive 403 and simply do not render the banner.
+(function loadProcessExecutionIndicator() {
+  const run = async () => {
+    try {
+      const response = await fetch('/api/auth/process-execution', {
+        credentials: 'same-origin',
+      });
+      if (response.ok) syncProcessExecutionBanner(await response.json());
+    } catch (_) {}
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run, { once: true });
+  } else {
+    run();
+  }
+})();
+
 /* ═══════════════════════════════════════════
    INIT & REFRESH
    ═══════════════════════════════════════════ */
@@ -2186,6 +2370,7 @@ function initAll() {
   initResearchSettings();
   initResearchSearchSettings();
   initAgentSettings();
+  initProcessExecutionSettings();
   initAppearance();
   initShortcuts();
   initAccount();

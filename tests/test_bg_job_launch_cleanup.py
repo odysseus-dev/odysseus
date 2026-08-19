@@ -1,5 +1,6 @@
 """Transactional cleanup coverage for detached sandbox launches."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -32,6 +33,27 @@ def launch_context(tmp_path, monkeypatch):
     monkeypatch.setattr(bg_jobs, "_STORE", store)
     monkeypatch.setattr(bg_jobs, "sandbox_command", lambda *args, **kwargs: ["/trusted/sandbox"])
     monkeypatch.setattr(bg_jobs, "environment_for_sandbox_launcher", lambda: {})
+    monkeypatch.setattr(
+        bg_jobs,
+        "configured_process_execution_mode",
+        lambda: bg_jobs.ProcessExecutionMode.SANDBOX,
+    )
+    class AvailableProfile:
+        def supports(self, _profile):
+            return True
+
+        def reason_for(self, _profile):
+            return ""
+
+    class AvailableCapability:
+        def for_mode(self, _mode):
+            return AvailableProfile()
+
+    monkeypatch.setattr(
+        bg_jobs,
+        "process_capability",
+        lambda: AvailableCapability(),
+    )
     monkeypatch.setattr(bg_jobs, "detached_popen_kwargs", lambda: {})
     return jobs_dir, store, workspace
 
@@ -128,13 +150,17 @@ def test_successful_launch_persists_record_and_private_command_file(
     record = bg_jobs.launch("printf success", session_id="chat-1", cwd=str(workspace))
 
     command_path = Path(record["log_path"]).with_name(f"{record['id']}.cmd.sh")
+    plan_path = Path(record["log_path"]).with_name(f"{record['id']}.plan.json")
     assert record["status"] == "running"
     assert bg_jobs._load()[record["id"]]["pid"] == process.pid
     assert store.exists()
     assert command_path.read_text(encoding="utf-8") == "printf success\n"
     assert command_path.stat().st_mode & 0o777 == 0o600
+    assert plan_path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(plan_path.read_text(encoding="utf-8"))["argv"] == ["/trusted/sandbox"]
     assert jobs_dir.stat().st_mode & 0o777 == 0o700
     assert command_path in _job_artifacts(jobs_dir)
+    assert plan_path in _job_artifacts(jobs_dir)
 
 
 def test_command_file_creation_is_exclusive(launch_context, monkeypatch):
@@ -155,13 +181,23 @@ def test_command_file_creation_is_exclusive(launch_context, monkeypatch):
 def test_detached_wrapper_writes_success_exit_artifact(tmp_path):
     log_path = tmp_path / "job.log"
     exit_path = tmp_path / "job.exit"
+    plan_path = tmp_path / "job.plan.json"
+    plan_bytes = json.dumps(
+        {
+            "version": 1,
+            "argv": [sys.executable, "-I", "-c", "print('ok')"],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    plan_path.write_bytes(plan_bytes)
     completed = subprocess.run(
         [
             sys.executable,
             "-I",
             "-c",
             bg_jobs._DETACHED_SANDBOX_WRAPPER,
-            json.dumps([sys.executable, "-I", "-c", "print('ok')"]),
+            str(plan_path),
+            hashlib.sha256(plan_bytes).hexdigest(),
             str(log_path),
             str(exit_path),
         ],
@@ -175,3 +211,39 @@ def test_detached_wrapper_writes_success_exit_artifact(tmp_path):
     assert exit_path.read_text(encoding="utf-8") == "0"
     assert log_path.stat().st_mode & 0o777 == 0o600
     assert exit_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_full_access_launch_uses_full_filesystem_profile_and_retained_network(
+    launch_context,
+    monkeypatch,
+):
+    jobs_dir, _store, workspace = launch_context
+    process = _FakeProcess()
+    monkeypatch.setattr(
+        bg_jobs,
+        "configured_process_execution_mode",
+        lambda: bg_jobs.ProcessExecutionMode.FULL_ACCESS,
+    )
+    monkeypatch.setattr(
+        bg_jobs,
+        "full_access_command",
+        lambda argv, **_kwargs: ["/trusted/bwrap-full", *argv],
+    )
+    monkeypatch.setattr(bg_jobs.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    record = bg_jobs.launch(
+        "printf success",
+        session_id="chat-1",
+        cwd=str(workspace),
+        network_profile=bg_jobs.SandboxNetworkProfile.BROKERED_ONLY,
+    )
+
+    plan_path = jobs_dir / f"{record['id']}.plan.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert record["execution_mode"] == "full_access"
+    assert record["network_enforcement"] == "brokered_http_https"
+    assert record["warning"] == bg_jobs.FULL_ACCESS_WARNING
+    assert plan["argv"][:2] == ["/trusted/bwrap-full", "/bin/bash"]
+    assert "Execution mode: full_access" in bg_jobs.result_text(
+        {**record, "status": "done", "exit_code": 0}
+    )

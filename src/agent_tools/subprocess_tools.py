@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import shutil
+import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
@@ -12,8 +13,16 @@ from src.execution_sandbox import (
     SandboxNetworkProfile,
     SandboxUnavailable,
     environment_for_sandbox_launcher,
+    full_access_command,
     sandbox_command,
     sandbox_python_executable,
+)
+from src.process_execution import (
+    FULL_ACCESS_WARNING,
+    ProcessExecutionMode,
+    blocked_process_result,
+    configured_process_execution_mode,
+    process_capability,
 )
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
@@ -24,6 +33,7 @@ PROGRESS_TAIL_LINES = 12
 TMUX_CAPTURE_LINES = 2000
 _TMUX_ENV_SCRUBBER = "/usr/bin/env"
 _TMUX_LOCKS: dict[str, asyncio.Lock] = {}
+_TMUX_OWNED_SESSIONS: set[str] = set()
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
@@ -141,6 +151,7 @@ async def _tmux_session_names() -> list[str]:
 async def _tmux_kill_session(name: str) -> None:
     out, err, rc = await _run_exec("tmux", "kill-session", "-t", name, timeout=5)
     if rc == 0:
+        _TMUX_OWNED_SESSIONS.discard(name)
         return
     detail = f"{out}\n{err}".casefold()
     if (
@@ -148,6 +159,7 @@ async def _tmux_kill_session(name: str) -> None:
         or "session not found" in detail
         or "can't find session" in detail
     ):
+        _TMUX_OWNED_SESSIONS.discard(name)
         return
     raise RuntimeError(f"failed to terminate stale tmux session {name}: {(err or out).strip()}")
 
@@ -197,8 +209,16 @@ async def _ensure_tmux_session(
     shell_argv: list[str],
 ) -> None:
     if await _tmux_has_session(name):
-        await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
-        return
+        if name not in _TMUX_OWNED_SESSIONS:
+            # A matching name that this process did not create is not evidence
+            # of the expected namespace or launch policy. Recreate it rather
+            # than sending model commands into an unverifiable host shell.
+            await _tmux_kill_session(name)
+        else:
+            await _run_exec(
+                "tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5
+            )
+            return
     if not os.path.isfile(_TMUX_ENV_SCRUBBER):
         raise RuntimeError("trusted tmux environment scrubber is unavailable")
     _, launch_error, _ = await _run_exec(
@@ -218,6 +238,7 @@ async def _ensure_tmux_session(
                 "trusted launcher and outer OCI seccomp compatibility"
             )
         raise RuntimeError(f"failed to create tmux session {name}")
+    _TMUX_OWNED_SESSIONS.add(name)
     await _run_exec("tmux", "send-keys", "-t", name, "stty -echo", "C-m", timeout=5)
 
 
@@ -493,26 +514,116 @@ def _sandbox_setup_failure(
 class BashTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
+
         if isinstance(content, dict):
-            content = str(content.get("command") or content.get("cmd") or content.get("code") or "")
+            content = str(
+                content.get("command")
+                or content.get("cmd")
+                or content.get("code")
+                or ""
+            )
         progress_cb = ctx.get("progress_cb")
         session_id = ctx.get("session_id")
         network_profile = ctx.get(
             "network_profile", SandboxNetworkProfile.NETWORKLESS
         )
         workspace = agent_cwd()
-        if IS_WINDOWS:
+        execution_mode = configured_process_execution_mode()
+
+        if execution_mode is ProcessExecutionMode.FULL_ACCESS:
+            if IS_WINDOWS:
+                return blocked_process_result(
+                    "bash",
+                    execution_mode,
+                    "Full Access with retained network isolation requires Linux and Bubblewrap.",
+                )
+            capability = process_capability().full_access
+            if not capability.supports(network_profile):
+                return blocked_process_result(
+                    "bash",
+                    execution_mode,
+                    capability.reason_for(network_profile),
+                )
+            try:
+                argv = full_access_command(
+                    ["/bin/bash", "--noprofile", "--norc", "-c", content],
+                    working_directory=workspace,
+                    network_profile=network_profile,
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment_for_sandbox_launcher(),
+                    cwd=workspace,
+                )
+            except (OSError, RuntimeError, SandboxUnavailable) as exc:
+                return {
+                    "error": f"bash: {exc}",
+                    "exit_code": 1,
+                    "blocked": True,
+                    "execution_mode": execution_mode.value,
+                }
+            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                proc,
+                timeout=DEFAULT_BASH_TIMEOUT,
+                progress_cb=progress_cb,
+            )
+            if timed_out:
+                return {
+                    "error": (
+                        f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — "
+                        "process killed"
+                    ),
+                    "exit_code": 124,
+                    "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                    "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                    "execution_mode": execution_mode.value,
+                    "warning": FULL_ACCESS_WARNING,
+                }
+            setup_failure = _sandbox_setup_failure("bash", stderr, rc)
+            if setup_failure:
+                setup_failure["execution_mode"] = execution_mode.value
+                setup_failure["warning"] = FULL_ACCESS_WARNING
+                return setup_failure
+            output = stdout.rstrip()
+            err = stderr.rstrip()
+            if err:
+                output = (
+                    (output + "\nSTDERR: " + err).strip()
+                    if output
+                    else "STDERR: " + err
+                )
             return {
-                "error": (
-                    "bash: Sandboxed agent execution requires Linux with "
-                    "bubblewrap."
+                "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+                "exit_code": rc or 0,
+                "execution_mode": execution_mode.value,
+                "network_enforcement": (
+                    "brokered_http_https"
+                    if network_profile is SandboxNetworkProfile.BROKERED_ONLY
+                    else "networkless"
                 ),
-                "exit_code": 1,
-                "blocked": True,
+                "warning": FULL_ACCESS_WARNING,
             }
-        # tmux is a POSIX persistence path. A stray MSYS/Cygwin tmux.exe on
-        # native Windows must not bypass the platform-specific launcher.
-        if session_id and not IS_WINDOWS and shutil.which("tmux"):
+
+        if IS_WINDOWS:
+            return blocked_process_result(
+                "bash",
+                execution_mode,
+                "Sandbox mode requires Linux with Bubblewrap.",
+            )
+        capability = process_capability().sandbox
+        if not capability.supports(network_profile):
+            return blocked_process_result(
+                "bash",
+                execution_mode,
+                capability.reason_for(network_profile),
+            )
+
+        # Persistent tmux is available only in Sandbox mode. Full Access uses
+        # one-shot processes so an unsandboxed shell cannot silently outlive a
+        # later mode change.
+        if session_id and shutil.which("tmux"):
             try:
                 stdout, stderr, rc, timed_out, tmux_session = await _run_tmux_bash(
                     content,
@@ -523,23 +634,37 @@ class BashTool:
                     network_profile=network_profile,
                 )
             except (OSError, RuntimeError, SandboxUnavailable) as exc:
-                return {"error": f"bash: {exc}", "exit_code": 1, "blocked": True}
+                return {
+                    "error": f"bash: {exc}",
+                    "exit_code": 1,
+                    "blocked": True,
+                    "execution_mode": execution_mode.value,
+                }
             if timed_out:
                 return {
-                    "error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — sent Ctrl-C to tmux session",
+                    "error": (
+                        f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — "
+                        "sent Ctrl-C to tmux session"
+                    ),
                     "exit_code": 124,
                     "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
                     "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
                     "tmux_session": tmux_session,
+                    "execution_mode": execution_mode.value,
                 }
             output = stdout.rstrip()
             err = stderr.rstrip()
             if err:
-                output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
+                output = (
+                    (output + "\nSTDERR: " + err).strip()
+                    if output
+                    else "STDERR: " + err
+                )
             return {
                 "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
                 "exit_code": rc or 0,
-                    "tmux_session": tmux_session,
+                "tmux_session": tmux_session,
+                "execution_mode": execution_mode.value,
             }
 
         try:
@@ -555,74 +680,198 @@ class BashTool:
                 env=environment_for_sandbox_launcher(),
                 cwd=workspace,
             )
-        except (RuntimeError, SandboxUnavailable) as exc:
-            return {"error": f"bash: {exc}", "exit_code": 1, "blocked": True}
+        except (OSError, RuntimeError, SandboxUnavailable) as exc:
+            return {
+                "error": f"bash: {exc}",
+                "exit_code": 1,
+                "blocked": True,
+                "execution_mode": execution_mode.value,
+            }
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_BASH_TIMEOUT,
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            return {
+                "error": (
+                    f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed"
+                ),
+                "exit_code": 124,
+                "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                "execution_mode": execution_mode.value,
+            }
         setup_failure = _sandbox_setup_failure("bash", stderr, rc)
         if setup_failure:
+            setup_failure["execution_mode"] = execution_mode.value
             return setup_failure
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
-            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-        output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}
+            output = (
+                (output + "\nSTDERR: " + err).strip()
+                if output
+                else "STDERR: " + err
+            )
+        return {
+            "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+            "exit_code": rc or 0,
+            "execution_mode": execution_mode.value,
+        }
+
 
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
+
+        if isinstance(content, dict):
+            content = str(content.get("code") or content.get("command") or "")
         progress_cb = ctx.get("progress_cb")
         network_profile = ctx.get(
             "network_profile", SandboxNetworkProfile.NETWORKLESS
         )
         workspace = agent_cwd()
-        if IS_WINDOWS:
+        execution_mode = configured_process_execution_mode()
+
+        if execution_mode is ProcessExecutionMode.FULL_ACCESS:
+            if IS_WINDOWS:
+                return blocked_process_result(
+                    "python",
+                    execution_mode,
+                    "Full Access with retained network isolation requires Linux and Bubblewrap.",
+                )
+            capability = process_capability().full_access
+            if not capability.supports(network_profile):
+                return blocked_process_result(
+                    "python",
+                    execution_mode,
+                    capability.reason_for(network_profile),
+                )
+            try:
+                argv = full_access_command(
+                    [sys.executable, "-I", "-c", content],
+                    working_directory=workspace,
+                    network_profile=network_profile,
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment_for_sandbox_launcher(),
+                    cwd=workspace,
+                )
+            except (OSError, RuntimeError, SandboxUnavailable) as exc:
+                return {
+                    "error": f"python: {exc}",
+                    "exit_code": 1,
+                    "blocked": True,
+                    "execution_mode": execution_mode.value,
+                }
+            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                proc,
+                timeout=DEFAULT_PYTHON_TIMEOUT,
+                progress_cb=progress_cb,
+            )
+            if timed_out:
+                return {
+                    "error": (
+                        f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — "
+                        "process killed"
+                    ),
+                    "exit_code": 124,
+                    "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                    "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                    "execution_mode": execution_mode.value,
+                    "warning": FULL_ACCESS_WARNING,
+                }
+            setup_failure = _sandbox_setup_failure("python", stderr, rc)
+            if setup_failure:
+                setup_failure["execution_mode"] = execution_mode.value
+                setup_failure["warning"] = FULL_ACCESS_WARNING
+                return setup_failure
+            output = stdout.rstrip()
+            err = stderr.rstrip()
+            if err:
+                output = (
+                    (output + "\nSTDERR: " + err).strip()
+                    if output
+                    else "STDERR: " + err
+                )
             return {
-                "error": (
-                    "python: Sandboxed agent execution requires Linux with "
-                    "bubblewrap."
+                "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+                "exit_code": rc or 0,
+                "execution_mode": execution_mode.value,
+                "network_enforcement": (
+                    "brokered_http_https"
+                    if network_profile is SandboxNetworkProfile.BROKERED_ONLY
+                    else "networkless"
                 ),
-                "exit_code": 1,
-                "blocked": True,
+                "warning": FULL_ACCESS_WARNING,
             }
+
+        if IS_WINDOWS:
+            return blocked_process_result(
+                "python",
+                execution_mode,
+                "Sandbox mode requires Linux with Bubblewrap.",
+            )
+        capability = process_capability().sandbox
+        if not capability.supports(network_profile):
+            return blocked_process_result(
+                "python",
+                execution_mode,
+                capability.reason_for(network_profile),
+            )
         try:
             argv = sandbox_command(
                 [sandbox_python_executable(), "-I", "-c", content],
                 workspace=workspace,
                 network_profile=network_profile,
             )
-            process_env = environment_for_sandbox_launcher()
-        except SandboxUnavailable as exc:
-            return {"error": f"python: {exc}", "exit_code": 1, "blocked": True}
-        try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=process_env,
+                env=environment_for_sandbox_launcher(),
                 cwd=workspace,
             )
-        except (OSError, RuntimeError) as exc:
-            return {"error": f"python: {exc}", "exit_code": 1, "blocked": True}
+        except (OSError, RuntimeError, SandboxUnavailable) as exc:
+            return {
+                "error": f"python: {exc}",
+                "exit_code": 1,
+                "blocked": True,
+                "execution_mode": execution_mode.value,
+            }
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_PYTHON_TIMEOUT,
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            return {
+                "error": (
+                    f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed"
+                ),
+                "exit_code": 124,
+                "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+                "execution_mode": execution_mode.value,
+            }
         setup_failure = _sandbox_setup_failure("python", stderr, rc)
         if setup_failure:
+            setup_failure["execution_mode"] = execution_mode.value
             return setup_failure
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
-            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-        output = _truncate(output, MAX_OUTPUT_CHARS)
-        return {"output": output or "(no output)", "exit_code": rc or 0}
+            output = (
+                (output + "\nSTDERR: " + err).strip()
+                if output
+                else "STDERR: " + err
+            )
+        return {
+            "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+            "exit_code": rc or 0,
+            "execution_mode": execution_mode.value,
+        }

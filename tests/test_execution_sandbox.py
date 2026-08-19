@@ -16,7 +16,9 @@ from src.execution_sandbox import (
     SandboxNetworkProfile,
     SandboxUnavailable,
     environment_for_sandbox_launcher,
+    full_access_command,
     sandbox_command,
+    sandbox_python_executable,
 )
 
 
@@ -131,8 +133,11 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
     ]
     assert "--clearenv" in argv
     assert "/usr/bin/prlimit" in argv
-    assert "--nproc=256" in argv
-    assert "--as=4294967296" in argv
+    assert "--nproc=256" not in argv
+    assert "--cpu=3600" in argv
+    assert "--fsize=4294967296" in argv
+    assert "--nofile=1024" in argv
+    assert "--as=8589934592" in argv
     assert ["--ro-bind", "/", "/"] not in [
         argv[index:index + 3] for index in range(len(argv) - 2)
     ]
@@ -303,6 +308,38 @@ def test_brokered_profile_fails_closed_without_ca_bundle(tmp_path, monkeypatch):
         )
 
 
+def test_full_access_binds_service_filesystem_but_retains_private_network(
+    tmp_path,
+):
+    argv = full_access_command(
+        ["/bin/true"],
+        working_directory=str(tmp_path),
+        network_profile=SandboxNetworkProfile.NETWORKLESS,
+    )
+
+    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
+    assert ["--bind", "/", "/"] in triples
+    assert "--unshare-net" in argv
+    assert "--share-net" not in argv
+    assert ["--proc", "/proc"] in [
+        argv[index:index + 2] for index in range(len(argv) - 1)
+    ]
+    assert "/usr/bin/prlimit" in argv
+
+
+def test_full_access_brokered_profile_uses_trusted_proxy(tmp_path):
+    argv = full_access_command(
+        ["/bin/true"],
+        working_directory=str(tmp_path),
+        network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+    )
+
+    assert argv[0] == "/usr/local/libexec/odysseus-egress-broker"
+    assert "--unshare-net" in argv
+    assert "http://127.0.0.1:3128" in argv
+    assert "/usr/local/libexec/odysseus-egress-bridge" in argv
+
+
 def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -311,6 +348,7 @@ def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
     (workspace / ".ssh").mkdir()
     (workspace / ".config" / "gh").mkdir(parents=True)
     (workspace / ".profile").write_text("persist", encoding="utf-8")
+    (workspace / ".bash_login").write_text("persist", encoding="utf-8")
 
     argv = sandbox_command(["/bin/true"], workspace=str(workspace))
 
@@ -325,6 +363,7 @@ def test_sandbox_overlays_credentials_and_protects_git(tmp_path):
     assert ["--tmpfs", str(workspace / ".ssh")] in pairs
     assert ["--tmpfs", str(workspace / ".config" / "gh")] in pairs
     assert ["--ro-bind", "/dev/null", str(workspace / ".profile")] in triples
+    assert ["--ro-bind", "/dev/null", str(workspace / ".bash_login")] in triples
 
 
 def test_sandbox_rejects_preexisting_unix_socket_in_workspace(tmp_path):
@@ -405,6 +444,59 @@ def test_sandbox_rejects_the_process_home_as_workspace(tmp_path, monkeypatch):
 
     with pytest.raises(SandboxUnavailable):
         sandbox_command(["/bin/true"], workspace=str(tmp_path))
+
+
+def test_sandbox_rejects_any_login_home_and_exposing_ancestor(tmp_path, monkeypatch):
+    login_home = tmp_path / "users" / "alice"
+    project = login_home / "project"
+    project.mkdir(parents=True)
+    monkeypatch.setattr(
+        "src.execution_sandbox._login_home_roots",
+        lambda: {str(login_home.resolve())},
+    )
+    monkeypatch.setattr(
+        "src.constants.AGENT_WORKSPACE_DIR",
+        str(tmp_path / "managed-agent-workspace"),
+    )
+
+    with pytest.raises(SandboxUnavailable, match="login-profile"):
+        sandbox_command(["/bin/true"], workspace=str(login_home))
+    with pytest.raises(SandboxUnavailable, match="login-profile"):
+        sandbox_command(["/bin/true"], workspace=str(login_home.parent))
+
+    assert sandbox_command(["/bin/true"], workspace=str(project))
+
+
+def test_sandbox_allows_managed_workspace_inside_login_home(tmp_path, monkeypatch):
+    login_home = tmp_path / "users" / "alice"
+    managed = login_home / "odysseus-agent"
+    managed.mkdir(parents=True)
+    monkeypatch.setattr(
+        "src.execution_sandbox._login_home_roots",
+        lambda: {str(login_home.resolve())},
+    )
+    monkeypatch.setattr("src.constants.AGENT_WORKSPACE_DIR", str(managed))
+
+    assert sandbox_command(["/bin/true"], workspace=str(managed))
+
+
+def test_sandbox_rejects_sensitive_root_selection(tmp_path):
+    sensitive = tmp_path / ".ssh"
+    sensitive.mkdir()
+
+    with pytest.raises(SandboxUnavailable, match="sensitive"):
+        sandbox_command(["/bin/true"], workspace=str(sensitive))
+
+
+def test_sandbox_rejects_hard_linked_workspace_file(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside-secret"
+    outside.write_text("secret", encoding="utf-8")
+    os.link(outside, workspace / "innocent.txt")
+
+    with pytest.raises(SandboxUnavailable, match="hard-linked"):
+        sandbox_command(["/bin/true"], workspace=str(workspace))
 
 
 def test_sandbox_protects_worktree_git_file(tmp_path):
@@ -666,7 +758,7 @@ def test_sandbox_network_namespace_has_no_external_route(
             "\nraise SystemExit(1)"
         )
         argv = sandbox_command(
-            ["/usr/bin/python3", "-I", "-c", code],
+            [sandbox_python_executable(), "-I", "-c", code],
             workspace=str(workspace),
         )
 

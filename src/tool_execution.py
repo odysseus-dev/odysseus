@@ -909,7 +909,10 @@ async def _execute_tool_block_impl(
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
+                "execution_mode": rec.get("execution_mode", "sandbox"),
             }
+            if rec.get("warning"):
+                result["warning"] = rec["warning"]
             logger.info(f"Tool executed: {desc} -> bg job {rec['id']}")
             return desc, result
 

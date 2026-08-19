@@ -83,6 +83,12 @@ class SetAdminRequest(BaseModel):
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
+
+class SetProcessExecutionModeRequest(BaseModel):
+    mode: str
+    confirmation: str = ""
+
+
 SESSION_COOKIE = "odysseus_session"
 
 
@@ -753,6 +759,73 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             current[key] = val
         _save_settings(current)
         return without_retired_settings(current)
+
+    @router.get("/process-execution")
+    async def get_process_execution_mode(request: Request):
+        """Return the transient admin-owned mode and actual capability state."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+
+        from src.process_execution import (
+            FULL_ACCESS_CONFIRMATION,
+            FULL_ACCESS_WARNING,
+            configured_process_execution_mode,
+            process_capability,
+        )
+
+        capability = await asyncio.to_thread(process_capability)
+        return {
+            "mode": configured_process_execution_mode().value,
+            "capability": capability.as_dict(),
+            "full_access_warning": FULL_ACCESS_WARNING,
+            "confirmation_phrase": FULL_ACCESS_CONFIRMATION,
+            "transient": True,
+        }
+
+    @router.post("/process-execution")
+    async def set_process_execution_mode_route(
+        body: SetProcessExecutionModeRequest,
+        request: Request,
+    ):
+        """Change transient process authority only after explicit confirmation."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+
+        from src.process_execution import (
+            FULL_ACCESS_WARNING,
+            ProcessExecutionMode,
+            process_capability,
+            set_process_execution_mode,
+        )
+
+        try:
+            mode = ProcessExecutionMode(str(body.mode or "").strip().lower())
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid process execution mode") from exc
+
+        capability = await asyncio.to_thread(process_capability)
+        profile = capability.for_mode(mode)
+        if mode is ProcessExecutionMode.FULL_ACCESS and not profile.networkless:
+            raise HTTPException(
+                409,
+                "Full Access cannot retain the required private-network boundary: "
+                + profile.networkless_reason,
+            )
+        try:
+            set_process_execution_mode(mode, confirmation=body.confirmation)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "ok": True,
+            "mode": mode.value,
+            "capability": capability.as_dict(),
+            "mode_available": profile.networkless,
+            "mode_unavailable_reason": profile.networkless_reason,
+            "full_access_warning": FULL_ACCESS_WARNING,
+            "transient": True,
+        }
 
     # ---- Integrations CRUD ----
 

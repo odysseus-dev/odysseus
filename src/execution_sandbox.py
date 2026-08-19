@@ -93,8 +93,21 @@ _SENSITIVE_DIR_NAMES = frozenset(
         ".ssh",
     }
 )
+_SENSITIVE_WORKSPACE_ROOT_NAMES = frozenset(
+    {
+        ".aws",
+        ".azure",
+        ".config",
+        ".docker",
+        ".git",
+        ".gnupg",
+        ".kube",
+        ".ssh",
+    }
+)
 _SENSITIVE_FILE_NAMES = frozenset(
     {
+        ".bash_login",
         ".bash_profile",
         ".bash_logout",
         ".bashrc",
@@ -127,12 +140,11 @@ _BROKER_SOCKET = "/run/odysseus-egress/broker.sock"
 _BROKER_PROXY_URL = "http://127.0.0.1:3128"
 _CA_CERTIFICATE = "/etc/ssl/certs/ca-certificates.crt"
 _SANDBOX_LIMITS = (
-    "--as=4294967296",
+    "--as=4294967296",       # 4 GiB virtual address space per process
     "--core=0",
-    "--cpu=900",
-    "--fsize=1073741824",
-    "--nofile=256",
-    "--nproc=256",
+    "--cpu=3600",             # one hour of CPU time per process
+    "--fsize=4294967296",     # 4 GiB per output file
+    "--nofile=1024",
 )
 
 
@@ -215,23 +227,53 @@ def _egress_bridge_binary() -> str:
     return _trusted_python_helper(_TRUSTED_EGRESS_BRIDGE, "egress bridge")
 
 
-def _normalized_workspace(workspace: str) -> str:
-    if not isinstance(workspace, str) or not workspace.strip():
-        raise SandboxUnavailable("Sandboxed execution requires a workspace.")
-    resolved = os.path.realpath(os.path.expanduser(workspace))
-    home_roots = {
+def _login_home_roots() -> set[str]:
+    """Return real login-home roots without making account lookup mandatory."""
+    homes = {
         os.path.realpath(path)
         for path in (os.path.expanduser("~"), os.environ.get("HOME", ""))
         if path
     }
+    try:
+        import pwd
+
+        homes.update(
+            os.path.realpath(entry.pw_dir)
+            for entry in pwd.getpwall()
+            if entry.pw_dir and os.path.isabs(entry.pw_dir)
+        )
+    except (ImportError, KeyError, OSError):
+        pass
+    return homes
+
+
+def _normalized_workspace(workspace: str) -> str:
+    if not isinstance(workspace, str) or not workspace.strip():
+        raise SandboxUnavailable("Sandboxed execution requires a workspace.")
+    resolved = os.path.realpath(os.path.expanduser(workspace))
+    from src.constants import AGENT_WORKSPACE_DIR
+
+    managed_workspace = os.path.realpath(AGENT_WORKSPACE_DIR)
+    exposes_login_home = (
+        not _is_within(resolved, managed_workspace)
+        and any(
+            resolved == home or _is_within(home, resolved)
+            for home in _login_home_roots()
+        )
+    )
+    sensitive_root = Path(resolved).name.casefold() in _SENSITIVE_WORKSPACE_ROOT_NAMES
+    if sensitive_root:
+        raise SandboxUnavailable(
+            f"Refusing sensitive sandbox workspace root: {resolved}"
+        )
     if (
         resolved in _BROAD_WORKSPACE_ROOTS
-        or resolved in home_roots
+        or exposes_login_home
         or os.path.dirname(resolved) == resolved
         or any(_is_within(resolved, root) for root in _SYSTEM_WORKSPACE_ROOTS)
     ):
         raise SandboxUnavailable(
-            f"Refusing broad sandbox workspace: {resolved}"
+            f"Refusing broad or login-profile sandbox workspace: {resolved}"
         )
     try:
         Path(resolved).mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -358,6 +400,10 @@ def _workspace_overlays(
             if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
                 raise SandboxUnavailable(
                     f"Sandbox workspace contains an unsupported special file: {relative}"
+                )
+            if stat.S_ISREG(metadata.st_mode) and metadata.st_nlink > 1:
+                raise SandboxUnavailable(
+                    f"Sandbox workspace contains a hard-linked file: {relative}"
                 )
             if name.casefold() == ".git" and os.path.islink(path):
                 raise SandboxUnavailable(
@@ -586,11 +632,109 @@ def sandbox_command(
     args.extend(("--chdir", root, "--"))
     if bridge is not None:
         args.extend((bridge, _BROKER_SOCKET, "--"))
-    args.extend(("/usr/bin/prlimit",))
-    args.extend(_SANDBOX_LIMITS)
-    args.extend(("--",))
-    args.extend(command)
+    args.extend(process_limited_command(command))
     return args
+
+
+def full_access_command(
+    command: Sequence[str],
+    *,
+    working_directory: str,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
+) -> list[str]:
+    """Build the explicit full-filesystem profile with retained network policy.
+
+    This profile grants the payload the same filesystem view and permissions as
+    the Odysseus service user. It still uses a private network namespace: no
+    Internet by default, or trusted brokered HTTP(S) when explicitly enabled.
+    It is not an unsandboxed fallback and therefore remains unavailable when the
+    minimum Bubblewrap/network boundary cannot be established.
+    """
+    if not command or not all(isinstance(part, str) for part in command):
+        raise SandboxUnavailable("Full Access command must be a non-empty argv list.")
+    if not isinstance(network_profile, SandboxNetworkProfile):
+        raise SandboxUnavailable("Invalid server-owned sandbox network profile.")
+
+    cwd = os.path.realpath(os.path.expanduser(working_directory or "."))
+    if not os.path.isdir(cwd):
+        raise SandboxUnavailable("Full Access working directory is unavailable.")
+
+    launcher = _seccomp_launcher_binary()
+    binary = _bubblewrap_binary()
+    broker = None
+    bridge = None
+    if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
+        broker = _egress_broker_binary()
+        bridge = _egress_bridge_binary()
+        if not os.path.isfile(_CA_CERTIFICATE):
+            raise SandboxUnavailable(
+                "Brokered Internet requires the system CA certificate bundle."
+            )
+
+    args = [launcher, binary]
+    if broker is not None:
+        args.insert(0, broker)
+    args.extend(
+        (
+            "--unshare-user",
+            "--unshare-ipc",
+            "--unshare-pid",
+            "--unshare-net",
+            "--unshare-uts",
+            "--unshare-cgroup",
+            "--die-with-parent",
+            "--new-session",
+            "--clearenv",
+            "--cap-drop",
+            "ALL",
+            "--bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+        )
+    )
+
+    environment = {
+        "COLUMNS": "120",
+        "HOME": os.path.expanduser("~"),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
+        "LINES": "40",
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "TERM": os.environ.get("TERM", "xterm-256color"),
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+    }
+    if os.path.isfile(_CA_CERTIFICATE):
+        environment["SSL_CERT_FILE"] = _CA_CERTIFICATE
+    if network_profile is SandboxNetworkProfile.BROKERED_ONLY:
+        environment.update(
+            {
+                "HTTP_PROXY": _BROKER_PROXY_URL,
+                "HTTPS_PROXY": _BROKER_PROXY_URL,
+                "http_proxy": _BROKER_PROXY_URL,
+                "https_proxy": _BROKER_PROXY_URL,
+            }
+        )
+    for name, value in environment.items():
+        args.extend(("--setenv", name, value))
+
+    args.extend(("--chdir", cwd, "--"))
+    if bridge is not None:
+        args.extend((bridge, _BROKER_SOCKET, "--"))
+    args.extend(process_limited_command(command))
+    return args
+
+
+def process_limited_command(command: Sequence[str]) -> list[str]:
+    """Apply generous per-process ceilings without claiming tree containment."""
+    if not command or not all(isinstance(part, str) for part in command):
+        raise SandboxUnavailable("Process command must be a non-empty argv list.")
+    if not os.path.isfile("/usr/bin/prlimit"):
+        raise SandboxUnavailable(
+            "Agent process execution requires `/usr/bin/prlimit`."
+        )
+    return ["/usr/bin/prlimit", *_SANDBOX_LIMITS, "--", *command]
 
 
 def environment_for_sandbox_launcher() -> dict[str, str]:

@@ -523,10 +523,14 @@ def test_loopback_bridge_releases_a_slot_when_the_broker_closes_first(tmp_path):
     client = socket.create_connection(proxy.address, timeout=2)
 
     deadline = time.monotonic() + 2
-    while not proxy.connections and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert proxy.connections
-    connection_thread = proxy.connections[0]
+    connection_thread = None
+    while connection_thread is None and time.monotonic() < deadline:
+        with proxy.connections_lock:
+            if proxy.connections:
+                connection_thread = proxy.connections[0]
+        if connection_thread is None:
+            time.sleep(0.01)
+    assert connection_thread is not None
     connection_thread.join(timeout=1)
     released_before_client_close = not connection_thread.is_alive()
 

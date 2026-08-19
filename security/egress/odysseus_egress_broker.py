@@ -614,6 +614,7 @@ class BrokerServer:
         self.stop = threading.Event()
         self.slots = threading.BoundedSemaphore(max_connections)
         self.threads: list[threading.Thread] = []
+        self.threads_lock = threading.Lock()
         self.accept_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -638,9 +639,10 @@ class BrokerServer:
                 args=(client,),
                 daemon=True,
             )
-            self.threads = [worker for worker in self.threads if worker.is_alive()]
-            self.threads.append(thread)
-            thread.start()
+            with self.threads_lock:
+                self.threads = [worker for worker in self.threads if worker.is_alive()]
+                thread.start()
+                self.threads.append(thread)
 
     def _handle(self, client: socket.socket) -> None:
         try:
@@ -660,7 +662,9 @@ class BrokerServer:
             pass
         if self.accept_thread is not None:
             self.accept_thread.join(timeout=1.0)
-        for thread in self.threads:
+        with self.threads_lock:
+            threads = list(self.threads)
+        for thread in threads:
             thread.join(timeout=0.2)
 
 

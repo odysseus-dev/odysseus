@@ -149,6 +149,8 @@ async def _run_followup(rec: dict) -> bool:
             "model": sess.model,
             "bg_job_id": rec["id"],
             "bg_result": bg_jobs.result_text(rec)[:4000],
+            "execution_mode": rec.get("execution_mode", "sandbox"),
+            "execution_warning": rec.get("warning") or "",
         },
     ))
     sm.save_sessions()

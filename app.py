@@ -1032,6 +1032,38 @@ app.router.lifespan_context = _lifespan
 async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
+    try:
+        from src.process_execution import (
+            process_capability,
+            reset_process_execution_mode,
+        )
+
+        # Full Access is intentionally transient: every application start returns
+        # to the least-authority Sandbox default and requires a new confirmation.
+        reset_process_execution_mode()
+        capability = await asyncio.to_thread(process_capability, refresh=True)
+        if capability.sandbox.networkless:
+            logger.info("Agent process Sandbox capability probe passed")
+            if not capability.sandbox.brokered:
+                logger.warning(
+                    "Brokered process Internet is unavailable in Sandbox mode: %s",
+                    capability.sandbox.brokered_reason,
+                )
+        else:
+            logger.warning(
+                "Agent process Sandbox unavailable; Bash, Python, tmux, and "
+                "detached jobs remain blocked by default: %s",
+                capability.sandbox.networkless_reason,
+            )
+        if not capability.full_access.networkless:
+            logger.warning(
+                "Explicit Full Access process mode is also unavailable: %s",
+                capability.full_access.networkless_reason,
+            )
+    except Exception:
+        logger.exception(
+            "Agent process capability probe failed; process tools remain blocked"
+        )
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.

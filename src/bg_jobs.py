@@ -14,14 +14,17 @@ Design goals:
   * Bounded: a hard max-runtime marks a runaway job failed and STILL triggers
     a follow-up ("timed out"), so you always hear back.
 
-This module only owns launch + state. Model commands execute inside the same
-Linux bubblewrap profile as foreground Bash; a tiny isolated Python wrapper
-outside the sandbox only records output and the exit code. The monitor / agent
-re-invocation lives in the caller (so this stays import-light and unit-testable).
+This module only owns launch + state. Model commands execute through the
+server-selected process boundary: the default workspace Sandbox or explicitly
+confirmed Full Access, both retaining the private network policy. A tiny isolated
+Python wrapper outside that boundary only records output and the exit code. The
+monitor / agent re-invocation lives in the caller (so this stays import-light and
+unit-testable).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -43,7 +46,14 @@ from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
 from src.execution_sandbox import (
     SandboxNetworkProfile,
     environment_for_sandbox_launcher,
+    full_access_command,
     sandbox_command,
+)
+from src.process_execution import (
+    FULL_ACCESS_WARNING,
+    ProcessExecutionMode,
+    configured_process_execution_mode,
+    process_capability,
 )
 
 _JOBS_DIR = Path(BG_JOBS_DIR)
@@ -60,15 +70,17 @@ _MAX_OUTPUT_CHARS = 16000
 _RETENTION_S = 3600  # 1 hour after follow-up
 
 _DETACHED_SANDBOX_WRAPPER = """
+import hashlib
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-argv = json.loads(sys.argv[1])
-log_path = Path(sys.argv[2])
-exit_path = Path(sys.argv[3])
+plan_path = Path(sys.argv[1])
+expected_digest = sys.argv[2]
+log_path = Path(sys.argv[3])
+exit_path = Path(sys.argv[4])
 code = 1
 
 def write_private_text(path, text):
@@ -77,6 +89,17 @@ def write_private_text(path, text):
         stream.write(text)
 
 try:
+    plan_bytes = plan_path.read_bytes()
+    actual_digest = hashlib.sha256(plan_bytes).hexdigest()
+    if actual_digest != expected_digest:
+        raise RuntimeError("detached process plan digest mismatch")
+    plan = json.loads(plan_bytes)
+    if plan.get("version") != 1 or not isinstance(plan.get("argv"), list):
+        raise RuntimeError("invalid detached process plan")
+    argv = plan["argv"]
+    if not argv or not all(isinstance(part, str) for part in argv):
+        raise RuntimeError("invalid detached process argv")
+    child_env = {}
     log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(log_fd, "wb") as output:
         completed = subprocess.run(
@@ -84,13 +107,13 @@ try:
             stdin=subprocess.DEVNULL,
             stdout=output,
             stderr=subprocess.STDOUT,
-            env={},
+            env=child_env,
             check=False,
         )
         code = int(completed.returncode)
 except Exception as exc:
     try:
-        write_private_text(log_path, f"sandbox launch failed: {exc}\\n")
+        write_private_text(log_path, f"process launch failed: {exc}\\n")
     except Exception:
         pass
 try:
@@ -214,28 +237,56 @@ def launch(
     log_path = _JOBS_DIR / f"{job_id}.log"
     exit_path = _JOBS_DIR / f"{job_id}.exit"
     cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+    plan_path = _JOBS_DIR / f"{job_id}.plan.json"
     try:
         preexisting_paths = set(_JOBS_DIR.glob(f"{job_id}.*"))
     except OSError:
         preexisting_paths = set()
-    created_paths: list[Path] = [cmd_path, log_path, exit_path]
+    created_paths: list[Path] = [cmd_path, plan_path, log_path, exit_path]
     proc: subprocess.Popen | None = None
     record_saved = False
 
     try:
         _write_private_file(cmd_path, command + "\n")
-        sandbox_argv = sandbox_command(
-            ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
-            workspace=cwd or "",
-            readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
-            network_profile=network_profile,
-        )
+        execution_mode = configured_process_execution_mode()
+        capability = process_capability().for_mode(execution_mode)
+        if not capability.supports(network_profile):
+            raise RuntimeError(
+                f"{execution_mode.value} process boundary unavailable: "
+                + capability.reason_for(network_profile)
+            )
+        if execution_mode is ProcessExecutionMode.SANDBOX:
+            process_argv = sandbox_command(
+                ["/bin/bash", "--noprofile", "--norc", "/run/odysseus/command.sh"],
+                workspace=cwd or "",
+                readonly_files={str(cmd_path): "/run/odysseus/command.sh"},
+                network_profile=network_profile,
+            )
+        else:
+            process_argv = full_access_command(
+                ["/bin/bash", "--noprofile", "--norc", str(cmd_path)],
+                working_directory=cwd or "",
+                network_profile=network_profile,
+            )
+        wrapper_environment = environment_for_sandbox_launcher()
+
+        plan_bytes = json.dumps(
+            {
+                "version": 1,
+                "argv": process_argv,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        plan_digest = hashlib.sha256(plan_bytes).hexdigest()
+        _write_private_file(plan_path, plan_bytes.decode("utf-8"))
+
         argv = [
             sys.executable,
             "-I",
             "-c",
             _DETACHED_SANDBOX_WRAPPER,
-            json.dumps(sandbox_argv),
+            str(plan_path),
+            plan_digest,
             str(log_path),
             str(exit_path),
         ]
@@ -245,7 +296,7 @@ def launch(
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             cwd=None,
-            env=environment_for_sandbox_launcher(),
+            env=wrapper_environment,
             **detached_popen_kwargs(),  # detach from the request lifecycle (setsid)
         )
 
@@ -260,6 +311,17 @@ def launch(
             "exit_code": None,
             "max_runtime_s": max_runtime_s,
             "network_profile": network_profile.value,
+            "execution_mode": execution_mode.value,
+            "network_enforcement": (
+                "brokered_http_https"
+                if network_profile is SandboxNetworkProfile.BROKERED_ONLY
+                else "networkless"
+            ),
+            "warning": (
+                FULL_ACCESS_WARNING
+                if execution_mode is ProcessExecutionMode.FULL_ACCESS
+                else ""
+            ),
             "followed_up": False,       # has the agent been re-invoked with the result?
             "log_path": str(log_path),
             "exit_path": str(exit_path),
@@ -413,4 +475,10 @@ def result_text(rec: Dict[str, Any]) -> str:
         head = "Background job process died unexpectedly (no exit code)."
     else:
         head = f"Background job finished with exit code {rec.get('exit_code')}."
-    return f"{head}\nCommand: {rec.get('command')}\n\nOutput:\n{out or '(no output)'}"
+    authority = f"Execution mode: {rec.get('execution_mode', 'sandbox')}"
+    if rec.get("warning"):
+        authority += f"\nWARNING: {rec['warning']}"
+    return (
+        f"{head}\n{authority}\nCommand: {rec.get('command')}"
+        f"\n\nOutput:\n{out or '(no output)'}"
+    )

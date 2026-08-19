@@ -147,6 +147,7 @@ class LoopbackBridge:
         self.slots = threading.BoundedSemaphore(max_connections)
         self.accept_thread: threading.Thread | None = None
         self.connections: list[threading.Thread] = []
+        self.connections_lock = threading.Lock()
 
     @property
     def address(self) -> tuple[str, int]:
@@ -184,11 +185,12 @@ class LoopbackBridge:
                 args=(client,),
                 daemon=True,
             )
-            self.connections = [
-                worker for worker in self.connections if worker.is_alive()
-            ]
-            self.connections.append(thread)
-            thread.start()
+            with self.connections_lock:
+                self.connections = [
+                    worker for worker in self.connections if worker.is_alive()
+                ]
+                thread.start()
+                self.connections.append(thread)
 
     def _connect(self, client: socket.socket) -> None:
         broker = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -217,7 +219,9 @@ class LoopbackBridge:
             pass
         if self.accept_thread is not None:
             self.accept_thread.join(timeout=1.0)
-        for thread in self.connections:
+        with self.connections_lock:
+            connections = list(self.connections)
+        for thread in connections:
             thread.join(timeout=0.2)
 
 

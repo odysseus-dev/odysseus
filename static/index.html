@@ -2379,6 +2379,27 @@
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
+          <div class="admin-card admin-only" id="process-execution-card" style="margin-bottom:12px;">
+            <h2 style="display:flex;align-items:center;gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+              Process Execution
+              <span style="flex:1"></span>
+              <label class="admin-switch" title="Explicitly grant the process the Odysseus user's full filesystem authority">
+                <input type="checkbox" id="set-process-full-access-toggle">
+                <span class="admin-slider"></span>
+              </label>
+            </h2>
+            <div class="admin-toggle-sub">
+              Sandbox is the default. Bash, Python, tmux, and detached jobs are
+              blocked when their selected process boundary cannot be established.
+              Full Access expands filesystem authority only; process networking
+              remains private and Internet-enabled execution stays brokered.
+            </div>
+            <div id="set-process-execution-status" style="font-size:11px;margin-top:8px;"></div>
+            <div id="set-process-full-access-warning" class="hidden" style="margin-top:10px;padding:10px;border:1px solid color-mix(in srgb, var(--red) 65%, transparent);border-radius:6px;font-size:11px;line-height:1.45;color:var(--red);"></div>
+            <div id="set-process-execution-msg" style="font-size:11px;margin-top:8px;"></div>
+          </div>
+
           <div class="admin-card" style="margin-bottom:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Built-in Tools</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Enable or disable tools available to the AI agent.</div>
