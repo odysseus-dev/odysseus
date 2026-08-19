@@ -82,7 +82,6 @@ _ASK_RISK_EFFECTS = frozenset(
 
 _SANDBOX_ALWAYS_APPROVE_EFFECTS = frozenset(
     {
-        ToolEffect.READ_PRIVATE,
         ToolEffect.NETWORK_EGRESS,
         ToolEffect.EXTERNAL_SIDE_EFFECT,
         ToolEffect.ADMIN_CHANGE,
