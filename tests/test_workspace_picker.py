@@ -282,6 +282,22 @@ def test_missing_folder_creation_rejects_symlink_swap(workspace_api, tmp_path, m
     assert workspace_api["get"](request=_request())["path"] == ""
 
 
+def test_missing_folder_creation_fails_closed_without_no_follow_support(
+    workspace_api, monkeypatch
+):
+    managed = workspace_api["managed"]
+    workspace_api["browse"](request=_request(), path="")
+    target = managed / "new" / "project"
+
+    monkeypatch.setattr(workspace_routes.os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(workspace_routes.os, "O_DIRECTORY", 0, raising=False)
+
+    with pytest.raises(RuntimeError, match="no-follow"):
+        workspace_routes._create_managed_path(str(target))
+
+    assert not target.exists()
+
+
 def test_new_folder_button_api_creates_and_refreshes_into_folder(workspace_api):
     managed = workspace_api["managed"]
     workspace_api["browse"](request=_request(), path="")
@@ -332,6 +348,28 @@ def test_clear_removes_server_owned_selection(workspace_api):
     assert stored["_users"]["admin"]["agent_workspace"] == ""
 
 
+def test_clear_does_not_commit_tombstone_before_default_workspace_ready(
+    workspace_api, monkeypatch
+):
+    project = workspace_api["managed"] / "project"
+    project.mkdir(parents=True)
+    workspace_api["select"](
+        request=_request(),
+        body=workspace_routes.WorkspaceSelection(path=str(project)),
+    )
+
+    def fail_default_workspace():
+        raise RuntimeError("default workspace unavailable")
+
+    monkeypatch.setattr(workspace_routes, "ensure_default_workspace", fail_default_workspace)
+
+    with pytest.raises(RuntimeError, match="default workspace unavailable"):
+        workspace_api["clear"](request=_request())
+
+    stored = json.loads(Path(prefs_routes.PREFS_FILE).read_text(encoding="utf-8"))
+    assert stored["_users"]["admin"]["agent_workspace"] == os.path.realpath(project)
+
+
 def test_workspace_mutations_reject_cross_site_requests(workspace_api):
     project = workspace_api["managed"] / "project"
     project.mkdir(parents=True)
@@ -357,6 +395,8 @@ def test_picker_source_uses_typed_value_and_visible_creation_controls():
     assert "not sandboxed" not in source
     assert "cached && state.migration_allowed" in source
     assert "export function whenWorkspaceReady()" in source
+    assert "return _syncServerWorkspace();" in source
+    assert "_workspaceReadyPromise" not in source
 
     chat_source = open("static/js/chat.js", encoding="utf-8").read()
     assert "await workspaceModule.whenWorkspaceReady();" in chat_source

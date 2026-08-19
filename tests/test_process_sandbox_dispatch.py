@@ -84,6 +84,14 @@ async def test_foreground_bash_with_session_reaches_tmux(monkeypatch, tmp_path):
     monkeypatch.setattr(tool_execution, "is_public_blocked_tool", lambda _tool: False)
     monkeypatch.setattr(subprocess_tools.shutil, "which", lambda _name: "/usr/bin/tmux")
     monkeypatch.setattr(subprocess_tools, "_run_tmux_bash", fake_run_tmux_bash)
+    from src.process_execution import ProcessCapability, ProfileCapability
+
+    available = ProfileCapability(True, "", True, "")
+    monkeypatch.setattr(
+        subprocess_tools,
+        "process_capability",
+        lambda: ProcessCapability(available, available, 0),
+    )
     monkeypatch.setitem(
         agent_tools.TOOL_HANDLERS,
         "bash",

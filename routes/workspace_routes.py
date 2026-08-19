@@ -98,8 +98,8 @@ def _create_managed_path(target: str) -> str:
     The POSIX path walks from an already-open root directory and opens every
     child with ``O_NOFOLLOW``. This closes the validation-to-creation race in
     which a writable ancestor could otherwise be replaced with a symlink.
-    Platforms without directory-fd support retain a post-creation containment
-    check and never persist an escaped result.
+    Platforms without equivalent no-follow directory primitives fail closed;
+    a post-creation containment check cannot undo an external side effect.
     """
     managed_root = ensure_default_workspace()
     candidate = os.path.abspath(target)
@@ -129,9 +129,9 @@ def _create_managed_path(target: str) -> str:
         finally:
             os.close(fd)
     else:
-        # Non-POSIX fallback retains the lexical precheck and canonical
-        # postcheck around this intentionally admin-selected managed path.
-        Path(candidate).mkdir(mode=0o700, parents=True, exist_ok=True)
+        raise RuntimeError(
+            "Safe managed-folder creation requires no-follow directory support."
+        )
 
     resolved = os.path.realpath(candidate)
     if not _is_within(resolved, managed_root) or not os.path.isdir(resolved):
@@ -305,8 +305,13 @@ def setup_workspace_routes():
     def clear_selection(request: Request):
         owner = _require_workspace_admin(request)
         _reject_cross_site(request)
+        # Prepare every fallible part of the response before writing the clear
+        # tombstone. Otherwise a default-workspace failure can report an error
+        # after the server has cleared the preference while the browser still
+        # holds the old path and can submit it on the next action.
+        default_path = ensure_default_workspace()
         _save_selected_workspace(owner, "")
-        return {"ok": True, "path": "", "default_path": ensure_default_workspace()}
+        return {"ok": True, "path": "", "default_path": default_path}
 
     @router.post("/folders")
     def create_folder(request: Request, body: WorkspaceFolderCreate):

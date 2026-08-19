@@ -463,6 +463,26 @@ def test_vet_workspace_accepts_normal_dir(ws):
     assert vet_workspace(ws) == os.path.realpath(ws)
 
 
+def test_vet_workspace_applies_process_sandbox_policy(ws, monkeypatch):
+    import src.execution_sandbox as execution_sandbox
+    from src.tool_execution import vet_workspace
+
+    seen = []
+
+    def reject_for_process_sandbox(path):
+        seen.append(path)
+        return None, "process sandbox policy rejected this workspace"
+
+    monkeypatch.setattr(
+        execution_sandbox,
+        "validate_sandbox_workspace_path",
+        reject_for_process_sandbox,
+    )
+
+    assert vet_workspace(ws) is None
+    assert seen == [os.path.realpath(ws)]
+
+
 @pytest.mark.parametrize(
     "relative",
     [

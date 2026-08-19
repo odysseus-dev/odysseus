@@ -16,15 +16,16 @@ let _modal = null;
 let _curPath = '';
 let _defaultPath = '';
 let _workspace = Storage.get(KEYS.WORKSPACE, '') || '';
-let _workspaceReadyPromise = null;
 
 export function getWorkspace() {
   return _workspace;
 }
 
 export function whenWorkspaceReady() {
-  if (!_workspaceReadyPromise) _workspaceReadyPromise = _syncServerWorkspace();
-  return _workspaceReadyPromise;
+  // Refresh on every action so a different browser/device can change or
+  // clear the server-owned selection without this tab continuing to submit a
+  // permanently cached path.
+  return _syncServerWorkspace();
 }
 
 function _basename(p) {

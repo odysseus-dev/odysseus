@@ -294,7 +294,19 @@ def validate_workspace(raw: str) -> tuple[Optional[str], str]:
     # also covers C:\ and \\server\share without platform-specific lists.
     if os.path.dirname(resolved) == resolved:
         return None, "A filesystem root cannot be used as a workspace."
-    return resolved, ""
+    # The request/chat boundary and the picker must enforce the same policy as
+    # process-sandbox construction.  In particular, the generic path checks
+    # above do not reject login homes, application-data roots, or broad system
+    # roots that would be unsafe to mount into a process sandbox.
+    try:
+        from src.execution_sandbox import validate_sandbox_workspace_path
+
+        sandbox_resolved, sandbox_reason = validate_sandbox_workspace_path(resolved)
+    except (ImportError, OSError, RuntimeError):
+        return None, "Workspace sandbox policy is unavailable."
+    if not sandbox_resolved:
+        return None, sandbox_reason
+    return sandbox_resolved, ""
 
 
 def workspace_path_is_sensitive(raw: str) -> bool:
