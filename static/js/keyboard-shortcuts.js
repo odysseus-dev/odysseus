@@ -3,7 +3,6 @@
 // ============================================
 
 import { IS_MAC, isAltGrEvent } from './platform.js';
-import { getSettings } from './appConfig.js';
 
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
@@ -57,7 +56,8 @@ export function initKeyboardShortcuts(modules) {
   window._odysseusKeybinds = { ..._defaultKeybinds };
 
   // Load saved keybinds
-  getSettings()
+  fetch('/api/auth/settings', { credentials: 'same-origin' })
+    .then(r => r.json())
     .then(s => { if (s.keybinds) window._odysseusKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
     .catch(() => {});
 
@@ -105,6 +105,7 @@ export function initKeyboardShortcuts(modules) {
     'gallery-modal':          'tool-gallery-btn',
     'research-overlay':       'tool-research-btn',
     'cookbook-modal':         'tool-cookbook-btn',
+    'council-modal':          'tool-council-btn',
     'compare-model-overlay':  'tool-compare-btn',
     'calendar-modal':         'tool-calendar-btn',
     'email-lib-modal':        'email-section-title',

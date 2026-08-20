@@ -1168,7 +1168,14 @@ function _renderTestLog(logEl, verdictEl, job, card, name) {
             body: JSON.stringify({ approval_id: approval.approval_id, decision }),
           },
         );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          let errDetail = `HTTP ${response.status}`;
+          try {
+            const errData = await response.json();
+            if (errData && errData.detail) errDetail = errData.detail;
+          } catch (_) {}
+          throw new Error(errDetail);
+        }
         await _testSkill(card, name, false);
       } catch (error) {
         add(`Approval failed: ${error.message || error}`, 'skill-test-err');

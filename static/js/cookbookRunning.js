@@ -338,7 +338,6 @@ let _sshPrefix;
 let _getPlatform;
 let _isWindows;
 let _buildEnvPrefix;
-let _psQuote;
 let _loadPresets;
 let _savePresets;
 let _copyText;
@@ -1972,7 +1971,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   let envPrefix = '';
   if (_isWindows()) {
     if (_envState.env === 'venv' && _envState.envPath) {
-      envPrefix = '& ' + _psQuote(_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
+      envPrefix = '& ' + (_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
     } else if (_envState.env === 'conda' && _envState.envPath) {
       envPrefix = 'conda activate ' + _envState.envPath;
     }
@@ -4403,7 +4402,6 @@ export function initRunning(shared) {
   _getPlatform = shared._getPlatform;
   _isWindows = shared._isWindows;
   _buildEnvPrefix = shared._buildEnvPrefix;
-  _psQuote = shared._psQuote;
   _loadPresets = shared._loadPresets;
   _savePresets = shared._savePresets;
   _copyText = shared._copyText;

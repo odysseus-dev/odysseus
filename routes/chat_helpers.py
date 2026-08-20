@@ -602,6 +602,29 @@ def _session_is_research_spinoff(sess) -> bool:
     return False
 
 
+def _clean_no_think_text(text: Any) -> Any:
+    if not isinstance(text, str):
+        return text
+    cleaned = re.sub(r'(?i)(?:^|\s+)/no_think\b', '', text)
+    return cleaned.strip()
+
+
+def _clean_no_think_content(content: Any) -> Any:
+    if isinstance(content, str):
+        return _clean_no_think_text(content)
+    if isinstance(content, list):
+        cleaned_list = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                b = dict(block)
+                b["text"] = _clean_no_think_text(b["text"])
+                cleaned_list.append(b)
+            else:
+                cleaned_list.append(block)
+        return cleaned_list
+    return content
+
+
 async def build_chat_context(
     sess,
     request,
@@ -624,8 +647,8 @@ async def build_chat_context(
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
     defer_context_shaping: bool = False,
-    continuation_context_message: str | None = None,
-    persist_user_message: bool = True,
+    thinking: Optional[bool] = None,
+    no_think: bool = False,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -634,6 +657,9 @@ async def build_chat_context(
     """
     # Preset
     preset = extract_preset(chat_handler, preset_id)
+
+    # Determine whether No-Think mode is active
+    is_no_think = bool(no_think or (thinking is False) or (isinstance(message, str) and "/no_think" in message))
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side
@@ -646,17 +672,22 @@ async def build_chat_context(
         allow_tool_preprocessing=allow_tool_preprocessing,
     )
 
+    if is_no_think:
+        preprocessed.user_content = _clean_no_think_content(preprocessed.user_content)
+        preprocessed.text_for_context = _clean_no_think_text(preprocessed.text_for_context)
+        message = _clean_no_think_text(message)
+
     # Add user message to history. Nobody/incognito uses a request-local
     # transcript store instead of session history so stale saved chats cannot
     # bleed into context and the turn is not persisted.
-    if persist_user_message and incognito:
+    if incognito:
         user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
-    elif persist_user_message:
+    else:
         add_user_message(sess, chat_handler, preprocessed, incognito=False)
 
     # Fire events
-    if persist_user_message and not incognito:
+    if not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
@@ -668,12 +699,7 @@ async def build_chat_context(
         getattr(chat_handler, "upload_handler", None),
         getattr(sess, "owner", None),
     )
-    context_message = (
-        str(continuation_context_message).strip()
-        if continuation_context_message
-        else message
-    )
-    casual_low_signal = _is_casual_low_signal(context_message)
+    casual_low_signal = _is_casual_low_signal(message)
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
@@ -710,15 +736,7 @@ async def build_chat_context(
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
     # the sync path uses text_for_context.
-    _ctx_msg = (
-        context_message
-        if continuation_context_message
-        else (
-            preprocessed.enhanced_message
-            if use_enhanced_message
-            else preprocessed.text_for_context
-        )
-    )
+    _ctx_msg = preprocessed.enhanced_message if use_enhanced_message else preprocessed.text_for_context
     _preface_kwargs = dict(
         message=_ctx_msg,
         session=sess,
@@ -781,6 +799,22 @@ async def build_chat_context(
                 messages.append(_dt_msg)
         except Exception:
             logger.debug("Failed to add current date/time context", exc_info=True)
+
+    if is_no_think and messages:
+        for idx in range(len(messages) - 1, -1, -1):
+            if messages[idx].get("role") == "user":
+                last_content = messages[idx].get("content")
+                if isinstance(last_content, str):
+                    if "/no_think" not in last_content:
+                        messages[idx]["content"] = (last_content.rstrip() + " /no_think").strip()
+                elif isinstance(last_content, list):
+                    for block in reversed(last_content):
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            t = block.get("text", "")
+                            if "/no_think" not in t:
+                                block["text"] = (t.rstrip() + " /no_think").strip()
+                            break
+                break
 
     route_messages = list(messages)
     # Explicit fallback routing must shape from the same route-neutral prompt

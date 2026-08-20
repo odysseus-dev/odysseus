@@ -179,6 +179,7 @@ from starlette.responses import JSONResponse as _JSONResponse
 REQUEST_HARD_TIMEOUT = float(os.getenv("REQUEST_HARD_TIMEOUT", "45"))
 _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/chat",            # streaming
+    "/api/council",         # multi-model debate streaming
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
     "/api/model/download",  # tmux setup may run pip installs
@@ -784,7 +785,7 @@ from src.task_scheduler import TaskScheduler
 task_scheduler = TaskScheduler(session_manager)
 from src.event_bus import set_task_scheduler
 set_task_scheduler(task_scheduler)
-from routes.task.task_routes import setup_task_routes
+from routes.task_routes import setup_task_routes
 app.include_router(setup_task_routes(task_scheduler))
 
 from routes.assistant_routes import setup_assistant_routes
@@ -886,6 +887,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# Council of Models
+from routes.council_routes import setup_council_routes
+app.include_router(setup_council_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 @app.get("/")
@@ -899,6 +904,10 @@ async def serve_index(request: Request):
     # "not found". This keeps the app-shell route consistent with the other
     # bundled-template routes instead of mislabelling the fault as a 404.
     return serve_html_with_nonce(request, abs_join(BASE_DIR, "index.html"))
+
+@app.get("/council")
+async def serve_council(request: Request):
+    return await serve_index(request)
 
 @app.get("/notes")
 async def serve_notes(request: Request):

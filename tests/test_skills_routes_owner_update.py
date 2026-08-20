@@ -205,3 +205,84 @@ async def test_manual_skill_test_approval_resumes_only_its_sealed_action(
         assert tool_approval_store.peek(pending.approval_id) is None
     finally:
         skills_routes._skill_test_jobs.pop(key, None)
+
+
+@pytest.mark.asyncio
+async def test_manual_skill_test_approval_with_api_token_owner(
+    tmp_path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "skills"
+    _write_skill_md(skills_root, "general", "api-token-skill", "alice")
+    sm = SkillsManager(str(tmp_path))
+    router = setup_skills_routes(sm)
+    approve_route = _route_handler(
+        router,
+        "/api/skills/{skill_id}/test-approval",
+        "POST",
+    )
+
+    pending = tool_approval_store.create(
+        owner="alice",
+        session_id=None,
+        origin_run_id="skill-run",
+        tool_name="bash",
+        content="printf approved",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf approved"),
+    )
+    key = ("alice", "api-token-skill")
+    skills_routes._skill_test_jobs[key] = {
+        "status": "awaiting_approval",
+        "task": "test task",
+        "log": [],
+        "approval": pending.public_payload(),
+        "_transcript": ["proposal\n"],
+        "_run": {
+            "md": "skill markdown",
+            "url": "http://example.test",
+            "model": "model",
+            "headers": None,
+            "owner": "alice",
+        },
+    }
+
+    async def fake_resume(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(skills_routes, "_run_skill_test_job", fake_resume)
+
+    payload = json.dumps({
+        "approval_id": pending.approval_id,
+        "decision": "approve",
+    }).encode("utf-8")
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        sent = True
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    class DummyApp:
+        state = State()
+
+    api_token_req = Request(scope={
+        "type": "http",
+        "method": "POST",
+        "headers": [(b"content-type", b"application/json")],
+        "app": DummyApp(),
+        "state": {"api_token": True, "api_token_owner": "alice", "current_user": "api"},
+    }, receive=receive)
+
+    try:
+        result = await approve_route(
+            api_token_req,
+            "api-token-skill",
+        )
+        assert result == {"ok": True, "status": "running", "decision": "approve"}
+    finally:
+        skills_routes._skill_test_jobs.pop(key, None)
+

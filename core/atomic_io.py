@@ -30,20 +30,11 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.tmp.{uuid.uuid4().hex}"
-
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=indent)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    finally:
-        # Directly unlink to avoid a check-then-act race condition.
-        # Swallows FileNotFoundError (on success path) and other cleanup OSErrors.
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=indent)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 def atomic_write_text(path: str, text: str) -> None:
@@ -51,17 +42,8 @@ def atomic_write_text(path: str, text: str) -> None:
         raise TypeError("atomic_write_text expects a string")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.tmp.{uuid.uuid4().hex}"
-
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    finally:
-        # Directly unlink to avoid a check-then-act race condition.
-        # Swallows FileNotFoundError (on success path) and other cleanup OSErrors.
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)

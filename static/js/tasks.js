@@ -10,7 +10,6 @@ import { topPortalZ } from './toolWindowZOrder.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
-import { getSettings, invalidateSettings } from './appConfig.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -215,31 +214,31 @@ async function _fetchActions() {
   return _builtinActions;
 }
 
+let _urgentEmailSettings = null;
 async function _fetchUrgentEmailSettings() {
+  if (_urgentEmailSettings) return _urgentEmailSettings;
   try {
-    return await getSettings();
+    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    _urgentEmailSettings = await res.json();
   } catch (e) {
-    return { urgent_email_prompt: '' };
+    _urgentEmailSettings = { urgent_email_prompt: '' };
   }
+  return _urgentEmailSettings;
 }
 
 async function _saveUrgentEmailSettings(prompt) {
-  try {
-    await fetch('/api/auth/settings', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        urgent_email_prompt: prompt || '',
-      }),
-    });
-  } finally {
-    // The shared snapshot still carries the old prompt — drop it so the next
-    // read (here or in any other module) sees what was just written. In a
-    // `finally` because a request that throws on the way back may still have
-    // been applied.
-    invalidateSettings();
-  }
+  _urgentEmailSettings = {
+    ...(_urgentEmailSettings || {}),
+    urgent_email_prompt: prompt || '',
+  };
+  await fetch('/api/auth/settings', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      urgent_email_prompt: prompt || '',
+    }),
+  });
 }
 
 const _EMAIL_ACCOUNT_ACTIONS = new Set([

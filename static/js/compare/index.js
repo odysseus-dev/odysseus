@@ -21,7 +21,7 @@ import { EVAL_PROMPTS, WAVE_FRAMES,
 import { fetchModels, _persistSelections, _modelDisplayNames, getExcludedModels, setExcludedModels } from './models.js';
 import { showModelSelector, disableToolToggles, restoreToolToggles, _syncToolbarIndicator } from './selector.js?v=20260723compareicon2';
 import { _checkUnprobed, _clearProbeWaves } from './probe.js';
-import { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions } from './stream.js?v=20260819approvalcontrol1';
+import { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions } from './stream.js';
 import {
   stopAll, stopPane, rerollPane, shufflePanePositions, resetCompare,
   _addPane, _removePane, toggleExpandPane, togglePanePreview, copyPaneResponse,
@@ -1006,16 +1006,11 @@ async function _executeCompare(message) {
     console.error('Compare error:', err);
     if (uiModule) uiModule.showError('Compare failed: ' + err.message);
   } finally {
-    // A pane may have started its own ask_user/approval continuation while the
-    // original all-pane Promise was settling. Keep Compare busy until every
-    // pane-owned controller is gone instead of exposing a second broadcast send.
-    const compareStillStreaming = state._abortControllers.some(Boolean);
-    state._streaming = compareStillStreaming;
-    _setSendBtn(compareStillStreaming ? 'stop' : 'send');
-    document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach((button) => {
-      button.disabled = compareStillStreaming;
-      button.style.opacity = compareStillStreaming ? '0.25' : '0.7';
-      button.style.pointerEvents = compareStillStreaming ? 'none' : '';
+    state._streaming = false;
+    _setSendBtn('send');
+    // Re-enable header buttons
+    document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach(b => {
+      b.disabled = false; b.style.opacity = '0.7'; b.style.pointerEvents = '';
     });
   }
 }
@@ -1519,7 +1514,7 @@ async function showShufflePoolEditor() {
 // ────────────────────────────────────────────────────────────────────────────
 
 registerCompareActions({ stopAll, resetCompare });
-registerStreamActions({ rerollPane, autoPreviewHtml: _autoPreviewHtml, setSendBtn: _setSendBtn });
+registerStreamActions({ rerollPane, autoPreviewHtml: _autoPreviewHtml });
 registerPaneActions({ setSendBtn: _setSendBtn, deactivate, streamToPane, renderSearchResults: _renderSearchResults, fetchModels });
 
 // ────────────────────────────────────────────────────────────────────────────

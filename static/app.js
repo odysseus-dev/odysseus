@@ -10,8 +10,8 @@ import modelsModule from './js/models.js?v=20260715startupcalm2';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260819approvalcontrol1';
-import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
+import chatModule from './js/chat.js?v=20260815toolapproval4';
+import compareModule from './js/compare/index.js?v=20260723compareicon2';
 import documentModule from './js/document.js?v=20260815approvalsave1';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
@@ -22,7 +22,7 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260819approvalcontrol1';
+import chatRenderer from './js/chatRenderer.js?v=20260815toolapproval4';
 import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import voiceRecorderModule from './js/voiceRecorder.js';
@@ -46,11 +46,11 @@ import themeModule from './js/theme.js';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
+import * as councilModule from './js/council.js';
 import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
-import { getSettings } from './js/appConfig.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
@@ -60,6 +60,7 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+window.councilModule = councilModule;
 
 function _isMobileChatInput() {
   return window.innerWidth <= 768;
@@ -171,6 +172,7 @@ function initRailHoverLabels() {
     'rail-documents': 'Docs',
     'rail-calendar': 'Calendar',
     'rail-compare': 'Compare',
+    'rail-council': 'Council',
     'rail-cookbook': 'Cookbook',
     'rail-research': 'Research',
     'rail-email': 'Email',
@@ -1005,6 +1007,19 @@ function initializeEventListeners() {
     });
   }
 
+  // ── Council modal toggle ──
+  const toolCouncilBtn = el('tool-council-btn');
+  if (toolCouncilBtn) {
+    toolCouncilBtn.addEventListener('click', async () => {
+      if (!councilModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('council-modal')) {
+        if (councilModule.isCouncilOpen()) councilModule.closeCouncil();
+        else councilModule.openCouncil();
+      }
+    });
+  }
+
   const toolResearchBtn = el('tool-research-btn');
   if (toolResearchBtn) {
     toolResearchBtn.addEventListener('click', () => {
@@ -1220,6 +1235,7 @@ function initializeEventListeners() {
       setTimeout(_goFullscreen, 200);
     },
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
+    '/council':  () => document.getElementById('tool-council-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
@@ -1519,11 +1535,13 @@ function initializeEventListeners() {
     })
     .catch(() => {});
 
-  // Hide Gallery when image generation is disabled in settings.
-  // getSettings() consumes the login prefetch itself, so every other module
-  // that asks for settings this load gets the same snapshot without a request.
-  window._initSettingsReady = getSettings()
-    .then(settings => {
+  // Hide Gallery when image generation is disabled in settings
+  const _prefetchedSettings = sessionStorage.getItem('ody-prefetch-settings');
+  sessionStorage.removeItem('ody-prefetch-settings');
+  window._initSettingsReady = (_prefetchedSettings
+    ? Promise.resolve(JSON.parse(_prefetchedSettings))
+    : fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' }).then(r => r.json())
+  ).then(settings => {
       // NOTE: image_gen_enabled only governs *generating* images in chat — the
       // tool is blocked server-side (chat_routes / agent_loop). The Gallery
       // holds uploads and past images too, so it stays visible regardless;
@@ -1849,6 +1867,43 @@ function initializeEventListeners() {
     chatBtn.addEventListener('click', () => setMode('chat'));
 	    setMode(currentMode);
 	  })();
+
+  function syncThinkToggle(active) {
+    const btn = el('think-toggle-btn');
+    const chk = el('think-toggle');
+    if (chk) chk.checked = !!active;
+    if (btn) {
+      btn.classList.toggle('active', !!active);
+      btn.setAttribute('aria-pressed', String(!!active));
+      btn.title = active ? 'Thinking mode: ON' : 'Thinking mode: OFF (No-think)';
+    }
+  }
+
+  function setThinkMode(active, options = {}) {
+    const on = !!active;
+    const st = loadToggleState();
+    st.think = on;
+    saveToggleState(st);
+    syncThinkToggle(on);
+    if (!options.silent && uiModule?.showToast) {
+      uiModule.showToast(on ? 'Thinking mode on' : 'Thinking mode off (no-think)', 1600);
+    }
+  }
+
+  (function initThinkToggle() {
+    const btn = el('think-toggle-btn');
+    const state = loadToggleState();
+    const isThinkOn = state.think !== undefined ? !!state.think : true;
+    syncThinkToggle(isThinkOn);
+    window.__odysseusSetThinkMode = (active) => setThinkMode(active, { silent: true });
+    if (btn) {
+      btn.addEventListener('click', () => {
+        const st = loadToggleState();
+        const cur = st.think !== undefined ? !!st.think : true;
+        setThinkMode(!cur);
+      });
+    }
+  })();
 
   (function initPlanToggle() {
     const btn = el('plan-toggle-btn');
@@ -2265,7 +2320,7 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
+    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn', 'think-toggle-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
@@ -3704,7 +3759,7 @@ function startOdysseusApp() {
   modelsModule.init(API_BASE);
   ragModule.init(API_BASE);
   presetsModule.init(API_BASE);
-  searchModule.init();
+  searchModule.init(API_BASE);
   chatModule.init(API_BASE);
   chatModule.initListeners();
   groupModule.init(API_BASE);
@@ -3738,6 +3793,7 @@ function startOdysseusApp() {
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
     'rail-compare':   'tool-compare-btn',
+    'rail-council':   'tool-council-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-archive':   'tool-library-btn',

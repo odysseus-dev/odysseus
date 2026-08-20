@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user, get_current_user
 from src.prompt_security import untrusted_context_message
 from core.middleware import require_admin
 
@@ -100,11 +100,15 @@ def _skill_test_task(skill: dict) -> str:
         skill = {}
     ctx = (skill.get("when_to_use") or skill.get("description") or skill.get("name") or "").strip()
     return (
-        "Test this skill end-to-end. FIRST, set up a small realistic scenario it "
-        "applies to — create any sample input it needs (e.g. a short document, a "
-        "note, sample data). Do NOT ask the user for input; invent a plausible "
-        "example yourself. THEN apply the skill fully to that example and show the "
-        "result. Context for when this skill is used: " + (ctx or "(general)")
+        "Test this skill end-to-end using a purely hypothetical scenario — no real "
+        "files, folders, or user input allowed. FIRST, invent a plausible imaginary "
+        "scenario it applies to, and describe any sample input it needs (e.g. a short "
+        "document, a note, sample data) directly in your response as narrative text — "
+        "do NOT create, save, open, or reference any actual file or folder on disk. "
+        "Do NOT ask the user for input, paths, or clarification of any kind — invent "
+        "every detail yourself. THEN walk through applying the skill fully to that "
+        "imagined example, entirely in text, and show the result inline. Context for "
+        "when this skill is used: " + (ctx or "(general)")
     )
 
 
@@ -1184,7 +1188,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     router = APIRouter(prefix="/api/skills", tags=["skills"])
 
     def _owner(request: Request) -> Optional[str]:
-        return get_current_user(request)
+        return effective_user(request)
 
     def _verify_owner(skill: dict, user: Optional[str]):
         if user is None:
@@ -1603,9 +1607,6 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             decision=decision,
             owner=user,
             session_id=None,
-            # The button here says "Allow once" and there is no chat to carry a
-            # scope into, so the gate must re-arm behind the sealed action.
-            allow_continuation=False,
         )
 
         if decision == "approve" and exact_approval is None:

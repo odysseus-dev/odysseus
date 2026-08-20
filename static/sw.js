@@ -7,21 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v380-shared-config-image-editor-lazy-katex-mermaid';
-
-// KaTeX resolves these from its own stylesheet, so caching the CSS without them
-// gives offline math fallback glyphs instead of proper typesetting.
-const KATEX_FONTS = [
-  'AMS-Regular', 'Caligraphic-Bold', 'Caligraphic-Regular',
-  'Fraktur-Bold', 'Fraktur-Regular',
-  'Main-Bold', 'Main-BoldItalic', 'Main-Italic', 'Main-Regular',
-  'Math-BoldItalic', 'Math-Italic',
-  'SansSerif-Bold', 'SansSerif-Italic', 'SansSerif-Regular',
-  'Script-Regular',
-  'Size1-Regular', 'Size2-Regular', 'Size3-Regular', 'Size4-Regular',
-  'Typewriter-Regular',
-].map(name => `/static/lib/katex/fonts/KaTeX_${name}.woff2`);
-
+const CACHE_NAME = 'odysseus-v377-lazy-image-editor';
 
 // Two lists, two jobs — they are no longer the same set and must not be
 // "resynced" back into one:
@@ -42,7 +28,6 @@ const PRECACHE = [
   '/static/style.css',
   '/static/app.js',
   '/static/js/storage.js',
-  '/static/js/appConfig.js',
   '/static/js/ui.js',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
@@ -87,15 +72,6 @@ const PRECACHE = [
   '/static/js/sidebar-layout.js',
   '/static/js/section-management.js',
   '/static/lib/highlight.min.js',
-  // Math turns up in ordinary answers and KaTeX is small, so precaching it and
-  // its fonts keeps formulas typeset offline. Mermaid is deliberately NOT
-  // precached: at 3.5 MB it would re-download on every CACHE_NAME bump, a poor
-  // trade for a library most sessions never touch. The cache-first rule below
-  // picks it up the first time a diagram renders, which is also when it starts
-  // mattering offline.
-  '/static/lib/katex/katex.min.js',
-  '/static/lib/katex/katex.min.css',
-  ...KATEX_FONTS,
 ];
 
 // Lazily-imported panel modules (js/panels.js). Not in index.html by design;

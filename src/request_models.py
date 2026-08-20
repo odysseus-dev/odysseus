@@ -13,6 +13,8 @@ class ChatRequest(BaseModel):
     time_filter: Optional[str] = Field(default=None, description="Time filter for search")
     preset_id: Optional[str] = Field(default=None, description="Preset identifier")
     selected_endpoint_id: Optional[str] = Field(default=None, description="Selected model endpoint ID")
+    thinking: Optional[bool] = Field(default=None, description="Enable or suppress model thinking/reasoning")
+    no_think: Optional[bool] = Field(default=False, description="Suppress model thinking/reasoning")
     
     @field_validator('message')
     @classmethod

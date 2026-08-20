@@ -22,7 +22,6 @@ import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
-import { getSettings } from './appConfig.js';
 
 // ── Module state ──────────────────────────────────────────────────────
 
@@ -1379,6 +1378,7 @@ async function _cmdOpen(args, ctx) {
       memories: ['tool-memory-btn', 'rail-memory'],
       research: ['tool-research-btn', 'rail-research'],
       compare: ['tool-compare-btn', 'rail-compare'],
+      council: ['tool-council-btn', 'rail-council'],
       theme: ['tool-theme-btn', 'rail-theme'],
     };
     const ids = targets[target];
@@ -5221,7 +5221,8 @@ async function _cmdShortcuts(args, ctx) {
   };
 
   try {
-    const settings = await getSettings();
+    const res = await fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' });
+    const settings = await res.json();
     if (settings.keybinds) {
       keybinds = { ...keybinds, ...settings.keybinds };
     }
@@ -6050,6 +6051,13 @@ const COMMANDS = {
     help: 'Open Compare',
     handler: (args, ctx) => _cmdToolPanel('compare', args, ctx),
     usage: '/compare'
+  },
+  council: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Council of Models',
+    handler: (args, ctx) => _cmdToolPanel('council', args, ctx),
+    usage: '/council'
   },
   mcp: {
     alias: [],

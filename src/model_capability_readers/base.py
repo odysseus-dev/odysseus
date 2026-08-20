@@ -290,22 +290,17 @@ def detect_vendor(base_url: Any = "", endpoint_kind: Any = "") -> str:
         return kind_map[kind]
 
     parsed = urlparse(compact_str(base_url))
-    host = (parsed.hostname or "").lower().rstrip(".")
+    host = (parsed.hostname or "").lower()
     port = parsed.port
-
-    def host_matches(domain: str) -> bool:
-        domain = domain.lower().rstrip(".")
-        return host == domain or host.endswith(f".{domain}")
-
-    if host_matches("openrouter.ai"):
+    if host.endswith("openrouter.ai"):
         return VENDOR_OPENROUTER
-    if host_matches("openai.com"):
+    if host.endswith("openai.com"):
         return VENDOR_OPENAI
-    if host_matches("anthropic.com"):
+    if host.endswith("anthropic.com"):
         return VENDOR_ANTHROPIC
-    if host_matches("googleapis.com"):
+    if host.endswith("googleapis.com"):
         return VENDOR_GOOGLE
-    if host_matches("ollama.com") or port == 11434:
+    if host.endswith("ollama.com") or port == 11434:
         return VENDOR_OLLAMA
     if port == 1234:
         return VENDOR_LMSTUDIO

@@ -15,7 +15,6 @@ let _getPlatform;
 let _serverByVal;
 let _isWindows;
 let _buildEnvPrefix;
-let _psQuote;
 let _buildServeCmd;
 let _detectBackend;
 let _detectToolParser;
@@ -539,7 +538,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   if (srv.downloadDir) payload.local_dir = srv.downloadDir;
   if (isWin) {
     if (env === 'venv' && envPath) {
-      payload.env_prefix = '& ' + _psQuote(envPath.endsWith('\\Scripts\\Activate.ps1') ? envPath : envPath + '\\Scripts\\Activate.ps1');
+      payload.env_prefix = '& ' + (envPath.endsWith('\\Scripts\\Activate.ps1') ? envPath : envPath + '\\Scripts\\Activate.ps1');
     } else if (env === 'conda' && envPath) {
       payload.env_prefix = 'conda activate ' + envPath;
     }
@@ -653,7 +652,6 @@ export function initDownload(shared) {
   _serverByVal = shared._serverByVal;
   _isWindows = shared._isWindows;
   _buildEnvPrefix = shared._buildEnvPrefix;
-  _psQuote = shared._psQuote;
   _buildServeCmd = shared._buildServeCmd;
   _detectBackend = shared._detectBackend;
   _detectToolParser = shared._detectToolParser;

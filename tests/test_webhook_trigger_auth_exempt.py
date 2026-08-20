@@ -87,7 +87,6 @@ def test_webhook_trigger_handler_still_validates_token():
     routes_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "routes",
-        "task",
         "task_routes.py",
     )
     with open(routes_path, encoding="utf-8") as fh:
