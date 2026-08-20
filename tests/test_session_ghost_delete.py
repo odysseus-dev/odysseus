@@ -34,7 +34,7 @@ from tests.helpers.import_state import clear_module, preserve_import_state
 # — the local SM/SR bindings keep their captured stub modules for this file's own
 # assertions.
 _TEMP_STUBS = ("core.database", "core.models")
-with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes"):
+with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes", "routes.session.session_routes"):
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)
     if isinstance(sys.modules.get("core.session_manager"), MagicMock):
@@ -42,6 +42,7 @@ with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session
     # Drop the cached entry AND the parent `routes` attribute so the stubbed
     # import below yields a fresh module with no stale binding behind it.
     clear_module("routes.session_routes")
+    clear_module("routes.session.session_routes")
     SM = importlib.import_module("core.session_manager")
     import routes.session_routes as SR  # noqa: E402
 

@@ -1017,7 +1017,7 @@ def test_email_thread_rendering_sanitizes_body_html():
 
 
 def test_session_html_export_escapes_name():
-    src = Path(__file__).resolve().parents[1] / "routes" / "session_routes.py"
+    src = Path(__file__).resolve().parents[1] / "routes" / "session" / "session_routes.py"
     text = src.read_text()
     assert "safe_title = html.escape(session.name" in text
     assert "<title>{session.name}" not in text
@@ -1142,6 +1142,7 @@ def _import_session_routes_for_filename():
     # leak a stub-bound DbSession into the cached module and break later tests
     # that reuse routes.session_routes (e.g. the archived-sessions filter).
     _drop_route_module_cache("routes.session_routes")
+    _drop_route_module_cache("routes.session.session_routes")
     return importlib.import_module("routes.session_routes")
 
 

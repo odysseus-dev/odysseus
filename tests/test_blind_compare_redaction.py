@@ -31,12 +31,13 @@ _REPO = Path(__file__).resolve().parent.parent
 # preserve_import_state restores both sys.modules and parent-package attributes
 # after the block, preventing stub leakage into siblings.
 _TEMP_STUBS = ("core.database", "core.models")
-with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes"):
+with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes", "routes.session.session_routes"):
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)
     if isinstance(sys.modules.get("core.session_manager"), MagicMock):
         del sys.modules["core.session_manager"]
     clear_module("routes.session_routes")
+    clear_module("routes.session.session_routes")
     importlib.import_module("core.session_manager")
     import routes.session_routes as SR  # noqa: E402
 
