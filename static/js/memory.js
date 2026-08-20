@@ -464,6 +464,7 @@ export async function loadMemories() {
     buildCategoryChips();
     renderMemoryList();
     updateMemoryCount();
+    _updateWelcomeCard();
   } catch (error) {
     console.error('Failed to load memories:', error);
     memories = [];
@@ -471,9 +472,19 @@ export async function loadMemories() {
     buildCategoryChips();
     renderMemoryList();
     updateMemoryCount();
+    _updateWelcomeCard();
   }
   // Always wire toggles, even if memory API failed
   syncToggles();
+}
+
+function _updateWelcomeCard() {
+  const welcome = document.getElementById('memory-welcome');
+  const list = document.getElementById('memory-list');
+  if (!welcome || !list) return;
+  const hasMemories = memories && memories.length > 0;
+  welcome.classList.toggle('hidden', hasMemories);
+  list.style.display = hasMemories ? '' : 'none';
 }
 
 // ---- Bulk select mode ----
@@ -1591,6 +1602,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('memory-refresh', () => {
     loadMemories();
+  });
+
+  // Welcome card buttons.
+  const welcomeAdd = document.getElementById('memory-welcome-add');
+  if (welcomeAdd) welcomeAdd.addEventListener('click', () => {
+    // Switch to the Add tab.
+    const addTab = document.querySelector('.memory-tab[data-memory-tab="add"]');
+    if (addTab) addTab.click();
+  });
+  const welcomeAuto = document.getElementById('memory-welcome-auto');
+  if (welcomeAuto) welcomeAuto.addEventListener('click', () => {
+    // Switch to the Settings tab.
+    const settingsTab = document.querySelector('.memory-tab[data-memory-tab="settings"]');
+    if (settingsTab) settingsTab.click();
   });
 });
 
