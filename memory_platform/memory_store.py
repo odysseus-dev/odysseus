@@ -36,7 +36,10 @@ import sys
 from datetime import datetime, timezone
 
 # Odysseus-native path resolution — no hardcoded user paths.
-import memory_env
+try:
+    from . import memory_env
+except ImportError:
+    import memory_env
 
 STORE_DIR = memory_env.store_dir()
 DB_PATH = memory_env.store_db()
@@ -66,30 +69,49 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# Module-level flag: set by connect(), read by all vec0 operations.
-_VEC_AVAILABLE = False
+def _cosine_sim(a, b):
+    """Pure Python cosine similarity — no numpy needed."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
 
 
-def has_vec():
-    """Check if sqlite-vec was available when connect() was called."""
-    return _VEC_AVAILABLE
+def _dense_search(db, qvec, budget):
+    """Brute-force dense search over embedding BLOBs.
+
+    Loads all embeddings, computes cosine similarity, returns top-k.
+    Fast for <100k entries (pure Python, no C extensions).
+    """
+    if not qvec:
+        return []
+    rows = db.execute(
+        "SELECT id, embedding FROM entries WHERE status='active' "
+        "AND embedding IS NOT NULL").fetchall()
+    scored = []
+    for r in rows:
+        try:
+            vec = json.loads(r["embedding"])
+            sim = _cosine_sim(qvec, vec)
+            scored.append((r["id"], sim))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    scored.sort(key=lambda x: -x[1])
+    return scored[:budget]
 
 
 def connect():
-    """Open the hybrid store. sqlite-vec is optional — degrades to BM25-only."""
-    global _VEC_AVAILABLE
+    """Open the hybrid store. Pure SQLite — no C extensions needed.
+
+    Dense vectors are stored as JSON blobs in a regular BLOB column.
+    Cosine similarity is computed in Python (brute-force, fast for <100k entries).
+    FTS5 handles BM25 lexical search (built into SQLite).
+    """
     os.makedirs(STORE_DIR, exist_ok=True)
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
-    # sqlite-vec is optional: if unavailable, the store degrades to BM25-only.
-    _VEC_AVAILABLE = False
-    try:
-        db.enable_load_extension(True)
-        import sqlite_vec
-        sqlite_vec.load(db)
-        _VEC_AVAILABLE = True
-    except (ImportError, Exception):
-        _VEC_AVAILABLE = False
     db.executescript("""
         CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
             text, content='', tokenize='porter unicode61'
@@ -106,7 +128,8 @@ def connect():
             method TEXT DEFAULT 'curator',
             status TEXT DEFAULT 'active',
             valid_from TEXT,
-            valid_until TEXT
+            valid_until TEXT,
+            embedding BLOB
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
             text, content='', tokenize='porter unicode61'
@@ -123,7 +146,8 @@ def connect():
             text TEXT NOT NULL,
             content_hash TEXT NOT NULL,
             importance REAL DEFAULT 0.5,
-            ingested_at TEXT NOT NULL
+            ingested_at TEXT NOT NULL,
+            embedding BLOB
         );
         CREATE TABLE IF NOT EXISTS documents (
             path TEXT PRIMARY KEY,
@@ -168,16 +192,6 @@ def connect():
             value TEXT NOT NULL
         );
     """)
-    # Vector tables are conditional on sqlite-vec availability.
-    if _has_vec:
-        db.executescript("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec USING vec0(
-                embedding float[%d]
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
-                embedding float[%d]
-            );
-        """ % (EMBED_DIM, EMBED_DIM))
     # Schema migration: add new columns to EXISTING tables (so the upgrades are
     # retroactive — the live store and any pre-existing DB get the new fields
     # without a destructive rebuild).
@@ -377,9 +391,9 @@ def add_entry(db, text, importance=0.5, topic="", entities=None,
          _entities_to_json(entities), source or "", method or "curator",
          "active", ts, valid_until, conf, temp, int(always_on), int(priority)))
     eid = cur.lastrowid
-    if vec and has_vec():
-        db.execute("INSERT INTO entries_vec (rowid, embedding) VALUES (?,?)",
-                   (eid, json.dumps(vec)))
+    if vec:
+        db.execute("UPDATE entries SET embedding=? WHERE id=?",
+                   (json.dumps(vec), eid))
     db.execute("INSERT INTO entries_fts (rowid, text) VALUES (?,?)",
                (eid, text))
     db.execute("UPDATE entries SET summary=? WHERE id=?",
@@ -420,29 +434,16 @@ def recall(db, query, budget=RECALL_BUDGET, min_score=RECALL_MIN_SCORE):
         _extra = []
     # ------------------------------------------------------------------------
     qvec = _embed([f"search_query: {query}"]).get(f"search_query: {query}")
-    # (1) Dense: exact KNN over vec0 (fine at a few thousand entries).
-    # Skipped entirely when sqlite-vec is unavailable (BM25-only mode).
+    # (1) Dense: brute-force cosine similarity over embedding BLOBs.
+    # Pure Python, no C extensions. Fast for <100k entries.
     dense = []
-    if qvec and has_vec():
-        rows = db.execute(
-            "SELECT v.rowid, distance FROM entries_vec v "
-            "WHERE v.embedding MATCH ? AND k = ?",
-            (json.dumps(qvec), RECALL_BUDGET * 2)).fetchall()
-        # META-JUDGEMENT (applies in BOTH modes): vector proximity is not a
-        # relation by itself. A dense hit must also share a CONTENT WORD with
-        # the query — otherwise "black coffee" would pull in "black holes"
-        # (semantically close, contextually unrelated). Pure vector similarity
-        # is used only when the query has no shared content word AND the match
-        # is very strong (a genuine paraphrase). This is the dense-side twin of
-        # the conjunctive lexical gate — one rule, both modes.
+    if qvec:
+        raw_dense = _dense_search(db, qvec, RECALL_BUDGET * 2)
+        # META-JUDGEMENT: vector proximity is not a relation by itself.
+        # A dense hit must also share a CONTENT WORD with the query —
+        # otherwise "black coffee" would pull in "black holes".
         q_content = {t for t in query.lower().split()
                      if len(t) > 3 and t not in _STOPWORDS}
-        # Rare-word distinctiveness: a shared word that appears in MANY store
-        # entries ("black", "physics") is NOT a relation — it's a common token.
-        # A relation needs a shared DISTINCTIVE term (low document frequency),
-        # the same rare-word logic the coherence gate uses to separate real
-        # grounding from noise. Pure vector similarity is only trusted for very
-        # strong matches (>= 0.82) with no distinctive shared word.
         total_entries = max(db.execute(
             "SELECT COUNT(*) AS n FROM entries WHERE status='active'").fetchone()["n"], 1)
         def _df(word):
@@ -452,19 +453,16 @@ def recall(db, query, budget=RECALL_BUDGET, min_score=RECALL_MIN_SCORE):
                     "AND text LIKE ?", (f"%{word}%",)).fetchone()["n"]
             except Exception:
                 return 0
-        dense = []
-        for r in rows:
-            cos = 1.0 - r["distance"] / 2.0
+        for eid, cos in raw_dense:
             entry_text = db.execute(
-                "SELECT text FROM entries WHERE id=?", (r["rowid"],)).fetchone()
+                "SELECT text FROM entries WHERE id=?", (eid,)).fetchone()
             etxt = (entry_text["text"] or "").lower() if entry_text else ""
-            # a distinctive shared word = rare in the store (< 5% of entries)
             distinctive = [w for w in q_content
                            if w in etxt and _df(w) / total_entries < 0.05]
             if distinctive:
-                dense.append((r["rowid"], cos))
+                dense.append((eid, cos))
             elif not q_content or cos >= 0.80:
-                dense.append((r["rowid"], cos))
+                dense.append((eid, cos))
     # (2) BM25 via FTS5.
     # CONJUNCTIVE matching (Salton, Fox & Wu, "Extended Boolean IR", CACM 1983;
     # SQLite FTS5 implicit AND): `MATCH "black coffee"` requires BOTH terms, so
@@ -688,10 +686,9 @@ def update_entry(db, eid, text=None, importance=None, valid_until=None):
         params.append(text)
         # re-embed + refresh FTS
         vec = _embed([text]).get(text)
-        if vec and has_vec():
-            db.execute("DELETE FROM entries_vec WHERE rowid=?", (eid,))
-            db.execute("INSERT INTO entries_vec (rowid, embedding) VALUES (?,?)",
-                       (eid, json.dumps(vec)))
+        if vec:
+            db.execute("UPDATE entries SET embedding=? WHERE id=?",
+                       (json.dumps(vec), eid))
         _fts_delete(db, eid)
         db.execute("INSERT INTO entries_fts (rowid, text) VALUES (?,?)",
                    (eid, text))
@@ -730,8 +727,6 @@ def _fts_delete(db, eid):
 
 def delete_entry(db, eid):
     db.execute("DELETE FROM entries WHERE id=?", (eid,))
-    if has_vec():
-        db.execute("DELETE FROM entries_vec WHERE rowid=?", (eid,))
     _fts_delete(db, eid)
     db.commit()
     return True
@@ -824,18 +819,15 @@ def add_chunk(db, text, wing="", room="", source_path="", doc_id="",
         "importance=excluded.importance, ingested_at=excluded.ingested_at",
         (chunk_id, doc_id or source_path or "chunk", wing, room, source_path,
          start_line, end_line, page, text, ch, float(importance), ts))
-    if has_vec():
-        db.execute("DELETE FROM chunks_vec WHERE rowid IN "
-                   "(SELECT rowid FROM chunks WHERE chunk_id=?)", (chunk_id,))
     # sqlite-vec rowid = sqlite rowid of the chunks table row.
     rid = db.execute("SELECT rowid FROM chunks WHERE chunk_id=?",
                      (chunk_id,)).fetchone()["rowid"]
     if old is not None:
         db.execute("INSERT INTO chunks_fts(chunks_fts, rowid, text) "
                    "VALUES ('delete', ?, ?)", (old["rowid"], old["text"]))
-    if vec and has_vec():
-        db.execute("INSERT INTO chunks_vec (rowid, embedding) VALUES (?,?)",
-                   (rid, json.dumps(vec)))
+    if vec:
+        db.execute("UPDATE chunks SET embedding=? WHERE chunk_id=?",
+                   (json.dumps(vec), chunk_id))
     db.execute("INSERT INTO chunks_fts (rowid, text) VALUES (?,?)",
                (rid, text))
     db.commit()
@@ -858,16 +850,20 @@ def chunk_recall(db, query, budget=6, wing=None, min_sim=0.0, doc=None):
     qvec = _embed([f"search_query: {query}"]).get(f"search_query: {query}")
     dense = []
     best_dense = 0.0
-    if qvec and has_vec():
+    if qvec:
         rows = db.execute(
-            "SELECT rowid, distance FROM chunks_vec v "
-            "WHERE v.embedding MATCH ? AND k = ?",
-            (json.dumps(qvec), budget * 3)).fetchall()
-        dense = []
+            "SELECT rowid, embedding FROM chunks "
+            "WHERE embedding IS NOT NULL").fetchall()
         for r in rows:
-            cos = 1.0 - r["distance"] / 2.0
-            dense.append((r["rowid"], cos))
-            best_dense = max(best_dense, cos)
+            try:
+                vec = json.loads(r["embedding"])
+                cos = _cosine_sim(qvec, vec)
+                dense.append((r["rowid"], cos))
+                best_dense = max(best_dense, cos)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        dense.sort(key=lambda x: -x[1])
+        dense = dense[:budget * 3]
     if best_dense < min_sim:
         return []  # below the grounding floor -> abstain
     bm25 = []

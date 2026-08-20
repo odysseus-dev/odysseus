@@ -44,9 +44,3 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
-
-# sqlite-vec — vector similarity search as a SQLite extension.
-# Enables dense vector recall (hybrid BM25 + dense + RRF) in the memory
-# platform. Without it, the store degrades to BM25-only mode gracefully.
-# Zero external dependencies, pure C extension.
-sqlite-vec>=0.1.9

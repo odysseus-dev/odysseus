@@ -46,7 +46,10 @@ import sys
 from datetime import datetime, timezone
 
 # Odysseus-native path resolution — no hardcoded user paths.
-import memory_env
+try:
+    from . import memory_env
+except ImportError:
+    import memory_env
 
 GRAPH_DIR = memory_env.graph_dir()
 DB_PATH = memory_env.graph_db()
