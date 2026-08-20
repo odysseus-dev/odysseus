@@ -2097,3 +2097,78 @@ def test_manual_refresh_timeout_keeps_cached_models_and_warns(monkeypatch):
     assert db.commits == 0
     assert response.headers["X-Model-Refresh-Status"] == "failed"
     assert "kept cached models" in response.headers["X-Model-Refresh-Warning"]
+
+
+# ---- issue #6077: endpoint dedup key must include model_type ----
+
+def test_post_same_url_different_model_type_creates_distinct_row(monkeypatch):
+    """Adding an image endpoint for a URL that already has an LLM endpoint must
+    create a new row, not retype the existing one."""
+    llm_ep = _make_endpoint(
+        base_url="https://localai.example.com/v1",
+        model_type="llm",
+    )
+    db = _PinnedFakeDb([llm_ep])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://localai.example.com/v1",
+        **_create_form_kwargs(model_type="image"),
+    )
+
+    # Must NOT return the existing LLM row.
+    assert result.get("existing") is not True
+    # A new row must have been written.
+    assert len(db.added) == 1
+    assert db.added[0].model_type == "image"
+    # The original LLM row must be unchanged.
+    assert llm_ep.model_type == "llm"
+
+
+def test_post_same_url_same_model_type_still_dedupes(monkeypatch):
+    """Re-adding an LLM endpoint for a URL that already has an LLM endpoint
+    must still return the existing row (normal dedup behaviour)."""
+    llm_ep = _make_endpoint(
+        base_url="https://localai.example.com/v1",
+        model_type="llm",
+    )
+    db = _PinnedFakeDb([llm_ep])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://localai.example.com/v1",
+        **_create_form_kwargs(model_type="llm"),
+    )
+
+    assert result["existing"] is True
+    assert result["id"] == llm_ep.id
+    assert db.added == []
+
+
+def test_post_llm_registration_does_not_retype_existing_image_endpoint(monkeypatch):
+    """An LLM re-registration must not silently flip an image endpoint back to
+    llm (the step-3 flip-flop described in issue #6077)."""
+    image_ep = _make_endpoint(
+        base_url="https://localai.example.com/v1",
+        model_type="image",
+    )
+    db = _PinnedFakeDb([image_ep])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://localai.example.com/v1",
+        **_create_form_kwargs(model_type="llm"),
+    )
+
+    # A new row is created for the LLM type, not a retype of the image row.
+    assert result.get("existing") is not True
+    assert len(db.added) == 1
+    assert db.added[0].model_type == "llm"
+    # The image row must remain intact.
+    assert image_ep.model_type == "image"
