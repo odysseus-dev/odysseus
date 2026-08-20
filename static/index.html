@@ -496,6 +496,21 @@
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.5">Set to 0 to disable skill injection.</span>
           </div>
+          <!-- ── Sleep-time Memory ── -->
+          <div class="admin-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.7"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Sleep-time Memory</h2>
+              <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="sleep-enabled-toggle" checked /><span class="admin-slider"></span></label>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Automatically consolidate memories after sessions. The agent reflects on recent conversations and extracts insights.</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
+              <span class="admin-toggle-sub" style="margin:0">Reflection model</span>
+              <select id="sleep-model-select" style="flex-shrink:0;min-width:180px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px">
+                <option value="">Loading models...</option>
+              </select>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.5">Choose which local model to use for memory consolidation. Smaller models are faster.</span>
+          </div>
         </div>
       </div>
     </div>

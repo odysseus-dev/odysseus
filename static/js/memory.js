@@ -196,6 +196,10 @@ async function syncToggles() {
   await syncPrefSlider('skill-confidence-slider', 'skill_min_confidence', 'skill-confidence-label', 0.85);
   await syncPrefNumber('skill-max-input', 'skill_max_injected', 3);
 
+  // Sleep-time memory settings.
+  await syncPrefToggle('sleep-enabled-toggle', 'sleep_enabled', 'Sleep-time enabled', 'Sleep-time disabled', false);
+  await syncSleepModelSelect();
+
   // Reflect the header toggle into the sidebar dim + modal body opacity.
   const headerToggle = document.getElementById('memory-enabled-header-toggle');
   if (headerToggle) {
@@ -322,6 +326,64 @@ async function syncPrefNumber(elementId, prefKey, defaultVal) {
         showToast(v === 0 ? 'No skills injected' : `Max injected skills: ${v}`);
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
+        showError('Failed to save preference');
+      }
+    });
+  }
+}
+
+async function syncSleepModelSelect() {
+  const select = document.getElementById('sleep-model-select');
+  if (!select) return;
+
+  // Load available models from Ollama.
+  try {
+    const res = await fetch(`${window.location.origin}/api/models`);
+    if (res.ok) {
+      const data = await res.json();
+      const models = (data.models || data || []).map(m => m.id || m.name || m);
+      select.innerHTML = '';
+      if (models.length === 0) {
+        select.innerHTML = '<option value="">No models found</option>';
+      } else {
+        for (const m of models) {
+          const opt = document.createElement('option');
+          opt.value = m;
+          opt.textContent = m;
+          select.appendChild(opt);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load models:', e);
+    select.innerHTML = '<option value="">Failed to load models</option>';
+  }
+
+  // Load saved preference.
+  try {
+    const res = await fetch(`${window.location.origin}/api/prefs/sleep_model`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.value) select.value = data.value;
+    }
+  } catch (e) {
+    console.error('Failed to load sleep_model pref:', e);
+  }
+
+  // Save on change.
+  if (!select.dataset.bound) {
+    select.dataset.bound = '1';
+    select.addEventListener('change', async () => {
+      try {
+        const res = await fetch(`${window.location.origin}/api/prefs/sleep_model`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: select.value })
+        });
+        if (!res.ok) { showError('Failed to save sleep model'); return; }
+        showToast(`Sleep model: ${select.value}`);
+      } catch (e) {
+        console.error('Failed to save sleep_model pref:', e);
         showError('Failed to save preference');
       }
     });
