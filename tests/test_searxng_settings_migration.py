@@ -119,6 +119,7 @@ def test_key_is_inserted_inside_explicit_yaml_document(tmp_path):
     assert settings.read_bytes() == (
         b"\xef\xbb\xbf# header\r\n---\r\nuse_default_settings: true\r\n"
         b"server:\r\n  secret_key: retained\r\n"
+        b"search:\r\n  formats:\r\n    - html\r\n    - json\r\n"
     )
 
 
@@ -130,7 +131,13 @@ def test_indented_root_mapping_keeps_its_existing_indent(tmp_path):
     result = _run(settings)
 
     assert result.returncode == 0, result.stderr
-    assert settings.read_bytes() == b"  use_default_settings: true\n" + original
+    # use_default_settings is prepended; formats is inserted inside search block.
+    assert settings.read_bytes() == (
+        b"  use_default_settings: true\n"
+        b"  server:\n    secret_key: retained\n"
+        b"  search:\n    safe_search: 1\n"
+        b"    formats:\n      - html\n      - json\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -147,11 +154,20 @@ def test_block_mapping_properties_stay_attached_to_the_root(tmp_path, property_l
     result = _run(settings)
 
     assert result.returncode == 0, result.stderr
-    expected = property_line + b"use_default_settings: true\n" + mapping
+    # formats is inserted inside the existing search block, not appended as a
+    # new search key, so safe_search and formats coexist in the same section.
+    expected = (
+        property_line
+        + b"use_default_settings: true\n"
+        + b"server:\n  secret_key: retained\n"
+        + b"search:\n  safe_search: 1\n  formats:\n    - html\n    - json\n"
+    )
     assert settings.read_bytes() == expected
     migrated_data = yaml.safe_load(settings.read_bytes())
     assert migrated_data.pop("use_default_settings") is True
-    assert migrated_data == original_data
+    assert migrated_data["search"]["safe_search"] == 1
+    assert "json" in migrated_data["search"]["formats"]
+    assert "html" in migrated_data["search"]["formats"]
 
 
 def test_flow_mapping_gains_default_inheritance_without_reformatting(tmp_path):
@@ -280,6 +296,7 @@ def test_temporary_file_is_chmodded_before_it_is_chowned(tmp_path, monkeypatch):
     assert stat.S_IMODE(settings.stat().st_mode) == 0o640
     assert settings.read_bytes() == (
         b"use_default_settings: true\nserver:\n  secret_key: retained\n"
+        b"search:\n  formats:\n    - html\n    - json\n"
     )
 
 
@@ -304,6 +321,61 @@ def test_replace_failure_preserves_original_and_removes_temporary_file(
     assert settings.read_bytes() == original
     assert after.st_ino == before.st_ino
     assert list(tmp_path.iterdir()) == [settings]
+
+
+def test_retained_settings_without_formats_gain_json_format(tmp_path):
+    # Regression test for #6066: a retained file that has no search.formats
+    # receives use_default_settings: true but the pinned SearXNG image defaults
+    # to HTML-only, so format=json requests returned HTTP 403. The migration must
+    # also append search.formats with html and json when the key is absent.
+    settings = tmp_path / "settings.yml"
+    retained = (
+        b"server:\n"
+        b'  secret_key: "retained-secret"\n'
+        b"search:\n"
+        b"  safe_search: 1\n"
+    )
+    settings.write_bytes(retained)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated_bytes = settings.read_bytes()
+    # formats is inserted inside the existing search block so safe_search and
+    # formats coexist and are visible to standard yaml.safe_load.
+    migrated = yaml.safe_load(migrated_bytes)
+    assert migrated["use_default_settings"] is True
+    assert migrated["search"]["safe_search"] == 1
+    assert "json" in migrated["search"]["formats"]
+    assert "html" in migrated["search"]["formats"]
+
+    # Idempotent: a second run must not touch the already-migrated file
+    second = _run(settings)
+    assert second.returncode == 0, second.stderr
+    assert settings.read_bytes() == migrated_bytes
+    assert second.stdout == ""
+
+
+def test_explicit_operator_formats_list_is_not_overridden(tmp_path):
+    # An operator who deliberately chose html-only (or any custom list) must not
+    # have that choice silently replaced by the migration.
+    settings = tmp_path / "settings.yml"
+    original = (
+        b"server:\n"
+        b'  secret_key: "retained-secret"\n'
+        b"search:\n"
+        b"  formats:\n"
+        b"    - html\n"
+    )
+    settings.write_bytes(original)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated = yaml.safe_load(settings.read_bytes())
+    assert migrated["use_default_settings"] is True
+    # The operator's formats list must be preserved exactly
+    assert migrated["search"]["formats"] == ["html"]
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES, ids=lambda path: path.name)

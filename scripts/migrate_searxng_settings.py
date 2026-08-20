@@ -87,6 +87,69 @@ def _add_block_default_inheritance(
     return contents[:offset] + addition + contents[offset:]
 
 
+def _formats_list(loaded: dict) -> list | None:
+    """Return the explicit search.formats list, or None if absent."""
+    search = loaded.get("search")
+    if not isinstance(search, dict):
+        return None
+    formats = search.get("formats")
+    if not isinstance(formats, list):
+        return None
+    return formats
+
+
+def _insert_search_formats(
+    contents: bytes, text: str, root: MappingNode, loaded: dict, indent_width: int
+) -> bytes:
+    """Insert search.formats into the block mapping, preserving all other content.
+
+    If ``search`` already exists as a block mapping key, the formats list is
+    inserted at the end of that sub-mapping. If ``search`` does not exist, the
+    entire ``search.formats`` block is appended at the end of the document.
+    This avoids emitting a second ``search:`` key that would shadow the first
+    under standard YAML semantics.
+    """
+    newline = _newline_for(contents)
+    indent = b" " * indent_width
+    bom_length = len(_UTF8_BOM) if contents.startswith(_UTF8_BOM) else 0
+
+    # Walk the root mapping node to find the ``search`` key's value node.
+    for key_node, value_node in root.value:
+        if key_node.value == "search":
+            if value_node.id == "mapping" and not value_node.flow_style:
+                # Insert formats at the end of the existing search block.
+                insert_offset = (
+                    bom_length
+                    + len(text[: value_node.end_mark.index].encode("utf-8"))
+                )
+                tail = contents[insert_offset:]
+                if not contents[:insert_offset].endswith((b"\n", b"\r")):
+                    prefix = newline
+                else:
+                    prefix = b""
+                addition = (
+                    prefix
+                    + indent + b"  formats:" + newline
+                    + indent + b"    - html" + newline
+                    + indent + b"    - json" + newline
+                )
+                return contents[:insert_offset] + addition + tail
+            # search exists but is not a plain block mapping (flow style or
+            # scalar); fall through to the append path to avoid corruption.
+            break
+
+    # No usable search block found -- append one.
+    block = (
+        indent + b"search:" + newline
+        + indent + b"  formats:" + newline
+        + indent + b"    - html" + newline
+        + indent + b"    - json" + newline
+    )
+    if not contents.endswith((b"\n", b"\r")):
+        block = newline + block
+    return contents + block
+
+
 def migrate_settings(path: Path) -> bool:
     """Add the missing inheritance key atomically; return whether the file changed."""
     source_stat = path.lstat()
@@ -115,6 +178,27 @@ def migrate_settings(path: Path) -> bool:
         )
     else:
         updated = _add_block_default_inheritance(contents, text, root)
+
+    # The pinned SearXNG image defaults to HTML-only, so a retained file that
+    # gains use_default_settings without an explicit search.formats list would
+    # reject the provider's format=json requests with HTTP 403. Insert the list
+    # only when the operator has not already set it; an explicit operator list
+    # (including a JSON-free one) is intentional and must not be overridden.
+    # Flow-style root mappings are left as-is: they are rare, already
+    # operator-managed, and cannot receive a trailing block-style key.
+    if _formats_list(loaded) is None and not (root is not None and root.flow_style):
+        _, indent_width = _block_mapping_position(text, root)
+        # Re-parse the updated content so insertion offsets reflect the newly
+        # added use_default_settings line.
+        updated_text = updated[
+            (len(_UTF8_BOM) if updated.startswith(_UTF8_BOM) else 0):
+        ].decode("utf-8-sig")
+        updated_root, _ = _parse_root_mapping(updated_text)
+        if updated_root is not None:
+            updated = _insert_search_formats(
+                updated, updated_text, updated_root, loaded, indent_width
+            )
+
     fd, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.odysseus-", dir=path.parent
     )
@@ -158,7 +242,10 @@ def main(argv: list[str]) -> int:
         return 1
 
     if changed:
-        print("Added use_default_settings inheritance to retained SearXNG settings")
+        print(
+            "Migrated retained SearXNG settings: added use_default_settings"
+            " inheritance and ensured search.formats includes json"
+        )
     return 0
 
 
