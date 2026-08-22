@@ -1,0 +1,17 @@
+# Rootless Podman overlay.
+#
+# Usage:
+#   podman compose -f docker-compose.yml -f docker/podman.yml up -d --build
+#
+# Odysseus normally starts as container root, repairs ownership, then drops to
+# PUID/PGID. Rootless Podman maps the invoking host user to container UID/GID 0
+# here so that flow keeps bind-mounted files owned by the host user. The
+# keep-id mode is intentionally unavailable to rootful Podman.
+services:
+  odysseus:
+    userns_mode: "keep-id:uid=0,gid=0"
+    environment:
+      - PUID=0
+      - PGID=0
+    security_opt:
+      - no-new-privileges:true

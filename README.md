@@ -38,6 +38,9 @@ Open `http://localhost:7000` when the containers are healthy. The first admin pa
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
+Rootless Podman users can run the same stack with the focused overlays in the
+[Podman guide](docs/podman.md).
+
 ## Features
 
 - **Chat + Agents** — local/API models, tools, MCP, files, shell, skills, and memory.
