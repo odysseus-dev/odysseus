@@ -22,6 +22,7 @@ import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import { getSettings } from './appConfig.js';
 
 // ── Module state ──────────────────────────────────────────────────────
 
@@ -5220,8 +5221,7 @@ async function _cmdShortcuts(args, ctx) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' });
-    const settings = await res.json();
+    const settings = await getSettings();
     if (settings.keybinds) {
       keybinds = { ...keybinds, ...settings.keybinds };
     }

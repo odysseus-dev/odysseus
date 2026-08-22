@@ -14,6 +14,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
+from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
 from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 
@@ -618,13 +619,30 @@ class ToolRunSecurityContext:
     external_untrusted_context_seen: bool = False
     external_sources: list[str] = field(default_factory=list)
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Task-scope approval sets this for the resumed in-memory run. Chat-scope
+    # approval is projected from the server-owned session history marker below.
+    # The bypass affects only this automatic gate; current tool policy, ownership,
+    # workspace confinement, and execution/sandbox restrictions still apply.
+    approval_gate_bypassed: bool = False
 
     def observe_messages(self, messages: Iterable[dict]) -> None:
-        """Promote any server-labelled untrusted prompt context into the gate."""
-        if messages_contain_external_untrusted_context(messages):
+        """Apply server-owned chat scope and promote untrusted prompt context."""
+        message_list = list(messages or ())
+        if any(
+            isinstance(message, dict)
+            and isinstance(message.get("metadata"), dict)
+            and message["metadata"].get(
+                CHAT_SESSION_APPROVAL_CONTEXT_MARKER
+            ) is True
+            for message in message_list
+        ):
+            self.approval_gate_bypassed = True
+        if messages_contain_external_untrusted_context(message_list):
             self.external_untrusted_context_seen = True
 
     def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
+        if self.approval_gate_bypassed:
+            return ToolGateDecision(True)
         if not self.external_untrusted_context_seen:
             return ToolGateDecision(True)
         capabilities = capabilities_for_action(tool_name, content)

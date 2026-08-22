@@ -441,9 +441,18 @@ A grab-bag of small gotchas that otherwise turn into long debugging sessions.
 | Package | Feature unlocked |
 |---------|-----------------|
 | `faster-whisper` | Local speech-to-text (microphone -> text) via the "local" STT provider. |
+| `kokoro`, `soundfile` | Local Kokoro-82M text-to-speech on a CUDA GPU. The pinned Kokoro release supports Odysseus installs on Python 3.11-3.12; these packages are intentionally skipped on Python 3.13+ (including the Python 3.14 container image). |
 | `ddgs` | DuckDuckGo as a search provider option. |
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
+
+Install the optional set only when you need these features:
+
+```bash
+pip install -r requirements-optional.txt
+```
+
+The default Docker image currently uses Python 3.14, while Kokoro 0.9.4 declares Python `>=3.10,<3.13`. Odysseus itself continues to support Python 3.11+, but this pinned optional local-TTS feature requires a native Python 3.11 or 3.12 environment. Kokoro declares `torch`, but the local provider only activates when that torch build has CUDA and a GPU is visible; install the CUDA build appropriate for your host. Browser and configured endpoint TTS remain available on Python 3.13+ and in the container image.
 
 ### Faster, reproducible installs with uv (optional)
 [uv](https://docs.astral.sh/uv/) works as a drop-in replacement for the
@@ -475,7 +484,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
-- Use `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- Leave `SECURE_COOKIES` unset unless you need to override it: session cookies are marked `Secure` whenever the request arrives over HTTPS. Use `SECURE_COOKIES=true` to force it on for a proxy whose scheme Odysseus cannot see, or `SECURE_COOKIES=false` to force it off while you still serve plain HTTP alongside HTTPS.
 - Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
 - Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
@@ -486,6 +495,14 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only. Expose only the authenticated Odysseus web/API entrypoint through your trusted proxy or private access layer.
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
 
+> **Upgrading an existing install:** `SECURE_COOKIES` used to default to
+> `false`, so an install set up before scheme derivation may still carry
+> `SECURE_COOKIES=false` in its own `.env`. That explicit value stays
+> authoritative, so HTTPS logins keep getting a non-`Secure` session cookie.
+> Pulling this change updates the tracked Compose files, but nothing rewrites
+> your `.env` — drop the line from it unless you deliberately serve plain HTTP
+> alongside HTTPS and want the escape hatch.
+
 ### Private or proxied deployments
 Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and the bundled services to `127.0.0.1` by default, so a typical production/private setup is:
 
@@ -494,7 +511,7 @@ Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and th
 3. Put the authenticated Odysseus web/API entrypoint behind that layer.
 4. Keep raw service and model ports internal-only.
 
-Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
+Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true` and `LOCALHOST_BYPASS=false`. Any proxy that forwards `X-Forwarded-Proto: https` gets `Secure` session cookies without configuration, so `SECURE_COOKIES` only needs setting when you want to override that — force it on for a proxy that forwards no scheme at all, or off while you still serve plain HTTP.
 `ALLOWED_ORIGINS` lists exact permitted origins for cross-origin browser/API clients; ordinary same-origin reverse-proxy access usually does not need a special CORS entry.
 
 #### Faster over the network: HTTP/2
@@ -582,9 +599,12 @@ Odysseus's own service is unchanged; the proxy runs alongside it. Under Docker,
 run the proxy as another container, or on the host pointing at the published
 port.
 
-**4. Point Odysseus at the new origin** in `.env`, then restart it:
+**4. Point Odysseus at the new origin** in `.env`, then restart it.
+
+A proxy that exposes the HTTPS request scheme to Odysseus needs no `SECURE_COOKIES` setting. Only force it on when the proxy cannot expose that scheme:
 
 ```bash
+# only if the proxy cannot expose the external HTTPS scheme to Odysseus:
 SECURE_COOKIES=true
 # only if you use remote MCP servers with OAuth:
 OAUTH_REDIRECT_BASE_URL=https://odysseus.example.com
@@ -619,10 +639,12 @@ enable it by right-clicking the column headers.
 
 Three things bite when moving an existing install behind TLS:
 
-- Set `SECURE_COOKIES=true` **at the same time** you stop serving plain HTTP,
-  not before. The flag is applied to every login regardless of the scheme the
-  request arrived on, so while an HTTP entrypoint is still reachable the
-  browser will reject the `Secure` cookie there and login will appear to loop.
+- Leave `SECURE_COOKIES` unset when Odysseus can see the external HTTPS scheme;
+  the cookie then follows the request automatically. If your proxy cannot expose
+  that scheme, set `SECURE_COOKIES=true` **at the same time** you stop serving
+  plain HTTP, not before. An explicit `true` applies to every login, so while an
+  HTTP entrypoint is still reachable the browser will reject the `Secure` cookie
+  there and login will appear to loop.
 - `OAUTH_REDIRECT_BASE_URL` defaults to `http://localhost:7000`. Unlike the
   Gmail redirect URI it cannot be derived from a request — it is registered
   with each MCP authorization server up front — so set it to the external
@@ -675,7 +697,7 @@ Key settings:
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `ALLOWED_ORIGINS` | `http://localhost,http://127.0.0.1` | Comma-separated exact permitted origins for cross-origin browser/API clients. |
-| `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |
+| `SECURE_COOKIES` | derived from the request scheme | Marks session cookies `Secure` on HTTPS requests. Set true to force it on, false to force it off. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |

@@ -784,7 +784,7 @@ from src.task_scheduler import TaskScheduler
 task_scheduler = TaskScheduler(session_manager)
 from src.event_bus import set_task_scheduler
 set_task_scheduler(task_scheduler)
-from routes.task_routes import setup_task_routes
+from routes.task.task_routes import setup_task_routes
 app.include_router(setup_task_routes(task_scheduler))
 
 from routes.assistant_routes import setup_assistant_routes

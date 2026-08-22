@@ -26,10 +26,36 @@ import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { invalidateSettings } from './appConfig.js';
 
 let initialized = false;
 let modalEl = null;
 let _authPolicy = { password_min_length: 8 };
+
+/**
+ * POST a settings patch, then drop the shared snapshot in appConfig.js.
+ *
+ * Every write in this file goes through here so no save path can forget the
+ * invalidation — a stale settings object served for the rest of the session is
+ * a worse bug than the duplicate fetches the cache removes. The invalidation is
+ * in a `finally` because a request that throws on the way back may still have
+ * been applied server-side.
+ *
+ * Reads in this file deliberately stay direct fetches: this panel is the writer
+ * and edits what it reads, so it must see the authoritative state, not a cache.
+ */
+async function _postSettings(body) {
+  try {
+    return await fetch('/api/auth/settings', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } finally {
+    invalidateSettings();
+  }
+}
 
 const el = byId;
 function esc(s) { return uiModule.esc(s); }
@@ -276,10 +302,7 @@ function _bindFallbackWidget(opts) {
     var body = {};
     body[settingKey] = clean;
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      await _postSettings(body);
     } catch (e) { console.warn('[fallback] save failed for ' + settingKey, e); }
   }
 
@@ -417,14 +440,11 @@ async function initDefaultChat() {
 
   async function saveDefault() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          default_endpoint_id: epSel.value,
-          default_model: modelSel.value,
-          default_reasoning_effort: currentControlDefaults().reasoning_effort,
-          default_verbosity: currentControlDefaults().verbosity
-        })
+      await _postSettings({
+        default_endpoint_id: epSel.value,
+        default_model: modelSel.value,
+        default_reasoning_effort: currentControlDefaults().reasoning_effort,
+        default_verbosity: currentControlDefaults().verbosity
       });
       publishControlDefaults();
       if (controlsMsg) {
@@ -488,12 +508,9 @@ async function initUtilityModel() {
   // no toggle, "—" means "unset, use chat").
   async function saveUtility() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          utility_endpoint_id: epSel.value || '',
-          utility_model: modelSel.value || ''
-        })
+      await _postSettings({
+        utility_endpoint_id: epSel.value || '',
+        utility_model: modelSel.value || ''
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
@@ -586,10 +603,7 @@ async function initTeacherModel() {
         spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
       }
       var enabled = enabledToggle ? !!enabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
-      });
+      await _postSettings({ teacher_enabled: enabled, teacher_model: spec });
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
@@ -664,8 +678,7 @@ async function initImageSettings() {
 
   async function saveSettings() {
     try {
-      const res = await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value }) });
+      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value });
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -739,8 +752,7 @@ async function initVisionSettings() {
 
   async function saveSettings() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value }) });
+      await _postSettings({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
@@ -821,8 +833,7 @@ async function initTtsSettings() {
 
   async function saveTTS() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
+      await _postSettings({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' });
       ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
@@ -983,9 +994,7 @@ async function initSttSettings() {
   async function saveSTT() {
     try {
       var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
+      await _postSettings({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() });
       sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
@@ -1141,10 +1150,7 @@ async function initSearchSettings() {
         payload[kf] = keyInput.value.trim();
         _settings[kf] = keyInput.value.trim();
       }
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await _postSettings(payload);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
       if (searchModule && searchModule.refresh) searchModule.refresh();
@@ -1296,11 +1302,7 @@ async function initSearchSettings() {
   async function _saveFallbackChain(chain) {
     _settings.search_fallback_chain = chain;
     try {
-      await fetch('/api/auth/settings', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ search_fallback_chain: chain }),
-      });
+      await _postSettings({ search_fallback_chain: chain });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1464,10 +1466,7 @@ async function initResearchSettings() {
       }
     }
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await _postSettings(payload);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(showStatus, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1531,10 +1530,7 @@ async function initResearchSearchSettings() {
 
   async function saveResearchSearch() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ research_search_provider: searchSel.value })
-      });
+      await _postSettings({ research_search_provider: searchSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1576,10 +1572,7 @@ async function initAgentSettings() {
     if (rounds != null) payload.agent_max_rounds = rounds;
     if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await _postSettings(payload);
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
         (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
         (supInput && supInput.checked ? ' · supervisor on' : '');
@@ -1974,11 +1967,7 @@ async function initShortcuts() {
 
   async function saveKeybinds() {
     try {
-      await fetch('/api/auth/settings', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keybinds }),
-      });
+      await _postSettings({ keybinds });
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
@@ -2271,11 +2260,7 @@ async function initReminderSettings() {
       pubDebounce = setTimeout(async () => {
         try {
           const val = pubUrlIn.value.trim().replace(/\/+$/, '');
-          await fetch('/api/auth/settings', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ app_public_url: val }),
-          });
+          await _postSettings({ app_public_url: val });
           if (pubUrlMsg) {
             pubUrlMsg.textContent = val ? 'Saved' : 'Cleared (deep-links disabled)';
             pubUrlMsg.style.color = 'var(--green,#50fa7b)';
@@ -2573,12 +2558,7 @@ async function initReminderSettings() {
 
   async function save(patch) {
     try {
-      await fetch('/api/auth/settings', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
+      await _postSettings(patch);
     } catch (e) { console.warn('Failed to save reminder settings', e); }
   }
 
