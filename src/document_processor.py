@@ -2,6 +2,7 @@
 """Document processing: PDF/OCR extraction, text file handling, image VL analysis, user content building."""
 
 import os
+import asyncio
 import logging
 import mimetypes
 import base64
@@ -413,8 +414,10 @@ async def describe_image_for_caption(
     see analyze_image_with_vl_result for that path) so a gallery caption
     still gets produced.
     """
-    with open(image_path, "rb") as f:
-        img_data = base64.b64encode(f.read()).decode("utf-8")
+    def _read_and_encode() -> str:
+        with open(image_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    img_data = await asyncio.to_thread(_read_and_encode)
     ext = os.path.splitext(image_path)[1].lower()
     mime_map = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
     img_format = mime_map.get(ext, "jpeg")
@@ -428,7 +431,11 @@ async def describe_image_for_caption(
         }
     ]
     from src.llm_core import llm_call_async
-    return await llm_call_async(url, model_id, messages, headers=headers, timeout=120)
+    # max_tokens is left uncapped (llm_call_async's own default), so a
+    # thinking model can legitimately take a while — same reasoning as the
+    # ai-tag route's own timeout (raised 60s -> 300s after live batch runs
+    # hit httpx.ReadTimeout at exactly the old cap).
+    return await llm_call_async(url, model_id, messages, headers=headers, timeout=300)
 
 
 def build_user_content(
