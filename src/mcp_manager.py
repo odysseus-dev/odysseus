@@ -146,6 +146,9 @@ class McpManager:
         self._stacks: Dict[str, Any] = {}
         # server_id -> background connect task (HTTP transport / OAuth)
         self._connect_tasks: Dict[str, Any] = {}
+        # server_id -> original connect_server kwargs, kept so a user-added
+        # server whose session died can be reconnected (issue #1789)
+        self._connect_params: Dict[str, Dict[str, Any]] = {}
         # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
 
@@ -160,6 +163,14 @@ class McpManager:
         url: Optional[str] = None,
     ) -> bool:
         """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
+        self._connect_params[server_id] = {
+            "name": name,
+            "transport": transport,
+            "command": command,
+            "args": list(args or []),
+            "env": dict(env or {}),
+            "url": url,
+        }
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
@@ -483,26 +494,24 @@ class McpManager:
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
-            # Auto-reconnect for builtin servers whose subprocess may have died
-            if self.is_builtin(server_id):
-                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
-                reconnected = await self._reconnect_builtin(server_id)
-                if reconnected:
-                    session = self._sessions.get(server_id)
-                    if session:
-                        try:
-                            result = await self._do_call(session, tool_name, arguments)
-                        except Exception as e2:
-                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
-                            return {"error": str(e2), "exit_code": 1}
-                    else:
-                        return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
+            # Auto-reconnect: the session may have died — a builtin subprocess
+            # crash, or a stdio session whose creating asyncio task has exited
+            # (issue #1789) — so try one reconnect for user-added servers too.
+            logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
+            reconnected = await self._reconnect_any(server_id)
+            if reconnected:
+                session = self._sessions.get(server_id)
+                if session:
+                    try:
+                        result = await self._do_call(session, tool_name, arguments)
+                    except Exception as e2:
+                        logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
+                        return {"error": str(e2), "exit_code": 1}
                 else:
-                    logger.error(f"MCP reconnect failed for {server_id}")
-                    return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
+                    return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
             else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+                logger.error(f"MCP reconnect failed for {server_id}")
+                return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
 
         return result
 
@@ -535,6 +544,24 @@ class McpManager:
         if images:
             result_dict["images"] = images
         return result_dict
+
+    async def _reconnect_any(self, server_id: str) -> bool:
+        """Tear down and reconnect any MCP server, builtin or user-added."""
+        if self.is_builtin(server_id):
+            return await self._reconnect_builtin(server_id)
+        params = self._connect_params.get(server_id)
+        if not params:
+            logger.error(f"No stored connect params to reconnect MCP server {server_id}")
+            return False
+        await self.disconnect_server(server_id)
+        try:
+            ok = await self.connect_server(server_id=server_id, **params)
+            if ok:
+                logger.info(f"Reconnected user MCP server: {params.get('name', server_id)}")
+            return ok
+        except Exception as e:
+            logger.error(f"Failed to reconnect MCP server {server_id}: {e}")
+            return False
 
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
