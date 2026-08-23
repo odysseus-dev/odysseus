@@ -31,8 +31,10 @@ from typing import Any, Dict, List, Optional
 
 from core.atomic_io import atomic_write_json
 from core.platform_compat import (
+    IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
+    find_powershell,
     git_bash_path,
     kill_process_tree,
     pid_alive,
@@ -97,8 +99,29 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     # command in `( … )` — the wrapper can't be broken by an unbalanced paren or
     # a trailing line-continuation in the command. `$?` is the child's real
     # exit status.
+    powershell = find_powershell() if IS_WINDOWS else None
     bash = find_bash()
-    if bash:
+    if powershell:
+        child_path = _JOBS_DIR / f"{job_id}.child.ps1"
+        child_path.write_text(command + "\n", encoding="utf-8")
+        script_path = _JOBS_DIR / f"{job_id}.ps1"
+
+        def _ps_quote(path: Path) -> str:
+            return "'" + str(path).replace("'", "''") + "'"
+
+        script_path.write_text(
+            "$ErrorActionPreference = 'Continue'\n"
+            f"& {_ps_quote(child_path)} *> {_ps_quote(log_path)}\n"
+            "$odyCode = if ($null -eq $LASTEXITCODE) { if ($?) { 0 } else { 1 } } else { $LASTEXITCODE }\n"
+            f"[IO.File]::WriteAllText({_ps_quote(exit_path)}, [string]$odyCode)\n"
+            "exit $odyCode\n",
+            encoding="utf-8",
+        )
+        argv = [
+            powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass", "-File", str(script_path),
+        ]
+    elif bash:
         # POSIX, or Windows with Git Bash/WSL. The user command goes in its OWN
         # script file, run as a child `bash` — an `exit` inside it only ends
         # that child (so the wrapper still records the exit code), and an
@@ -117,7 +140,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         )
         argv = [bash, str(script_path)]
     else:
-        # Windows without any bash installed: cmd.exe wrapper. The command runs
+        # Last-resort Windows without PowerShell/Bash: cmd.exe wrapper. The command runs
         # in its own child .cmd so %ERRORLEVEL% is the command's real exit code.
         child_path = _JOBS_DIR / f"{job_id}.child.cmd"
         child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")

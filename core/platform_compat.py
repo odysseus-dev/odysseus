@@ -144,6 +144,8 @@ def kill_process_tree(pid: Optional[int]) -> None:
 # ── Shell / executable resolution ───────────────────────────────────────────
 _BASH_CACHE: Optional[str] = None
 _BASH_PROBED = False
+_POWERSHELL_CACHE: Optional[str] = None
+_POWERSHELL_PROBED = False
 
 # Common Git-for-Windows install locations to probe when bash isn't on PATH.
 _WINDOWS_BASH_ROOT_ENV_VARS = (
@@ -247,6 +249,17 @@ def find_bash() -> Optional[str]:
     if found and IS_WINDOWS and _is_windows_bash_stub(found):
         found = None
     if not found and IS_WINDOWS:
+        # Git may be installed on a non-system drive (for example D:\Git) and
+        # expose only its cmd directory on PATH. Infer the adjacent Bash paths.
+        git = which_tool("git")
+        if git:
+            git_root = Path(git).resolve().parent.parent
+            for rel in _WINDOWS_BASH_RELATIVE_PATHS:
+                candidate = str(git_root.joinpath(*rel))
+                if os.path.exists(candidate):
+                    found = candidate
+                    break
+    if not found and IS_WINDOWS:
         for cand in _windows_bash_fallbacks():
             if os.path.exists(cand):
                 found = cand
@@ -257,6 +270,40 @@ def find_bash() -> Optional[str]:
 
 def has_bash() -> bool:
     return find_bash() is not None
+
+
+def find_powershell() -> Optional[str]:
+    """Locate PowerShell Core or Windows PowerShell."""
+    global _POWERSHELL_CACHE, _POWERSHELL_PROBED
+    if _POWERSHELL_PROBED:
+        return _POWERSHELL_CACHE
+    _POWERSHELL_PROBED = True
+    found = which_tool("pwsh") or which_tool("powershell")
+    if not found and IS_WINDOWS:
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        candidate = ntpath.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        if os.path.exists(candidate):
+            found = candidate
+    _POWERSHELL_CACHE = found
+    return found
+
+
+def native_shell_argv(command: str) -> List[str]:
+    """Return an argv that executes command in the host's native shell.
+
+    The agent tool keeps its historical ``bash`` API name for model/schema
+    compatibility, but native Windows installations execute PowerShell syntax.
+    """
+    if IS_WINDOWS:
+        powershell = find_powershell()
+        if powershell:
+            return [
+                powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", command,
+            ]
+        return [os.environ.get("ComSpec", "cmd.exe"), "/d", "/s", "/c", command]
+    bash = find_bash()
+    return [bash, "-lc", command] if bash else ["/bin/sh", "-c", command]
 
 
 def which_tool(name: str) -> Optional[str]:

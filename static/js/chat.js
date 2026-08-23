@@ -7,7 +7,7 @@
 
 import Storage from './storage.js';
 import uiModule from './ui.js';
-import sessionModule from './sessions.js';
+import sessionModule from './sessions.js?v=20260823integration1';
 import chatRenderer from './chatRenderer.js?v=20260819approvalcontrol1';
 import chatStream from './chatStream.js?v=20260819approvalcontrol1';
 import { addAITTSButton } from './tts-ai.js';
@@ -90,6 +90,12 @@ import { loadPanel } from './panels.js';
     };
     _submitToolApprovalWhenIdle(_pendingToolApproval.approval_id);
   });
+
+  function _emitApprovalActivity(detail) {
+    try {
+      document.dispatchEvent(new CustomEvent('odysseus-approval-activity', { detail }));
+    } catch (_) {}
+  }
 
   function _fmtContextNumber(n) {
     const v = Number(n || 0);
@@ -1840,6 +1846,8 @@ import { loadPanel } from './panels.js';
           _pendingToolApproval = null;
         }
       }
+      const _selectedCitations = window.odysseusCitations?.getAll?.() || [];
+      if (_selectedCitations.length) fd.append('selected_citations', JSON.stringify(_selectedCitations));
       if (selectedRouteForSend.model) fd.append('selected_model', selectedRouteForSend.model);
       if (selectedRouteForSend.endpoint_url) fd.append('selected_endpoint_url', selectedRouteForSend.endpoint_url);
       if (selectedRouteForSend.endpoint_id) fd.append('selected_endpoint_id', selectedRouteForSend.endpoint_id);
@@ -1895,6 +1903,7 @@ import { loadPanel } from './panels.js';
 	      }
 	      fd.append('mode', isAgentMode ? 'agent' : 'chat');
 	      fd.append('plan_mode', isPlanMode ? 'true' : 'false');
+	      fd.append('permission_mode', window.odysseusPermissions?.getMode?.() || 'auto');
 	      if (!isPlanMode && _pendingApprovedPlan) {
 	        fd.append('approved_plan', _pendingApprovedPlan.slice(0, 8192));
 	        _pendingApprovedPlan = '';
@@ -2134,6 +2143,9 @@ import { loadPanel } from './panels.js';
       }
       const streamRunId = res.headers.get('X-Odysseus-Run-Id') || '';
       if (streamRunId) _rememberStreamRunId(streamSessionId, streamRunId, streamGeneration);
+
+      // The server accepted the turn; these chips now belong to that request.
+      window.odysseusCitations?.clear?.();
 
       // Mark the chat log busy while streaming so screen readers wait for the
       // settled response instead of announcing every token. Cleared in finally.
@@ -2868,7 +2880,7 @@ import { loadPanel } from './panels.js';
                 if (spinner && spinner.element) spinner.destroy();
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'permission_request' || json.type === 'permission_resolved' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
@@ -3030,7 +3042,8 @@ import { loadPanel } from './panels.js';
                   _thinkingRecheckAt = _falseCloseDeadline || 0;
                   if (spinner && spinner.element) spinner.destroy();
 
-                  // Create a live thinking box — starts expanded so content streams visibly
+                  // Create a live thinking box. Reasoning stays collapsed unless
+                  // the user explicitly opens it, including while it streams.
                   var thinkBody = roundHolder.querySelector('.body');
                   var thinkContent = _ensureStreamLayout(thinkBody);
                   thinkContent.style.minHeight = '';
@@ -3041,9 +3054,9 @@ import { loadPanel } from './panels.js';
                         <div class="thinking-header-left"><span class="live-think-header-text">Thinking\u2026</span></div>
                         <span class="live-think-spinner-slot" style="flex-shrink:0;margin-left:auto;"></span>
                         <span class="live-think-timer" style="font-size:11px;opacity:0.4;font-variant-numeric:tabular-nums;margin-left:6px;margin-right:5px;"></span>
-                        <span class="thinking-toggle live-think-toggle expanded" id="${_liveThinkDomId}-toggle"></span>
+                        <span class="thinking-toggle live-think-toggle" id="${_liveThinkDomId}-toggle"></span>
                       </div>
-                      <div class="thinking-content expanded" id="${_liveThinkDomId}">
+                      <div class="thinking-content" id="${_liveThinkDomId}">
                         <div class="thinking-content-inner live-think-inner"></div>
                       </div>
                     </div>`;
@@ -3496,6 +3509,71 @@ import { loadPanel } from './panels.js';
                 // can be edited/deleted immediately, without reloading the chat.
                 if (_isBg) continue;
                 if (holder && json.id) holder.dataset.dbId = json.id;
+
+              } else if (json.type === 'permission_request') {
+                const answerPermission = async (approved) => {
+                  const response = await fetch(`${API_BASE}/api/chat/permission/${encodeURIComponent(json.id)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ approved: !!approved }),
+                  });
+                  if (!response.ok && response.status !== 404) throw new Error(`Permission response failed (${response.status})`);
+                };
+                if (_isBg) {
+                  answerPermission(false).catch(() => {});
+                  continue;
+                }
+                _emitApprovalActivity({
+                  id: json.id || '',
+                  sessionId: streamSessionId || sessionModule.getCurrentSessionId?.() || '',
+                  tool: json.tool || 'Tool',
+                  command: json.command || '',
+                  status: 'pending',
+                });
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const card = document.createElement('section');
+                card.className = 'agent-permission-card';
+                card.dataset.approvalId = json.id || '';
+                const heading = document.createElement('div');
+                heading.className = 'agent-permission-heading';
+                heading.textContent = `${json.tool || 'Tool'} wants to run`;
+                const command = document.createElement('pre');
+                command.className = 'agent-permission-command';
+                command.textContent = json.command || 'No arguments';
+                const actions = document.createElement('div');
+                actions.className = 'agent-permission-actions';
+                const deny = document.createElement('button');
+                deny.type = 'button'; deny.className = 'agent-permission-deny'; deny.textContent = 'Deny';
+                const approve = document.createElement('button');
+                approve.type = 'button'; approve.className = 'agent-permission-approve'; approve.textContent = 'Approve';
+                const settle = async (allowed) => {
+                  deny.disabled = true; approve.disabled = true;
+                  try {
+                    await answerPermission(allowed);
+                    card.classList.add(allowed ? 'approved' : 'denied');
+                    heading.textContent = allowed ? `${json.tool || 'Tool'} approved` : `${json.tool || 'Tool'} denied`;
+                    _emitApprovalActivity({ id: json.id || '', status: 'resolved', approved: !!allowed });
+                  } catch (error) {
+                    deny.disabled = false; approve.disabled = false;
+                    uiModule.showToast(error.message || 'Could not answer permission request');
+                  }
+                };
+                deny.addEventListener('click', () => settle(false));
+                approve.addEventListener('click', () => settle(true));
+                actions.append(deny, approve);
+                card.append(heading, command, actions);
+                document.getElementById('chat-history')?.appendChild(card);
+                uiModule.scrollHistory();
+
+              } else if (json.type === 'permission_resolved') {
+                _emitApprovalActivity({ id: json.id || '', status: 'resolved', approved: !!json.approved });
+                // The interactive card updates immediately on click. This event
+                // also covers server-side timeout/cancellation.
+                const card = document.querySelector(`.agent-permission-card[data-approval-id="${CSS.escape(json.id || '')}"]`);
+                if (card && !card.classList.contains('approved') && !card.classList.contains('denied')) {
+                  card.classList.add(json.approved ? 'approved' : 'denied');
+                }
 
               } else if (json.type === 'tool_start') {
                 _closeOpenThinkingMarkup(_isBg);

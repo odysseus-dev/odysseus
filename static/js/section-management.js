@@ -10,6 +10,19 @@ export function initSectionCollapse(Storage) {
   const _chevronHtml = '<button type="button" class="section-collapse-btn" title="Collapse section"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>';
   const savedState = Storage.getJSON('section-collapsed') || {};
 
+  // The modern sidebar treats utilities like Codex treats secondary areas:
+  // available, but not expanded into a wall of controls by default. Apply the
+  // calmer default once, then respect every collapse/expand choice the user
+  // makes from that point onward.
+  try {
+    const modernSidebarKey = 'ody-modern-sidebar-v2-initialized';
+    if (document.body.classList.contains('ody-modern-shell') && !localStorage.getItem(modernSidebarKey)) {
+      savedState['tools-section'] = true;
+      Storage.setJSON('section-collapsed', savedState);
+      localStorage.setItem(modernSidebarKey, '1');
+    }
+  } catch (_) {}
+
   document.querySelectorAll('.section .section-header-flex').forEach(header => {
     const section = header.closest('.section');
     if (!section || !section.id) return;

@@ -35,6 +35,7 @@ export function initSidebarLayout(Storage, opts) {
   const iconRail = document.getElementById('icon-rail');
   const hamburgerBtn = document.getElementById('hamburger-btn');
   const SIDEBAR_MODE_KEY = 'odysseus-sidebar-mode';
+  const isModernShell = document.body.classList.contains('ody-modern-shell');
 
   function _setSidebarModeClasses(mode) {
     document.documentElement.classList.remove('ody-mobile-startup-sidebar-hidden');
@@ -62,6 +63,13 @@ export function initSidebarLayout(Storage, opts) {
     }
     let mode = 'full';
     try { mode = localStorage.getItem(SIDEBAR_MODE_KEY) || 'full'; } catch (_) {}
+    // The modern shell has one navigation surface. Older builds persisted a
+    // separate "mini" icon rail; migrate that state to a genuinely closed
+    // sidebar so collapsing never reveals a surprising second set of tools.
+    if (isModernShell && mode === 'mini') {
+      mode = 'off';
+      try { localStorage.setItem(SIDEBAR_MODE_KEY, mode); } catch (_) {}
+    }
     if (mode === 'mini') {
       sidebar.classList.add('hidden');
       if (iconRail) iconRail.classList.remove('rail-hidden');
@@ -83,6 +91,7 @@ export function initSidebarLayout(Storage, opts) {
     const railHidden = iconRail.classList.contains('rail-hidden');
     const isMobileMini = iconRail.classList.contains('mobile-mini');
     iconRail.classList.toggle('right-side', isRight);
+    if (isModernShell) iconRail.classList.add('rail-hidden');
     // On mobile mini mode, JS already set inline styles — don't touch
     if (isMobileMini) {
       // Just update side positioning
@@ -94,15 +103,15 @@ export function initSidebarLayout(Storage, opts) {
         iconRail.style.right = 'auto';
       }
     } else {
-      iconRail.style.display = (sidebarHidden && !railHidden) ? '' : 'none';
+      iconRail.style.display = (sidebarHidden && !iconRail.classList.contains('rail-hidden')) ? '' : 'none';
     }
     // Hamburger is always visible — just update body classes for CSS layout adjustments
     if (hamburgerBtn) {
       document.body.classList.toggle('hamburger-right', isRight);
       document.body.classList.toggle('hamburger-left', !isRight);
-      document.body.classList.toggle('hamburger-only', sidebarHidden && railHidden);
+      document.body.classList.toggle('hamburger-only', sidebarHidden && iconRail.classList.contains('rail-hidden'));
       document.body.classList.toggle('sidebar-collapsed', sidebarHidden);
-      _setSidebarModeClasses(!sidebarHidden ? 'full' : (railHidden ? 'off' : 'mini'));
+      _setSidebarModeClasses(!sidebarHidden ? 'full' : (iconRail.classList.contains('rail-hidden') ? 'off' : 'mini'));
     }
     // Keep incognito button clear of hamburger
     const incogBtn = document.getElementById('incognito-btn');
@@ -145,9 +154,51 @@ export function initSidebarLayout(Storage, opts) {
     });
   });
 
-  // Hamburger cycles: full sidebar → mini → off → full
+  // Hamburger toggles the single navigation surface open / closed.
   let _userToggledSidebar = false;
   let _wasAutoCollapsed = false;
+  let _sidebarAnimationTimer = null;
+
+  function _animateModernSidebar(sidebar, opening) {
+    if (!isModernShell || window.innerWidth < 768 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      sidebar.classList.toggle('hidden', !opening);
+      _saveSidebarMode(opening ? 'full' : 'off');
+      syncRailSide();
+      return;
+    }
+    if (_sidebarAnimationTimer) clearTimeout(_sidebarAnimationTimer);
+    const transient = opening ? 'ody-sidebar-opening' : 'ody-sidebar-closing';
+    sidebar.classList.remove('ody-sidebar-opening', 'ody-sidebar-closing');
+
+    const finish = () => {
+      if (_sidebarAnimationTimer) clearTimeout(_sidebarAnimationTimer);
+      _sidebarAnimationTimer = null;
+      sidebar.classList.remove('ody-sidebar-opening', 'ody-sidebar-closing');
+      sidebar.classList.toggle('hidden', !opening);
+      _saveSidebarMode(opening ? 'full' : 'off');
+      syncRailSide();
+    };
+
+    if (opening) {
+      // Remove the persisted html-level closed state, hold the panel at zero
+      // for one frame, then let its real width animate into the flex layout.
+      _saveSidebarMode('full');
+      sidebar.classList.add(transient);
+      sidebar.classList.remove('hidden');
+      sidebar.getBoundingClientRect();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        sidebar.classList.remove(transient);
+      }));
+    } else {
+      // Keep the panel in layout until the transition ends. Applying .hidden
+      // or the persisted html class immediately would skip the visible tween.
+      sidebar.classList.add(transient);
+    }
+    sidebar.addEventListener('transitionend', (event) => {
+      if (event.target === sidebar && event.propertyName === 'width') finish();
+    }, { once: true });
+    _sidebarAnimationTimer = setTimeout(finish, 320);
+  }
 
   // Deliberate "open the sidebar" used by the mobile swipe gesture (wired at
   // module scope). It MUST set _userToggledSidebar so the auto-collapse
@@ -226,18 +277,16 @@ export function initSidebarLayout(Storage, opts) {
         return;
       }
 
-      // Desktop: full sidebar ↔ mini (icon rail) — simple toggle
+      // Desktop: full sidebar ↔ hidden. The legacy mini icon rail is not
+      // used by the modern shell because its extra buttons duplicate the nav.
       if (isSidebarVisible) {
-        sidebar.classList.add('hidden');
-        if (iconRail) iconRail.classList.remove('rail-hidden');
-        _saveSidebarMode('mini');
+        if (iconRail) iconRail.classList.add('rail-hidden');
+        _animateModernSidebar(sidebar, false);
       } else {
         _wasAutoCollapsed = false;
-        iconRail.classList.remove('rail-hidden');
-        sidebar.classList.remove('hidden');
-        _saveSidebarMode('full');
+        if (iconRail) iconRail.classList.add('rail-hidden');
+        _animateModernSidebar(sidebar, true);
       }
-      syncRailSide();
     });
   }
 

@@ -449,6 +449,107 @@ def test_browse_is_admin_gated(monkeypatch):
     assert all("name" in d and "path" in d for d in out["dirs"])
 
 
+def test_default_workspace_and_projects_use_checkout_parent(monkeypatch, tmp_path):
+    import routes.workspace_routes as wr
+
+    app_root = tmp_path / "Odysseus"
+    app_root.mkdir()
+    (tmp_path / "Alpha").mkdir()
+    (tmp_path / "Beta").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    monkeypatch.delenv("ODYSSEUS_DEFAULT_WORKSPACE", raising=False)
+    monkeypatch.setattr(wr, "get_app_root", lambda: str(app_root))
+    monkeypatch.setattr(wr, "get_current_user", lambda req: "admin")
+    monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
+
+    router = wr.setup_workspace_routes()
+    default = next(r.endpoint for r in router.routes if r.path == "/api/workspace/default")
+    projects = next(r.endpoint for r in router.routes if r.path == "/api/workspace/projects")
+
+    assert default(request=object()) == {"path": os.path.realpath(tmp_path)}
+    result = projects(request=object())
+    assert result["root"] == os.path.realpath(tmp_path)
+    assert [project["name"] for project in result["projects"]] == ["Alpha", "Beta", "Odysseus"]
+
+
+def test_workspace_status_is_admin_gated_and_returns_git_pulse(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    import routes.workspace_routes as wr
+
+    monkeypatch.setattr(wr, "get_current_user", lambda req: "admin")
+    monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: False)
+    router = wr.setup_workspace_routes()
+    status = next(r.endpoint for r in router.routes if r.path == "/api/workspace/status")
+    with pytest.raises(HTTPException) as exc:
+        status(request=object(), path=str(tmp_path))
+    assert exc.value.status_code == 403
+
+    monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
+    monkeypatch.setattr(wr, "_git_workspace_status", lambda path: {
+        "is_git": True, "branch": "main", "changed_files": 3, "ahead": 1, "behind": 0,
+        "additions": 18, "deletions": 4, "upstream": "origin/main", "files": [],
+    })
+    result = status(request=object(), path=str(tmp_path))
+    assert result["path"] == os.path.realpath(tmp_path)
+    assert result["branch"] == "main"
+    assert result["changed_files"] == 3
+
+
+def test_git_workspace_status_parses_branch_and_changes(monkeypatch, tmp_path):
+    import routes.workspace_routes as wr
+
+    class Result:
+        def __init__(self, stdout="", returncode=0):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(args, **kwargs):
+        command = args[3:]
+        if command[:2] == ["status", "--porcelain=v1"]:
+            return Result("## feature/pulse...origin/feature/pulse [ahead 2, behind 1]\n M static/app.js\n?? new.txt\n")
+        if command == ["diff", "--numstat"]:
+            return Result("12\t3\tstatic/app.js\n")
+        if command == ["diff", "--cached", "--numstat"]:
+            return Result("2\t0\tstatic/index.html\n")
+        if command[0] == "rev-parse":
+            return Result("origin/feature/pulse\n")
+        return Result(returncode=1)
+
+    monkeypatch.setattr(wr.shutil, "which", lambda name: "git")
+    monkeypatch.setattr(wr.subprocess, "run", fake_run)
+    result = wr._git_workspace_status(str(tmp_path))
+    assert result == {
+        "is_git": True,
+        "branch": "feature/pulse",
+        "changed_files": 2,
+        "ahead": 2,
+        "behind": 1,
+        "additions": 14,
+        "deletions": 3,
+        "upstream": "origin/feature/pulse",
+        "files": [
+            {"path": "static/app.js", "status": "M", "staged": False},
+            {"path": "new.txt", "status": "??", "staged": False},
+        ],
+    }
+
+
+def test_session_schema_and_model_carry_project_workspace(tmp_path):
+    from core.database import Session as DbSession
+    from core.models import Session
+
+    assert "workspace" in DbSession.__table__.columns
+    session = Session(
+        id="project-chat",
+        name="Project chat",
+        endpoint_url="http://localhost/v1/chat/completions",
+        model="test-model",
+        workspace=str(tmp_path),
+    )
+    assert session.workspace == str(tmp_path)
+
+
 # ── bind-time vetting of the workspace root ─────────────────────────────
 
 def test_vet_workspace_accepts_normal_dir(ws):

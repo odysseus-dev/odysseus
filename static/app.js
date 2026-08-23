@@ -4,16 +4,17 @@
 // ============================================
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
-import workspaceModule from './js/workspace.js';
+import workspaceModule from './js/workspace.js?v=20260823activity1';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js?v=20260715startupcalm2';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260819approvalcontrol1';
+import chatModule from './js/chat.js?v=20260823integration1';
 import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
 import documentModule from './js/document.js?v=20260815approvalsave1';
 import searchChatModule from './js/search-chat.js';
+import activityCenterModule from './js/activity-center.js?v=20260823activity1';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
   revealApplicationShellAfterPaint,
@@ -23,7 +24,7 @@ import {
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js?v=20260819approvalcontrol1';
-import sessionModule from './js/sessions.js';
+import sessionModule from './js/sessions.js?v=20260823integration1';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
@@ -51,12 +52,14 @@ import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { getSettings } from './js/appConfig.js';
-import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
-import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260823permissions1';
+import { initSectionCollapse, initSectionDrag } from './js/section-management.js?v=20260823interaction1';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
+window.workspaceModule = workspaceModule;
+window.odysseusActivity = activityCenterModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
@@ -1721,8 +1724,21 @@ function initializeEventListeners() {
     Storage.saveToggleState(state);
   }
 
-  // Mode-affected tools: default ON in Agent mode, default OFF in Chat mode,
-  // but the user's explicit per-mode override is persisted and honored.
+  // One-time coding setup migration. New and existing installations enter the
+  // useful local-agent state once; subsequent user changes remain untouched.
+  const CODING_DEFAULTS_KEY = 'odysseus-coding-defaults-v1';
+  if (!Storage.get(CODING_DEFAULTS_KEY, '')) {
+    const codingDefaults = loadToggleState();
+    codingDefaults.mode = 'agent';
+    codingDefaults.web_agent = true;
+    codingDefaults.bash_agent = true;
+    codingDefaults.web_chat = true;
+    saveToggleState(codingDefaults);
+    Storage.set(CODING_DEFAULTS_KEY, '1');
+  }
+
+  // Web and shell are ready by default. Explicit per-mode overrides are still
+  // persisted and honored after the initial coding setup migration.
   const MODE_TOOLS = [
     { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
     { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
@@ -1734,7 +1750,7 @@ function initializeEventListeners() {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
-    return mode === 'agent'; // default: ON in agent, OFF in chat
+    return true;
   }
 
   function saveToolPref(stateKey, mode, value) {
@@ -1814,7 +1830,7 @@ function initializeEventListeners() {
     const chatBtn = el('mode-chat-btn');
     if (!agentBtn || !chatBtn) return;
     const state = loadToggleState();
-    let currentMode = state.mode || 'chat';
+    let currentMode = state.mode || 'agent';
 
     // Immediately hide bash button in chat mode on page load
     if (currentMode === 'chat') {
@@ -1940,14 +1956,14 @@ function initializeEventListeners() {
     const btn = el(btnId);
     if (!btn) return;
     // Restore per-mode saved state for both Agent and Chat modes.
-    const mode = (loadToggleState().mode) || 'chat';
+    const mode = (loadToggleState().mode) || 'agent';
     const saved = loadToolPref(stateKey, mode);
     const chk = el(checkboxId);
     if (chk) chk.checked = saved;
     btn.classList.toggle('active', saved);
     btn.setAttribute('aria-pressed', String(saved));
     btn.addEventListener('click', () => {
-      const curMode = (loadToggleState().mode) || 'chat';
+      const curMode = (loadToggleState().mode) || 'agent';
       const chk = el(checkboxId);
       chk.checked = !chk.checked;
       btn.classList.toggle('active', chk.checked);
@@ -1967,6 +1983,7 @@ function initializeEventListeners() {
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
   try { workspaceModule.initWorkspace(); } catch (_) {}
+  try { activityCenterModule.init(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   function bringOpenDocumentToFrontOnMobile() {

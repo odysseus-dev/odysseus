@@ -68,6 +68,7 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
+from src.tool_approval import normalize_permission_mode, resolve_approval
 
 logger = logging.getLogger(__name__)
 
@@ -732,6 +733,17 @@ def setup_chat_routes(
 ) -> APIRouter:
     router = APIRouter(tags=["chat"])
 
+    @router.post("/api/chat/permission/{approval_id}")
+    async def answer_tool_permission(approval_id: str, request: Request) -> Dict[str, bool]:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        approved = payload.get("approved") is True
+        if not resolve_approval(approval_id, get_current_user(request), approved):
+            raise HTTPException(404, "Permission request is no longer pending")
+        return {"ok": True, "approved": approved}
+
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
     # ------------------------------------------------------------------ #
@@ -954,6 +966,26 @@ def setup_chat_routes(
             or (body or {}).get("selected_endpoint_id")
             or ""
         ).strip()
+        selected_citations_raw = form_data.get("selected_citations") or (body or {}).get("selected_citations")
+        selected_citations: List[str] = []
+        if selected_citations_raw:
+            try:
+                parsed_citations = json.loads(selected_citations_raw) if isinstance(selected_citations_raw, str) else selected_citations_raw
+                total_chars = 0
+                for item in parsed_citations if isinstance(parsed_citations, list) else []:
+                    text = item.get("text") if isinstance(item, dict) else item
+                    text = str(text or "").strip()[:16000]
+                    if not text:
+                        continue
+                    remaining = 32000 - total_chars
+                    if remaining <= 0:
+                        break
+                    selected_citations.append(text[:remaining])
+                    total_chars += len(selected_citations[-1])
+                    if len(selected_citations) >= 5:
+                        break
+            except (TypeError, ValueError, json.JSONDecodeError):
+                selected_citations = []
         # Issue #3229: API callers send JSON, not FormData.  Read from the
         # JSON body as fallback so callers who send {"allow_bash": true}
         # actually get bash enabled.
@@ -978,6 +1010,9 @@ def setup_chat_routes(
         retired_tool_approval_taint = False
         external_untrusted_context_seen = False
         tool_approval_continuation = False
+        permission_mode = normalize_permission_mode(
+            form_data.get("permission_mode") or (body or {}).get("permission_mode")
+        )
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
@@ -1754,6 +1789,13 @@ def setup_chat_routes(
                 if tool_approval_continuation
                 else _ensure_current_request_is_latest_user(context_source, message)
             )
+            if selected_citations:
+                citation_context = untrusted_context_message(
+                    "text explicitly selected by the user from this conversation",
+                    "\n\n--- selected passage ---\n\n".join(selected_citations),
+                )
+                insert_at = max(0, len(messages) - 1) if messages and messages[-1].get("role") == "user" else len(messages)
+                messages.insert(insert_at, citation_context)
 
             # Auto-compact notification
             if ctx.was_compacted:
@@ -2328,6 +2370,7 @@ def setup_chat_routes(
                         defer_context_shaping=_foreground_policy.enabled,
                         external_untrusted_context_seen=external_untrusted_context_seen,
                         exact_approval=exact_tool_approval,
+                        permission_mode=permission_mode,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -2354,6 +2397,7 @@ def setup_chat_routes(
                                     "intent_nudge_exhausted",
                                     "ask_user",
                                     "plan_update",
+                                    "permission_request", "permission_resolved",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _event_round = data.get("round", 1)

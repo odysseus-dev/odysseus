@@ -41145,257 +41145,2137 @@ body.theme-frosted .modal {
   .compare-pane { min-height: 60dvh; }
 }
 
-/* ── Settings navigation / finder ────────────────────────────── */
-.settings-sidebar-content {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-  overflow-x: hidden;
+/* ========================================================================== */
+/* Modern agent shell                                                         */
+/* A restrained, Codex-inspired presentation layer. Existing element IDs and */
+/* interaction logic stay untouched so the redesign remains an upgrade rather */
+/* than a parallel UI implementation.                                         */
+/* ========================================================================== */
+
+body.ody-modern-shell {
+  --bg: #151616;
+  --fg: #ececeb;
+  --panel: #1d1e1e;
+  --border: #303131;
+  --red: #a8c7fa;
+  --accent: #a8c7fa;
+  --accent-primary: #a8c7fa;
+  --sidebar-bg: #1b2225;
+  --input-bg: #2b2c2c;
+  --input-border: #414242;
+  --send-btn-bg: #f1f1ef;
+  --send-btn-hover: #ffffff;
+  --user-bubble-bg: #2b2c2c;
+  --ai-bubble-bg: transparent;
+  --bubble-border: transparent;
+  background: #151616;
+  color: #ececeb;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: -0.006em;
 }
 
-.settings-nav-search-wrap {
-  position: relative;
-  margin: 0 0 8px;
+body.ody-modern-shell pre,
+body.ody-modern-shell code,
+body.ody-modern-shell .hljs {
+  font-family: "Fira Code", "Cascadia Code", Consolas, monospace;
 }
 
-.settings-nav-search {
-  box-sizing: border-box;
-  width: 100%;
+body.ody-modern-shell ::selection {
+  background: rgba(168, 199, 250, 0.25);
+}
+
+@supports selector(::-webkit-scrollbar) {
+  body.ody-modern-shell ::-webkit-scrollbar { width: 10px; height: 10px; }
+  body.ody-modern-shell ::-webkit-scrollbar-track { background: transparent; }
+  body.ody-modern-shell ::-webkit-scrollbar-thumb {
+    background: #3a3c3c;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+  body.ody-modern-shell ::-webkit-scrollbar-thumb:hover { background-color: #555757; }
+}
+
+body.ody-modern-shell .sidebar:not(.hidden) {
+  min-width: 272px;
+}
+
+body.ody-modern-shell .sidebar {
+  background: #1b2225;
+  border: 0;
+  border-right: 1px solid #2a3032;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+body.ody-modern-shell .sidebar.right-side {
+  border-left: 1px solid #2a3032;
+  border-right: 0;
+}
+
+body.ody-modern-shell .sidebar-resize-handle:hover,
+body.ody-modern-shell .sidebar-resize-handle.dragging,
+body.ody-modern-shell .rail-resize-handle:hover,
+body.ody-modern-shell .rail-resize-handle.dragging {
+  background: rgba(168, 199, 250, 0.42);
+}
+
+body.ody-modern-shell .sidebar-header {
+  min-height: 54px;
+  padding: 12px 14px 4px 46px;
+  justify-content: flex-start;
+  background: #1b2225;
+}
+
+body.ody-modern-shell .sidebar-brand {
+  gap: 9px;
   min-width: 0;
+}
+
+body.ody-modern-shell .sidebar-brand::before {
+  content: "O";
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: linear-gradient(145deg, #303b3f, #202629);
+  color: #f5f5f3;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+body.ody-modern-shell .sidebar-brand-title {
+  position: static;
+  color: #f1f1ef;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+body.ody-modern-shell .hamburger-btn {
+  top: 12px;
+  left: 11px;
+  width: 32px;
   height: 32px;
-  padding: 5px 9px 5px 29px;
-  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #c4c8c8;
+  opacity: 0.74;
+}
+
+body.ody-modern-shell .hamburger-btn:hover {
+  background: rgba(255, 255, 255, 0.065);
+  opacity: 1;
+}
+
+body.ody-modern-shell .sidebar-inner {
+  gap: 2px;
+  padding: 8px 8px 12px;
+}
+
+body.ody-modern-shell #sidebar-new-chat-btn,
+body.ody-modern-shell #sidebar-search-btn,
+body.ody-modern-shell #tools-section .list-item,
+body.ody-modern-shell .list-item {
+  min-height: 34px;
+  margin: 1px 0;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #c7cccc;
+  font-size: 12.5px;
+  line-height: 1.25;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+body.ody-modern-shell .list-item:hover,
+body.ody-modern-shell .list-item.hovered {
+  color: #f1f1ef;
+  background: rgba(255, 255, 255, 0.055);
+  border-color: transparent;
+}
+
+body.ody-modern-shell .list-item.active-session,
+body.ody-modern-shell .list-item.active {
+  color: #f5f5f3;
+  background: #303638;
+  border-color: rgba(255, 255, 255, 0.035);
+  box-shadow: none;
+}
+
+body.ody-modern-shell #sidebar-new-chat-btn {
+  color: #f0f1ef;
+  margin-bottom: 2px;
+}
+
+body.ody-modern-shell .section {
+  margin-top: 12px;
+  border-radius: 0;
+}
+
+body.ody-modern-shell #sessions-section { margin-top: 14px; }
+
+body.ody-modern-shell .section-header-flex {
+  min-height: 29px;
+  height: auto;
+  padding: 5px 9px;
+}
+
+body.ody-modern-shell .section-header-flex .section-title,
+body.ody-modern-shell .section-title {
+  color: #858c8e;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+body.ody-modern-shell .section-icon { opacity: 0.55; }
+
+body.ody-modern-shell .section-header-btn,
+body.ody-modern-shell .list-item-plus-btn {
+  color: #929899;
   border-radius: 6px;
-  outline: none;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
+}
+
+body.ody-modern-shell .section-header-btn:hover,
+body.ody-modern-shell .list-item-plus-btn:hover {
+  color: #f0f0ef;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.ody-modern-shell .sidebar-user-bar {
+  min-height: 52px;
+  padding: 7px 8px;
+  border-top: 1px solid #2a3032;
+}
+
+body.ody-modern-shell .user-bar-left {
+  padding: 7px 8px;
+  border-radius: 8px;
+}
+
+body.ody-modern-shell .user-bar-avatar {
+  width: 25px;
+  height: 25px;
+  background: #323a3d;
+  color: #e9ebea;
+  opacity: 1;
+}
+
+body.ody-modern-shell .user-bar-name { color: #cbd0d0; font-size: 12px; opacity: 1; }
+body.ody-modern-shell .user-bar-btn { color: #aeb4b5; opacity: 0.7; }
+
+body.ody-modern-shell .icon-rail {
+  width: 52px;
+  padding: 50px 6px 8px;
+  gap: 3px;
+  background: #1b2225;
+  border-color: #2a3032;
+}
+
+body.ody-modern-shell .icon-rail-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  color: #c2c8c9;
+  opacity: 0.68;
+}
+
+body.ody-modern-shell .icon-rail-btn:hover,
+body.ody-modern-shell .icon-rail-btn.active-section {
+  color: #f2f2f0;
+  background: rgba(255, 255, 255, 0.07);
+  opacity: 1;
+}
+
+body.ody-modern-shell .chat-container {
+  margin: 0;
+  padding: 0 24px 16px;
+  background: #151616;
+}
+
+body.ody-modern-shell .chat-top-bar {
+  min-height: 56px;
+  padding: 0;
+  border-bottom: 1px solid #292a2a;
+}
+
+body.ody-modern-shell .chat-meta-overlay {
+  left: 50%;
+  right: auto;
+  top: 50%;
+  width: min(800px, calc(100% - 48px));
+  max-width: 800px;
+  transform: translate(-50%, -50%);
+  justify-content: flex-start;
+  gap: 5px;
+  color: #d7d8d6;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+body.ody-modern-shell .export-dl-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  color: #909595;
+}
+
+body.ody-modern-shell .export-dl-btn:hover {
+  color: #ededeb;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.ody-modern-shell .export-dropdown-menu,
+body.ody-modern-shell .dropdown,
+body.ody-modern-shell .model-picker-menu,
+body.ody-modern-shell .overflow-menu {
+  border: 1px solid #393a3a;
+  border-radius: 12px;
+  background: #252626;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.38);
+}
+
+body.ody-modern-shell .chat-history {
+  --chat-max: 800px;
+  margin-bottom: 10px;
+  padding-top: 22px;
+  padding-bottom: 18px;
+  scroll-padding-bottom: 28px;
+}
+
+body.ody-modern-shell .msg {
+  margin-top: 7px;
+  margin-bottom: 7px;
+  color: #e7e7e5;
+  font-size: 14px;
+  line-height: 1.55;
+  animation-duration: 180ms;
+}
+
+body.ody-modern-shell .msg-ai {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+  padding: 13px 0 17px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+body.ody-modern-shell .msg-user {
+  max-width: 76%;
+  margin-right: 0;
+  padding: 10px 14px;
+  border: 1px solid #383939;
+  border-radius: 16px;
+  background: #2b2c2c;
+}
+
+body.ody-modern-shell .msg-user .role { display: none; }
+
+body.ody-modern-shell .msg-ai .role {
+  margin-bottom: 9px;
+  color: #aeb3b3;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+body.ody-modern-shell .msg .body { font-size: 14px; line-height: 1.6; }
+
+body.ody-modern-shell .msg pre,
+body.ody-modern-shell .msg .code-block {
+  border: 1px solid #303232;
+  border-radius: 11px;
+  background: #101111;
+}
+
+body.ody-modern-shell #welcome-screen {
+  top: 36%;
+  width: min(540px, calc(100% - 40px));
+  animation-duration: 260ms;
+}
+
+body.ody-modern-shell #welcome-screen .welcome-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  background: none;
+  color: #eeeeec;
+  -webkit-text-fill-color: currentColor;
+  font-size: clamp(24px, 2.1vw, 31px);
+  font-weight: 570;
+  letter-spacing: -0.035em;
+}
+
+body.ody-modern-shell .welcome-boat {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 5px;
+  border: 1px solid #3a3d3d;
+  border-radius: 8px;
+  color: #d8e6ff;
+  background: #242829;
+}
+
+body.ody-modern-shell #welcome-screen .welcome-sub {
+  max-width: 420px;
+  color: #999e9e;
+  font-size: 13px;
+  opacity: 1;
+}
+
+body.ody-modern-shell #welcome-screen .welcome-tip {
+  margin-top: 17px;
+  color: #777c7c;
+  font-size: 11px;
+  opacity: 1;
+}
+
+body.ody-modern-shell .incognito-btn {
+  height: 28px;
+  margin-top: 14px;
+  padding: 0 10px;
+  border-color: #343737;
+  border-radius: 8px;
+  color: #999f9f;
+  opacity: 1;
+}
+
+body.ody-modern-shell .chat-container.welcome-active .chat-input-bar {
+  max-width: 760px;
+  margin-bottom: 25vh;
+}
+
+body.ody-modern-shell .chat-input-bar {
+  max-width: 800px;
+  padding: 11px 12px 10px;
+  gap: 7px;
+  border: 1px solid #3b3c3c;
+  border-radius: 18px;
+  background: #2b2c2c;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24), inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+body.ody-modern-shell .chat-input-bar:focus-within {
+  border-color: #555757;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.3), inset 0 1px rgba(255, 255, 255, 0.035);
+}
+
+body.ody-modern-shell .chat-input-bar textarea#message {
+  min-height: 31px;
+  padding: 3px 150px 2px 2px;
+  color: #f0f0ee;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+body.ody-modern-shell .chat-input-bar textarea#message::placeholder { color: #8c9090; }
+
+body.ody-modern-shell .model-picker-btn {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  color: #b5b9b9;
+  background: transparent;
+  font-family: inherit;
   font-size: 11px;
 }
 
-.settings-nav-search:focus {
-  border-color: var(--accent, var(--red));
+body.ody-modern-shell .model-picker-btn:hover {
+  color: #f0f0ee;
+  background: rgba(255, 255, 255, 0.055);
 }
 
-.settings-nav-search::placeholder {
-  color: var(--fg);
-  opacity: 0.45;
+body.ody-modern-shell .chat-input-bottom { margin-top: 2px; }
+body.ody-modern-shell .chat-input-left { gap: 2px; }
+
+body.ody-modern-shell .input-icon-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  color: #b8bcbc;
+  opacity: 0.68;
 }
 
-.settings-nav-search-icon {
-  position: absolute;
-  z-index: 2;
-  top: 9px;
-  left: 9px;
-  pointer-events: none;
-  opacity: 0.5;
+body.ody-modern-shell .input-icon-btn:hover,
+body.ody-modern-shell .input-icon-btn.active,
+body.ody-modern-shell .input-icon-btn.expanded {
+  color: #f1f1ef;
+  background: rgba(255, 255, 255, 0.065);
+  opacity: 1;
 }
 
-.settings-nav-search-results {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  min-width: 100%;
-  max-height: 300px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+body.ody-modern-shell .mode-toggle {
+  height: 30px;
+  border-color: #3b3c3c;
+  border-radius: 9px;
+  background: #242525;
 }
 
-.settings-search-result {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  width: 100%;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 9px;
+body.ody-modern-shell .mode-toggle::before {
+  border-radius: 8px;
+  background: #3a3b3b;
+}
+
+body.ody-modern-shell .mode-toggle-btn {
+  padding: 0 10px;
+  color: #8d9292;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+body.ody-modern-shell .mode-toggle-btn.active { color: #efefed; }
+
+body.ody-modern-shell .send-btn,
+body.ody-modern-shell .send-btn.mic-mode,
+body.ody-modern-shell .send-btn.newchat-mode {
+  width: 32px;
+  min-width: 32px;
+  height: 32px !important;
   border: 0;
-  border-radius: 5px;
+  border-radius: 50%;
+  background: #f0f0ee;
+  color: #202121;
+  box-shadow: none;
+}
+
+body.ody-modern-shell .send-btn:hover,
+body.ody-modern-shell .send-btn.mic-mode:hover,
+body.ody-modern-shell .send-btn.newchat-mode:hover {
+  background: #ffffff;
+  color: #151616;
+  transform: scale(1.03);
+}
+
+body.ody-modern-shell .send-btn.newchat-expanded {
+  width: 68px;
+  border-radius: 16px;
+}
+
+body.ody-modern-shell .modal-content,
+body.ody-modern-shell .settings-modal-content {
+  border: 1px solid #383a3a;
+  border-radius: 16px;
+  background: #202121;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+body.ody-modern-shell button:focus-visible,
+body.ody-modern-shell textarea:focus-visible,
+body.ody-modern-shell input:focus-visible,
+body.ody-modern-shell [tabindex]:focus-visible {
+  outline: 2px solid rgba(168, 199, 250, 0.75);
+  outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  body.ody-modern-shell .sidebar:not(.hidden) { min-width: 0; }
+  body.ody-modern-shell .sidebar {
+    width: 88% !important;
+    max-width: 330px;
+    background: #1b2225 !important;
+    border-right: 1px solid #303638;
+  }
+  body.ody-modern-shell .sidebar.hidden { width: 88% !important; }
+  body.ody-modern-shell .sidebar-header { min-height: 58px; padding: 14px 14px 6px 52px; }
+  body.ody-modern-shell .sidebar-brand-title { font-size: 15px; }
+  body.ody-modern-shell .chat-container { padding: 0 12px 10px; }
+  body.ody-modern-shell .chat-top-bar { min-height: 48px; margin: 0; padding: 0; }
+  body.ody-modern-shell .chat-meta-overlay {
+    width: calc(100% - 88px);
+    max-width: none;
+    font-size: 12px;
+    justify-content: center;
+  }
+  body.ody-modern-shell .chat-history {
+    padding: 14px 2px 12px;
+    margin-bottom: 8px;
+  }
+  body.ody-modern-shell .msg-user { max-width: 88% !important; margin-right: 2px; }
+  body.ody-modern-shell .msg-ai { padding-left: 2px; padding-right: 2px; }
+  body.ody-modern-shell #welcome-screen { top: 36%; }
+  body.ody-modern-shell #welcome-screen .welcome-name { font-size: 23px; }
+  body.ody-modern-shell .chat-container.welcome-active .chat-input-bar { margin-bottom: 0; }
+  body.ody-modern-shell .chat-input-bar { padding: 10px; border-radius: 16px; }
+  body.ody-modern-shell .chat-input-bar textarea#message { padding-right: 112px; font-size: 16px !important; }
+  body.ody-modern-shell .send-btn,
+  body.ody-modern-shell .send-btn.mic-mode,
+  body.ody-modern-shell .send-btn.newchat-mode {
+    width: 42px;
+    min-width: 42px;
+    height: 42px !important;
+  }
+}
+
+@media (max-width: 470px) {
+  body.ody-modern-shell .mode-toggle { display: none; }
+  body.ody-modern-shell .chat-input-bar textarea#message { padding-right: 90px; }
+  body.ody-modern-shell #welcome-screen .welcome-name { font-size: 21px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ody-modern-shell *,
+  body.ody-modern-shell *::before,
+  body.ody-modern-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Coding workspace navigation ────────────────────────────────────────── */
+
+body.ody-modern-shell .sidebar-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  margin: 5px 0 0;
+  padding: 0 8px 0 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+body.ody-modern-shell .sidebar-mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  color: #aeb5b5;
+  font-size: 13px;
+}
+
+body.ody-modern-shell .sidebar-mode-label svg {
+  color: #899294;
+  opacity: 0.85;
+}
+
+body.ody-modern-shell .sidebar-mode-row .mode-toggle {
+  display: flex !important;
+  width: 116px;
+  height: 28px;
+  border-color: #354044;
+  border-radius: 8px;
+  background: rgba(8, 12, 13, 0.26);
+}
+
+body.ody-modern-shell .sidebar-mode-row .mode-toggle::before {
+  border-radius: 7px;
+  background: #364044;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+}
+
+body.ody-modern-shell .sidebar-mode-row .mode-toggle-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+body.ody-modern-shell .workspace-projects-section {
+  margin-top: 15px;
+}
+
+body.ody-modern-shell .workspace-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 238px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+body.ody-modern-shell .workspace-project-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  padding: 5px 10px 5px 12px;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  color: #abb2b3;
   background: transparent;
-  color: var(--fg);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+body.ody-modern-shell .workspace-project-item:hover {
+  color: #e1e4e3;
+  background: rgba(255, 255, 255, 0.047);
+}
+
+body.ody-modern-shell .workspace-project-item.active {
+  color: #eef0ef;
+  background: #323a3d;
+}
+
+body.ody-modern-shell .workspace-project-item .workspace-row-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  opacity: 0.72;
+}
+
+body.ody-modern-shell .workspace-project-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.ody-modern-shell .workspace-project-name,
+body.ody-modern-shell .workspace-project-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ody-modern-shell .workspace-project-name {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+body.ody-modern-shell .workspace-project-path {
+  color: #778184;
+  font-size: 9.5px;
+}
+
+body.ody-modern-shell .workspace-project-active-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: #8fb5f4;
+  box-shadow: 0 0 0 3px rgba(143, 181, 244, 0.1);
+}
+
+body.ody-modern-shell .workspace-project-empty {
+  padding: 8px 12px;
+  color: #747e80;
+  font-size: 11px;
+}
+
+body.ody-modern-shell #sessions-section {
+  margin-top: 15px;
+}
+
+body.ody-modern-shell #workspace-indicator-btn.workspace-chip {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  max-width: min(270px, 36vw);
+  min-width: 0;
+  height: 34px;
+  padding: 4px 7px 4px 9px;
+  gap: 8px;
+  border: 1px solid #3a3c3c;
+  border-radius: 9px;
+  color: #c9cdcc;
+  background: #292a2a;
+  opacity: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+body.ody-modern-shell #workspace-indicator-btn.workspace-chip:hover {
+  color: #f0f1ef;
+  border-color: #4a4c4c;
+  background: #303131;
+}
+
+body.ody-modern-shell .workspace-chip .workspace-indicator-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  opacity: 0.8 !important;
+}
+
+body.ody-modern-shell .workspace-chip-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  line-height: 1.08;
+}
+
+body.ody-modern-shell #workspace-indicator-name,
+body.ody-modern-shell #workspace-indicator-path {
+  display: block;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ody-modern-shell #workspace-indicator-name {
+  color: #e1e3e2;
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+body.ody-modern-shell #workspace-indicator-path {
+  margin-top: 2px;
+  color: #868c8c;
+  font-size: 8.5px;
+}
+
+body.ody-modern-shell .workspace-chip-chevron {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  color: #818787;
+}
+
+@media (max-width: 768px) {
+  body.ody-modern-shell .workspace-project-list { max-height: 196px; }
+  body.ody-modern-shell #workspace-indicator-btn.workspace-chip { max-width: 148px; }
+  body.ody-modern-shell #workspace-indicator-path { display: none; }
+}
+
+/* ── Modern sidebar refinement ──────────────────────────────────────────────
+   Codex gets much of its calmness from proportion and typography: the rail is
+   wide enough for titles, labels are a real reading size, and metadata does
+   not compete with the task names. These rules intentionally override several
+   legacy child selectors that forced sidebar spans down to 9.75px. */
+
+@font-face {
+  font-family: "Odysseus Sans";
+  src: url("/static/fonts/InterVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+body.ody-modern-shell {
+  font-family: "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  font-variation-settings: "wght" 400;
+  letter-spacing: 0;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (min-width: 769px) {
+  body.ody-modern-shell .sidebar:not(.hidden) {
+    width: clamp(320px, 19.5vw, 380px);
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+body.ody-modern-shell .sidebar {
+  background: #1d2528;
+  border-right-color: #2a3235;
+}
+
+body.ody-modern-shell .sidebar.right-side {
+  border-left-color: #2a3235;
+}
+
+body.ody-modern-shell .sidebar-header {
+  height: 68px;
+  min-height: 68px;
+  padding: 0 16px 0 54px;
+  align-items: center;
+  background: #1d2528;
+}
+
+body.ody-modern-shell .sidebar-brand {
+  gap: 7px;
+  min-height: 34px;
+}
+
+body.ody-modern-shell .sidebar-brand::before { display: none; }
+
+body.ody-modern-shell .sidebar-brand::after {
+  display: none;
+}
+
+body.ody-modern-shell .sidebar-brand-title {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  color: #dfe2e1;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.025em;
+}
+
+body.ody-modern-shell .hamburger-btn {
+  top: 17px;
+  left: 14px;
+  width: 34px;
+  height: 34px;
+  color: #a7adae;
+}
+
+body.ody-modern-shell .hamburger-btn svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2;
+}
+
+body.ody-modern-shell .sidebar-inner {
+  gap: 0;
+  padding: 10px 8px 20px;
+}
+
+body.ody-modern-shell #sidebar-new-chat-btn,
+body.ody-modern-shell #sidebar-search-btn {
+  min-height: 42px !important;
+  margin: 1px 0;
+  padding: 0 12px !important;
+  gap: 12px !important;
+  border-radius: 9px;
+}
+
+body.ody-modern-shell #sidebar-new-chat-btn .grow,
+body.ody-modern-shell #sidebar-search-btn .grow,
+body.ody-modern-shell .sidebar .list-item .grow,
+body.ody-modern-shell .sidebar .list-item span.grow {
+  position: static !important;
+  color: #cbd0d0;
+  font-family: inherit;
+  font-size: 14px !important;
+  font-weight: 400;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+}
+
+body.ody-modern-shell #sidebar-new-chat-btn .grow {
+  color: #e4e6e5;
+  font-weight: 500;
+}
+
+body.ody-modern-shell .sidebar-action-icon {
+  position: static !important;
+  width: 17px;
+  height: 17px;
+  color: #aab1b2;
+  opacity: 0.9;
+}
+
+body.ody-modern-shell .section {
+  margin-top: 18px;
+}
+
+body.ody-modern-shell #sessions-section { margin-top: 22px; }
+
+body.ody-modern-shell .section-header-flex {
+  min-height: 34px;
+  padding: 6px 11px;
+  gap: 8px;
+}
+
+body.ody-modern-shell .section-header-flex .section-title,
+body.ody-modern-shell .section-title,
+body.ody-modern-shell .section-title span {
+  color: #7f898b !important;
+  font-family: inherit;
+  font-size: 11px !important;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.055em;
+  text-transform: none;
+}
+
+body.ody-modern-shell .section-title-label,
+body.ody-modern-shell #chats-section-label {
+  text-transform: uppercase;
+}
+
+body.ody-modern-shell .section-icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.62;
+}
+
+body.ody-modern-shell .section-collapse-btn,
+body.ody-modern-shell .section-header-btn {
+  width: 26px;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 !important;
+  border: 0;
+  border-radius: 7px;
+  color: #7f888a;
+}
+
+body.ody-modern-shell .section-collapse-btn:hover,
+body.ody-modern-shell .section-header-btn:hover {
+  color: #d6d9d8;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+body.ody-modern-shell #session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+body.ody-modern-shell #session-list .date-section-header {
+  min-height: 30px;
+  padding: 10px 12px 5px;
+  color: #747e80;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+}
+
+body.ody-modern-shell #session-list .date-section-header::after {
+  background: #30383a;
+  opacity: 0.75;
+}
+
+body.ody-modern-shell #session-list .list-item {
+  min-height: 40px;
+  margin: 0;
+  padding: 0 12px 0 24px;
+  gap: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+}
+
+body.ody-modern-shell #session-list .list-item:hover {
+  background: rgba(255, 255, 255, 0.047);
+}
+
+body.ody-modern-shell #session-list .list-item.active-session {
+  background: #323a3d;
+  border: 0;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+body.ody-modern-shell #session-list .list-item .grow {
+  color: #c4c9c9;
+  font-size: 14px !important;
+}
+
+body.ody-modern-shell #session-list .list-item.active-session .grow {
+  color: #e5e7e6;
+}
+
+/* Codex lets task names carry the row. Provider and modality glyphs are still
+   available in the conversation header, but hiding them here removes the noisy
+   double-icon prefix visible in the old sidebar. */
+body.ody-modern-shell #session-list .session-star,
+body.ody-modern-shell #session-list .session-icon {
+  display: none !important;
+}
+
+body.ody-modern-shell #session-list .session-menu-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  margin-left: 6px;
+  padding: 0 !important;
+  color: #858e90;
+  border-radius: 7px;
+}
+
+body.ody-modern-shell .session-folder { margin: 7px 0; }
+
+body.ody-modern-shell .session-folder-header {
+  min-height: 36px;
+  padding: 0 12px;
+  gap: 8px;
+  border-radius: 8px;
+  color: #aeb5b5;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+body.ody-modern-shell .session-folder-content { padding-left: 8px; }
+body.ody-modern-shell .session-folder-content .list-item { border-bottom: 0; }
+
+body.ody-modern-shell .session-show-more-btn {
+  min-height: 36px;
+  padding: 0 24px;
+  color: #81898b;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  opacity: 1;
+}
+
+body.ody-modern-shell #email-section,
+body.ody-modern-shell #tools-section {
+  margin-top: 12px;
+}
+
+body.ody-modern-shell #email-section .section-header-flex,
+body.ody-modern-shell #tools-section .section-header-flex {
+  min-height: 42px;
+  border-radius: 9px;
+}
+
+body.ody-modern-shell #email-section .section-header-flex:hover,
+body.ody-modern-shell #tools-section .section-header-flex:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+body.ody-modern-shell #email-section .section-title,
+body.ody-modern-shell #email-section .section-title span,
+body.ody-modern-shell #tools-section .section-title,
+body.ody-modern-shell #tools-section .section-title span {
+  color: #aeb5b5 !important;
+  font-size: 13px !important;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body.ody-modern-shell #tools-section .list-item {
+  min-height: 40px;
+  padding: 0 12px 0 24px;
+  gap: 11px;
+  border-radius: 9px;
+}
+
+body.ody-modern-shell #tools-section .list-item > svg {
+  width: 16px;
+  height: 16px;
+  opacity: 0.62 !important;
+}
+
+body.ody-modern-shell .sidebar-user-bar {
+  min-height: 62px;
+  padding: 9px 10px;
+  background: #1d2528;
+  border-top-color: #2a3235;
+}
+
+body.ody-modern-shell .user-bar-left {
+  min-height: 42px;
+  gap: 11px;
+  padding: 0 8px;
+}
+
+body.ody-modern-shell .user-bar-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+body.ody-modern-shell .user-bar-name {
+  color: #cbd0d0;
+  font-size: 14px;
+  font-weight: 450;
+}
+
+body.ody-modern-shell .user-bar-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+body.ody-modern-shell .msg,
+body.ody-modern-shell .msg .body,
+body.ody-modern-shell .chat-input-bar textarea#message,
+body.ody-modern-shell .chat-meta-overlay {
+  font-family: "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (max-width: 768px) {
+  body.ody-modern-shell .sidebar-header {
+    min-height: 62px;
+    padding: 14px 14px 6px 54px;
+  }
+  body.ody-modern-shell .sidebar-inner { padding: 8px 10px 18px !important; }
+  body.ody-modern-shell #sidebar-new-chat-btn,
+  body.ody-modern-shell #sidebar-search-btn { min-height: 46px !important; }
+  body.ody-modern-shell #session-list .list-item { min-height: 44px; padding-left: 18px; }
+  body.ody-modern-shell #tools-section .list-item { min-height: 44px; padding-left: 18px; }
+}
+
+/* ── Modern interaction cleanup ─────────────────────────────────────────── */
+
+/* The modern navigation has only two states: open and closed. The legacy
+   mini rail duplicated actions (including new/delete) and is intentionally
+   unavailable here. The fixed hamburger remains as the way back in. */
+body.ody-modern-shell .icon-rail,
+html.ody-sidebar-mini body.ody-modern-shell .icon-rail,
+body.ody-modern-shell .icon-rail.mobile-mini {
+  display: none !important;
+  width: 0 !important;
+}
+
+body.ody-modern-shell .sidebar {
+  will-change: width, opacity, transform;
+  transition:
+    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    min-width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 170ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 170ms ease !important;
+}
+
+@media (min-width: 769px) {
+  body.ody-modern-shell .sidebar.ody-sidebar-opening,
+  body.ody-modern-shell .sidebar.ody-sidebar-closing {
+    width: 0 !important;
+    min-width: 0 !important;
+    opacity: 0;
+    overflow: hidden;
+    transform: translateX(-10px);
+    pointer-events: none;
+  }
+
+  body.ody-modern-shell .sidebar.right-side.ody-sidebar-opening,
+  body.ody-modern-shell .sidebar.right-side.ody-sidebar-closing {
+    transform: translateX(10px);
+  }
+
+  body.ody-modern-shell .sidebar.hidden {
+    width: 0 !important;
+    min-width: 0 !important;
+    opacity: 0;
+    transform: translateX(-10px);
+    pointer-events: none;
+  }
+
+  body.ody-modern-shell .sidebar.right-side.hidden {
+    transform: translateX(10px);
+  }
+}
+
+/* Context is a property of the ongoing conversation, so it travels with the
+   composer. Per-message throughput and actions stay in their original footer. */
+body.ody-modern-shell .msg-footer .ctx-ring,
+body.ody-modern-shell .msg-footer .ctx-divider {
+  display: none !important;
+}
+
+body.ody-modern-shell .composer-context-pill {
+  position: static;
+  height: 30px;
+  min-width: 46px;
+  margin: 0 2px 0 0;
+  padding: 0 8px;
+  justify-content: center;
+  gap: 4px;
+  color: #aeb4b5;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+body.ody-modern-shell .composer-context-pill:hover,
+body.ody-modern-shell .composer-context-pill.open {
+  color: #e7e9e8;
+  border-color: #474a4a;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+/* Floating action shown only for text selected inside rendered messages. */
+.chat-selection-toolbar {
+  position: fixed;
+  z-index: 10020;
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid #464949;
+  border-radius: 9px;
+  background: #292b2b;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.42);
+  font-family: "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  animation: ody-selection-toolbar-in 120ms ease-out;
+}
+
+.chat-selection-toolbar[hidden] { display: none !important; }
+
+.selection-citation-strip { display:flex; align-items:center; gap:7px; padding:10px 12px 0; overflow-x:auto; scrollbar-width:none; }
+.selection-citation-strip::-webkit-scrollbar { display:none; }
+.selection-citation-strip[hidden] { display:none !important; }
+.selection-citation-chip { display:inline-flex; align-items:center; min-width:0; max-width:310px; height:28px; padding:0 4px 0 9px; gap:7px; border:1px solid color-mix(in srgb, var(--fg) 14%, transparent); border-radius:8px; background:color-mix(in srgb, var(--fg) 7%, transparent); color:var(--fg); font-size:11.5px; }
+.selection-citation-icon { color:var(--muted); font-family:Georgia,serif; font-size:18px; line-height:1; }
+.selection-citation-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.selection-citation-remove { display:grid; place-items:center; flex:0 0 20px; width:20px; height:20px; padding:0; border:0; border-radius:5px; background:transparent; color:var(--muted); font:16px/1 inherit; cursor:pointer; }
+.selection-citation-remove:hover { background:color-mix(in srgb, var(--fg) 10%, transparent); color:var(--fg); }
+
+.permission-mode-control { position:relative; display:inline-flex; align-items:center; height:30px; }
+.permission-mode-trigger { display:inline-flex; align-items:center; height:30px; max-width:150px; padding:0 7px; gap:6px; border:1px solid transparent; border-radius:8px; color:#aeb4b5; background:transparent; font:500 11px/1 "Odysseus Sans",Inter,"Segoe UI",sans-serif; cursor:pointer; transition:color 140ms ease,background 140ms ease,border-color 140ms ease; }
+.permission-mode-trigger:hover, .permission-mode-control.open .permission-mode-trigger { color:#e8eae8; background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.08); }
+.permission-trigger-icon { flex:0 0 auto; opacity:.82; }
+.permission-mode-trigger[data-mode="auto"] .permission-trigger-icon { color:#ff7a35; }
+.permission-trigger-chevron { flex:0 0 auto; opacity:.68; transition:transform 160ms cubic-bezier(.22,1,.36,1); }
+.permission-mode-control.open .permission-trigger-chevron { transform:rotate(180deg); }
+.permission-mode-menu { position:absolute; z-index:450; right:0; bottom:calc(100% + 9px); width:410px; max-width:calc(100vw - 24px); padding:8px; border:1px solid rgba(255,255,255,.11); border-radius:14px; background:#2c2c2b; color:#edeeec; box-shadow:0 18px 55px rgba(0,0,0,.42),0 2px 10px rgba(0,0,0,.24); opacity:0; transform:translateY(7px) scale(.985); transform-origin:bottom right; pointer-events:none; transition:opacity 135ms ease,transform 165ms cubic-bezier(.22,1,.36,1); }
+.permission-mode-menu[hidden] { display:none !important; }
+.permission-mode-menu.visible { opacity:1; transform:translateY(0) scale(1); pointer-events:auto; }
+.permission-menu-heading { padding:7px 10px 8px; color:#a7aaa8; font-size:12px; font-weight:500; }
+.permission-menu-item { position:relative; display:grid; grid-template-columns:24px minmax(0,1fr) 20px; align-items:start; width:100%; min-height:54px; padding:8px; gap:9px; border:0; border-radius:9px; background:transparent; color:inherit; text-align:left; font-family:inherit; cursor:pointer; transition:background 120ms ease; }
+.permission-menu-item:hover, .permission-menu-item:focus-visible { outline:0; background:rgba(255,255,255,.065); }
+.permission-menu-icon { display:grid; place-items:center; width:24px; height:24px; margin-top:1px; color:#b6bab7; }
+.permission-menu-icon svg, .permission-menu-check svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; }
+.permission-menu-copy { display:flex; min-width:0; flex-direction:column; gap:4px; }
+.permission-menu-title { color:#edeeec; font-size:13px; font-weight:520; line-height:1.2; }
+.permission-menu-description { color:#9da19e; font-size:11.5px; line-height:1.25; }
+.permission-menu-check { display:none; place-items:center; width:20px; height:24px; color:#d4d7d4; }
+.permission-menu-item[aria-checked="true"] .permission-menu-check { display:grid; }
+.permission-menu-item-danger .permission-menu-icon, .permission-menu-item-danger .permission-menu-title, .permission-menu-item-danger .permission-menu-description { color:#ff7a35; }
+@media (max-width:600px) { .permission-mode-menu { position:fixed; right:12px; bottom:92px; left:12px; width:auto; max-width:none; transform-origin:bottom center; } }
+@media (prefers-reduced-motion:reduce) { .permission-mode-menu, .permission-trigger-chevron { transition:none !important; } }
+.agent-permission-card { width:min(680px,calc(100% - 36px)); margin:12px auto; padding:13px; border:1px solid color-mix(in srgb, var(--fg) 13%, transparent); border-radius:12px; background:color-mix(in srgb, var(--fg) 5%, var(--bg)); box-shadow:0 8px 28px rgba(0,0,0,.16); }
+.agent-permission-heading { color:var(--fg); font-size:13px; font-weight:600; }
+.agent-permission-command { max-height:150px; margin:9px 0; padding:9px 10px; overflow:auto; border-radius:7px; background:rgba(0,0,0,.2); color:var(--muted); font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
+.agent-permission-actions { display:flex; justify-content:flex-end; gap:7px; }
+.agent-permission-actions button { min-height:30px; padding:0 12px; border:1px solid color-mix(in srgb, var(--fg) 13%, transparent); border-radius:7px; font:600 11px/1 inherit; cursor:pointer; }
+.agent-permission-deny { background:transparent; color:var(--fg); }
+.agent-permission-approve { background:#ecefed; color:#161817; }
+.agent-permission-card.approved, .agent-permission-card.denied { opacity:.7; }
+.agent-permission-card.approved .agent-permission-actions, .agent-permission-card.denied .agent-permission-actions { display:none; }
+
+.chat-selection-add {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #e2e4e3;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.chat-selection-add:hover,
+.chat-selection-add:focus-visible { background: rgba(255, 255, 255, 0.075); }
+
+@keyframes ody-selection-toolbar-in {
+  from { opacity: 0; transform: translateY(3px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 470px) {
+  body.ody-modern-shell .composer-context-pill { min-width: 42px; padding: 0 6px; }
+}
+
+/* ── Project chat tree ─────────────────────────────────────────────────── */
+body.ody-modern-shell .workspace-projects-section[hidden] {
+  display: none !important;
+}
+
+body.ody-modern-shell .workspace-projects-section .section-header-flex {
+  cursor: default;
+}
+
+body.ody-modern-shell .projects-section-toggle {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0;
+  gap: 7px;
+  border: 0;
+  color: inherit;
+  background: transparent;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.settings-search-result:hover,
-.settings-search-result.active {
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
+body.ody-modern-shell .projects-section-chevron {
+  width: 10px;
+  height: 10px;
+  margin-left: 1px;
+  fill: none;
+  stroke: #6f797b;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(90deg);
+  transition: transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.settings-search-result-label {
+body.ody-modern-shell .projects-section-collapsed .projects-section-chevron {
+  transform: rotate(0deg);
+}
+
+body.ody-modern-shell .projects-section-reveal,
+body.ody-modern-shell .workspace-project-chat-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    grid-template-rows 230ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 155ms ease,
+    transform 230ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+body.ody-modern-shell .projects-section-reveal > .workspace-project-list,
+body.ody-modern-shell .workspace-project-chat-reveal > .workspace-project-chat-reveal-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.ody-modern-shell .projects-section-collapsed .projects-section-reveal,
+body.ody-modern-shell .workspace-project-chat-reveal.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+
+body.ody-modern-shell .workspace-project-list {
+  max-height: none;
+  overflow: visible;
+}
+
+body.ody-modern-shell .workspace-project-group {
+  position: relative;
+  margin: 1px 0 5px;
+}
+
+body.ody-modern-shell .workspace-project-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+body.ody-modern-shell .workspace-project-row:hover,
+body.ody-modern-shell .workspace-project-group.current-workspace > .workspace-project-row {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+body.ody-modern-shell .workspace-project-main {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 62px 0 8px;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  color: #c4c9c9;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.ody-modern-shell .workspace-project-main:hover {
+  color: #eef0ef;
+  background: transparent;
+}
+
+body.ody-modern-shell .workspace-project-main .workspace-row-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  opacity: 0.72;
+}
+
+body.ody-modern-shell .workspace-project-main .workspace-project-name {
+  min-width: 0;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+body.ody-modern-shell .workspace-project-chevron {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  fill: none;
+  stroke: #778184;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+body.ody-modern-shell .workspace-project-main[aria-expanded="true"] .workspace-project-chevron {
+  transform: rotate(90deg);
+}
+
+body.ody-modern-shell .workspace-project-actions {
+  position: absolute;
+  top: 6px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 110ms ease;
+}
+
+body.ody-modern-shell .workspace-project-row:hover .workspace-project-actions,
+body.ody-modern-shell .workspace-project-row:focus-within .workspace-project-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+body.ody-modern-shell .workspace-project-action {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #9ca4a5;
+  background: transparent;
+  cursor: pointer;
+}
+
+body.ody-modern-shell .workspace-project-action:hover {
+  color: #f0f1ef;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+body.ody-modern-shell .workspace-project-action svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.ody-modern-shell .workspace-project-more svg { fill: currentColor; stroke: none; }
+
+body.ody-modern-shell .workspace-project-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 1px 0 4px 31px;
+}
+
+body.ody-modern-shell .workspace-project-chat-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 8px;
+}
+
+body.ody-modern-shell .workspace-project-chat-row .workspace-project-chat {
+  padding-right: 35px;
+}
+
+body.ody-modern-shell .workspace-project-chat-more {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #9ca4a5;
+  background: #292f31;
+  opacity: 0;
+  transform: translateY(-50%) scale(0.92);
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 110ms ease, transform 150ms cubic-bezier(0.22, 1, 0.36, 1), color 110ms ease, background 110ms ease;
+}
+
+body.ody-modern-shell .workspace-project-chat-row:hover .workspace-project-chat-more,
+body.ody-modern-shell .workspace-project-chat-row:focus-within .workspace-project-chat-more {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+  pointer-events: auto;
+}
+
+body.ody-modern-shell .workspace-project-chat-more:hover {
+  color: #f0f1ef;
+  background: #3a4143;
+}
+
+body.ody-modern-shell .workspace-project-chat-more svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+body.ody-modern-shell .workspace-project-chat,
+body.ody-modern-shell .workspace-project-show-more {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  color: #aeb5b5;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 34px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+body.ody-modern-shell .workspace-project-chat:hover,
+body.ody-modern-shell .workspace-project-show-more:hover {
+  color: #e4e6e5;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+body.ody-modern-shell .workspace-project-chat.active-session {
+  color: #f0f1ef;
+  background: #323a3d;
+}
+
+body.ody-modern-shell .workspace-project-show-more {
+  color: #778184;
+  font-size: 11.5px;
+}
+
+.project-context-menu {
+  position: fixed;
+  z-index: 10030;
+  width: 232px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+  background: #292b2b;
+  box-shadow: 0 16px 46px rgba(0, 0, 0, 0.48);
+  font-family: "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  animation: ody-project-menu-in 120ms ease-out;
+}
+
+.project-context-action {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  gap: 10px;
+  border: 0;
+  border-radius: 7px;
+  color: #d8dbda;
+  background: transparent;
+  font: 500 12px/1 inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-context-action:hover { background: rgba(255, 255, 255, 0.07); }
+.project-context-action svg { width: 16px; height: 16px; fill: none; stroke: #abb1b0; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.project-context-action.is-danger,
+.project-context-action.is-danger svg { color: #ef7b7b; stroke: #ef7b7b; }
+.project-context-action.is-danger:hover { background: rgba(239, 123, 123, 0.09); }
+.project-context-divider { height: 1px; margin: 5px 3px; background: rgba(255, 255, 255, 0.09); }
+.chat-context-menu { width: 220px; }
+
+@keyframes ody-project-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 768px) {
+  body.ody-modern-shell .workspace-project-actions { opacity: 1; pointer-events: auto; }
+  body.ody-modern-shell .workspace-project-chat { min-height: 38px; line-height: 38px; }
+  body.ody-modern-shell .workspace-project-chat-more { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ody-modern-shell .projects-section-reveal,
+  body.ody-modern-shell .projects-section-chevron,
+  body.ody-modern-shell .workspace-project-chat-reveal,
+  body.ody-modern-shell .workspace-project-chevron,
+  body.ody-modern-shell .workspace-project-actions,
+  body.ody-modern-shell .workspace-project-chat-more,
+  .project-context-menu { transition: none !important; animation: none !important; }
+}
+
+/* ── Project pulse + live result states ────────────────────────────────── */
+body.ody-modern-shell .sidebar-brand { flex: 1; }
+
+body.ody-modern-shell .sidebar-activity-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #929b9c;
+  background: transparent;
+  cursor: pointer;
+  transition: color 130ms ease, background 130ms ease, border-color 130ms ease;
+}
+
+body.ody-modern-shell .sidebar-activity-btn:hover,
+body.ody-modern-shell .sidebar-activity-btn[aria-expanded="true"] {
+  color: #eceeed;
+  border-color: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+body.ody-modern-shell .sidebar-activity-btn.has-running svg { color: #8bb9ff; }
+body.ody-modern-shell .sidebar-activity-btn.needs-attention svg { color: #ff9b69; }
+
+body.ody-modern-shell .sidebar-activity-badge {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  display: grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border: 2px solid #1d2528;
+  border-radius: 999px;
+  background: #8bb9ff;
+  color: #101416;
+  font-size: 8.5px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+body.ody-modern-shell .workspace-project-main { padding-right: 62px; }
+
+body.ody-modern-shell .workspace-project-main .workspace-project-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ody-modern-shell .workspace-project-pulse {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 5px;
+  color: #778184;
+  font-size: 9.5px;
+}
+
+body.ody-modern-shell .workspace-project-pulse[hidden] { display: none !important; }
+
+body.ody-modern-shell .project-pulse-branch {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 72px;
+  gap: 3px;
+  color: #7f898b;
+}
+
+body.ody-modern-shell .project-pulse-branch svg {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+body.ody-modern-shell .project-pulse-branch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.ody-modern-shell .project-pulse-changes {
+  min-width: 17px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #a8afb0;
+  font: 650 9px/16px inherit;
+  text-align: center;
+}
+
+body.ody-modern-shell .project-pulse-state,
+body.ody-modern-shell .workspace-chat-state,
+.activity-row-state {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #72bd8f;
+}
+
+body.ody-modern-shell .project-pulse-state.running,
+body.ody-modern-shell .workspace-chat-state.running,
+.activity-row-state.running {
+  background: #8bb9ff;
+  box-shadow: 0 0 0 0 rgba(139, 185, 255, 0.42);
+  animation: ody-agent-pulse 1.7s ease-out infinite;
+}
+
+body.ody-modern-shell .project-pulse-state.ready,
+body.ody-modern-shell .workspace-chat-state.ready,
+.activity-row-state.ready { background: #72bd8f; }
+body.ody-modern-shell .project-pulse-state.failed,
+.activity-row-state.failed { background: #f27979; }
+
+body.ody-modern-shell .project-pulse-approval {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  background: rgba(255, 139, 78, 0.15);
+  color: #ff9b69;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+body.ody-modern-shell .workspace-project-chat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.2;
+}
+
+body.ody-modern-shell .workspace-project-chat-label {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
 }
 
-.settings-search-result-group {
-  flex: 0 0 auto;
-  max-width: 92px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 9px;
-  opacity: 0.5;
+@keyframes ody-agent-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(139, 185, 255, 0.4); }
+  70%, 100% { box-shadow: 0 0 0 5px rgba(139, 185, 255, 0); }
 }
 
-.settings-search-empty {
-  padding: 8px;
-  color: var(--fg);
-  font-size: 10px;
-  text-align: center;
-  opacity: 0.55;
-}
-
-.settings-sidebar-resize-handle {
+/* ── Pinned workspace summary ─────────────────────────────────────────── */
+body.ody-modern-shell .pinned-summary-toggle {
   position: absolute;
-  z-index: 20;
-  top: 0;
-  right: -3px;
-  width: 6px;
-  height: 100%;
-  cursor: col-resize;
+  top: 13px;
+  right: 8px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #8e9696;
   background: transparent;
-  touch-action: none;
-}
-
-.settings-sidebar-resize-handle:hover,
-.settings-sidebar-resizing .settings-sidebar-resize-handle {
-  background: var(--accent, var(--red));
-  opacity: 0.45;
-}
-
-.settings-sidebar-resizing {
-  transition: none;
-  user-select: none;
-}
-
-body.settings-sidebar-resize-active {
-  cursor: col-resize;
-  user-select: none;
-}
-
-.settings-sidebar-toggle {
-  position: absolute;
-  z-index: 25;
-  top: 9px;
-  right: -13px;
-  display: flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--panel);
-  color: var(--fg);
   cursor: pointer;
+  transition: color 130ms ease, background 130ms ease, border-color 130ms ease;
+}
+
+body.ody-modern-shell .pinned-summary-toggle:hover,
+body.ody-modern-shell .pinned-summary-toggle[aria-expanded="true"] {
+  color: #eef0ef;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+body.ody-modern-shell .pinned-summary-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.pinned-summary {
+  position: fixed;
+  top: 76px;
+  right: 14px;
+  z-index: 290;
+  width: 300px;
+  max-height: calc(100vh - 94px);
   opacity: 0;
-  transition: opacity 0.12s ease, border-color 0.12s ease;
+  transform: translateX(18px) scale(0.985);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 210ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.settings-sidebar:hover .settings-sidebar-toggle,
-.settings-sidebar-toggle:focus-visible,
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
-  opacity: 1;
+.pinned-summary.is-open { opacity: 1; transform: translateX(0) scale(1); pointer-events: auto; }
+
+.pinned-summary-card {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 94px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 18px;
+  background: #2b2c2c;
+  color: #e8eae8;
+  box-shadow: 0 22px 65px rgba(0, 0, 0, 0.38), 0 2px 10px rgba(0, 0, 0, 0.2);
+  font-family: "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
-.settings-sidebar-toggle:hover,
-.settings-sidebar-toggle:focus-visible {
-  border-color: var(--accent, var(--red));
-  color: var(--accent, var(--red));
+.pinned-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 12px 0 15px;
+  color: #aeb2b0;
+  font-size: 13px;
+  font-weight: 540;
 }
 
-.settings-sidebar-toggle-expand {
-  display: none;
-}
-
-.settings-sidebar.settings-sidebar-collapsed {
-  width: 34px;
-  flex-basis: 34px;
+.pinned-summary-header button,
+.pinned-summary-section-title button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
   padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: #929795;
+  background: transparent;
+  cursor: pointer;
 }
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
-  display: none;
+.pinned-summary-header button:hover,
+.pinned-summary-section-title button:hover { color: #eef0ee; background: rgba(255, 255, 255, 0.065); }
+.pinned-summary-header svg,
+.pinned-summary-section-title svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.pinned-summary-body { min-height: 80px; overflow: auto; scrollbar-width: thin; transition: opacity 120ms ease; }
+.pinned-summary-body.is-refreshing { opacity: 0.68; }
+.pinned-summary-section { padding: 0 12px 11px; }
+.pinned-summary-section + .pinned-summary-section { padding-top: 11px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+
+.pinned-summary-row,
+.pinned-summary-action {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 5px;
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #dadddb;
+  background: transparent;
+  font: 500 12px/1.2 inherit;
+  text-align: left;
 }
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-resize-handle {
-  display: none;
+.pinned-summary-action { cursor: pointer; }
+.pinned-summary-action:hover { background: rgba(255, 255, 255, 0.06); }
+.pinned-summary-icon { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; color: #afb4b2; }
+.pinned-summary-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.pinned-summary-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pinned-summary-value { display: flex; align-items: center; max-width: 120px; gap: 3px; overflow: hidden; color: #9da29f; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.git-additions { color: #58d38b; }
+.git-deletions { color: #f16e6e; }
+.git-clean { color: #73c794; }
+.pinned-summary-arrow { margin-left: auto; color: #8c9290; font-size: 14px; }
+
+.pinned-summary-section-title { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 3px 3px; color: #9ca19e; font-size: 12px; }
+.pinned-summary-files { display: flex; flex-direction: column; gap: 1px; }
+.pinned-summary-file {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 31px;
+  padding: 0 6px;
+  gap: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  color: #aeb3b1;
+  background: transparent;
+  font: 500 10.5px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+}
+.pinned-summary-file:hover { color: #eef0ee; background: rgba(255, 255, 255, 0.055); }
+.pinned-summary-file > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pinned-summary-file-status { color: #e7b35d; font-size: 9.5px; }
+.pinned-summary-file-status.untracked { color: #68b9df; }
+.pinned-summary-staged { color: #6fc493; font: 500 8.5px/1 inherit; }
+.pinned-summary-empty, .pinned-summary-loading, .pinned-summary-more { padding: 14px 8px; color: #858b88; font-size: 11px; text-align: center; }
+
+@media (min-width: 1201px) {
+  body.ody-modern-shell.pinned-summary-visible .chat-container { padding-right: 334px; }
+  body.ody-modern-shell.pinned-summary-visible .chat-meta-overlay { width: min(800px, calc(100% - 24px)); }
 }
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
-  top: 10px;
-  right: 5px;
+@media (max-width: 1200px) {
+  .pinned-summary { top: 66px; right: 10px; width: min(300px, calc(100vw - 20px)); }
 }
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-collapse {
-  display: none;
+@media (max-width: 768px) {
+  body.ody-modern-shell .pinned-summary-toggle { top: 7px; right: 7px; }
+  .pinned-summary { top: 50px; max-height: calc(100vh - 62px); }
+  .pinned-summary-card { max-height: calc(100vh - 62px); }
 }
 
-.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-expand {
-  display: block;
+@media (prefers-reduced-motion: reduce) {
+  .pinned-summary,
+  .pinned-summary-body { transition: none !important; }
 }
 
-/* The existing narrow/snapped layout is a horizontal tab rail. Sidebar
-   resizing/collapse applies only to the vertical desktop layout. */
-@container settings-modal (max-width: 620px) {
-  .settings-sidebar {
-    width: auto;
-    flex: 0 0 auto;
-    transition: none;
-  }
-
-  .settings-sidebar-content {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .settings-nav-search-wrap,
-  .settings-sidebar-resize-handle,
-  .settings-sidebar-toggle {
-    display: none;
-  }
-
-  .settings-sidebar.settings-sidebar-collapsed {
-    width: auto;
-    flex-basis: auto;
-    padding: 6px;
-  }
-
-  .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
-    display: flex;
-  }
+/* ── Agent activity center ─────────────────────────────────────────────── */
+.activity-center-popover {
+  position: fixed;
+  z-index: 10035;
+  max-height: min(620px, calc(100vh - 78px));
+  padding: 9px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 15px;
+  background: #292d2f;
+  color: #e9ebea;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.48), 0 2px 10px rgba(0, 0, 0, 0.24);
+  font-family: "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  opacity: 0;
+  transform: translateY(-5px) scale(0.985);
+  transform-origin: top right;
+  transition: opacity 140ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+.activity-center-popover.visible { opacity: 1; transform: translateY(0) scale(1); }
+
+.activity-center-head {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 2px 5px 8px 7px;
+}
+
+.activity-center-head > div { display: flex; flex-direction: column; gap: 3px; }
+.activity-center-head strong { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+.activity-center-head span { color: #8f9797; font-size: 10.5px; }
+
+.activity-center-refresh {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #929a9a;
+  background: transparent;
+  cursor: pointer;
+}
+.activity-center-refresh:hover { color: #eceeed; background: rgba(255, 255, 255, 0.06); }
+.activity-center-refresh svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.activity-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 8px; }
+.activity-summary-card { display: flex; min-width: 0; height: 52px; padding: 8px; flex-direction: column; justify-content: center; gap: 4px; border: 1px solid rgba(255, 255, 255, 0.055); border-radius: 10px; background: rgba(255, 255, 255, 0.028); }
+.activity-summary-card span { color: #dce0df; font-size: 15px; font-weight: 680; line-height: 1; }
+.activity-summary-card small { overflow: hidden; color: #858e8f; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-summary-card.running span { color: #9bc3ff; }
+.activity-summary-card.ready span { color: #87c99f; }
+.activity-summary-card.failed span { color: #f18a8a; }
+.activity-summary-card.approval span { color: #ffab7e; }
+
+.activity-center-list { max-height: 380px; padding: 3px 0; overflow-y: auto; scrollbar-width: thin; }
+.activity-center-row { display: flex; align-items: center; width: 100%; min-height: 48px; padding: 6px 8px; gap: 9px; border: 0; border-radius: 9px; color: inherit; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
+.activity-center-row:hover { background: rgba(255, 255, 255, 0.055); }
+.activity-row-state.approval { background: #ff9b69; }
+.activity-row-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.activity-row-copy strong, .activity-row-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-row-copy strong { color: #dfe2e1; font-size: 11.5px; font-weight: 550; }
+.activity-row-copy small { color: #858e8f; font-size: 9.5px; }
+.activity-row-time { color: #737c7d; font-size: 9px; }
+.activity-center-empty { padding: 34px 12px; color: #7f8889; font-size: 11px; text-align: center; }
+.activity-center-full { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 38px; margin-top: 5px; padding: 0 10px; border: 0; border-top: 1px solid rgba(255, 255, 255, 0.06); color: #abb3b3; background: transparent; font: 500 10.5px/1 inherit; cursor: pointer; }
+.activity-center-full:hover { color: #f0f1ef; }
+
+/* ── Universal Ctrl+K launcher ─────────────────────────────────────────── */
+body.ody-modern-shell .search-overlay {
+  padding-top: 11vh;
+  background: rgba(7, 9, 10, 0.62);
+  opacity: 0;
+  backdrop-filter: blur(8px);
+  transition: opacity 150ms ease;
+}
+body.ody-modern-shell .search-overlay.visible { opacity: 1; }
+body.ody-modern-shell .search-popup {
+  width: min(660px, calc(100vw - 28px));
+  max-width: none;
+  max-height: min(620px, 75vh);
+  border-color: rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  background: #292d2f;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.24);
+  opacity: 0;
+  transform: translateY(-6px) scale(0.985);
+  transition: opacity 150ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+body.ody-modern-shell .search-overlay.visible .search-popup { opacity: 1; transform: translateY(0) scale(1); }
+body.ody-modern-shell .launcher-input-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; min-height: 58px; padding: 0 15px; gap: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.075); color: #8f9899; }
+body.ody-modern-shell .launcher-input-row > svg { width: 17px; height: 17px; }
+body.ody-modern-shell .search-popup input#search-input { height: 57px; padding: 0; border: 0; color: #eff1ef; font: 450 15px/1 "Odysseus Sans", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.01em; }
+body.ody-modern-shell .search-popup input#search-input::placeholder { color: #7f8889; }
+body.ody-modern-shell .search-results { padding: 7px; }
+body.ody-modern-shell .search-results { scrollbar-color: #596366 transparent; scrollbar-width: thin; }
+body.ody-modern-shell .search-results::-webkit-scrollbar { width: 8px; }
+body.ody-modern-shell .search-results::-webkit-scrollbar-track { background: transparent; }
+body.ody-modern-shell .search-results::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: #596366; background-clip: padding-box; }
+body.ody-modern-shell .launcher-group-label { padding: 10px 9px 5px; color: #707a7b; font-size: 9px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; }
+body.ody-modern-shell .launcher-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; width: 100%; min-height: 52px; padding: 5px 9px; gap: 9px; border: 0; border-radius: 10px; color: #dfe2e1; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
+body.ody-modern-shell .launcher-item:hover, body.ody-modern-shell .launcher-item.selected { background: rgba(255, 255, 255, 0.065); }
+body.ody-modern-shell .launcher-item-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid rgba(255, 255, 255, 0.065); border-radius: 9px; color: #9ca5a6; background: rgba(255, 255, 255, 0.035); }
+body.ody-modern-shell .launcher-item-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+body.ody-modern-shell .launcher-item-icon.project { color: #a9bedf; }
+body.ody-modern-shell .launcher-item-icon.activity { color: #8bb9ff; }
+body.ody-modern-shell .launcher-item-icon.permission { color: #d5ad91; }
+body.ody-modern-shell .launcher-item-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+body.ody-modern-shell .launcher-item-copy strong, body.ody-modern-shell .launcher-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.ody-modern-shell .launcher-item-copy strong { color: #e1e4e2; font-size: 12px; font-weight: 560; }
+body.ody-modern-shell .launcher-item-copy small { color: #7f8889; font-size: 9.5px; font-weight: 400; }
+body.ody-modern-shell .launcher-item-meta, body.ody-modern-shell .launcher-current { color: #778182; font-size: 9px; white-space: nowrap; }
+body.ody-modern-shell .launcher-current { padding: 3px 6px; border-radius: 6px; background: rgba(114, 189, 143, 0.1); color: #85c79c; }
+body.ody-modern-shell .launcher-shortcut { color: #7c8586; background: rgba(255, 255, 255, 0.04); }
+body.ody-modern-shell .launcher-footer { display: flex; align-items: center; min-height: 38px; padding: 0 14px; gap: 18px; border-top: 1px solid rgba(255, 255, 255, 0.065); color: #70797a; font-size: 9px; }
+body.ody-modern-shell .launcher-footer span { display: flex; align-items: center; gap: 4px; }
+body.ody-modern-shell .launcher-footer kbd, body.ody-modern-shell .launcher-input-row kbd, body.ody-modern-shell .launcher-shortcut { min-width: 20px; padding: 3px 5px; border: 0; border-radius: 5px; color: #858e8f; background: rgba(255, 255, 255, 0.045); font: 500 8.5px/1 inherit; text-align: center; box-shadow: none; }
+body.ody-modern-shell .launcher-empty { display: flex; min-height: 180px; align-items: center; justify-content: center; flex-direction: column; gap: 7px; color: #858e8f; }
+body.ody-modern-shell .launcher-empty strong { color: #c9cecc; font-size: 12px; }
+body.ody-modern-shell .launcher-empty span { font-size: 10px; }
+body.ody-modern-shell .search-highlight { padding: 0; background: transparent; color: #b7d2ff; font-weight: inherit; }
 
 @media (max-width: 600px) {
-  .settings-sidebar {
-    width: auto;
-    flex: 0 0 auto;
-  }
+  body.ody-modern-shell .search-overlay { padding-top: max(18px, env(safe-area-inset-top)); align-items: flex-start; }
+  body.ody-modern-shell .search-popup { max-height: calc(100dvh - 36px); }
+  body.ody-modern-shell .launcher-footer { display: none; }
+  .activity-summary-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
-  .settings-sidebar-content {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .settings-nav-search-wrap,
-  .settings-sidebar-resize-handle,
-  .settings-sidebar-toggle {
-    display: none;
-  }
+@media (prefers-reduced-motion: reduce) {
+  body.ody-modern-shell .search-overlay,
+  body.ody-modern-shell .search-popup,
+  body.ody-modern-shell .project-pulse-state,
+  body.ody-modern-shell .workspace-chat-state,
+  .activity-center-popover,
+  .activity-row-state { transition: none !important; animation: none !important; }
 }

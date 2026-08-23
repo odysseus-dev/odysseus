@@ -16,6 +16,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
@@ -104,7 +105,9 @@ def _is_sensitive_path(resolved: str) -> bool:
     the lowercase form, so a case-sensitive check would let it slip past the
     deny-list in every file tool that relies on it.
     """
-    parts = [p.casefold() for p in resolved.split(os.sep)]
+    # Accept both separator styles regardless of the current host. This matters
+    # for model-supplied paths and remote/WSL references on Windows.
+    parts = [p.casefold() for p in re.split(r"[\\/]+", str(resolved)) if p]
     filename = parts[-1] if parts else ""
 
     # Check if any path component is a sensitive directory.
@@ -126,6 +129,10 @@ def _tool_path_roots() -> list[str]:
     # Project data directory — the agent's primary workspace.
     from src.constants import DATA_DIR
     roots.append(DATA_DIR)
+
+    # Native Windows temp (for example C:\Users\name\AppData\Local\Temp).
+    # tempfile also returns /tmp on POSIX, which is deduplicated below.
+    roots.append(tempfile.gettempdir())
 
     # /tmp (and its macOS realpath /private/tmp).
     roots.append("/tmp")
@@ -158,9 +165,10 @@ def _tool_path_roots() -> list[str]:
             real = os.path.realpath(r)
         except OSError:
             continue
-        if real in seen:
+        key = os.path.normcase(real)
+        if key in seen:
             continue
-        seen.add(real)
+        seen.add(key)
         out.append(real)
     return out
 
@@ -195,13 +203,15 @@ def _resolve_tool_path(raw_path: str) -> str:
         )
 
     for root in _tool_path_roots():
-        if resolved == root:
+        nresolved = os.path.normcase(resolved)
+        nroot = os.path.normcase(root)
+        if nresolved == nroot:
             return resolved
         try:
-            common = os.path.commonpath([resolved, root])
+            common = os.path.commonpath([nresolved, nroot])
         except ValueError:
             continue
-        if common == root:
+        if common == nroot:
             return resolved
     raise ValueError(
         f"path '{raw_path}' is outside the allowed roots"
@@ -604,6 +614,7 @@ async def execute_tool_block(
         | _MissingToolSecurityContext
     ) = _MISSING_TOOL_SECURITY_CONTEXT,
     exact_approval: Optional[ExactToolApproval] = None,
+    permission_mode: str = "auto",
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -733,6 +744,7 @@ async def execute_tool_block(
                 if approval_claimed
                 else None
             ),
+            permission_mode=permission_mode,
         )
         if isinstance(security_context, ToolRunSecurityContext):
             security_context.observe_tool_result(
@@ -755,6 +767,7 @@ async def _execute_tool_block_impl(
     approved_document_id: Optional[str] = None,
     approved_document_version: Optional[int] = None,
     approved_document_digest: Optional[str] = None,
+    permission_mode: str = "auto",
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -776,6 +789,13 @@ async def _execute_tool_block_impl(
         do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
     )
+    from src.tool_approval import normalize_permission_mode, tool_is_read_only
+
+    if normalize_permission_mode(permission_mode) == "read_only" and not tool_is_read_only(block.tool_type):
+        return (
+            f"{block.tool_type}: BLOCKED",
+            {"error": "Blocked by Read only permission mode.", "exit_code": 1, "blocked": True},
+        )
 
     # HACK:
     # This is a temporary workaround for a circular dependency between

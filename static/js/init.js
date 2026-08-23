@@ -227,6 +227,17 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
   const MAX_WIDTH = 700;
   const COLLAPSE_THRESHOLD = 150;
 
+  // Upgrade an existing narrow legacy sidebar once. From then on the normal
+  // resize handle owns the value and every user-selected width is preserved.
+  try {
+    const modernWidthKey = 'ody-modern-sidebar-v2-width-initialized';
+    if (document.body.classList.contains('ody-modern-shell') && !localStorage.getItem(modernWidthKey)) {
+      const modernDefault = Math.round(Math.min(380, Math.max(320, window.innerWidth * 0.195)));
+      Storage.set(STORAGE_KEY, String(modernDefault));
+      localStorage.setItem(modernWidthKey, '1');
+    }
+  } catch (_) {}
+
   function getSavedWidth() {
     const w = parseInt(Storage.get(STORAGE_KEY, '340'), 10);
     return (w >= MIN_WIDTH && w <= MAX_WIDTH) ? w : 340;

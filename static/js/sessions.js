@@ -276,6 +276,20 @@ async function _cleanupIncognitoSessions() {
 const _researchingSessions = new Set();
 const _streamingSessions = new Set();   // Background chat streams (not polled against research API)
 const _completedSessions = new Set();   // Sessions with completed background streams
+
+export function getSessionActivityState(sessionId) {
+  if (_researchingSessions.has(sessionId) || _streamingSessions.has(sessionId)) return 'running';
+  if (_completedSessions.has(sessionId)) return 'ready';
+  return '';
+}
+
+function _emitSessionActivity(sessionId) {
+  try {
+    document.dispatchEvent(new CustomEvent('odysseus-session-activity-change', {
+      detail: { sessionId, state: getSessionActivityState(sessionId) },
+    }));
+  } catch (_) {}
+}
 let _researchPollTimer = null;
 
 // Session list keyboard navigation state
@@ -1080,7 +1094,9 @@ function _renderSessionListImpl() {
 
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
-  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  let orderedSessions = sessions.filter(s => !s.archived && !s.workspace && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  const sessionsSection = uiModule.el('sessions-section');
+  if (sessionsSection) sessionsSection.classList.toggle('hidden', orderedSessions.length === 0);
 
   if (savedOrder) {
     try {
@@ -1699,10 +1715,13 @@ export async function loadSessions() {
       throw new Error('Session request returned an invalid response');
     }
     sessions = _normalizeSessionsList(fetched);
+    try {
+      document.dispatchEvent(new CustomEvent('odysseus-sessions-loaded', { detail: { sessions } }));
+    } catch (_) {}
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
-    if (sessions.length === 0) {
+    if (sessions.filter(s => !s.workspace && s.folder !== 'Assistant' && s.folder !== 'Tasks').length === 0) {
       sessionsSection.classList.add('hidden');
     } else {
       sessionsSection.classList.remove('hidden');
@@ -1877,6 +1896,9 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
+    if (meta?.workspace && window.workspaceModule?.setWorkspace) {
+      window.workspaceModule.setWorkspace(meta.workspace);
+    }
 
     // Detach any in-flight stream to background instead of aborting
     try {
@@ -2220,7 +2242,13 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
-  _pendingChat = { url, modelId, endpointId, source: incomingSource };
+  _pendingChat = {
+    url,
+    modelId,
+    endpointId,
+    source: incomingSource,
+    workspace: window.workspaceModule?.getWorkspace?.() || '',
+  };
   _pendingMaterializePromise = null;
   _skipAutoSelect = true;
   _suppressNextSessionLoading = true;
@@ -2293,6 +2321,8 @@ export async function materializePendingSession() {
     if (pending.endpointId) {
       fd.append('endpoint_id', pending.endpointId);
     }
+    const pendingWorkspace = pending.workspace || window.workspaceModule?.getWorkspace?.() || '';
+    if (pendingWorkspace) fd.append('workspace', pendingWorkspace);
 
     let res;
     try {
@@ -2384,6 +2414,103 @@ export function isCurrentSessionIncognito() {
 
 export function getSessions() {
   return sessions;
+}
+
+export async function renameSession(sessionId) {
+  const session = sessions.find(item => String(item.id) === String(sessionId));
+  if (!session) return false;
+  const name = await styledPrompt('Rename chat', {
+    defaultValue: session.name || '',
+    placeholder: 'Chat name',
+    confirmText: 'Rename',
+  });
+  const nextName = String(name || '').trim();
+  if (!nextName || nextName === session.name) return false;
+  const body = new FormData();
+  body.append('name', nextName);
+  const response = await fetch(`${API_BASE}/api/session/${session.id}`, { method: 'PATCH', body });
+  if (!response.ok) {
+    uiModule.showError('Failed to rename chat');
+    return false;
+  }
+  session.name = nextName;
+  uiModule.showToast('Chat renamed');
+  await loadSessions();
+  return true;
+}
+
+export async function setSessionImportant(sessionId, important) {
+  const session = sessions.find(item => String(item.id) === String(sessionId));
+  if (!session) return false;
+  const body = new FormData();
+  body.append('important', !!important);
+  const response = await fetch(`${API_BASE}/api/session/${session.id}/important`, { method: 'POST', body });
+  if (!response.ok) {
+    uiModule.showError(`Failed to ${important ? 'pin' : 'unpin'} chat`);
+    return false;
+  }
+  session.is_important = !!important;
+  uiModule.showToast(important ? 'Chat pinned' : 'Chat unpinned');
+  await loadSessions();
+  return true;
+}
+
+export async function copySession(sessionId) {
+  try {
+    const response = await fetch(`${API_BASE}/api/history/${sessionId}`);
+    if (!response.ok) throw new Error('History unavailable');
+    const data = await response.json();
+    const text = (data.history || [])
+      .filter(message => message.role === 'user' || message.role === 'assistant')
+      .map(message => `${message.role === 'user' ? 'You' : 'Odysseus'}: ${typeof message.content === 'string' ? message.content.trim() : JSON.stringify(message.content)}`)
+      .join('\n\n');
+    if (!text) {
+      uiModule.showToast('No messages to copy');
+      return false;
+    }
+    await navigator.clipboard.writeText(text);
+    uiModule.showToast('Chat copied');
+    return true;
+  } catch (_) {
+    uiModule.showError('Failed to copy chat');
+    return false;
+  }
+}
+
+export async function archiveSession(sessionId) {
+  const response = await fetch(`${API_BASE}/api/session/${sessionId}/archive`, { method: 'POST' });
+  if (!response.ok) {
+    uiModule.showError('Failed to archive chat');
+    return false;
+  }
+  if (String(currentSessionId) === String(sessionId)) setCurrentSessionId(null);
+  uiModule.showToast('Chat archived');
+  await loadSessions();
+  return true;
+}
+
+export async function deleteSession(sessionId) {
+  const session = sessions.find(item => String(item.id) === String(sessionId));
+  if (!session) return false;
+  if (session.is_important) {
+    uiModule.showToast('Unpin before deleting');
+    return false;
+  }
+  if (!await uiModule.styledConfirm('Delete this chat permanently?', { confirmText: 'Delete', danger: true })) return false;
+  if (String(currentSessionId) === String(sessionId)) {
+    if (window.chatModule?.abortCurrentRequest) window.chatModule.abortCurrentRequest();
+    _deselectCurrentSession(sessionId);
+    _skipAutoSelect = true;
+  }
+  const response = await fetch(`${API_BASE}/api/session/${sessionId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    uiModule.showError('Failed to delete chat');
+    return false;
+  }
+  _removeSessionFromLocalState(sessionId);
+  uiModule.showToast('Chat deleted');
+  await loadSessions();
+  return true;
 }
 
 export function getCurrentModel() {
@@ -2598,6 +2725,7 @@ export function markResearching(sessionId) {
   _researchingSessions.add(sessionId);
   _updateResearchDots();
   _updateRailNotifs();
+  _emitSessionActivity(sessionId);
   _startResearchPolling();
 }
 
@@ -2605,18 +2733,21 @@ export function clearResearching(sessionId) {
   _researchingSessions.delete(sessionId);
   _updateResearchDots();
   _updateRailNotifs();
+  _emitSessionActivity(sessionId);
 }
 
 export function markStreaming(sessionId) {
   _streamingSessions.add(sessionId);
   _updateResearchDots();
   _updateRailNotifs();
+  _emitSessionActivity(sessionId);
 }
 
 export function clearStreaming(sessionId) {
   _streamingSessions.delete(sessionId);
   _updateResearchDots();
   _updateRailNotifs();
+  _emitSessionActivity(sessionId);
 }
 
 function _clearRunningState(sessionId) {
@@ -2627,6 +2758,7 @@ function _clearRunningState(sessionId) {
   if (changed) {
     _updateResearchDots();
     _updateRailNotifs();
+    _emitSessionActivity(sessionId);
   }
 }
 
@@ -2637,11 +2769,13 @@ export function markStreamComplete(sessionId) {
   if (currentSessionId === sessionId) {
     _updateResearchDots();
     _updateRailNotifs();
+    _emitSessionActivity(sessionId);
     return;
   }
   _completedSessions.add(sessionId);
   _updateResearchDots();
   _updateRailNotifs();
+  _emitSessionActivity(sessionId);
   // Show notification dot on Chats section if collapsed
   const sessSection = document.getElementById('sessions-section');
   if (sessSection && sessSection.classList.contains('collapsed')) {
@@ -2787,6 +2921,7 @@ export function clearStreamComplete(sessionId) {
   if (star) { star.classList.remove('notify', 'processing'); star.style.opacity = ''; }
   _updateResearchDots();
   _updateRailNotifs();
+  _emitSessionActivity(sessionId);
 }
 
 // Initialize dropdowns once DOM is ready
@@ -3663,6 +3798,12 @@ const sessionModule = {
   getPendingChat,
   getCurrentSessionId,
   getSessions,
+  renameSession,
+  setSessionImportant,
+  copySession,
+  archiveSession,
+  deleteSession,
+  getSessionActivityState,
   getCurrentModel,
   getCurrentEndpointUrl,
   setCurrentSessionId,

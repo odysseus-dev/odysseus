@@ -46,6 +46,7 @@ from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
+    native_shell_argv,
     git_bash_path,
 )
 
@@ -553,21 +554,14 @@ async def _create_shell(command: str, **kwargs):
     """Spawn a shell subprocess for `command`.
 
     POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
-    Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
-    the same as on Linux; fall back to cmd.exe when no bash is installed.
-    Powershell commands are executed directly via cmd.exe /c to avoid quoting
-    and env variable expansion errors under Git Bash.
+    Windows: use native PowerShell so paths, environment variables, and built-in
+    commands match what the Windows-hosted agent is instructed to emit.
     """
     if IS_WINDOWS:
-        # PowerShell commands (used by the frontend for Windows log-file polling
-        # and session management) must run directly — passing them through
-        # bash -c mangles $env:VAR syntax and breaks the command.
         cmd_trim = command.strip()
         if cmd_trim.startswith("powershell") or cmd_trim.startswith("cmd "):
             return await asyncio.create_subprocess_shell(command, **kwargs)
-        bash = find_bash()
-        if bash:
-            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
+        return await asyncio.create_subprocess_exec(*native_shell_argv(command), **kwargs)
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 

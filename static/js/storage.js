@@ -25,7 +25,10 @@ export const KEYS = {
   ADMIN_LAST_TAB: 'admin-last-tab',
   DENSITY: 'odysseus-density',
   UI_SCALE: 'odysseus-ui-scale',
-  WORKSPACE: 'odysseus-workspace'
+  WORKSPACE: 'odysseus-workspace',
+  WORKSPACE_RECENTS: 'odysseus-workspace-recents',
+  WORKSPACE_FOLDS: 'odysseus-workspace-folds',
+  WORKSPACE_SECTION_FOLDED: 'odysseus-workspace-section-folded'
 };
 
 /**
