@@ -42335,41 +42335,30 @@ body.ody-modern-shell .icon-rail.mobile-mini {
 }
 
 body.ody-modern-shell .sidebar {
-  will-change: width, opacity, transform;
+  /* Keep the sidebar on one inexpensive, interruptible track. Animating
+     min-width and transform alongside width forced the flex layout to settle
+     repeatedly and made open/close look hesitant on Windows. */
+  will-change: width, opacity;
+  contain: paint;
   transition:
-    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    min-width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 170ms ease,
-    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 170ms ease !important;
+    width 210ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 130ms ease !important;
 }
 
 @media (min-width: 769px) {
-  body.ody-modern-shell .sidebar.ody-sidebar-opening,
   body.ody-modern-shell .sidebar.ody-sidebar-closing {
     width: 0 !important;
     min-width: 0 !important;
     opacity: 0;
     overflow: hidden;
-    transform: translateX(-10px);
     pointer-events: none;
-  }
-
-  body.ody-modern-shell .sidebar.right-side.ody-sidebar-opening,
-  body.ody-modern-shell .sidebar.right-side.ody-sidebar-closing {
-    transform: translateX(10px);
   }
 
   body.ody-modern-shell .sidebar.hidden {
     width: 0 !important;
     min-width: 0 !important;
     opacity: 0;
-    transform: translateX(-10px);
     pointer-events: none;
-  }
-
-  body.ody-modern-shell .sidebar.right-side.hidden {
-    transform: translateX(10px);
   }
 }
 

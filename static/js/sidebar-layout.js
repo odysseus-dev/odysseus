@@ -88,6 +88,8 @@ export function initSidebarLayout(Storage, opts) {
     if (!iconRail) return;
     const isRight = sidebar.classList.contains('right-side');
     const sidebarHidden = sidebar.classList.contains('hidden');
+    const sidebarClosing = sidebar.classList.contains('ody-sidebar-closing');
+    const sidebarCollapsed = sidebarHidden || sidebarClosing;
     const railHidden = iconRail.classList.contains('rail-hidden');
     const isMobileMini = iconRail.classList.contains('mobile-mini');
     iconRail.classList.toggle('right-side', isRight);
@@ -109,8 +111,8 @@ export function initSidebarLayout(Storage, opts) {
     if (hamburgerBtn) {
       document.body.classList.toggle('hamburger-right', isRight);
       document.body.classList.toggle('hamburger-left', !isRight);
-      document.body.classList.toggle('hamburger-only', sidebarHidden && iconRail.classList.contains('rail-hidden'));
-      document.body.classList.toggle('sidebar-collapsed', sidebarHidden);
+      document.body.classList.toggle('hamburger-only', sidebarCollapsed && iconRail.classList.contains('rail-hidden'));
+      document.body.classList.toggle('sidebar-collapsed', sidebarCollapsed);
       _setSidebarModeClasses(!sidebarHidden ? 'full' : (iconRail.classList.contains('rail-hidden') ? 'off' : 'mini'));
     }
     // Keep incognito button clear of hamburger
@@ -158,6 +160,7 @@ export function initSidebarLayout(Storage, opts) {
   let _userToggledSidebar = false;
   let _wasAutoCollapsed = false;
   let _sidebarAnimationTimer = null;
+  let _sidebarAnimationRun = 0;
 
   function _animateModernSidebar(sidebar, opening) {
     if (!isModernShell || window.innerWidth < 768 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -167,37 +170,43 @@ export function initSidebarLayout(Storage, opts) {
       return;
     }
     if (_sidebarAnimationTimer) clearTimeout(_sidebarAnimationTimer);
-    const transient = opening ? 'ody-sidebar-opening' : 'ody-sidebar-closing';
+    const run = ++_sidebarAnimationRun;
     sidebar.classList.remove('ody-sidebar-opening', 'ody-sidebar-closing');
 
     const finish = () => {
+      if (run !== _sidebarAnimationRun) return;
       if (_sidebarAnimationTimer) clearTimeout(_sidebarAnimationTimer);
       _sidebarAnimationTimer = null;
-      sidebar.classList.remove('ody-sidebar-opening', 'ody-sidebar-closing');
-      sidebar.classList.toggle('hidden', !opening);
-      _saveSidebarMode(opening ? 'full' : 'off');
+      if (opening) {
+        sidebar.classList.remove('hidden');
+        _saveSidebarMode('full');
+      } else {
+        sidebar.classList.remove('ody-sidebar-closing');
+        sidebar.classList.add('hidden');
+        _saveSidebarMode('off');
+      }
       syncRailSide();
     };
 
     if (opening) {
-      // Remove the persisted html-level closed state, hold the panel at zero
-      // for one frame, then let its real width animate into the flex layout.
+      // Reversing a close should pick up from the panel's current width. The
+      // browser can interpolate directly from .hidden (zero width) to the
+      // panel's normal width; extra requestAnimationFrame hops made this feel
+      // like the UI had to wake up before responding.
       _saveSidebarMode('full');
-      sidebar.classList.add(transient);
       sidebar.classList.remove('hidden');
-      sidebar.getBoundingClientRect();
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        sidebar.classList.remove(transient);
-      }));
+      syncRailSide();
     } else {
-      // Keep the panel in layout until the transition ends. Applying .hidden
-      // or the persisted html class immediately would skip the visible tween.
-      sidebar.classList.add(transient);
+      // Keep the panel in the flex layout while it contracts. This avoids the
+      // blank-layout flash caused by applying the persisted .hidden state
+      // before the width transition begins.
+      sidebar.classList.add('ody-sidebar-closing');
+      syncRailSide();
     }
     sidebar.addEventListener('transitionend', (event) => {
       if (event.target === sidebar && event.propertyName === 'width') finish();
     }, { once: true });
-    _sidebarAnimationTimer = setTimeout(finish, 320);
+    _sidebarAnimationTimer = setTimeout(finish, 260);
   }
 
   // Deliberate "open the sidebar" used by the mobile swipe gesture (wired at
@@ -237,7 +246,8 @@ export function initSidebarLayout(Storage, opts) {
       const sidebar = document.getElementById('sidebar');
 
       _userToggledSidebar = true;
-      const isSidebarVisible = !sidebar.classList.contains('hidden');
+      const isSidebarVisible = !sidebar.classList.contains('hidden') &&
+        !sidebar.classList.contains('ody-sidebar-closing');
 
       if (window.innerWidth < 768) {
         // Mobile: full sidebar ↔ hidden — simple toggle, no mini rail
