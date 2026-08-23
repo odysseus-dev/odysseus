@@ -43142,22 +43142,6 @@ body.ody-modern-shell .mission-control-toggle svg { width: 16px; height: 16px; f
 .pinned-summary-staged { color: #6fc493; font: 500 8.5px/1 inherit; }
 .pinned-summary-empty, .pinned-summary-loading, .pinned-summary-more { padding: 14px 8px; color: #858b88; font-size: 11px; text-align: center; }
 
-@media (min-width: 1201px) {
-  body.ody-modern-shell .chat-container {
-    --pinned-summary-shift: 0px;
-    transition: padding-right 220ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1), margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
-  }
-  body.ody-modern-shell.pinned-summary-visible .chat-container {
-    /* Matches the composer's measured center shift after its own 24px
-       horizontal padding is accounted for, so the welcome state and composer
-       glide as one unit when the summary reserve opens. */
-    --pinned-summary-shift: 155px;
-    padding-right: 334px;
-  }
-  body.ody-modern-shell.pinned-summary-visible #welcome-screen { left: calc(50% - var(--pinned-summary-shift)); }
-  body.ody-modern-shell.pinned-summary-visible .chat-meta-overlay { width: min(800px, calc(100% - 24px)); }
-}
-
 @media (max-width: 1200px) {
   .pinned-summary { top: 66px; right: 10px; width: min(300px, calc(100vw - 20px)); }
 }
