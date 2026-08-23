@@ -41512,6 +41512,7 @@ body.ody-modern-shell #welcome-screen {
   top: 36%;
   width: min(540px, calc(100% - 40px));
   animation-duration: 260ms;
+  transition: left 220ms cubic-bezier(0.22, 1, 0.36, 1), top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease, transform 0.3s ease;
 }
 
 body.ody-modern-shell #welcome-screen .welcome-name {
@@ -43153,7 +43154,18 @@ body.ody-modern-shell .mission-control-toggle svg { width: 16px; height: 16px; f
 .pinned-summary-empty, .pinned-summary-loading, .pinned-summary-more { padding: 14px 8px; color: #858b88; font-size: 11px; text-align: center; }
 
 @media (min-width: 1201px) {
-  body.ody-modern-shell.pinned-summary-visible .chat-container { padding-right: 334px; }
+  body.ody-modern-shell .chat-container {
+    --pinned-summary-shift: 0px;
+    transition: padding-right 220ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1), margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  body.ody-modern-shell.pinned-summary-visible .chat-container {
+    /* Matches the composer's measured center shift after its own 24px
+       horizontal padding is accounted for, so the welcome state and composer
+       glide as one unit when the summary reserve opens. */
+    --pinned-summary-shift: 155px;
+    padding-right: 334px;
+  }
+  body.ody-modern-shell.pinned-summary-visible #welcome-screen { left: calc(50% - var(--pinned-summary-shift)); }
   body.ody-modern-shell.pinned-summary-visible .chat-meta-overlay { width: min(800px, calc(100% - 24px)); }
 }
 
@@ -43169,7 +43181,9 @@ body.ody-modern-shell .mission-control-toggle svg { width: 16px; height: 16px; f
 
 @media (prefers-reduced-motion: reduce) {
   .pinned-summary,
-  .pinned-summary-body { transition: none !important; }
+  .pinned-summary-body,
+  body.ody-modern-shell .chat-container,
+  body.ody-modern-shell #welcome-screen { transition: none !important; }
 }
 
 /* ── Agent activity center ─────────────────────────────────────────────── */
