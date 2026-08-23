@@ -53,7 +53,7 @@ import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { getSettings } from './js/appConfig.js';
-import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260823permissions1';
+import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260823sidebar2';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js?v=20260823interaction1';
 
 const API_BASE = window.location.origin;

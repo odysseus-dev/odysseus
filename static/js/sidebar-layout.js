@@ -188,25 +188,35 @@ export function initSidebarLayout(Storage, opts) {
       syncRailSide();
     };
 
+    const armFinish = () => {
+      _sidebarAnimationTimer = setTimeout(finish, 260);
+    };
+
+    sidebar.addEventListener('transitionend', (event) => {
+      if (event.target === sidebar && event.propertyName === 'width') finish();
+    }, { once: true });
+
     if (opening) {
-      // Reversing a close should pick up from the panel's current width. The
-      // browser can interpolate directly from .hidden (zero width) to the
-      // panel's normal width; extra requestAnimationFrame hops made this feel
-      // like the UI had to wake up before responding.
+      // First leave the persisted HTML-level closed state, while .hidden still
+      // supplies a measured width of zero. Removing .hidden on the next frame
+      // gives the browser an actual start and end value to interpolate; doing
+      // both in one style pass is why the open side used to snap in.
       _saveSidebarMode('full');
-      sidebar.classList.remove('hidden');
-      syncRailSide();
+      void sidebar.offsetWidth;
+      requestAnimationFrame(() => {
+        if (run !== _sidebarAnimationRun) return;
+        sidebar.classList.remove('hidden');
+        syncRailSide();
+        armFinish();
+      });
     } else {
       // Keep the panel in the flex layout while it contracts. This avoids the
       // blank-layout flash caused by applying the persisted .hidden state
       // before the width transition begins.
       sidebar.classList.add('ody-sidebar-closing');
       syncRailSide();
+      armFinish();
     }
-    sidebar.addEventListener('transitionend', (event) => {
-      if (event.target === sidebar && event.propertyName === 'width') finish();
-    }, { once: true });
-    _sidebarAnimationTimer = setTimeout(finish, 260);
   }
 
   // Deliberate "open the sidebar" used by the mobile swipe gesture (wired at
