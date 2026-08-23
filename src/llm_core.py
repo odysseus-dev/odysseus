@@ -593,6 +593,34 @@ def _is_ollama_openai_compat_url(url: str) -> bool:
     return local_ollama_host and (path == "/v1" or path.startswith("/v1/"))
 
 
+def _unreachable_provider_message(url: str, *, cooldown: bool = False) -> str:
+    """Return an actionable connection error for a configured model endpoint."""
+    try:
+        parsed = urlparse(url or "")
+        host = (parsed.hostname or "").lower()
+        is_local_ollama = (
+            host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+            and (parsed.port in (None, 11434))
+            and (
+                _is_ollama_native_url(url)
+                or _is_ollama_openai_compat_url(url)
+                or parsed.port == 11434
+            )
+        )
+    except Exception:
+        is_local_ollama = False
+
+    if is_local_ollama:
+        suffix = " The endpoint is temporarily in cooldown." if cooldown else ""
+        return (
+            "Ollama is not running at http://127.0.0.1:11434. "
+            "Start Ollama (or relaunch Odysseus) and retry."
+            + suffix
+        )
+    suffix = " (cooldown active)" if cooldown else ""
+    return f"Cannot reach {_host_key(url)}{suffix}"
+
+
 def _ollama_api_root(url: str) -> str:
     """Return a native Ollama API root such as https://ollama.com/api."""
     url = (url or "").strip().rstrip("/")
@@ -2401,7 +2429,7 @@ async def llm_call_async(
         _apply_local_generation_stability(payload, target_url, model)
 
     if _is_host_dead(target_url):
-        raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
+        raise HTTPException(503, _unreachable_provider_message(target_url, cooldown=True))
 
     call_timeout = _call_timeout(timeout)
     attempt = 0
@@ -2482,7 +2510,7 @@ async def llm_call_async(
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
             if _cooled or attempt >= max_retries:
-                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+                raise HTTPException(503, _unreachable_provider_message(target_url))
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except httpx.ReadTimeout as e:
             duration = time.time() - start
@@ -2672,7 +2700,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     stream_timeout = _stream_timeout(timeout)
 
     if _is_host_dead(target_url):
-        yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
+        yield f'event: error\ndata: {json.dumps({"error": _unreachable_provider_message(target_url, cooldown=True), "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
     degenerate_guard = _DegenerateStreamGuard(model)
@@ -2783,7 +2811,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
-            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": _unreachable_provider_message(target_url), "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
         except httpx.PoolTimeout:
@@ -2877,7 +2905,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"Ollama stream connect to {target_url} failed: {e}{_tail}")
-            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": _unreachable_provider_message(target_url), "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
         except httpx.PoolTimeout:
@@ -3030,7 +3058,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"Anthropic stream connect to {target_url} failed: {e}{_tail}")
-            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": _unreachable_provider_message(target_url), "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
         except httpx.PoolTimeout:
@@ -3346,7 +3374,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _cooled = _mark_host_dead(target_url)
         _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
         logger.warning(f"Stream connect to {target_url} failed: {e}{_tail}")
-        yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        yield f'event: error\ndata: {json.dumps({"error": _unreachable_provider_message(target_url), "status": 503})}\n\n'
     except httpx.ReadTimeout:
         yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
     except httpx.PoolTimeout:

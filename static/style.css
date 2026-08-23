@@ -331,9 +331,22 @@ body.bg-pattern-sparkles {
       pointer-events: auto;
     }
     .chat-meta-overlay #current-meta {
+      max-width: min(42vw, 520px);
       overflow: hidden;
       text-overflow: ellipsis;
       cursor: pointer;
+    }
+    .current-model-label {
+      display: inline-flex;
+      max-width: min(28vw, 360px);
+      align-items: center;
+      overflow: hidden;
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      text-overflow: ellipsis;
+    }
+    .current-model-label:not(:empty)::before {
+      content: "·";
+      margin-right: 4px;
     }
     .chat-meta-overlay:hover {
       color: color-mix(in srgb, var(--fg) 75%, transparent);

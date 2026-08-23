@@ -41,13 +41,14 @@ async def test_approval_can_only_be_resolved_by_its_owner():
 @pytest.mark.asyncio
 async def test_read_only_is_enforced_at_dispatcher(tmp_path):
     from src.agent_tools import ToolBlock
-    from src.tool_execution import execute_tool_block
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
 
     target = tmp_path / "blocked.txt"
     _, result = await execute_tool_block(
         ToolBlock("write_file", '{"path":"blocked.txt","content":"nope"}'),
         workspace=str(tmp_path),
         permission_mode="read_only",
+        security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result["blocked"] is True
     assert not target.exists()

@@ -1654,8 +1654,8 @@ function initializeEventListeners() {
           const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
           if (meta) {
             meta.name = newName;
-            const ver = window._appVersion ? ` v${window._appVersion}` : '';
-            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
+            el('current-meta').textContent = meta.name;
+            sessionModule.updateModelPicker?.();
           }
           // Refresh the sessions list
         await sessionModule.loadSessions();

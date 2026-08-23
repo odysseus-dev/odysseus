@@ -5,7 +5,7 @@ import Storage from './storage.js';
 import uiModule, { autoResize, styledPrompt } from './ui.js';
 import chatRenderer from './chatRenderer.js?v=20260815toolapproval4';
 import { providerLogo } from './providers.js';
-import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260722ctxheader1';
+import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260823modelheader1';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
 
@@ -2308,8 +2308,7 @@ export async function materializePendingSession() {
 
     const incognitoChk = document.getElementById('incognito-toggle');
     const isIncognito = incognitoChk && incognitoChk.checked;
-    const base = (pending.modelId || 'model').split('/').pop();
-    const name = isIncognito ? 'Nobody' : `${base} ${new Date().toLocaleTimeString()}`;
+    const name = isIncognito ? 'Nobody' : 'New Chat';
 
     const fd = new FormData();
     fd.append('name', name);

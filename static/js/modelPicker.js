@@ -946,6 +946,11 @@ export function updateModelPicker() {
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const headerModel = document.getElementById('current-model-label');
+  if (headerModel) {
+    headerModel.textContent = modelId ? displayName : '';
+    headerModel.title = modelId ? `Active model: ${modelId}` : '';
+  }
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
   label.title = modelId || '';

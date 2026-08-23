@@ -6,7 +6,9 @@ Provides token estimation for context usage tracking.
 """
 
 import ipaddress
+import json
 import logging
+import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -305,6 +307,9 @@ def _lookup_known(model: str) -> Optional[int]:
     first-match return would report o1-mini's window as 200k.
     """
     name = model.lower()
+    tag_context = _context_hint_from_model_tag(name)
+    if tag_context:
+        return tag_context
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
     best_key: Optional[str] = None
@@ -314,6 +319,95 @@ def _lookup_known(model: str) -> Optional[int]:
             if best_key is None or len(key) > len(best_key):
                 best_key, best_ctx = key, ctx
     return best_ctx
+
+
+def _context_hint_from_model_tag(model: str) -> Optional[int]:
+    """Read explicit context suffixes such as ``-96k`` or ``-256k``.
+
+    Locally built Ollama tags commonly encode the configured Modelfile
+    ``num_ctx`` in their name. Prefer that explicit tag over a generic family
+    fallback such as Qwen3's native 128K window.
+    """
+    name = (model or "").lower().split("/")[-1]
+    name = re.sub(r":(?:latest|free|extended)$", "", name)
+    matches = re.findall(r"(?:^|[-_.:])(\d+(?:\.\d+)?)([km])(?=$|[-_.:])", name)
+    if not matches:
+        return None
+    value_text, unit = matches[-1]
+    multiplier = 1024 if unit == "k" else 1024 * 1024
+    value = int(float(value_text) * multiplier)
+    return value if 4096 <= value <= 4 * 1024 * 1024 else None
+
+
+def _positive_int(value) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(float(str(value).strip().strip('"')))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _ollama_context_from_show(payload: dict) -> Optional[int]:
+    """Extract the active context from Ollama's ``/api/show`` response."""
+    if not isinstance(payload, dict):
+        return None
+
+    parameters = payload.get("parameters") or {}
+    if isinstance(parameters, str):
+        text = parameters.strip()
+        if text.startswith("{"):
+            try:
+                parameters = json.loads(text)
+            except json.JSONDecodeError:
+                parameters = {}
+        else:
+            parsed_parameters = {}
+            for line in text.splitlines():
+                parts = line.strip().split(None, 1)
+                if len(parts) == 2:
+                    parsed_parameters[parts[0]] = parts[1]
+            parameters = parsed_parameters
+    if isinstance(parameters, dict):
+        configured = _positive_int(parameters.get("num_ctx"))
+        if configured:
+            return configured
+
+    for mapping_name in ("model_info", "details"):
+        mapping = payload.get(mapping_name) or {}
+        if not isinstance(mapping, dict):
+            continue
+        for key, value in mapping.items():
+            key_text = str(key).lower()
+            if key_text == "context_length" or key_text.endswith(".context_length"):
+                discovered = _positive_int(value)
+                if discovered:
+                    return discovered
+    return _positive_int(payload.get("context_length"))
+
+
+def _query_local_ollama_context(endpoint_url: str, model: str) -> Optional[int]:
+    """Ask a localhost Ollama daemon for this tag's configured ``num_ctx``."""
+    try:
+        parsed = urlparse(endpoint_url or "")
+        host = (parsed.hostname or "").lower()
+        if host not in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+            return None
+        if parsed.port not in (None, 11434):
+            return None
+        base = f"{parsed.scheme or 'http'}://{parsed.netloc}"
+        response = httpx.post(
+            f"{base}/api/show",
+            json={"model": model},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if not response.is_success:
+            return None
+        return _ollama_context_from_show(response.json())
+    except Exception as exc:
+        logger.debug(f"Failed to query Ollama context for {model}: {exc}")
+        return None
 
 
 def _model_ctx_from_entry(m: dict) -> Optional[int]:
@@ -399,6 +493,11 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
+
+    ollama_ctx = _query_local_ollama_context(endpoint_url, model)
+    if ollama_ctx:
+        logger.info(f"Ollama /api/show reports num_ctx={ollama_ctx} for {model}")
+        return ollama_ctx, True
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context

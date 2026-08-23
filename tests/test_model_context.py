@@ -6,7 +6,13 @@ import types
 import pytest
 
 import src.model_context as model_context
-from src.model_context import is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import (
+    _context_hint_from_model_tag,
+    _lookup_known,
+    _ollama_context_from_show,
+    estimate_tokens,
+    is_local_endpoint,
+)
 
 
 class _Column:
@@ -189,6 +195,31 @@ class TestLookupKnown:
 
     def test_gpt4_base(self):
         assert _lookup_known("gpt-4") == 8192
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("qwen3.5-9b-96k:latest", 96 * 1024),
+            ("qwen3.5-9b-256k:latest", 256 * 1024),
+        ],
+    )
+    def test_explicit_local_context_tag_overrides_family_default(self, model, expected):
+        assert _context_hint_from_model_tag(model) == expected
+        assert _lookup_known(model) == expected
+
+    def test_parameter_count_is_not_mistaken_for_context(self):
+        assert _context_hint_from_model_tag("qwen3.5-9b:latest") is None
+
+    def test_ollama_show_prefers_configured_num_ctx(self):
+        payload = {
+            "parameters": "temperature 0.7\nnum_ctx 98304\n",
+            "model_info": {"qwen3.context_length": 131072},
+        }
+        assert _ollama_context_from_show(payload) == 98304
+
+    def test_ollama_show_accepts_json_parameters(self):
+        payload = {"parameters": '{"num_ctx": 262144, "temperature": 0.7}'}
+        assert _ollama_context_from_show(payload) == 262144
 
 
 class _FakeResp:
