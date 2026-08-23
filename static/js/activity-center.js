@@ -127,7 +127,10 @@ function renderPopover() {
       ${summaryCard('Approvals', data.approvals, 'approval')}
     </div>
     <div class="activity-center-list">${rows.length ? rows.join('') : '<div class="activity-center-empty">No agent activity yet.</div>'}</div>
-    <button type="button" class="activity-center-full">Open full activity <span>↗</span></button>`;
+    <div class="activity-center-footer">
+      <button type="button" class="activity-center-full" data-open-mission>Open Mission Control <span>↗</span></button>
+      <button type="button" class="activity-center-log" data-open-activity-log>Activity log</button>
+    </div>`;
 
   popover.querySelector('.activity-center-refresh')?.addEventListener('click', (event) => { event.stopPropagation(); refresh(); });
   popover.querySelectorAll('[data-session-id], [data-run-session-id]').forEach((row) => row.addEventListener('click', async () => {
@@ -135,7 +138,11 @@ function renderPopover() {
     if (id) await sessionApi().selectSession?.(id);
     close();
   }));
-  popover.querySelector('.activity-center-full')?.addEventListener('click', () => {
+  popover.querySelector('[data-open-mission]')?.addEventListener('click', () => {
+    close();
+    window.odysseusMissionControl?.open?.('review');
+  });
+  popover.querySelector('[data-open-activity-log]')?.addEventListener('click', () => {
     close();
     window.tasksModule?.openTasks?.(null, { tab: 'activity' });
   });

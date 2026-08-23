@@ -15,6 +15,7 @@ import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
 import documentModule from './js/document.js?v=20260815approvalsave1';
 import searchChatModule from './js/search-chat.js';
 import activityCenterModule from './js/activity-center.js?v=20260823activity1';
+import missionControlModule from './js/mission-control.js?v=20260823mission2';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
   revealApplicationShellAfterPaint,
@@ -60,6 +61,7 @@ window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.workspaceModule = workspaceModule;
 window.odysseusActivity = activityCenterModule;
+window.odysseusMissionControl = missionControlModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
@@ -1984,6 +1986,7 @@ function initializeEventListeners() {
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
   try { workspaceModule.initWorkspace(); } catch (_) {}
   try { activityCenterModule.init(); } catch (_) {}
+  try { missionControlModule.init(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   function bringOpenDocumentToFrontOnMobile() {

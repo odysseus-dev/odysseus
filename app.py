@@ -806,6 +806,9 @@ app.include_router(setup_cookbook_routes())
 from routes.workspace_routes import setup_workspace_routes
 app.include_router(setup_workspace_routes())
 
+from routes.operations_routes import setup_operations_routes
+app.include_router(setup_operations_routes(session_manager))
+
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())

@@ -328,6 +328,68 @@ def _resolve_search_root(raw_path: str) -> str:
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_MUTATING_TOOLS = frozenset({"bash", "python", "write_file", "edit_file", "apply_patch"})
+
+
+def _tool_may_change_workspace(tool: str, content: str) -> bool:
+    if tool in {"write_file", "edit_file", "apply_patch"}:
+        return True
+    text = content or ""
+    if tool == "bash":
+        return bool(re.search(
+            r"(?i)(?:^|[;&|\n]\s*)(?:git\s+(?:add|commit|merge|rebase|cherry-pick|restore|checkout|switch|pull)|"
+            r"(?:npm|pnpm|yarn)\s+(?:install|add|remove|update)|pip(?:3)?\s+install|cargo\s+fmt|"
+            r"remove-item|move-item|copy-item|set-content|add-content|new-item|rm\s|mv\s|cp\s)|(?:>>?|\|\s*tee\b)",
+            text,
+        ))
+    if tool == "python":
+        return bool(re.search(r"(?i)(?:write_text|write_bytes|\.write\s*\(|open\s*\([^\n]+['\"](?:w|a|x)[+b]?['\"])", text))
+    return False
+
+
+def _project_tool_guard(tool: str, content: str, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Enforce project protected paths and create pre-change checkpoints.
+
+    The guard runs only after the normal permission/security decisions have
+    allowed a tool. Checkpoint creation is best-effort so an unavailable Git
+    executable does not turn an otherwise valid workspace into a dead end.
+    """
+    workspace = get_active_workspace()
+    if not workspace or tool not in _PROJECT_MUTATING_TOOLS or not _tool_may_change_workspace(tool, content):
+        return None
+    try:
+        from src.project_operations import (
+            create_checkpoint,
+            load_project_config,
+            protected_path_match,
+            tool_target_paths,
+        )
+
+        config = load_project_config(workspace)
+        patterns = [str(value).strip() for value in config.get("protected_paths", []) if str(value).strip()]
+        for target in tool_target_paths(tool, content):
+            matched = protected_path_match(workspace, target, patterns)
+            if matched:
+                return {
+                    "error": (
+                        f"Blocked by project rule: '{target}' matches protected path "
+                        f"'{matched}'. Change the rule in Mission Control first if this edit is intentional."
+                    ),
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "project_protected_path",
+                }
+        if config.get("checkpoint_before_changes", True):
+            label = f"auto-{tool}-{(session_id or 'agent')[:12]}"
+            try:
+                checkpoint = create_checkpoint(workspace, label)
+                logger.info("Created automatic project checkpoint %s before %s", checkpoint["id"], tool)
+            except Exception as exc:
+                logger.warning("Automatic project checkpoint skipped before %s: %s", tool, exc)
+    except Exception as exc:
+        logger.warning("Project tool guard could not load workspace rules: %s", exc)
+    return None
+
 
 _ADMIN_TOOLS = {
     "app_api",
@@ -881,6 +943,12 @@ async def _execute_tool_block_impl(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    project_block = _project_tool_guard(tool, content, session_id)
+    if project_block:
+        desc = f"{tool}: BLOCKED"
+        logger.warning("Project rule blocked tool=%s", tool)
+        return desc, project_block
 
 
     # Background execution: a `bash` block whose first line is the `#!bg`

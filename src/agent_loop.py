@@ -1244,6 +1244,42 @@ def _local_computer_rules() -> str:
 def _workspace_coding_rules(workspace: Optional[str]) -> str:
     if not workspace:
         return ""
+    project_rules = ""
+    try:
+        from src.project_operations import load_project_config
+
+        config = load_project_config(workspace)
+        sections = []
+        if config.get("instructions"):
+            sections.append(
+                "### Project instructions\n"
+                "These are user-authored workspace instructions. Follow them unless they conflict with system, security, or active permission rules:\n"
+                + str(config["instructions"]).strip()
+            )
+        if config.get("test_command"):
+            sections.append(f"### Canonical verification\n- Preferred command: `{str(config['test_command']).strip()}`")
+        protected = [str(value).strip() for value in config.get("protected_paths", []) if str(value).strip()]
+        if protected:
+            sections.append(
+                "### Protected paths\n"
+                "Do not modify these paths unless the user explicitly changes the project rule:\n"
+                + "\n".join(f"- `{value}`" for value in protected)
+            )
+        permissions = [str(value).strip() for value in config.get("permission_rules", []) if str(value).strip()]
+        if permissions:
+            sections.append(
+                "### Project permission preferences\n"
+                "Treat these as additional restrictions; they never grant access beyond the active permission mode:\n"
+                + "\n".join(f"- {value}" for value in permissions)
+            )
+        if config.get("visual_qa_url"):
+            sections.append(f"### Visual QA target\n- `{str(config['visual_qa_url']).strip()}`")
+        if sections:
+            project_rules = "\n\n## Project operating contract\n" + "\n\n".join(sections)
+    except Exception:
+        # A malformed optional project file must never prevent the agent from
+        # starting; native tool guards still apply their own safe defaults.
+        pass
     shell_rules = (
         "- Host OS is Windows. The `bash` tool is a compatibility name backed by PowerShell. Use PowerShell commands and Windows paths; prefer `rg`, `Get-Content`, `Select-String`, `Get-ChildItem`, and `$env:NAME`. Never assume POSIX utilities exist.\n"
         if os.name == "nt" else
@@ -1268,6 +1304,7 @@ def _workspace_coding_rules(workspace: Optional[str]) -> str:
         "- If a command fails, use the failure output to choose the next diagnostic or patch. Do not silently stop or claim success.\n"
         "- After code changes, run the smallest relevant verification command you can infer from the repo (for example a focused test, `py_compile`, `node --check`, lint, or build). If verification cannot run, say exactly why.\n"
         "- Keep going until the requested change is actually made and checked, or state the concrete blocker."
+        + project_rules
     )
 
 
