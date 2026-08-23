@@ -17,7 +17,8 @@ numpy
 # chromadb-client is the lightweight HTTP client (talks to a standalone
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
-fastembed
+fastembed>=0.4.0
+tokenizers>=0.15.0
 youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
@@ -38,10 +39,7 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-# Built-in servers use the v1 low-level Server decorator API. MCP SDK v2 is a
-# breaking rewrite, so keep fresh installs on the maintained v1 line until the
-# servers are migrated together.
-mcp<2
+mcp
 pyotp
 qrcode[pil]
 croniter
