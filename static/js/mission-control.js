@@ -341,6 +341,7 @@ function open(tab = 'review') {
   if (heading) heading.textContent = workspace || 'Local agent operations';
   shell.classList.add('visible');
   shell.setAttribute('aria-hidden', 'false');
+  document.getElementById('mission-control-toggle')?.setAttribute('aria-expanded', 'true');
   document.body.classList.add('mission-control-open');
   render();
   load(activeTab, true);
@@ -351,10 +352,12 @@ function close() {
   if (!shell) return;
   shell.classList.remove('visible');
   shell.setAttribute('aria-hidden', 'true');
+  document.getElementById('mission-control-toggle')?.setAttribute('aria-expanded', 'false');
   document.body.classList.remove('mission-control-open');
 }
 
 function init() {
+  document.getElementById('mission-control-toggle')?.addEventListener('click', () => open('review'));
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && shell?.classList.contains('visible')) close();
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'm') {

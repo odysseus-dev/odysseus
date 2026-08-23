@@ -155,11 +155,12 @@ def test_mission_control_is_wired_into_app_and_activity():
     root = Path(__file__).resolve().parents[1]
     app = (root / "app.py").read_text(encoding="utf-8")
     frontend = (root / "static" / "app.js").read_text(encoding="utf-8")
+    index = (root / "static" / "index.html").read_text(encoding="utf-8")
     activity = (root / "static" / "js" / "activity-center.js").read_text(encoding="utf-8")
     mission = (root / "static" / "js" / "mission-control.js").read_text(encoding="utf-8")
 
     assert "setup_operations_routes(session_manager)" in app
-    assert "mission-control.js?v=20260823mission2" in frontend
+    assert "mission-control.js?v=20260823mission3" in frontend
     assert "missionControlModule.init()" in frontend
     assert "Open Mission Control" in activity
     assert "/api/operations/review" in mission
@@ -168,3 +169,6 @@ def test_mission_control_is_wired_into_app_and_activity():
     assert "/api/operations/checkpoints/restore" in mission
     assert "Delivery cockpit" in mission
     assert "Background agent queue" in mission
+    assert 'id="mission-control-toggle"' in index
+    assert "mission-control-toggle" in mission
+    assert "is-position-locked" in (root / "static" / "js" / "pinned-summary.js").read_text(encoding="utf-8")

@@ -14,6 +14,7 @@ const ICONS = {
 let panel;
 let toggle;
 let body;
+let topActions;
 let currentStatus = null;
 let refreshTimer = null;
 
@@ -28,10 +29,21 @@ function isOpen() {
 
 function setOpen(open, persist = true) {
   if (!panel || !toggle) return;
+  if (open && topActions && !topActions.classList.contains('is-position-locked')) {
+    const rect = topActions.getBoundingClientRect();
+    topActions.style.setProperty('--chat-actions-left', `${rect.left}px`);
+    topActions.style.setProperty('--chat-actions-top', `${rect.top}px`);
+    topActions.classList.add('is-position-locked');
+  }
   panel.classList.toggle('is-open', open);
   panel.setAttribute('aria-hidden', String(!open));
   toggle.setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('pinned-summary-visible', open);
+  if (!open && topActions) {
+    topActions.classList.remove('is-position-locked');
+    topActions.style.removeProperty('--chat-actions-left');
+    topActions.style.removeProperty('--chat-actions-top');
+  }
   if (persist) localStorage.setItem(STORAGE_KEY, open ? '1' : '0');
   if (open) refresh();
 }
@@ -108,6 +120,7 @@ function init() {
   panel = document.getElementById('pinned-summary');
   toggle = document.getElementById('pinned-summary-toggle');
   body = document.getElementById('pinned-summary-body');
+  topActions = document.getElementById('chat-top-actions');
   if (!panel || !toggle || !body) return;
   toggle.addEventListener('click', () => setOpen(!isOpen()));
   document.getElementById('pinned-summary-close')?.addEventListener('click', () => setOpen(false));

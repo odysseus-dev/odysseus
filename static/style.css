@@ -42988,12 +42988,28 @@ body.ody-modern-shell .workspace-project-chat-label {
   70%, 100% { box-shadow: 0 0 0 5px rgba(139, 185, 255, 0); }
 }
 
-/* ── Pinned workspace summary ─────────────────────────────────────────── */
-body.ody-modern-shell .pinned-summary-toggle {
+/* ── Persistent chat controls + pinned workspace summary ─────────────── */
+body.ody-modern-shell .chat-top-actions {
   position: absolute;
   top: 13px;
   right: 8px;
   z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+body.ody-modern-shell .chat-top-actions.is-position-locked {
+  position: fixed;
+  top: var(--chat-actions-top);
+  right: auto;
+  left: var(--chat-actions-left);
+  z-index: 300;
+}
+
+body.ody-modern-shell .mission-control-toggle,
+body.ody-modern-shell .pinned-summary-toggle {
+  position: relative;
   display: grid;
   place-items: center;
   width: 30px;
@@ -43008,13 +43024,16 @@ body.ody-modern-shell .pinned-summary-toggle {
 }
 
 body.ody-modern-shell .pinned-summary-toggle:hover,
-body.ody-modern-shell .pinned-summary-toggle[aria-expanded="true"] {
+body.ody-modern-shell .pinned-summary-toggle[aria-expanded="true"],
+body.ody-modern-shell .mission-control-toggle:hover,
+body.ody-modern-shell .mission-control-toggle[aria-expanded="true"] {
   color: #eef0ef;
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.055);
 }
 
-body.ody-modern-shell .pinned-summary-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+body.ody-modern-shell .pinned-summary-toggle svg,
+body.ody-modern-shell .mission-control-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
 .pinned-summary {
   position: fixed;
@@ -43143,7 +43162,7 @@ body.ody-modern-shell .pinned-summary-toggle svg { width: 16px; height: 16px; fi
 }
 
 @media (max-width: 768px) {
-  body.ody-modern-shell .pinned-summary-toggle { top: 7px; right: 7px; }
+  body.ody-modern-shell .chat-top-actions { top: 7px; right: 7px; }
   .pinned-summary { top: 50px; max-height: calc(100vh - 62px); }
   .pinned-summary-card { max-height: calc(100vh - 62px); }
 }
