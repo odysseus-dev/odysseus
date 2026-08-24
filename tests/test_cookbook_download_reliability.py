@@ -183,7 +183,10 @@ async def test_remote_reliable_runner_is_private_and_local_copy_is_always_remove
     assert result["ok"] is True
     assert captured["mode"] == 0o700
     assert "export HF_HUB_DISABLE_XET=1" in captured["script"]
-    assert "_odysseus_run_with_timeout hf download org/private-model" in captured["script"]
+    assert (
+        '_odysseus_run_with_timeout "$ODYSSEUS_HF_CLI" download '
+        "org/private-model" in captured["script"]
+    )
     assert "chmod 700" in captured["command"]
     assert not captured["path"].exists()
 
