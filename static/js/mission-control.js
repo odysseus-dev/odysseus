@@ -1,8 +1,10 @@
 import uiModule from './ui.js';
+import { setWorkspace } from './workspace.js';
 
 const API_BASE = window.location.origin;
 const TABS = [
   ['review', 'Review', 'Outcome, evidence, changes and recovery'],
+  ['missions', 'Agent missions', 'Isolated implementation, verification and triage'],
   ['runtime', 'Runtime', 'Models, services and hardware'],
   ['context', 'Context', 'Token budget and conversation weight'],
   ['project', 'Project rules', 'Instructions, permissions and QA'],
@@ -12,7 +14,7 @@ const TABS = [
 let shell = null;
 let activeTab = 'review';
 let loading = false;
-let state = { review: null, runtime: null, context: null, project: null, delivery: null };
+let state = { review: null, missions: null, runtime: null, context: null, project: null, delivery: null };
 
 const esc = (value) => uiModule.esc(String(value ?? ''));
 const currentWorkspace = () => window.workspaceModule?.getWorkspace?.() || '';
@@ -72,6 +74,7 @@ function addToChat(text) {
 function icon(name) {
   const paths = {
     review: '<path d="M4 4h16v16H4z"/><path d="m8 12 2.5 2.5L16 9"/>',
+    missions: '<path d="M5 4h10l4 4v12H5z"/><path d="M15 4v5h5M8 14h8M8 18h5"/>',
     runtime: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 9h3M7 13h6M17 9h.01"/>',
     context: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     project: '<path d="M3 7h7l2 2h9v10H3z"/><path d="M7 4h5l2 3"/>',
@@ -159,6 +162,25 @@ function renderReview() {
     <section class="mission-card"><header><strong>Agent worktrees</strong><span>Isolated branches</span></header><div class="mission-worktree-list">${worktrees || '<div class="mission-empty">No isolated worktrees yet.</div>'}</div></section>`;
 }
 
+function renderMissions() {
+  const project = state.missions?.project || state.project || {};
+  const review = state.missions?.review || state.review || {};
+  const hooks = project.completion_hooks || [];
+  const worktrees = review.worktrees || [];
+  const missions = [
+    ['Isolated implementer', 'Create a dedicated Git worktree, switch to it, and begin a fresh scoped chat.', 'data-mc-worktree'],
+    ['Independent verifier', 'Audit the current implementation without making speculative changes; run the deterministic checks and report evidence.', 'data-mc-mission="verifier"'],
+    ['Visual QA', project.visual_qa_url ? `Inspect ${project.visual_qa_url} at desktop and mobile sizes; record concrete defects only.` : 'Set a Visual QA URL in Project rules, then inspect desktop and mobile rendering.', 'data-mc-mission="visual"'],
+    ['Issue triage', 'Triage failures into reproducible issues, suspected ownership, impact, and a smallest safe next action.', 'data-mc-mission="triage"'],
+  ];
+  const cards = missions.map(([title, detail, action]) => `<article class="mission-agent-card"><span class="mission-agent-orb">${title.slice(0, 1)}</span><div><strong>${esc(title)}</strong><p>${esc(detail)}</p></div><button type="button" ${action}>Launch</button></article>`).join('');
+  const hookList = hooks.length ? hooks.map(hook => `<code>${esc(hook)}</code>`).join('') : '<span>No deterministic hooks configured yet.</span>';
+  const trees = worktrees.map(tree => `<div class="mission-worktree mission-worktree-action"><span>${icon('branch')}</span><div><strong>${esc(tree.branch || 'Detached')}</strong><small title="${esc(tree.path)}">${esc(tree.path)}</small></div><button type="button" data-mc-use-worktree="${esc(tree.path)}">Open task</button></div>`).join('');
+  return `<div class="mission-section-heading"><div><span class="mission-eyebrow">Agent operating system</span><h2>Mission desk</h2><p>Give each significant task a clear role, isolated workspace, and evidence-based finish line.</p></div></div>
+    <section class="mission-agent-grid">${cards}</section>
+    <section class="mission-card mission-hooks"><header><strong>Deterministic completion hooks</strong><span>${hooks.length} configured</span></header><div>${hookList}</div><button type="button" data-mc-tab="project">Configure hooks</button></section>
+    <section class="mission-card"><header><strong>Isolated worktrees</strong><span>${worktrees.length} active</span></header><div class="mission-worktree-list">${trees || '<div class="mission-empty">Create an isolated implementer mission when work should not touch your current branch.</div>'}</div></section>`;
+}
 function renderRuntime() {
   const data = state.runtime;
   if (!data) return skeleton();
@@ -204,6 +226,7 @@ function renderProject() {
       <label class="mission-field"><span>Protected paths</span><small>One path or glob per line.</small><textarea name="protected_paths" rows="5" placeholder=".env&#10;data/**">${esc((data.protected_paths || []).join('\n'))}</textarea></label>
       <label class="mission-field"><span>Reusable permission rules</span><small>Plain-language rules applied to this project.</small><textarea name="permission_rules" rows="5" placeholder="Always allow tests&#10;Ask before pushing">${esc((data.permission_rules || []).join('\n'))}</textarea></label>
       <label class="mission-field"><span>Visual QA URL</span><small>Page the agent should launch and inspect.</small><input name="visual_qa_url" value="${esc(data.visual_qa_url)}" placeholder="http://127.0.0.1:3000" /></label>
+      <label class="mission-field"><span>Completion hooks</span><small>One deterministic check per line. The agent must run and report applicable checks before completion.</small><textarea name="completion_hooks" rows="4" placeholder="pytest -q&#10;npm run lint">${esc((data.completion_hooks || []).join('\n'))}</textarea></label>
       <label class="mission-field"><span>Compact context at</span><small>Recommended automatic threshold.</small><div class="mission-range"><input type="range" name="context_compaction_percent" min="50" max="95" value="${Number(data.context_compaction_percent || 80)}" /><output>${Number(data.context_compaction_percent || 80)}%</output></div></label>
       <label class="mission-check"><input type="checkbox" name="checkpoint_before_changes" ${data.checkpoint_before_changes !== false ? 'checked' : ''} /><span><strong>Create checkpoints automatically</strong><small>Preserve tracked files before large edits and dependency changes.</small></span></label>
     </form>`;
@@ -234,7 +257,7 @@ function render() {
   shell.querySelectorAll('[data-mc-tab]').forEach(button => button.classList.toggle('active', button.dataset.mcTab === activeTab));
   const main = shell.querySelector('#mission-control-main');
   if (!main) return;
-  main.innerHTML = activeTab === 'review' ? renderReview() : activeTab === 'runtime' ? renderRuntime() : activeTab === 'context' ? renderContext() : activeTab === 'project' ? renderProject() : renderDelivery();
+  main.innerHTML = activeTab === 'review' ? renderReview() : activeTab === 'missions' ? renderMissions() : activeTab === 'runtime' ? renderRuntime() : activeTab === 'context' ? renderContext() : activeTab === 'project' ? renderProject() : renderDelivery();
   const range = main.querySelector('input[name="context_compaction_percent"]');
   range?.addEventListener('input', () => { const output = range.parentElement?.querySelector('output'); if (output) output.textContent = `${range.value}%`; });
 }
@@ -246,6 +269,12 @@ async function load(tab = activeTab, force = false) {
   render();
   try {
     if (tab === 'review') state.review = await api(endpoint('/api/operations/review', { session_id: currentSession() }));
+    else if (tab === 'missions') {
+      const [review, project] = await Promise.all([api(endpoint('/api/operations/review', { session_id: currentSession() })), api(endpoint('/api/operations/project'))]);
+      state.review = review;
+      state.project = project;
+      state.missions = { review, project };
+    }
     else if (tab === 'runtime') state.runtime = await api(endpoint('/api/operations/runtime'));
     else if (tab === 'context') state.context = await api(`${API_BASE}/api/operations/context?session_id=${encodeURIComponent(currentSession())}`);
     else if (tab === 'project') state.project = await api(endpoint('/api/operations/project'));
@@ -294,10 +323,28 @@ async function createWorktree() {
   try {
     const data = await api(endpoint('/api/operations/worktrees'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, base: 'HEAD' }) });
     uiModule.showToast?.(`Created ${data.worktree.branch}`);
-    await load('review', true);
+    startWorktreeMission(data.worktree.path, name);
+    await load('missions', true);
   } catch (error) { uiModule.showError?.(error.message); }
 }
 
+function startWorktreeMission(path, title = 'isolated task') {
+  setWorkspace(path);
+  document.getElementById('sidebar-new-chat-btn')?.click();
+  window.setTimeout(() => {
+    addToChat(`You are the isolated implementation agent for “${title}”. Work only in the active worktree: ${path}. First inspect the repository, write a concise plan, implement the scoped task, run the project's completion hooks, and finish with evidence plus any merge risks.`);
+  }, 0);
+}
+
+function launchMission(kind) {
+  const project = state.missions?.project || state.project || {};
+  const prompt = {
+    verifier: `Act as an independent verifier. Do not assume the implementation is correct. Inspect the current diff and relevant code, run these deterministic checks where applicable: ${(project.completion_hooks || []).join(', ') || project.test_command || 'the project tests'}. Report concrete evidence, failures, and remaining risks. Do not make unrelated changes.`,
+    visual: `Act as a visual QA agent. Open ${project.visual_qa_url || 'the configured local application'} and inspect desktop and mobile layouts, interaction states, and basic accessibility. Fix only confirmed defects, then report the pages, viewports, and evidence checked.`,
+    triage: 'Act as an issue-triage agent. Reproduce the reported problem if possible, isolate the likely subsystem, estimate impact, list the smallest safe next action, and do not make speculative edits. Return a concise structured triage report.',
+  }[kind];
+  if (prompt) addToChat(prompt);
+}
 async function saveProject() {
   const form = shell?.querySelector('#mission-project-form');
   if (!form) return;
@@ -309,6 +356,7 @@ async function saveProject() {
     github_base_branch: String(field('github_base_branch')?.value || 'main'),
     protected_paths: lines('protected_paths'),
     permission_rules: lines('permission_rules'),
+    completion_hooks: lines('completion_hooks'),
     visual_qa_url: String(field('visual_qa_url')?.value || ''),
     context_compaction_percent: Number(field('context_compaction_percent')?.value || 80),
     checkpoint_before_changes: !!field('checkpoint_before_changes')?.checked,
@@ -330,6 +378,8 @@ function handleClick(event) {
   else if (target.hasAttribute('data-mc-checkpoint')) createCheckpoint();
   else if (target.dataset.mcRestore) restoreCheckpoint(target.dataset.mcRestore);
   else if (target.hasAttribute('data-mc-worktree')) createWorktree();
+  else if (target.dataset.mcUseWorktree) startWorktreeMission(target.dataset.mcUseWorktree, 'existing isolated task');
+  else if (target.dataset.mcMission) launchMission(target.dataset.mcMission);
   else if (target.hasAttribute('data-mc-project-save')) saveProject();
 }
 
@@ -365,7 +415,7 @@ function init() {
       open();
     }
   });
-  document.addEventListener('odysseus-workspace-change', () => { state = { review: null, runtime: null, context: null, project: null, delivery: null }; });
+  document.addEventListener('odysseus-workspace-change', () => { state = { review: null, missions: null, runtime: null, context: null, project: null, delivery: null }; });
 }
 
 const missionControlModule = { init, open, close, refresh: () => load(activeTab, true) };

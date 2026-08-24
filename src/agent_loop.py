@@ -1259,6 +1259,14 @@ def _workspace_coding_rules(workspace: Optional[str]) -> str:
             )
         if config.get("test_command"):
             sections.append(f"### Canonical verification\n- Preferred command: `{str(config['test_command']).strip()}`")
+        completion_hooks = [str(value).strip() for value in config.get("completion_hooks", []) if str(value).strip()]
+        if completion_hooks:
+            sections.append(
+                "### Required completion hooks\n"
+                "Before claiming a coding task is complete, run these deterministic checks when they apply. "
+                "Report each result; do not invent a passing result:\n"
+                + "\n".join(f"- `{value}`" for value in completion_hooks)
+            )
         protected = [str(value).strip() for value in config.get("protected_paths", []) if str(value).strip()]
         if protected:
             sections.append(

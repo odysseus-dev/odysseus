@@ -28,6 +28,7 @@ def project_defaults() -> dict[str, Any]:
         "test_command": "",
         "protected_paths": [],
         "permission_rules": [],
+        "completion_hooks": [],
         "checkpoint_before_changes": True,
         "visual_qa_url": "",
         "github_base_branch": "main",

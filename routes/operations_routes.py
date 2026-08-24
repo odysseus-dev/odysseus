@@ -283,6 +283,7 @@ class ProjectConfigUpdate(BaseModel):
     test_command: str = Field(default="", max_length=2_000)
     protected_paths: list[str] = Field(default_factory=list, max_length=200)
     permission_rules: list[str] = Field(default_factory=list, max_length=200)
+    completion_hooks: list[str] = Field(default_factory=list, max_length=20)
     checkpoint_before_changes: bool = True
     visual_qa_url: str = Field(default="", max_length=2_000)
     github_base_branch: str = Field(default="main", max_length=200)
@@ -407,6 +408,7 @@ def setup_operations_routes(session_manager) -> APIRouter:
         payload = body.model_dump()
         payload["protected_paths"] = [str(value).strip() for value in payload["protected_paths"] if str(value).strip()][:200]
         payload["permission_rules"] = [str(value).strip() for value in payload["permission_rules"] if str(value).strip()][:200]
+        payload["completion_hooks"] = [str(value).strip() for value in payload["completion_hooks"] if str(value).strip()][:20]
         return _atomic_save_project_config(workspace, payload)
 
     @router.get("/checkpoints")

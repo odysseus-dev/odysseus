@@ -43473,6 +43473,20 @@ body.mission-control-open { overflow: hidden; }
 @keyframes missionSkeleton { to { background-position-x: -150%; } }
 .mission-error { display: flex; min-height: 380px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; color: #d1d5d3; }
 .mission-error span { color: #838d8d; font-size: 9.5px; }
+.mission-agent-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.mission-agent-card { display:grid; min-height:154px; padding:15px; grid-template-columns:32px minmax(0,1fr); align-content:start; gap:10px; border:1px solid rgba(255,255,255,.07); border-radius:14px; background:radial-gradient(circle at 0 0,rgba(113,162,229,.08),transparent 46%),rgba(255,255,255,.018); }
+.mission-agent-orb { display:grid; width:28px; height:28px; place-items:center; border:1px solid rgba(143,189,255,.2); border-radius:9px; color:#a9c7f3; background:rgba(112,162,229,.09); font:650 11px/1 ui-monospace,Consolas,monospace; }
+.mission-agent-card > div { display:flex; min-width:0; flex-direction:column; gap:6px; }
+.mission-agent-card strong { color:#dbe1df; font-size:11px; font-weight:610; }
+.mission-agent-card p { font-size:9px; line-height:1.55; }
+.mission-agent-card button, .mission-hooks > button, .mission-worktree-action button { min-height:30px; margin-top:auto; padding:0 10px; border:1px solid rgba(135,182,243,.2); border-radius:8px; color:#b8d0f3; background:rgba(110,160,225,.09); font:570 9px/1 inherit; cursor:pointer; }
+.mission-agent-card button { grid-column:2; justify-self:start; }
+.mission-agent-card button:hover, .mission-hooks > button:hover, .mission-worktree-action button:hover { color:#edf5ff; background:rgba(110,160,225,.17); }
+.mission-hooks > div { display:flex; min-height:51px; padding:10px 12px; flex-wrap:wrap; align-items:center; gap:6px; color:#758081; font-size:9px; }
+.mission-hooks code { padding:5px 7px; border:1px solid rgba(255,255,255,.065); border-radius:6px; color:#aebfc1; background:rgba(0,0,0,.13); font:500 8px/1.2 ui-monospace,Consolas,monospace; }
+.mission-hooks > button { margin:0 12px 12px; }
+.mission-worktree-action { grid-template-columns:24px minmax(0,1fr) auto; }
+.mission-worktree-action button { min-height:27px; margin:0; padding:0 8px; }
 .activity-center-footer { display: grid; margin-top: 5px; grid-template-columns: 1fr auto; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.06); }
 .activity-center-footer .activity-center-full { margin: 0; border-top: 0; }
 .activity-center-log { min-height: 34px; padding: 0 9px; border: 0; color: #737d7d; background: transparent; font: 500 9px/1 inherit; cursor: pointer; }
