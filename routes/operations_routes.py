@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -27,6 +28,8 @@ from src.project_operations import (
     CHECKPOINT_REF as _CHECKPOINT_REF,
     create_checkpoint as _shared_create_checkpoint,
     list_checkpoints as _shared_list_checkpoints,
+    list_handoffs as _shared_list_handoffs,
+    save_handoff as _shared_save_handoff,
     load_project_config as _shared_load_project_config,
     project_config_path as _shared_project_config_path,
     project_defaults as _shared_project_defaults,
@@ -309,6 +312,11 @@ class WorktreeAction(BaseModel):
     confirmation: str = Field(min_length=1, max_length=20)
 
 
+class HandoffCreate(BaseModel):
+    session_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(default="", max_length=160)
+
+
 def setup_operations_routes(session_manager) -> APIRouter:
     router = APIRouter(prefix="/api/operations", tags=["operations"])
 
@@ -416,6 +424,51 @@ def setup_operations_routes(session_manager) -> APIRouter:
         payload["completion_hooks"] = [str(value).strip() for value in payload["completion_hooks"] if str(value).strip()][:20]
         return _atomic_save_project_config(workspace, payload)
 
+    @router.get("/handoffs")
+    def list_handoffs(request: Request, path: str = Query(default="")):
+        _require_admin(request)
+        workspace = _resolve_workspace(path)
+        return {"workspace": workspace, "handoffs": _shared_list_handoffs(workspace)}
+
+    @router.post("/handoffs")
+    def create_handoff(request: Request, body: HandoffCreate, path: str = Query(default="")):
+        owner = _require_admin(request)
+        workspace = _resolve_workspace(path)
+        try:
+            session = session_manager.get_session(body.session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Source chat not found")
+        if owner and getattr(session, "owner", None) and session.owner != owner:
+            raise HTTPException(status_code=404, detail="Source chat not found")
+        messages = [message for message in session.history if getattr(message, "role", "") in {"user", "assistant"}]
+        if not messages:
+            raise HTTPException(status_code=409, detail="The current chat has no messages to hand off")
+        excerpt = []
+        for message in messages[-8:]:
+            content = str(getattr(message, "content", "") or "").strip()
+            if content:
+                excerpt.append({"role": str(getattr(message, "role", "user")), "content": content[:3500]})
+        latest_user = next((row["content"] for row in reversed(excerpt) if row["role"] == "user"), "")
+        latest_assistant = next((row["content"] for row in reversed(excerpt) if row["role"] == "assistant"), "")
+        git = _git_workspace_status(workspace)
+        handoff = {
+            "id": uuid.uuid4().hex,
+            "created_at": _utc_iso(),
+            "title": (body.title or getattr(session, "name", "") or "Context handoff").strip()[:160],
+            "source_session_id": session.id,
+            "source_chat": getattr(session, "name", "") or "Untitled chat",
+            "workspace": workspace,
+            "model": getattr(session, "model", "") or "",
+            "summary": {
+                "latest_request": latest_user[:3500],
+                "latest_result": latest_assistant[:5000],
+                "git": {"branch": git.get("branch"), "changed_files": git.get("changed_files", 0), "files": [row.get("path") for row in git.get("files", [])[:20]]},
+            },
+            "context_excerpt": excerpt,
+            "next_step": "Continue from the latest request. Inspect the current workspace and verify assumptions before changing files.",
+        }
+        _shared_save_handoff(workspace, handoff)
+        return {"ok": True, "handoff": handoff}
     @router.get("/checkpoints")
     def checkpoints(request: Request, path: str = Query(default="")):
         _require_admin(request)

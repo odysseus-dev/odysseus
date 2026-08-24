@@ -7,6 +7,7 @@ const TABS = [
   ['missions', 'Agent missions', 'Isolated implementation, verification and triage'],
   ['runtime', 'Runtime', 'Models, services and hardware'],
   ['context', 'Context', 'Token budget and conversation weight'],
+  ['handoff', 'Context handoff', 'Durable brief for the next clean chat'],
   ['project', 'Project rules', 'Instructions, permissions and QA'],
   ['delivery', 'Delivery', 'Tests, visual QA and GitHub handoff'],
 ];
@@ -14,7 +15,7 @@ const TABS = [
 let shell = null;
 let activeTab = 'review';
 let loading = false;
-let state = { review: null, missions: null, runtime: null, context: null, project: null, delivery: null };
+let state = { review: null, missions: null, runtime: null, context: null, handoff: null, project: null, delivery: null };
 
 const esc = (value) => uiModule.esc(String(value ?? ''));
 const currentWorkspace = () => window.workspaceModule?.getWorkspace?.() || '';
@@ -77,6 +78,7 @@ function icon(name) {
     missions: '<path d="M5 4h10l4 4v12H5z"/><path d="M15 4v5h5M8 14h8M8 18h5"/>',
     runtime: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 9h3M7 13h6M17 9h.01"/>',
     context: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    handoff: '<path d="M5 4h10l4 4v12H5z"/><path d="M15 4v5h5M8 13h8M8 17h6"/><path d="m16 10 3 3-3 3"/>',
     project: '<path d="M3 7h7l2 2h9v10H3z"/><path d="M7 4h5l2 3"/>',
     delivery: '<path d="M4 17V7l8-4 8 4v10l-8 4z"/><path d="m8 12 2.5 2.5L16 9"/>',
     refresh: '<path d="M20 6v5h-5M4 18v-5h5"/><path d="M18 9a7 7 0 0 0-12-2L4 10M6 15a7 7 0 0 0 12 2l2-3"/>',
@@ -138,6 +140,7 @@ function renderReview() {
   const checkpoints = (data.checkpoints || []).map(item => `<div class="mission-checkpoint-row"><span>${icon('checkpoint')}</span><div><strong>${esc(item.id.replace(/^\d{8}-\d{6}-/, '').replaceAll('-', ' '))}</strong><small>${esc(item.short_sha)} · ${esc(relative(item.created_at))}</small></div><button type="button" data-mc-restore="${esc(item.id)}">Restore</button></div>`).join('');
   const worktrees = (data.worktrees || []).map(item => `<div class="mission-worktree"><span>${icon('branch')}</span><div><strong>${esc(item.branch || 'Detached')}</strong><small title="${esc(item.path)}">${esc(item.path)}</small></div></div>`).join('');
   const risks = (data.risks || []).map(risk => `<li>${esc(risk)}</li>`).join('');
+  const diffReview = git.diff_preview ? `<section class="mission-card mission-diff-review"><header><strong>Diff review</strong><span>${git.diff_truncated ? 'Preview truncated' : 'Working tree preview'}</span></header><details><summary>Inspect changed lines</summary><pre>${esc(git.diff_preview)}</pre></details><button type="button" data-mc-followup="Review the current diff as an independent code reviewer. Identify correctness, security, testing, and maintainability issues with file and line references. Do not make edits unless I ask.">Ask verifier to review diff</button></section>` : '';
   const runs = (data.runs || []).map(run => `<div class="mission-run-row"><span class="mission-run-dot ${esc(run.status)}"></span><div><strong>${esc(run.task_name || 'Background task')}</strong><small>${esc(run.model || 'Local agent')} · ${esc(relative(run.finished_at || run.started_at))}</small></div>${renderStatusPill(run.status)}</div>`).join('');
 
   return `${outcome}
@@ -154,6 +157,7 @@ function renderReview() {
       <button type="button" data-mc-worktree>${icon('branch')} New isolated task</button>
     </div>
     ${risks ? `<section class="mission-card mission-risks"><header><strong>Needs attention</strong><span>${data.risks.length}</span></header><ul>${risks}</ul></section>` : ''}
+    ${diffReview}
     <div class="mission-two-column">
       <section class="mission-card"><header><strong>Changed files</strong><span>${Number(git.changed_files || 0)}</span></header><div class="mission-file-list">${files || '<div class="mission-empty">No uncommitted files</div>'}</div></section>
       <section class="mission-card"><header><strong>Checkpoints</strong><span>Tracked files</span></header><div class="mission-checkpoint-list">${checkpoints || '<div class="mission-empty">Create a recovery point before risky changes.</div>'}</div></section>
@@ -215,6 +219,24 @@ function renderContext() {
     <section class="mission-context-advice"><strong>${pct >= 85 ? 'Compaction recommended' : pct >= 65 ? 'Context is getting dense' : 'Healthy working range'}</strong><p>${pct >= 85 ? 'Start a fresh task or compact this chat before the model begins losing important early details.' : pct >= 65 ? 'Pin only essential files and avoid pasting large tool outputs into the conversation.' : 'There is comfortable room for tools, code, and a long implementation pass.'}</p></section>`;
 }
 
+function handoffPrompt(handoff) {
+  const summary = handoff.summary || {};
+  const git = summary.git || {};
+  const excerpt = (handoff.context_excerpt || []).map(item => `${String(item.role || 'user').toUpperCase()}: ${String(item.content || '')}`).join('\n\n').slice(0, 12000);
+  return `You are continuing a prior coding mission. Treat this handoff as context, but inspect the workspace before acting.\n\n# ${handoff.title || 'Context handoff'}\nWorkspace: ${handoff.workspace || currentWorkspace()}\nModel previously used: ${handoff.model || 'unknown'}\nBranch: ${git.branch || 'unknown'} · changed files: ${Number(git.changed_files || 0)}\n\n## Latest request\n${summary.latest_request || 'Not available'}\n\n## Latest result\n${summary.latest_result || 'Not available'}\n\n## Recent context\n${excerpt || 'Not available'}\n\n## Continue\n${handoff.next_step || 'Inspect the workspace, then continue from the latest request.'}`;
+}
+
+function renderHandoff() {
+  const data = state.handoff;
+  if (!data) return skeleton();
+  const items = (data.handoffs || []).map(item => {
+    const git = item.summary?.git || {};
+    return `<article class="mission-handoff-row"><div><span class="mission-eyebrow">${esc(relative(item.created_at))} · ${esc(item.model || 'local model')}</span><strong>${esc(item.title || 'Context handoff')}</strong><p>${esc((item.summary?.latest_request || item.next_step || '').slice(0, 230))}</p><small>${esc(git.branch || 'No branch')} · ${Number(git.changed_files || 0)} changed file(s)</small></div><button type="button" data-mc-continue-handoff="${esc(item.id)}">Continue in new chat</button></article>`;
+  }).join('');
+  return `<div class="mission-section-heading"><div><span class="mission-eyebrow">Clean continuation</span><h2>Context handoff</h2><p>Create a durable, bounded brief from this chat, then continue in a new conversation without dragging the whole transcript forward.</p></div><button type="button" class="mission-primary" data-mc-create-handoff>Create handoff</button></div>
+    <section class="mission-handoff-explainer"><strong>What gets carried forward</strong><span>Latest request and result, recent conversation excerpt, workspace, model, branch and changed-file state.</span></section>
+    <section class="mission-card"><header><strong>Saved handoffs</strong><span>${(data.handoffs || []).length} recent</span></header><div class="mission-handoff-list">${items || '<div class="mission-empty">No handoff yet. Create one before you start a fresh task or delegate a follow-up.</div>'}</div></section>`;
+}
 function renderProject() {
   const data = state.project;
   if (!data) return skeleton();
@@ -257,7 +279,7 @@ function render() {
   shell.querySelectorAll('[data-mc-tab]').forEach(button => button.classList.toggle('active', button.dataset.mcTab === activeTab));
   const main = shell.querySelector('#mission-control-main');
   if (!main) return;
-  main.innerHTML = activeTab === 'review' ? renderReview() : activeTab === 'missions' ? renderMissions() : activeTab === 'runtime' ? renderRuntime() : activeTab === 'context' ? renderContext() : activeTab === 'project' ? renderProject() : renderDelivery();
+  main.innerHTML = activeTab === 'review' ? renderReview() : activeTab === 'missions' ? renderMissions() : activeTab === 'runtime' ? renderRuntime() : activeTab === 'context' ? renderContext() : activeTab === 'handoff' ? renderHandoff() : activeTab === 'project' ? renderProject() : renderDelivery();
   const range = main.querySelector('input[name="context_compaction_percent"]');
   range?.addEventListener('input', () => { const output = range.parentElement?.querySelector('output'); if (output) output.textContent = `${range.value}%`; });
 }
@@ -277,6 +299,7 @@ async function load(tab = activeTab, force = false) {
     }
     else if (tab === 'runtime') state.runtime = await api(endpoint('/api/operations/runtime'));
     else if (tab === 'context') state.context = await api(`${API_BASE}/api/operations/context?session_id=${encodeURIComponent(currentSession())}`);
+    else if (tab === 'handoff') state.handoff = await api(endpoint('/api/operations/handoffs'));
     else if (tab === 'project') state.project = await api(endpoint('/api/operations/project'));
     else {
       const [review, project] = await Promise.all([
@@ -297,6 +320,25 @@ async function load(tab = activeTab, force = false) {
   render();
 }
 
+async function createHandoff() {
+  const sessionId = currentSession();
+  if (!sessionId) { uiModule.showError?.('Send a message first so there is a chat to hand off.'); return; }
+  const title = window.prompt('Name this handoff', document.getElementById('current-meta')?.textContent?.trim() || 'Context handoff');
+  if (title == null) return;
+  try {
+    await api(endpoint('/api/operations/handoffs'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, title }) });
+    uiModule.showToast?.('Context handoff saved');
+    await load('handoff', true);
+  } catch (error) { uiModule.showError?.(error.message); }
+}
+
+function continueHandoff(id) {
+  const handoff = (state.handoff?.handoffs || []).find(item => item.id === id);
+  if (!handoff) return;
+  if (handoff.workspace) setWorkspace(handoff.workspace);
+  document.getElementById('sidebar-new-chat-btn')?.click();
+  window.setTimeout(() => addToChat(handoffPrompt(handoff)), 0);
+}
 async function createCheckpoint() {
   const label = window.prompt('Checkpoint label', 'Before next change');
   if (label == null) return;
@@ -395,6 +437,8 @@ function handleClick(event) {
   else if (target.dataset.mcMergeWorktree) actOnWorktree('merge', target.dataset.mcMergeWorktree);
   else if (target.dataset.mcDiscardWorktree) actOnWorktree('discard', target.dataset.mcDiscardWorktree);
   else if (target.dataset.mcMission) launchMission(target.dataset.mcMission);
+  else if (target.hasAttribute('data-mc-create-handoff')) createHandoff();
+  else if (target.dataset.mcContinueHandoff) continueHandoff(target.dataset.mcContinueHandoff);
   else if (target.hasAttribute('data-mc-project-save')) saveProject();
 }
 
@@ -430,7 +474,7 @@ function init() {
       open();
     }
   });
-  document.addEventListener('odysseus-workspace-change', () => { state = { review: null, missions: null, runtime: null, context: null, project: null, delivery: null }; });
+  document.addEventListener('odysseus-workspace-change', () => { state = { review: null, missions: null, runtime: null, context: null, handoff: null, project: null, delivery: null }; });
 }
 
 const missionControlModule = { init, open, close, refresh: () => load(activeTab, true) };

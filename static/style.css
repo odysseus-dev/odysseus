@@ -43471,6 +43471,21 @@ body.mission-control-open { overflow: hidden; }
 .mission-skeleton-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .mission-skeleton-grid span { height: 130px; border-radius: 13px; background: linear-gradient(100deg, rgba(255,255,255,.025) 25%, rgba(255,255,255,.06) 40%, rgba(255,255,255,.025) 60%); background-size: 300% 100%; animation: missionSkeleton 1.5s ease infinite; }
 @keyframes missionSkeleton { to { background-position-x: -150%; } }
+.mission-handoff-explainer { display:flex; margin-bottom:11px; padding:14px; flex-direction:column; gap:5px; border:1px solid rgba(124,168,223,.14); border-radius:12px; color:#7f898a; background:radial-gradient(circle at 0 0,rgba(100,151,216,.075),transparent 45%),rgba(255,255,255,.014); font-size:9px; line-height:1.5; }
+.mission-handoff-explainer strong { color:#bfd1ea; font-size:10px; font-weight:600; }
+.mission-handoff-list { padding:6px; }
+.mission-handoff-row { display:grid; min-height:92px; padding:11px; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; border-radius:9px; }
+.mission-handoff-row:hover { background:rgba(255,255,255,.025); }
+.mission-handoff-row > div { display:flex; min-width:0; flex-direction:column; gap:4px; }
+.mission-handoff-row strong { overflow:hidden; color:#cbd1cf; font-size:10px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.mission-handoff-row p { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.mission-handoff-row small { color:#778183; font-size:8px; }
+.mission-handoff-row button, .mission-diff-review > button { min-height:30px; padding:0 10px; border:1px solid rgba(135,182,243,.2); border-radius:8px; color:#b8d0f3; background:rgba(110,160,225,.09); font:570 9px/1 inherit; cursor:pointer; }
+.mission-handoff-row button:hover, .mission-diff-review > button:hover { color:#edf5ff; background:rgba(110,160,225,.17); }
+.mission-diff-review details { padding:0 13px 12px; }
+.mission-diff-review summary { padding:10px 0; color:#9dbde7; font-size:9px; cursor:pointer; }
+.mission-diff-review pre { max-height:300px; margin:0; padding:10px; overflow:auto; border:1px solid rgba(255,255,255,.055); border-radius:8px; color:#aeb6b5; background:rgba(0,0,0,.2); font:8px/1.55 ui-monospace,Consolas,monospace; white-space:pre-wrap; }
+.mission-diff-review > button { margin:0 13px 13px; }
 .mission-error { display: flex; min-height: 380px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; color: #d1d5d3; }
 .mission-error span { color: #838d8d; font-size: 9.5px; }
 .mission-agent-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }

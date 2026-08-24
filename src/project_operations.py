@@ -19,6 +19,7 @@ from typing import Any
 
 CONFIG_DIR = ".odysseus"
 CONFIG_FILE = "project.json"
+HANDOFF_FILE = "handoffs.json"
 CHECKPOINT_REF = "refs/odysseus/checkpoints"
 
 
@@ -67,6 +68,36 @@ def save_project_config(workspace: str, payload: dict[str, Any]) -> dict[str, An
     os.replace(tmp, path)
     return load_project_config(workspace)
 
+
+def handoff_store_path(workspace: str) -> Path:
+    root = Path(workspace).resolve()
+    path = (root / CONFIG_DIR / HANDOFF_FILE).resolve()
+    if root not in path.parents:
+        raise ValueError("Invalid handoff store path")
+    return path
+
+
+def list_handoffs(workspace: str, limit: int = 30) -> list[dict[str, Any]]:
+    path = handoff_store_path(workspace)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            return []
+        rows = [item for item in payload if isinstance(item, dict)]
+        return rows[:limit]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def save_handoff(workspace: str, handoff: dict[str, Any]) -> dict[str, Any]:
+    path = handoff_store_path(workspace)
+    existing = list_handoffs(workspace, limit=200)
+    rows = [handoff, *[row for row in existing if row.get("id") != handoff.get("id")]][:100]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return handoff
 
 def protected_path_match(workspace: str, raw_path: str, patterns: list[str]) -> str | None:
     """Return the matching protected-path pattern, if any.
