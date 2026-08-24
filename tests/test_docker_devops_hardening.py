@@ -115,6 +115,21 @@ def test_docker_entrypoint_ownership_repair_stays_inside_expected_mounts():
     assert "Skipping recursive ownership repair" in script
 
 
+def test_docker_entrypoint_repairs_cache_parent_without_recursive_walk():
+    """Pin the hard-coded container-path contract without running entrypoint as root."""
+    script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    app_repair = script.index("repair_app_tree_ownership\n")
+    cache_parent_repair = script.index(
+        'chown "$PUID:$PGID" /app/.cache 2>/dev/null || true'
+    )
+    mounted_cache_repair = script.index(
+        "for dir in /app/data /app/logs /app/.ssh /app/.cache/huggingface /app/.local"
+    )
+
+    assert app_repair < cache_parent_repair < mounted_cache_repair
+    assert 'repair_tree_ownership "/app/.cache"' not in script
+
+
 def test_dockerignore_excludes_secrets_editor_backups():
     patterns = set((ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines())
     assert {
