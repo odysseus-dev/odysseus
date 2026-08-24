@@ -91,6 +91,26 @@ unless you opt in.
 serve engines live in `./data/local` (`~/.local` in the container), so they
 survive container recreation.
 
+**Reliable Cookbook downloads.** The reliable download path
+(`disable_hf_transfer=true`) is intended for networks on which large Hugging
+Face downloads stall. It disables Xet and the legacy `hf_transfer` path, while
+keeping the normal Hugging Face cache and partial-file resume behavior. Download
+requests default to a 60-second network timeout and a 30-second ETag timeout;
+existing `HF_HUB_DOWNLOAD_TIMEOUT` and `HF_HUB_ETAG_TIMEOUT` values take
+precedence.
+
+On POSIX hosts, each download attempt also has a 900-second watchdog by default.
+Override it at deployment level, for example in `.env`:
+
+```bash
+ODYSSEUS_HF_DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS=1800
+```
+
+Set the value to `0` to disable the per-attempt watchdog. Cache and resume data
+remain available when an attempt times out and is retried. The watchdog requires
+`timeout` (or `gtimeout` on macOS); without either command, the download still
+runs and emits a warning, but that attempt is not time-bounded.
+
 **Remote servers.** In **Cookbook -> Settings -> Servers**, generate the
 Odysseus SSH key and add the public key to the remote server's
 `~/.ssh/authorized_keys`. From the host you can also run:
