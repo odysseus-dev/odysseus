@@ -503,6 +503,21 @@ def tool_result_is_successful(result: Any) -> bool:
     )
 
 
+# Workspace sandbox is deliberately a small allowlist: newly added tools stay
+# unavailable until explicitly reviewed and added here.
+SANDBOXED_WORKSPACE_TOOLS = frozenset({
+    "get_workspace", "glob", "grep", "ls", "read_file",
+    "write_file", "edit_file", "apply_patch", "bash", "python",
+    "todowrite", "ask_user", "update_plan",
+})
+
+
+def sandboxed_workspace_allows(tool_name: Any) -> bool:
+    return isinstance(tool_name, str) and tool_name in SANDBOXED_WORKSPACE_TOOLS
+
+
+def sandboxed_workspace_blocked_tools() -> set[str]:
+    return set(KNOWN_CAPABILITY_TOOLS) - set(SANDBOXED_WORKSPACE_TOOLS)
 def tool_result_should_arm_gate(
     tool_name: Any,
     result: Any,

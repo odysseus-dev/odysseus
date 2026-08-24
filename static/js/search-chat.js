@@ -57,6 +57,8 @@ function localItems() {
     { kind: 'activity', group: 'Actions', title: 'Open full activity', subtitle: 'Inspect recent task runs', keywords: 'tasks runs completed failed', action: () => window.tasksModule?.openTasks?.(null, { tab: 'activity' }) },
   ];
   const permissionLabels = {
+    sandboxed_workspace: ['Sandboxed workspace', 'Workspace files only; commands need approval and web is blocked'],
+    sandboxed_workspace: ['Sandboxed workspace', 'Workspace files only; commands need approval and web is blocked'],
     auto: ['Full access', 'Run tools without asking'],
     ask_actions: ['Approve for me', 'Ask only for potentially unsafe actions'],
     ask_all: ['Ask for approval', 'Ask before every tool'],

@@ -52,6 +52,7 @@ from src.tool_capabilities import (
     capabilities_for_action,
     capabilities_for_tool,
     messages_contain_external_untrusted_context,
+    sandboxed_workspace_blocked_tools,
     tool_result_is_successful,
     tool_result_should_arm_gate,
 )
@@ -3547,6 +3548,11 @@ async def stream_agent_loop(
     if not isinstance(requested_endpoint_cost_tracked, bool):
         requested_endpoint_cost_tracked = None
     permission_mode = normalize_permission_mode(permission_mode)
+    if permission_mode == "sandboxed_workspace":
+        disabled_tools.update(sandboxed_workspace_blocked_tools())
+        mcp_mgr = None
+        if not workspace:
+            disabled_tools.update({"bash", "python", "read_file", "write_file", "edit_file", "apply_patch", "glob", "grep", "ls", "get_workspace"})
     if tool_policy:
         disabled_tools.update(tool_policy.all_disabled_names())
         if tool_policy.disable_mcp:

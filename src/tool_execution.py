@@ -28,7 +28,7 @@ from src.tool_security import (
     is_public_blocked_tool,
     owner_is_admin_or_single_user,
 )
-from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
+from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result, sandboxed_workspace_allows, sandboxed_workspace_allows
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
@@ -853,11 +853,15 @@ async def _execute_tool_block_impl(
     )
     from src.tool_approval import normalize_permission_mode, tool_is_read_only
 
-    if normalize_permission_mode(permission_mode) == "read_only" and not tool_is_read_only(block.tool_type):
+    normalized_permission_mode = normalize_permission_mode(permission_mode)
+    if normalized_permission_mode == "read_only" and not tool_is_read_only(block.tool_type):
         return (
             f"{block.tool_type}: BLOCKED",
             {"error": "Blocked by Read only permission mode.", "exit_code": 1, "blocked": True},
         )
+    if normalized_permission_mode == "sandboxed_workspace":
+        if not get_active_workspace() or not sandboxed_workspace_allows(block.tool_type):
+            return (f"{block.tool_type}: BLOCKED", {"error": "Blocked by Sandboxed workspace mode. Select a workspace; only workspace coding tools are allowed.", "exit_code": 1, "blocked": True, "policy": "sandboxed_workspace"})
 
     # HACK:
     # This is a temporary workaround for a circular dependency between

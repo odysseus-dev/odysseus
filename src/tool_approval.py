@@ -9,7 +9,7 @@ from typing import Dict, Optional
 
 from src.tool_security import PLAN_MODE_READONLY_TOOLS, email_tool_policy_names
 
-PERMISSION_MODES = frozenset({"auto", "ask_actions", "ask_all", "read_only"})
+PERMISSION_MODES = frozenset({"auto", "ask_actions", "ask_all", "read_only", "sandboxed_workspace"})
 _INTERNAL_TOOLS = frozenset({"ask_user", "update_plan"})
 
 
@@ -27,6 +27,8 @@ def tool_requires_approval(tool_name: str, mode: str) -> bool:
     mode = normalize_permission_mode(mode)
     if mode in {"auto", "read_only"} or tool_name in _INTERNAL_TOOLS:
         return False
+    if mode == "sandboxed_workspace":
+        return tool_name in {"bash", "python"}
     if mode == "ask_all":
         return True
     return not tool_is_read_only(tool_name)

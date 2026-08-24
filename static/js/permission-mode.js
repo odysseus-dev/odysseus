@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'odysseus-permission-mode';
-const MODES = new Set(['auto', 'ask_actions', 'ask_all', 'read_only']);
+const MODES = new Set(['auto', 'ask_actions', 'ask_all', 'read_only', 'sandboxed_workspace']);
 
 function currentMode() {
   const trigger = document.getElementById('permission-mode-trigger');
@@ -8,6 +8,8 @@ function currentMode() {
 }
 
 const MODE_LABELS = {
+  sandboxed_workspace: 'Sandboxed workspace',
+  sandboxed_workspace: 'Sandboxed workspace',
   auto: 'Full access',
   ask_actions: 'Approve for me',
   ask_all: 'Ask for approval',
