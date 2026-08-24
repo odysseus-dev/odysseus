@@ -43487,6 +43487,9 @@ body.mission-control-open { overflow: hidden; }
 .mission-hooks > button { margin:0 12px 12px; }
 .mission-worktree-action { grid-template-columns:24px minmax(0,1fr) auto; }
 .mission-worktree-action button { min-height:27px; margin:0; padding:0 8px; }
+.mission-worktree-controls { display:flex; align-items:center; gap:5px; }
+.mission-worktree-controls button:last-child { border-color:rgba(222,120,120,.17); color:#d9a3a3; background:rgba(203,89,89,.06); }
+.mission-worktree-controls button:last-child:hover { color:#ffd0d0; background:rgba(203,89,89,.13); }
 .activity-center-footer { display: grid; margin-top: 5px; grid-template-columns: 1fr auto; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.06); }
 .activity-center-footer .activity-center-full { margin: 0; border-top: 0; }
 .activity-center-log { min-height: 34px; padding: 0 9px; border: 0; color: #737d7d; background: transparent; font: 500 9px/1 inherit; cursor: pointer; }

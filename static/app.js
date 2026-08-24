@@ -15,7 +15,7 @@ import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
 import documentModule from './js/document.js?v=20260815approvalsave1';
 import searchChatModule from './js/search-chat.js';
 import activityCenterModule from './js/activity-center.js?v=20260823activity1';
-import missionControlModule from './js/mission-control.js?v=20260824missions1';
+import missionControlModule from './js/mission-control.js?v=20260824missions2';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
   revealApplicationShellAfterPaint,

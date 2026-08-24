@@ -166,7 +166,7 @@ function renderMissions() {
   const project = state.missions?.project || state.project || {};
   const review = state.missions?.review || state.review || {};
   const hooks = project.completion_hooks || [];
-  const worktrees = review.worktrees || [];
+  const worktrees = (review.worktrees || []).filter(tree => String(tree.branch || '').startsWith('odysseus/'));
   const missions = [
     ['Isolated implementer', 'Create a dedicated Git worktree, switch to it, and begin a fresh scoped chat.', 'data-mc-worktree'],
     ['Independent verifier', 'Audit the current implementation without making speculative changes; run the deterministic checks and report evidence.', 'data-mc-mission="verifier"'],
@@ -175,7 +175,7 @@ function renderMissions() {
   ];
   const cards = missions.map(([title, detail, action]) => `<article class="mission-agent-card"><span class="mission-agent-orb">${title.slice(0, 1)}</span><div><strong>${esc(title)}</strong><p>${esc(detail)}</p></div><button type="button" ${action}>Launch</button></article>`).join('');
   const hookList = hooks.length ? hooks.map(hook => `<code>${esc(hook)}</code>`).join('') : '<span>No deterministic hooks configured yet.</span>';
-  const trees = worktrees.map(tree => `<div class="mission-worktree mission-worktree-action"><span>${icon('branch')}</span><div><strong>${esc(tree.branch || 'Detached')}</strong><small title="${esc(tree.path)}">${esc(tree.path)}</small></div><button type="button" data-mc-use-worktree="${esc(tree.path)}">Open task</button></div>`).join('');
+  const trees = worktrees.map(tree => `<div class="mission-worktree mission-worktree-action"><span>${icon('branch')}</span><div><strong>${esc(tree.branch || 'Detached')}</strong><small title="${esc(tree.path)}">${esc(tree.path)}</small></div><div class="mission-worktree-controls"><button type="button" data-mc-use-worktree="${esc(tree.path)}">Open task</button><button type="button" data-mc-merge-worktree="${esc(tree.branch)}">Merge</button><button type="button" data-mc-discard-worktree="${esc(tree.branch)}">Discard</button></div></div>`).join('');
   return `<div class="mission-section-heading"><div><span class="mission-eyebrow">Agent operating system</span><h2>Mission desk</h2><p>Give each significant task a clear role, isolated workspace, and evidence-based finish line.</p></div></div>
     <section class="mission-agent-grid">${cards}</section>
     <section class="mission-card mission-hooks"><header><strong>Deterministic completion hooks</strong><span>${hooks.length} configured</span></header><div>${hookList}</div><button type="button" data-mc-tab="project">Configure hooks</button></section>
@@ -345,6 +345,19 @@ function launchMission(kind) {
   }[kind];
   if (prompt) addToChat(prompt);
 }
+async function actOnWorktree(action, branch) {
+  const verb = action === 'merge' ? 'MERGE' : 'DISCARD';
+  const warning = action === 'merge'
+    ? `Merge ${branch} into the current workspace branch? Type MERGE to confirm.`
+    : `Discard ${branch} and its worktree permanently? Type DISCARD to confirm.`;
+  const confirmation = window.prompt(warning);
+  if (confirmation !== verb) return;
+  try {
+    await api(endpoint(`/api/operations/worktrees/${action}`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch, confirmation }) });
+    uiModule.showToast?.(action === 'merge' ? `Merged ${branch}` : `Discarded ${branch}`);
+    await load('missions', true);
+  } catch (error) { uiModule.showError?.(error.message); }
+}
 async function saveProject() {
   const form = shell?.querySelector('#mission-project-form');
   if (!form) return;
@@ -379,6 +392,8 @@ function handleClick(event) {
   else if (target.dataset.mcRestore) restoreCheckpoint(target.dataset.mcRestore);
   else if (target.hasAttribute('data-mc-worktree')) createWorktree();
   else if (target.dataset.mcUseWorktree) startWorktreeMission(target.dataset.mcUseWorktree, 'existing isolated task');
+  else if (target.dataset.mcMergeWorktree) actOnWorktree('merge', target.dataset.mcMergeWorktree);
+  else if (target.dataset.mcDiscardWorktree) actOnWorktree('discard', target.dataset.mcDiscardWorktree);
   else if (target.dataset.mcMission) launchMission(target.dataset.mcMission);
   else if (target.hasAttribute('data-mc-project-save')) saveProject();
 }

@@ -304,6 +304,11 @@ class WorktreeCreate(BaseModel):
     base: str = Field(default="HEAD", max_length=200)
 
 
+class WorktreeAction(BaseModel):
+    branch: str = Field(min_length=1, max_length=240)
+    confirmation: str = Field(min_length=1, max_length=20)
+
+
 def setup_operations_routes(session_manager) -> APIRouter:
     router = APIRouter(prefix="/api/operations", tags=["operations"])
 
@@ -473,5 +478,56 @@ def setup_operations_routes(session_manager) -> APIRouter:
         if proc.returncode != 0:
             raise HTTPException(status_code=409, detail=(proc.stderr or proc.stdout or "Worktree creation failed").strip())
         return {"ok": True, "workspace": workspace, "worktree": {"name": body.name, "path": str(destination), "branch": branch, "base": body.base}}
+
+    @router.post("/worktrees/merge")
+    def merge_worktree(request: Request, body: WorktreeAction, path: str = Query(default="")):
+        _require_admin(request)
+        workspace = _resolve_workspace(path)
+        if body.confirmation != "MERGE":
+            raise HTTPException(status_code=400, detail="Type MERGE to confirm")
+        if not body.branch.startswith("odysseus/"):
+            raise HTTPException(status_code=400, detail="Only Odysseus-created worktree branches can be merged here")
+        status = _git_workspace_status(workspace)
+        if not status.get("is_git"):
+            raise HTTPException(status_code=409, detail="Workspace is not a Git repository")
+        if status.get("changed_files"):
+            raise HTTPException(status_code=409, detail="Commit or stash the current workspace changes before merging")
+        if status.get("branch") == body.branch:
+            raise HTTPException(status_code=409, detail="Cannot merge a branch into itself")
+        git = shutil.which("git")
+        try:
+            proc = _run_git(git, workspace, "merge", "--no-ff", body.branch, "-m", f"Merge {body.branch} via Odysseus")
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="Merge timed out")
+        if proc.returncode != 0:
+            raise HTTPException(status_code=409, detail=(proc.stderr or proc.stdout or "Merge failed").strip())
+        return {"ok": True, "workspace": workspace, "branch": body.branch, "head": _git_workspace_status(workspace).get("head")}
+
+    @router.post("/worktrees/discard")
+    def discard_worktree(request: Request, body: WorktreeAction, path: str = Query(default="")):
+        _require_admin(request)
+        workspace = _resolve_workspace(path)
+        if body.confirmation != "DISCARD":
+            raise HTTPException(status_code=400, detail="Type DISCARD to confirm")
+        if not body.branch.startswith("odysseus/"):
+            raise HTTPException(status_code=400, detail="Only Odysseus-created worktree branches can be discarded here")
+        target = next((row for row in _worktrees(workspace) if row.get("branch") == body.branch), None)
+        if not target or not target.get("path"):
+            raise HTTPException(status_code=404, detail="Worktree branch not found")
+        repo = Path(workspace).resolve()
+        target_path = Path(str(target["path"])).resolve()
+        expected_parent = (repo.parent / f"{repo.name}-worktrees").resolve()
+        if expected_parent not in target_path.parents:
+            raise HTTPException(status_code=400, detail="Refusing to remove a worktree outside Odysseus worktree storage")
+        git = shutil.which("git")
+        try:
+            removed = _run_git(git, workspace, "worktree", "remove", "--force", str(target_path), timeout=30)
+            if removed.returncode == 0:
+                _run_git(git, workspace, "branch", "-D", body.branch)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="Worktree removal timed out")
+        if removed.returncode != 0:
+            raise HTTPException(status_code=409, detail=(removed.stderr or removed.stdout or "Worktree removal failed").strip())
+        return {"ok": True, "workspace": workspace, "discarded": body.branch}
 
     return router
