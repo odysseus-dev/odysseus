@@ -3037,7 +3037,19 @@ function _renderRecipes() {
     return true;
   });
   if (!_localSeen) {
-    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub', platform: _envState.hostPlatform || '' });
+    // A synthesized Local entry must use local-only defaults. When a remote
+    // server is the active context, _es.env/_es.envPath describe the REMOTE
+    // venv, so inheriting them here would make Local build/download/serve
+    // prefixes resolve the remote interpreter/path. Only carry the active env
+    // into Local when Local itself is the active context (no remote host).
+    const _localActive = !_es.remoteHost;
+    _es.servers.unshift({
+      host: '',
+      env: _localActive ? (_es.env || 'none') : 'none',
+      envPath: _localActive ? (_es.envPath || '') : '',
+      modelDir: '~/.cache/huggingface/hub',
+      platform: _envState.hostPlatform || '',
+    });
   }
   if (!_es.remoteHost) {
     const local = _serverByVal('local');
