@@ -23,12 +23,16 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'website/**'
+      - 'assets/branding/**'
       - '.github/ISSUE_TEMPLATE/**'
   push:
     branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'website/**'
+      - 'assets/branding/**'
       - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 

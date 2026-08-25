@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/odysseus-wordmark.png" alt="Odysseus" width="238">
+  <img src="assets/branding/odysseus-wordmark.png" alt="Odysseus" width="238">
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/odysseus-browser.jpg" alt="Odysseus interface">
+  <img src="assets/branding/odysseus-browser.jpg" alt="Odysseus interface">
 </p>
 
 ---
@@ -51,7 +51,7 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 
 ## Demo
 
-A full hover-to-play tour lives on the landing page: [`docs/index.html`](docs/index.html).
+A full hover-to-play tour lives on the [Odysseus landing page](https://odysseus-dev.github.io/odysseus/). Its source lives under [`website/`](website/).
 
 ## Contributing
 
