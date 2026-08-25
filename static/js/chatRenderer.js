@@ -2327,6 +2327,42 @@ export function removeAskUserCards(root) {
   scope.querySelectorAll('.ask-user-card').forEach((node) => node.remove());
 }
 
+// While a choice card is visible, let plain 1–3 activate the corresponding
+// rendered option. Reuse the option's click path so the question keeps its
+// existing submission semantics. Tool approval cards are excluded: that card
+// exists to make consent deliberate after untrusted context influenced the
+// run, and its first option is the widest grant, so a stray digit must not
+// answer it.
+function _handleAskUserShortcut(event) {
+  if (
+    event.defaultPrevented
+    || event.repeat
+    || event.isComposing
+    || event.ctrlKey
+    || event.altKey
+    || event.metaKey
+    || event.shiftKey
+  ) return;
+  if (!/^[1-3]$/.test(event.key)) return;
+
+  const target = event.target;
+  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+
+  const focusedCard = document.activeElement?.closest?.('.ask-user-card') || null;
+  const mainCard = document.querySelector('#chat-history .ask-user-card');
+  const compareCards = document.querySelectorAll('.compare-pane .ask-user-card');
+  const card = focusedCard || mainCard || (compareCards.length === 1 ? compareCards[0] : null);
+  if (!card) return;
+  if (card.dataset.askUserKind === 'tool_approval') return;
+  const option = card.querySelectorAll('.ask-user-option')[Number(event.key) - 1];
+  if (!option || option.disabled) return;
+
+  event.preventDefault();
+  option.click();
+}
+
+document.addEventListener('keydown', _handleAskUserShortcut);
+
 /**
  * Render an ask_user payload as a durable choice card.
  *
@@ -2336,11 +2372,15 @@ export function removeAskUserCards(root) {
  */
 export function renderAskUserCard(payload, options) {
   const aq = payload || {};
+  if (aq.resolved) return null;
   const opts = Array.isArray(aq.options) ? aq.options : [];
-  const chatBox = document.getElementById('chat-history');
+  const renderOptions = options || {};
+  const chatBox = renderOptions.root || document.getElementById('chat-history');
+  const onSubmit = typeof renderOptions.onSubmit === 'function'
+    ? renderOptions.onSubmit
+    : null;
   if (!chatBox || !aq.question || opts.length < 2) return null;
 
-  const renderOptions = options || {};
   removeAskUserCards(chatBox);
 
   const card = document.createElement('div');
@@ -2349,6 +2389,7 @@ export function renderAskUserCard(payload, options) {
   card.tabIndex = -1;
   const multi = !!aq.multi;
   const isToolApproval = aq.kind === 'tool_approval' && !!aq.approval_id;
+  card.dataset.askUserKind = isToolApproval ? 'tool_approval' : 'question';
   const emojiText = (value) => svgifyEmoji(uiModule.esc(String(value)));
 
   const head = document.createElement('div');
@@ -2357,7 +2398,6 @@ export function renderAskUserCard(payload, options) {
   closeBtn.type = 'button';
   closeBtn.className = 'modal-close ask-user-close';
   closeBtn.setAttribute('aria-label', 'Dismiss question');
-  closeBtn.textContent = '×';
   closeBtn.addEventListener('click', () => {
     card.remove();
     const input = uiModule.el('message');
@@ -2400,6 +2440,17 @@ export function renderAskUserCard(payload, options) {
 
   const send = (text) => {
     if (!text) return;
+    if (onSubmit) {
+      const accepted = onSubmit({
+        kind: 'answer',
+        text,
+        label: text,
+        payload: aq,
+        card,
+      });
+      if (accepted !== false) card.remove();
+      return;
+    }
     card.remove();
     const input = uiModule.el('message');
     if (input) input.value = text;
@@ -2433,17 +2484,26 @@ export function renderAskUserCard(payload, options) {
       row.type = 'button';
       row.addEventListener('click', () => {
         if (isToolApproval) {
-          card.remove();
-          document.dispatchEvent(new CustomEvent('odysseus:tool-approval', {
-            detail: {
-              approval_id: aq.approval_id,
-              decision: String((opt && opt.value) || '').toLowerCase(),
-              label,
-              document_id: aq.action && aq.action.document_id
-                ? String(aq.action.document_id)
-                : '',
-            },
-          }));
+          const detail = {
+            approval_id: aq.approval_id,
+            decision: String((opt && opt.value) || '').toLowerCase(),
+            label,
+            document_id: aq.action && aq.action.document_id
+              ? String(aq.action.document_id)
+              : '',
+          };
+          if (onSubmit) {
+            const accepted = onSubmit({
+              kind: 'tool_approval',
+              ...detail,
+              payload: aq,
+              card,
+            });
+            if (accepted !== false) card.remove();
+          } else {
+            card.remove();
+            document.dispatchEvent(new CustomEvent('odysseus:tool-approval', { detail }));
+          }
         } else {
           send(label);
         }
@@ -2628,7 +2688,7 @@ export function addMessage(role, content, modelName, metadata) {
             box.appendChild(threadWrap);
           }
           for (const ev of roundTools) {
-            if (ev.ask_user) pendingAskUser = ev.ask_user;
+            if (ev.ask_user && !ev.ask_user.resolved) pendingAskUser = ev.ask_user;
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (ev.output && ev.output.trim()) {

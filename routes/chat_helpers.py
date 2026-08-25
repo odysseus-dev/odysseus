@@ -624,6 +624,8 @@ async def build_chat_context(
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
     defer_context_shaping: bool = False,
+    continuation_context_message: str | None = None,
+    persist_user_message: bool = True,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -647,14 +649,14 @@ async def build_chat_context(
     # Add user message to history. Nobody/incognito uses a request-local
     # transcript store instead of session history so stale saved chats cannot
     # bleed into context and the turn is not persisted.
-    if incognito:
+    if persist_user_message and incognito:
         user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
-    else:
+    elif persist_user_message:
         add_user_message(sess, chat_handler, preprocessed, incognito=False)
 
     # Fire events
-    if not incognito:
+    if persist_user_message and not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
@@ -666,7 +668,12 @@ async def build_chat_context(
         getattr(chat_handler, "upload_handler", None),
         getattr(sess, "owner", None),
     )
-    casual_low_signal = _is_casual_low_signal(message)
+    context_message = (
+        str(continuation_context_message).strip()
+        if continuation_context_message
+        else message
+    )
+    casual_low_signal = _is_casual_low_signal(context_message)
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
@@ -703,7 +710,15 @@ async def build_chat_context(
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
     # the sync path uses text_for_context.
-    _ctx_msg = preprocessed.enhanced_message if use_enhanced_message else preprocessed.text_for_context
+    _ctx_msg = (
+        context_message
+        if continuation_context_message
+        else (
+            preprocessed.enhanced_message
+            if use_enhanced_message
+            else preprocessed.text_for_context
+        )
+    )
     _preface_kwargs = dict(
         message=_ctx_msg,
         session=sess,

@@ -344,7 +344,7 @@ async def test_chat_stream_approval_restores_exact_shell_turn_toggle(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_denial_keeps_originating_run_tainted(monkeypatch):
+async def test_chat_stream_denial_returns_control_resolution(monkeypatch):
     from src.tool_capabilities import capabilities_for_action
 
     captured = {}
@@ -368,11 +368,13 @@ async def test_chat_stream_denial_keeps_originating_run_tainted(monkeypatch):
     )
 
     response = await endpoint(request)
-    async for _ in response.body_iterator:
-        pass
+    chunks = [chunk async for chunk in response.body_iterator]
 
+    event = json.loads(chunks[0][len("data: "):])
+    assert event == {"type": "tool_approval_resolved", "decision": "deny"}
+    assert chunks[-1] == "data: [DONE]\n\n"
+    assert "agent" not in captured
     assert "exact_approval" not in captured
-    assert captured["agent_external_untrusted_context_seen"] is True
     assert chat_routes.tool_approval_store.peek(pending.approval_id) is None
 
 

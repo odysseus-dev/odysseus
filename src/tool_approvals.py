@@ -1,8 +1,9 @@
-"""Opaque, exact, one-use approvals for tainted model-requested actions.
+"""Opaque exact-action approvals with explicit task and chat scopes.
 
-The model may propose an action after untrusted context, but only the server
-stores and later executes the exact approved tool input.  Browser-visible
-fields are display copies, never authority.
+The server still seals and claims the first displayed action exactly once. The
+selected scope then bypasses only the automatic post-external-context approval
+gate for the rest of the resumed task or chat session. Browser-visible fields
+are display copies, never authority.
 """
 
 from __future__ import annotations
@@ -16,6 +17,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.tool_approval_scopes import (
+    CHAT_SESSION_APPROVAL_DECISION,
+    DENY_APPROVAL_DECISION,
+    TASK_APPROVAL_DECISION,
+    ToolApprovalScope,
+    scope_for_decision,
+)
 from src.tool_capabilities import ToolCapabilities, capabilities_for_action
 
 
@@ -31,6 +39,51 @@ def _normalized_workspace(workspace: Any) -> str:
     if not isinstance(workspace, str) or not workspace.strip():
         return ""
     return os.path.realpath(os.path.expanduser(workspace))
+
+
+_MAX_APPROVAL_SELECTED_TOOLS = 512
+_MAX_APPROVAL_TOOL_NAME_CHARS = 512
+_MAX_APPROVAL_CONTINUATION_QUERY_CHARS = 4000
+
+
+def _normalized_selected_tools(
+    selected_tools: Any,
+    *,
+    required_tool: Any = None,
+) -> tuple[str, ...]:
+    if isinstance(selected_tools, str):
+        selected_tools = (selected_tools,)
+    try:
+        values = selected_tools or ()
+        names = {
+            name.strip()
+            for name in values
+            if (
+                isinstance(name, str)
+                and name.strip()
+                and len(name.strip()) <= _MAX_APPROVAL_TOOL_NAME_CHARS
+            )
+        }
+        required_name = str(required_tool or "").strip()
+        if required_name and len(required_name) <= _MAX_APPROVAL_TOOL_NAME_CHARS:
+            names.add(required_name)
+        ordered = sorted(names)
+        if len(ordered) <= _MAX_APPROVAL_SELECTED_TOOLS:
+            return tuple(ordered)
+        kept = ordered[:_MAX_APPROVAL_SELECTED_TOOLS]
+        if required_name and required_name in names and required_name not in kept:
+            kept[-1] = required_name
+            kept.sort()
+        return tuple(kept)
+    except TypeError:
+        return ()
+
+
+def _normalized_continuation_query(value: Any) -> str:
+    # The query is server-derived from the interrupted run and already lives in
+    # session history. Keep the pending copy bounded because approvals are held
+    # in memory until consumed or expired.
+    return str(value or "").strip()[:_MAX_APPROVAL_CONTINUATION_QUERY_CHARS]
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -60,6 +113,8 @@ def _binding_payload(
     document_version: Any,
     document_digest: Any,
     external_untrusted_context_seen: bool,
+    selected_tools: Any,
+    continuation_query: Any,
     effects: tuple[str, ...],
     result_integrity: str,
 ) -> dict[str, Any]:
@@ -76,6 +131,10 @@ def _binding_payload(
         ),
         "document_digest": str(document_digest or "").strip().lower(),
         "external_untrusted_context_seen": bool(external_untrusted_context_seen),
+        "selected_tools": list(
+            _normalized_selected_tools(selected_tools, required_tool=tool_name)
+        ),
+        "continuation_query": _normalized_continuation_query(continuation_query),
         "effects": list(effects),
         "result_integrity": str(result_integrity),
     }
@@ -99,26 +158,47 @@ class PendingToolApproval:
     digest: str
     created_at: float
     expires_at: float
+    # Server-only continuation state. Both fields are digest-bound and never
+    # exposed in the browser payload.
+    selected_tools: tuple[str, ...] = ()
+    continuation_query: str = ""
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
             "kind": "tool_approval",
             "approval_id": self.approval_id,
-            "question": "Allow this exact action once?",
+            # The browser already owns this chat id. Persisting it with the
+            # resolved card lets history-derived session grants remain bound to
+            # this exact chat and prevents inheritance by a forked session.
+            "session_id": self.session_id,
+            "question": "Allow this task to continue?",
             "description": reason or (
-                "Untrusted context influenced this run, so this action needs "
-                "your explicit approval."
+                "Untrusted context influenced this run, so continuing with "
+                "otherwise-gated actions needs your explicit approval."
             ),
             "options": [
                 {
-                    "label": "Allow once",
-                    "value": "approve",
-                    "description": "Execute only the sealed action shown here.",
+                    "label": "Allow for this task",
+                    "value": TASK_APPROVAL_DECISION,
+                    "description": (
+                        "Execute the sealed action and allow every otherwise-gated "
+                        "action needed to finish this request. Current tool, account, "
+                        "workspace, and sandbox restrictions still apply."
+                    ),
+                },
+                {
+                    "label": "Allow for this chat session",
+                    "value": CHAT_SESSION_APPROVAL_DECISION,
+                    "description": (
+                        "Execute the sealed action and stop asking at this gate for "
+                        "later requests in this chat. Current tool, account, workspace, "
+                        "and sandbox restrictions still apply."
+                    ),
                 },
                 {
                     "label": "Deny",
-                    "value": "deny",
-                    "description": "Do not execute it.",
+                    "value": DENY_APPROVAL_DECISION,
+                    "description": "Do not execute the proposed action.",
                 },
             ],
             "action": {
@@ -137,11 +217,22 @@ class PendingToolApproval:
 
 @dataclass
 class ExactToolApproval:
-    """A consumed grant that the dispatcher can claim exactly once."""
+    """A consumed exact first action plus an explicit continuation scope."""
 
     pending: PendingToolApproval
+    scope: ToolApprovalScope = ToolApprovalScope.TASK
+    # The seam consumed by agent_loop. Both chat-card allow choices cover the
+    # complete resumed task, because one-action scope there immediately
+    # re-entered the same gate on the next round. Callers with no resumable
+    # chat still get SINGLE_ACTION, which leaves the gate armed behind the
+    # sealed action.
+    allow_remaining_actions: bool = True
     _claimed: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    @property
+    def grants_chat_session(self) -> bool:
+        return self.scope is ToolApprovalScope.CHAT_SESSION
 
     def _matches_unlocked(
         self,
@@ -175,6 +266,8 @@ class ExactToolApproval:
             external_untrusted_context_seen=(
                 self.pending.external_untrusted_context_seen
             ),
+            selected_tools=self.pending.selected_tools,
+            continuation_query=self.pending.continuation_query,
             effects=effects,
             result_integrity=result_integrity,
         )
@@ -255,6 +348,8 @@ class ToolApprovalStore:
         document_id: Any = None,
         document_version: Any = None,
         document_digest: Any = None,
+        selected_tools: Any = None,
+        continuation_query: Any = None,
         external_untrusted_context_seen: bool,
         capabilities: ToolCapabilities,
     ) -> PendingToolApproval:
@@ -272,6 +367,8 @@ class ToolApprovalStore:
             document_version=document_version,
             document_digest=document_digest,
             external_untrusted_context_seen=external_untrusted_context_seen,
+            selected_tools=selected_tools,
+            continuation_query=continuation_query,
             effects=effects,
             result_integrity=result_integrity,
         )
@@ -294,6 +391,8 @@ class ToolApprovalStore:
             digest=_canonical_digest(payload),
             created_at=now,
             expires_at=now + self._ttl_seconds,
+            selected_tools=tuple(payload["selected_tools"]),
+            continuation_query=payload["continuation_query"],
         )
         with self._lock:
             self._purge_expired_locked(now)
@@ -331,7 +430,17 @@ class ToolApprovalStore:
         decision: Any,
         owner: Any,
         session_id: Any,
+        allow_continuation: bool = True,
     ) -> ExactToolApproval | None:
+        """Consume a pending approval.
+
+        ``allow_continuation`` is the caller's assertion that it owns a
+        resumable conversation the granted scope can apply to. Callers without
+        one (the skill tester, unattended audits) pass ``False`` and get the
+        original one-use grant, so a button labelled "Allow once" cannot widen
+        into a run-long bypass just because the chat card reuses the same wire
+        value.
+        """
         now = time.time()
         with self._lock:
             self._purge_expired_locked(now)
@@ -348,9 +457,21 @@ class ToolApprovalStore:
                 # another owner's pending action.
                 return None
             self._pending.pop(approval_key, None)
-        if str(decision or "").strip().lower() != "approve":
+        normalized_decision = str(decision or "").strip().lower()
+        scope = scope_for_decision(normalized_decision)
+        if scope is None:
             return None
-        return ExactToolApproval(pending)
+        if not allow_continuation:
+            return ExactToolApproval(
+                pending,
+                scope=ToolApprovalScope.SINGLE_ACTION,
+                allow_remaining_actions=False,
+            )
+        return ExactToolApproval(
+            pending,
+            scope=scope,
+            allow_remaining_actions=True,
+        )
 
     def peek(self, approval_id: Any) -> PendingToolApproval | None:
         now = time.time()
