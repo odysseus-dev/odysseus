@@ -19,8 +19,7 @@ On first setup, Odysseus creates an admin account (`admin` unless
 For Docker installs, the same line is in `docker compose logs odysseus`.
 Use that for the first login, then change it in **Settings**.
 
-Contributing? See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, testing, and
-pull request guidelines.
+Contributing? See [CONTRIBUTING.md](https://github.com/odysseus-dev/odysseus/blob/dev/CONTRIBUTING.md) for setup, testing, and pull request guidelines.
 
 ### Docker (recommended)
 ```bash
@@ -209,9 +208,11 @@ failed to fulfil mount request: open /usr/lib/wsl/lib/libdxcore.so: no such file
 
 Check with `snap list docker` or:
 
+<!-- {% raw %} -->
 ```bash
 docker info --format '{{.DockerRootDir}}'
 ```
+<!-- {% endraw %} -->
 
 A Docker root under `/var/snap/docker/` means snap confinement can prevent
 Docker from seeing WSL2's `/usr/lib/wsl/lib` GPU libraries even when the files
@@ -737,7 +738,7 @@ src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints
 services/  docs, memory, search, hwfit (Cookbook) …
 static/    index.html + app.js + style.css + js/ (modular front-end)
-docs/      landing page (index.html) + preview clips
+website/   landing page (index.html) + preview clips
 ```
 
 ## Data

@@ -8,6 +8,7 @@ be referenced by the site's entry point.
 import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -107,6 +108,35 @@ def test_pages_site_owns_its_entrypoint_and_media():
     assert "destination: _site" in workflow
     assert "path: _site" in workflow
     assert "cancel-in-progress: false" in workflow
+
+
+def test_pages_guides_keep_relative_links_inside_site():
+    site_root = (REPO / "website").resolve()
+
+    for guide in sorted(PUBLIC_GUIDES):
+        guide_path = REPO / "website" / guide
+        text = guide_path.read_text(encoding="utf-8")
+        for target in re.findall(r"\]\(([^)]+)\)", text):
+            parsed = urlsplit(target)
+            if parsed.scheme or parsed.netloc or not parsed.path:
+                continue
+
+            resolved = (guide_path.parent / parsed.path).resolve()
+            assert resolved.is_relative_to(site_root), (
+                f"{guide} links outside the Pages source: {target}"
+            )
+            assert resolved.exists(), f"{guide} has a missing local link: {target}"
+
+
+def test_setup_preserves_docker_go_template_literal():
+    setup = (REPO / "website/setup.md").read_text(encoding="utf-8")
+    guarded_command = """<!-- {% raw %} -->
+```bash
+docker info --format '{{.DockerRootDir}}'
+```
+<!-- {% endraw %} -->"""
+
+    assert guarded_command in setup
 
 
 def test_ci_runs_asset_ownership_guards_for_managed_roots():
