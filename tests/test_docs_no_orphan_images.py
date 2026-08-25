@@ -5,6 +5,7 @@ README/packaging imagery belongs in assets/branding/. Images in either managed
 root must be referenced by tracked text, and every tracked website video must
 be referenced by the site's entry point.
 """
+import re
 import subprocess
 from pathlib import Path
 
@@ -105,3 +106,16 @@ def test_pages_site_owns_its_entrypoint_and_media():
     assert "source: website" in workflow
     assert "destination: _site" in workflow
     assert "path: _site" in workflow
+
+
+def test_ci_runs_asset_ownership_guards_for_managed_roots():
+    workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    match = re.search(r"grep -Ev '([^']+)'", workflow)
+    assert match, "expected the docs-only path classifier in CI"
+    docs_only = re.compile(match.group(1))
+
+    assert docs_only.match("README.md")
+    assert docs_only.match("docs/example.md")
+    assert not docs_only.match("website/setup.md")
+    assert not docs_only.match("website/new-preview.webm")
+    assert not docs_only.match("assets/branding/new-logo.png")
