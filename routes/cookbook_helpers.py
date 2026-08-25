@@ -5,9 +5,11 @@ import json
 import logging
 import ntpath
 import os
+import platform
 import posixpath
 import re
 import shlex
+import sys
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -612,6 +614,8 @@ _SERVE_CMD_ALLOWLIST = {
     "python", "python3",
     "sglang", "lmdeploy",
     "node", "npx",
+    "omlx",  # oMLX — MLX inference server (Apple Silicon, OpenAI-compatible)
+    "mlx_lm.server",  # Apple's official MLX server console script
 }
 
 
@@ -732,6 +736,70 @@ def _check_serve_binary(seg: str) -> None:
             f"cmd binary '{base or '(empty)'}' is not allowed. Must start with one of: "
             f"{', '.join(sorted(_SERVE_CMD_ALLOWLIST))}",
         )
+
+
+def _is_apple_silicon() -> bool:
+    """True on local Apple-Silicon macOS (the only place MLX can run)."""
+    return sys.platform == "darwin" and platform.machine() == "arm64"
+
+
+def _is_mlx_serve_cmd(cmd: str | None) -> bool:
+    """True for an MLX serve command in any of the three shapes Cookbook emits:
+    `omlx serve`, the `mlx_lm.server` console script, or `python3 -m mlx_lm.server`."""
+    if not cmd:
+        return False
+    if re.search(r"(?:^|\s)-m\s+mlx_lm\.server\b", cmd):
+        return True
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return False
+    # Skip leading env-var assignments (e.g. KMP_DUPLICATE_LIB_OK=TRUE mlx_lm.server).
+    env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+    binary = next((os.path.basename(t) for t in tokens if not env_re.match(t)), "")
+    return binary in ("omlx", "mlx_lm.server")
+
+
+def _guard_mlx_platform(cmd: str | None, remote_host: str | None) -> None:
+    """Reject an MLX serve command (oMLX or mlx-lm) on a non-Apple-Silicon LOCAL
+    host. MLX has no CUDA/CPU fallback. Remote hosts are trusted to be Macs (the
+    SSH target is the user's call); only the local machine is gated.
+    """
+    if not remote_host and _is_mlx_serve_cmd(cmd) and not _is_apple_silicon():
+        raise HTTPException(
+            400,
+            "MLX (oMLX / mlx-lm) only runs on Apple Silicon. Serve it on a "
+            "local arm64 Mac or a remote Mac host.",
+        )
+
+
+# An MLX model is a folder bundle whose manifest is config.json; picking the
+# manifest (or one of the weight shards) out of a file browser is the natural
+# mistake, and both engines then fail late with an opaque load error.
+_MLX_MODEL_ARG_RE = re.compile(
+    r"(--model(?:-dir)?[= ]\s*)(?:'([^']*)'|\"([^\"]*)\"|([^'\"\s]+))"
+)
+_MLX_BUNDLE_FILE_RE = re.compile(r"/(?:config\.json|[^/]*\.safetensors)$")
+
+
+def _normalize_mlx_model_path(cmd: str | None) -> str | None:
+    """Point an MLX `--model`/`--model-dir` at the containing bundle directory
+    when it was given a config.json or a *.safetensors shard."""
+    if not cmd or not _is_mlx_serve_cmd(cmd):
+        return cmd
+
+    def _to_dir(m: re.Match[str]) -> str:
+        single, double, bare = m.group(2), m.group(3), m.group(4)
+        value = single if single is not None else double if double is not None else bare
+        if not _MLX_BUNDLE_FILE_RE.search(value or ""):
+            return m.group(0)
+        parent = posixpath.dirname(value)
+        if not parent:
+            return m.group(0)
+        quote = "'" if single is not None else '"' if double is not None else ""
+        return f"{m.group(1)}{quote}{parent}{quote}"
+
+    return _MLX_MODEL_ARG_RE.sub(_to_dir, cmd)
 
 
 def _is_safe_serve_subshell(subshell: str) -> bool:
@@ -1087,6 +1155,36 @@ class ServeRequest(BaseModel):
     platform: str | None = None    # "linux", "termux", or "windows"
 
 
+# mlx-lm refuses a checkpoint whose tensor keys don't match the architecture it
+# knows — almost always an mlx-lm older than the model. The raw output is a bare
+# KeyError (Python) or keyNotFound (the Swift bridge) on a tensor name, which
+# reads like an Odysseus bug rather than "upgrade mlx-lm".
+_MLX_KEY_MISMATCH_RE = re.compile(
+    r"keyNotFound"
+    r"|Received parameters not in model"
+    r"|Missing parameters:"
+    r"|KeyError:\s*['\"](?:model|language_model|transformer|vision_tower)[.\w]*['\"]",
+    re.I,
+)
+# Scopes the key-mismatch signal to output that actually came from an MLX
+# server. A bare "mlx" is far too loose: a vLLM launch on a CUDA box reads
+# `--model /models/mlx-community/foo`, so the model PATH alone would claim any
+# vLLM/llama.cpp KeyError for mlx-lm. Every real MLX serve echoes its launch
+# command (`mlx_lm.server` / `python3 -m mlx_lm.server` / `omlx serve`) or names
+# mlx_lm in the traceback, so require the engine name, not the substring.
+_MLX_ENGINE_MARKER_RE = re.compile(r"mlx[-_]?lm|omlx", re.I)
+# Same signal for _diagnose_serve_output, but scoped to MLX output — a bare
+# KeyError on a tensor name is not MLX-specific on its own.
+_MLX_KEY_MISMATCH_DIAGNOSIS_RE = (
+    rf"(?s)^(?=.*(?:{_MLX_ENGINE_MARKER_RE.pattern}))"
+    rf"(?=.*(?:{_MLX_KEY_MISMATCH_RE.pattern}))"
+)
+_MLX_KEY_MISMATCH_MESSAGE = (
+    "mlx-lm could not load this checkpoint — its tensor keys don't match any "
+    "architecture this mlx-lm knows. The model needs a newer mlx-lm."
+)
+
+
 def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
     """Parse a tmux snapshot of a serve task into structured phase info.
 
@@ -1131,6 +1229,13 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
     # HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up and serving
     if re.search(r'(?:GET|POST)\s+/[^\s]*\s+HTTP/[\d.]+"\s*\d{3}', flat):
         return {"phase": "idle", "status": "ready"}
+    # mlx-lm's built-in server (Apple's official MLX server) prints this on bind.
+    if re.search(r'Starting httpd at .*? on port\s+\d+', flat):
+        return {"phase": "ready", "status": "ready"}
+    # Checked after the ready lines so a server that came up and only later hit
+    # a bad request still reads "ready" — a key mismatch is a load-time failure.
+    if _MLX_KEY_MISMATCH_RE.search(flat) and _MLX_ENGINE_MARKER_RE.search(flat):
+        return {"phase": "load failed (mlx-lm too old)", "status": ""}
     if "Loading weights took" in flat:
         return {"phase": "initializing", "status": "running"}
     # "GPU KV cache" alone (during allocation) — not "GPU KV cache usage" (runtime log)
@@ -1391,6 +1496,11 @@ def _diagnose_serve_output(text: str) -> dict | None:
                 {"label": "relaunch from the cached local Hugging Face snapshot path on this Mac", "op": "manual"},
                 {"label": "Odysseus now rewrites MLX repo-id launches to a cached snapshot when one exists", "op": "manual"},
             ],
+        ),
+        (
+            _MLX_KEY_MISMATCH_DIAGNOSIS_RE,
+            _MLX_KEY_MISMATCH_MESSAGE,
+            [{"label": "upgrade mlx-lm in Cookbook Dependencies", "op": "dependency", "package": "mlx-lm"}],
         ),
         # System build deps come BEFORE the generic llama.cpp catch-all so
         # cmake / build-essential / git missing → a specific OS-package

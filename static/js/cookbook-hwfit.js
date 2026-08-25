@@ -787,7 +787,15 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
   }
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'newest';
-    const quantPref = document.getElementById('hwfit-quant')?.value || '';
+    let quantPref = document.getElementById('hwfit-quant')?.value || '';
+    // MLX builds carry their own quant tier (mlx-Nbit), so a GGUF tier like Q4
+    // matches nothing and drops every MLX row. The engine picks the format, the
+    // quant tier picks the bit-width — map e.g. Q4 -> mlx-4bit. Native (no
+    // quant) still shows all bit-widths via the client-side view filter.
+    if ((document.getElementById('hwfit-engine')?.value || '') === 'mlx' && quantPref) {
+      const _b = quantPref.match(/(\d+)/);
+      quantPref = _b ? `mlx-${_b[1]}bit` : '';
+    }
     const targetCtx = _ctxValue();
     // Get active GPU count from toggles
     const toggleContainer = document.getElementById('hwfit-gpu-toggles');
@@ -2177,6 +2185,14 @@ export function _hwfitInit() {
   const engine = document.getElementById('hwfit-engine');
   if (engine) _bindHwfitEnginePicker(engine);
   if (engine) engine.addEventListener('change', () => {
+    // MLX re-maps the quant tier to mlx-Nbit server-side, so switching to or
+    // away from it must re-probe; every other engine is a client-side filter.
+    const isMlx = engine.value === 'mlx';
+    if (isMlx || engine.dataset.wasMlx === '1') {
+      engine.dataset.wasMlx = isMlx ? '1' : '';
+      _hwfitFetch();
+      return;
+    }
     const list = document.getElementById('hwfit-list');
     if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
       _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));

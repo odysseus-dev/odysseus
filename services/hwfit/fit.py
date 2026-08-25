@@ -476,7 +476,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     # Determine which quant to evaluate at
     native_quant_prefixes = (
         "AWQ-", "GPTQ-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
-        "INT4", "INT8", "W4A16", "W8A8", "W8A16",
+        "INT4", "INT8", "W4A16", "W8A8", "W8A16", "mlx-",
     )
 
     if preq:
@@ -757,7 +757,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     # If user picked a native prequantized format, filter to only those models.
     filter_native = quant and any(quant.startswith(p) for p in (
         "AWQ-", "GPTQ-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
-        "INT4", "INT8", "W4A16", "W8A8", "W8A16",
+        "INT4", "INT8", "W4A16", "W8A8", "W8A16", "mlx-",
     ))
 
     system_backend = (system.get("backend") or "").lower()
@@ -818,6 +818,10 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if quant == "FP4" and native_q not in ("FP4", "NVFP4", "MXFP4", "NF4"):
                 continue
             if quant.startswith("AWQ") and not native_q.startswith("AWQ"):
+                continue
+            # The MLX tab must show MLX builds only — without this a GGUF row
+            # survives the filter and gets relabeled at the requested mlx- tier.
+            if quant.startswith("mlx-") and not native_q.startswith("mlx-"):
                 continue
             if quant.startswith("GPTQ") and not native_q.startswith("GPTQ"):
                 continue

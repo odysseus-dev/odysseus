@@ -42,6 +42,7 @@ from src.host_docker_access import (
 from routes.cookbook_output import (
     error_aware_output_tail, classify_dead_download,
     HF_CACHE_COMPLETE_PROBE, HF_CACHE_INCOMPLETE_PROBE,
+    mlx_bundle_gap,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ from routes.cookbook_helpers import (
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _append_pip_install_runner_lines, _pip_install_command_without_break_system_packages,
     _normalize_llama_cpp_python_cache_types,
+    _guard_mlx_platform, _normalize_mlx_model_path,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1991,11 +1993,13 @@ def setup_cookbook_routes() -> APIRouter:
         req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or ""
         req.cmd = _normalize_minimax_m3_vllm_cmd(req.cmd)
         req.cmd = _normalize_deepseek_v4_sglang_cmd(req.cmd)
+        req.cmd = _normalize_mlx_model_path(req.cmd) or ""
         req.cmd = _venv_safe_local_pip_install_cmd(
             req.cmd,
             local=not bool(req.remote_host),
             in_venv=sys.prefix != sys.base_prefix,
         )
+        _guard_mlx_platform(req.cmd, req.remote_host)
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         if is_pip_install:
             # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
@@ -4559,6 +4563,15 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
+            # An MLX download that "completed" but isn't a loadable folder bundle
+            # should say so here, not fail cryptically at serve time.
+            if task_type == "download" and status == "completed":
+                mlx_gap = mlx_bundle_gap(
+                    session_id, _payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or ""
+                )
+                if mlx_gap:
+                    status = "error"
+                    diagnosis = mlx_gap
             output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({

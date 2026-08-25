@@ -345,8 +345,13 @@ docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 
 **macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
 runs setup, and starts uvicorn on port `7860` because AirPlay often holds
-`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
-do not run on macOS. MLX-only models are not served by Odysseus.
+`7000`. It uses llama.cpp/Ollama and MLX for Metal. vLLM/SGLang are
+CUDA/ROCm-only and do not run on macOS. To serve MLX models, install Apple's
+mlx-lm (`pip install mlx-lm`, the default engine) or oMLX
+(https://github.com/jundot/omlx); pick the engine in the Cookbook serve panel.
+oMLX serves a whole directory of models rather than one path, so it launches
+against the panel's **MLX Model Dir** field — prefilled from the model's own
+folder when Odysseus can resolve one, and left for you to fill in when it can't.
 
 </details>
 

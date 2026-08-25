@@ -7,7 +7,7 @@ guarantee that non-macOS (Linux/Windows) detection is unchanged.
 import json
 
 from services.hwfit import hardware
-from services.hwfit.fit import rank_models
+from services.hwfit.fit import _native_quant, rank_models
 from services.hwfit.models import get_models
 
 
@@ -62,6 +62,34 @@ def test_mlx_hidden_on_cuda_backend_unchanged():
     """Regression guard: Linux/CUDA users never saw MLX before and still don't."""
     mlx = [m for m in rank_models(_cuda_system(), limit=900) if str(m.get("quant", "")).startswith("mlx-")]
     assert mlx == []
+
+
+def test_mlx_quant_filter_surfaces_all_mlx_bitwidths_on_metal():
+    """Picking the MLX quant filter surfaces MLX models at their native
+    bit-widths and excludes every non-MLX format."""
+    res = rank_models(_metal_system(), use_case="general", limit=900, quant="mlx-")
+    assert res, "MLX quant filter returned nothing on Metal"
+    assert all(str(r.get("quant", "")).startswith("mlx-") for r in res)
+    # …and the rows are genuinely MLX builds, not other formats relabeled at
+    # the requested tier (which is what happened before "mlx-" was a native
+    # prequantized format).
+    catalog = {m["name"]: m for m in get_models()}
+    assert all(_native_quant(catalog.get(r["name"], {})).startswith("mlx-") for r in res)
+
+
+def test_mlx_quant_filter_empty_off_metal():
+    """MLX is Apple-Silicon-only, so the MLX quant filter shows nothing on CUDA."""
+    assert rank_models(_cuda_system(), use_case="general", limit=900, quant="mlx-") == []
+
+
+def test_mlx_quant_filter_respects_bit_width_on_metal():
+    """MLX + a specific bit tier (the UI maps Q4 -> mlx-4bit) returns only that
+    bit-width, so the engine and quant filters compose correctly."""
+    res = rank_models(_metal_system(), use_case="general", limit=900, quant="mlx-4bit")
+    assert res, "mlx-4bit returned nothing on Metal"
+    assert all(r.get("quant") == "mlx-4bit" for r in res)
+    catalog = {m["name"]: m for m in get_models()}
+    assert all(_native_quant(catalog.get(r["name"], {})) == "mlx-4bit" for r in res)
 
 
 def test_only_gguf_or_mlx_models_recommended_on_metal():
