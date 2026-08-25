@@ -789,6 +789,11 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
+# Hermes Agent integration — same scope-gated /api/codex/* runtime surface;
+# this router only delivers the Hermes skill bundle zip.
+from routes.codex_routes import setup_hermes_routes
+app.include_router(setup_hermes_routes())
+
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 

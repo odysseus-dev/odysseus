@@ -59,4 +59,5 @@ def test_codex_plugin_downloads_use_general_authenticated_gate():
     source = Path("routes/codex_routes.py").read_text(encoding="utf-8")
 
     assert "require_authenticated_request" in source
-    assert source.count("require_authenticated_request(request)") == 2
+    # One gate per plugin-bundle download: codex, claude, hermes.
+    assert source.count("require_authenticated_request(request)") == 3
