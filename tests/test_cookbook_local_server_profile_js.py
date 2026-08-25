@@ -68,3 +68,17 @@ def test_model_download_resolves_local_profile_before_building_payload():
     assert "let env = srv.env || 'none'" in model_download
     assert "const envPath = srv.envPath || ''" in model_download
     assert "host ? (srv.env" not in model_download
+
+
+def test_synthesized_local_entry_uses_local_only_defaults_under_active_remote():
+    # A missing Local entry is synthesized from local-only defaults. When a
+    # remote server is the active context, _es.env/_es.envPath describe the
+    # remote venv, so the synthetic Local entry must not inherit them — that
+    # would make Local build/download/serve resolve the remote interpreter/path.
+    synth = _between(COOKBOOK, "if (!_localSeen) {", "if (!_es.remoteHost) {")
+
+    assert "const _localActive = !_es.remoteHost" in synth
+    assert "env: _localActive ? (_es.env || 'none') : 'none'" in synth
+    assert "envPath: _localActive ? (_es.envPath || '') : ''" in synth
+    # The old unconditional inheritance of the active (possibly remote) env is gone.
+    assert "env: _es.env || 'none', envPath: _es.envPath || ''" not in synth
