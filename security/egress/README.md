@@ -19,7 +19,4 @@ connection lifetime, and total broker lifetime. It intentionally does not
 support arbitrary TCP, UDP, SSH, SOCKS, private destinations, or raw network
 sharing.
 
-Installation rewrites each helper's shebang to the absolute Python interpreter
-selected at build/install time and enables Python isolated mode. Runtime launch
-therefore never resolves a Python executable or imports user-site startup code
-through inherited or model-writable state.
+The production install target rewrites each helper's shebang to the first available interpreter in the fixed set `/usr/local/bin/python3` and `/usr/bin/python3`, requires that canonical interpreter to be a root-owned regular executable with no set-id or group/other write bits, enables Python isolated mode, and fixes the install path and ownership to `/usr/local/libexec` and `root:root`. Its interpreter, path, and ownership contract cannot be replaced through Make variables; the separate developer `check` target remains configurable. Runtime launch therefore never resolves a Python executable or imports user-site startup code through inherited or model-writable state.

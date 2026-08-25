@@ -504,7 +504,7 @@ def _serve_http(
     ):
         raise RequestError(400, "plain proxy requests require an absolute HTTP URL")
     host = parsed.hostname
-    port = parsed_port or 80
+    port = 80 if parsed_port is None else parsed_port
     if port != 80:
         raise RequestError(403, "plain HTTP proxying is limited to public TCP port 80")
 

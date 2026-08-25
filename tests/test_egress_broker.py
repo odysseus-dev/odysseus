@@ -344,6 +344,7 @@ def test_connection_header_cannot_remove_content_length_framing():
     [
         b"CONNECT public.example:80 HTTP/1.1\r\nHost: public.example\r\n\r\n",
         b"CONNECT public.example:22 HTTP/1.1\r\nHost: public.example\r\n\r\n",
+        b"GET http://public.example:0/ HTTP/1.1\r\nHost: public.example:0\r\n\r\n",
         b"GET http://public.example:8080/ HTTP/1.1\r\nHost: public.example:8080\r\n\r\n",
         b"GET https://public.example/ HTTP/1.1\r\nHost: public.example\r\n\r\n",
     ],
@@ -604,24 +605,77 @@ def test_egress_makefile_keeps_trusted_install_contract():
         Path(__file__).resolve().parents[1] / "security" / "egress" / "Makefile"
     ).read_text(encoding="utf-8")
 
-    assert "INSTALL_OWNER ?= root" in makefile
-    assert "INSTALL_GROUP ?= root" in makefile
     assert (
-        'PYTHON_PATH := $(shell realpath "$$(command -v $(PYTHON))")' in makefile
+        "override TRUSTED_PYTHON := "
+        "$(firstword $(realpath /usr/local/bin/python3 /usr/bin/python3))"
+        in makefile
     )
-    assert "sed -i '1c\\#!$(PYTHON_PATH) -I'" in makefile
+    assert "override INSTALL_DIR := /usr/local/libexec" in makefile
+    assert "override INSTALL_OWNER := root" in makefile
+    assert "override INSTALL_GROUP := root" in makefile
+    assert "override SHELL := /bin/sh" in makefile
+    assert "override .SHELLFLAGS := -eu -c" in makefile
+    assert "override BROKER := odysseus_egress_broker.py" in makefile
+    assert "override BRIDGE := odysseus_egress_bridge.py" in makefile
+    for tool in ("install", "sed", "chown", "chmod"):
+        assert f"override {tool.upper()}_TOOL := /usr/bin/{tool}" in makefile
     assert (
-        "install -o $(INSTALL_OWNER) -g $(INSTALL_GROUP) -m 0755" in makefile
+        'PYTHON_PATH = $(shell realpath "$$(command -v $(PYTHON))")' in makefile
     )
+    assert "install: trusted-check" in makefile
     assert (
-        "chown $(INSTALL_OWNER):$(INSTALL_GROUP) "
+        "! -type f -o ! -uid 0 -o -perm /022 -o -perm /6000" in makefile
+    )
+    assert '"$(TRUSTED_PYTHON)" -I -m py_compile' in makefile
+    assert "$(SED_TOOL) -i '1c\\#!$(TRUSTED_PYTHON) -I'" in makefile
+    assert "$(INSTALL_TOOL) -o $(INSTALL_OWNER) -g $(INSTALL_GROUP) -m 0755" in makefile
+    assert (
+        "$(CHOWN_TOOL) $(INSTALL_OWNER):$(INSTALL_GROUP) "
         "$(INSTALL_DIR)/odysseus-egress-broker "
         "$(INSTALL_DIR)/odysseus-egress-bridge" in makefile
     )
     assert (
-        "chmod 0755 $(INSTALL_DIR)/odysseus-egress-broker "
+        "$(CHMOD_TOOL) 0755 $(INSTALL_DIR)/odysseus-egress-broker "
         "$(INSTALL_DIR)/odysseus-egress-bridge" in makefile
     )
+
+
+def test_egress_production_install_rejects_make_variable_overrides(tmp_path):
+    egress_dir = Path(__file__).resolve().parents[1] / "security" / "egress"
+    evaluation_marker = tmp_path / "attacker-python-was-evaluated"
+    completed = subprocess.run(
+        [
+            "make",
+            "--directory",
+            str(egress_dir),
+            "--dry-run",
+            "install",
+            f"PYTHON=$(shell touch {evaluation_marker})",
+            "TRUSTED_PYTHON=/tmp/attacker-python",
+            "INSTALL_DIR=/tmp/attacker-bin",
+            "INSTALL_OWNER=nobody",
+            "INSTALL_GROUP=nogroup",
+            "BROKER=/tmp/attacker-broker",
+            "BRIDGE=/tmp/attacker-bridge",
+            "INSTALL_TOOL=/tmp/attacker-install",
+            "SED_TOOL=/tmp/attacker-sed",
+            "CHOWN_TOOL=/tmp/attacker-chown",
+            "CHMOD_TOOL=/tmp/attacker-chmod",
+            "SHELL=/tmp/attacker-shell",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not evaluation_marker.exists()
+    assert "/tmp/attacker" not in completed.stdout
+    assert "/usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec" in completed.stdout
+    assert "odysseus_egress_broker.py" in completed.stdout
+    assert "odysseus_egress_bridge.py" in completed.stdout
+    assert "-I -m py_compile" in completed.stdout
 
 
 def test_multiple_simultaneous_connect_tunnels_work_within_bounds(tmp_path):
