@@ -1,0 +1,12 @@
+# NVIDIA CDI overlay for rootless Podman.
+#
+# Combine this with docker/podman.yml; do not also load docker/gpu.nvidia.yml.
+# NVIDIA's CDI documentation recommends label=disable for Podman workloads.
+# This file intentionally does not set NVIDIA_VISIBLE_DEVICES because that can
+# activate the legacy OCI hook and conflict with native CDI injection.
+services:
+  odysseus:
+    devices:
+      - nvidia.com/gpu=all
+    security_opt:
+      - label=disable

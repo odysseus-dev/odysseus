@@ -1,0 +1,12 @@
+# AMD ROCm overlay for rootless Podman.
+#
+# Combine this with docker/podman.yml; do not also load docker/gpu.amd.yml.
+# The host user must already have access to /dev/kfd and /dev/dri. Podman's
+# keep-groups extension preserves those supplementary device groups.
+services:
+  odysseus:
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - keep-groups
