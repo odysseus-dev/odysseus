@@ -1,5 +1,9 @@
 # Backup & Restore
 
+The Settings JSON export is a separate, mixed-scope portability format. Its version 2 shape includes memories, skills, presets, settings, preferences, calendars and events, scheduled tasks and run history, and notes. Memories, skills, preferences, calendars, tasks, and notes are selected for the current owner during export. Imported version 2 calendar, task, and note rows are stamped with the current owner, and primary-key collisions are remapped rather than overwriting another user's rows. Presets are shared across users, while settings and feature flags are instance-global; those sections remain shared/global rather than becoming owner-scoped. Task webhook tokens are intentionally excluded and must be regenerated after restore. References to chat/agent sessions, crew members, characters, and note upload images are detached because those domains are not part of the JSON format. Imported CalDAV calendars/events become local rows; reconnect and sync the account explicitly instead of reusing remote hrefs or pending-write markers from another instance.
+
+Version 1 JSON exports remain importable; they simply do not contain the newer calendar/task/note sections. The commands below describe full on-disk instance snapshots, which serve a different disaster-recovery use case.
+
 Odysseus keeps all of your state in the `data/` directory — the SQLite database
 (`app.db`), the Fernet encryption key (`data/.app_key`), the vault, memory, RAG
 indexes, personal documents, and uploads. The `scripts/odysseus-backup` tool
