@@ -6,8 +6,15 @@ Verifies two critical cases:
   2. api.deepseek.com must still be treated as tool-capable via the host
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
 """
+from types import SimpleNamespace
+
 import pytest
-from src.agent_loop import _API_HOSTS, _endpoint_lookup_keys, _is_ollama_openai_compat_url
+from src.agent_loop import (
+    _API_HOSTS,
+    _agent_route_tool_mode,
+    _endpoint_lookup_keys,
+    _is_ollama_openai_compat_url,
+)
 from src.llm_core import _is_ollama_native_url
 
 
@@ -164,3 +171,57 @@ class TestEndpointLookupKeys:
         keys = _endpoint_lookup_keys("http://host.docker.internal:11434/api/chat")
 
         assert "http://host.docker.internal:11434/api" in keys
+
+
+def test_route_tool_mode_matches_credential_distinct_endpoint(monkeypatch):
+    from core import database
+    from src import endpoint_resolver
+
+    rows = [
+        SimpleNamespace(
+            id="one",
+            base_url="https://same.example/v1",
+            api_key="key-one",
+            provider_auth_id=None,
+            supports_tools=True,
+        ),
+        SimpleNamespace(
+            id="two",
+            base_url="https://same.example/v1",
+            api_key="key-two",
+            provider_auth_id=None,
+            supports_tools=False,
+        ),
+    ]
+
+    class Query:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return rows
+
+    class Db:
+        def query(self, *args, **kwargs):
+            return Query()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(database, "SessionLocal", lambda: Db())
+    monkeypatch.setattr(
+        endpoint_resolver,
+        "resolve_endpoint_runtime",
+        lambda endpoint, owner=None: (endpoint.base_url, endpoint.api_key),
+    )
+
+    assert _agent_route_tool_mode(
+        "https://same.example/v1",
+        "custom-model",
+        headers={"Authorization": "Bearer key-one"},
+    )[0] is True
+    assert _agent_route_tool_mode(
+        "https://same.example/v1",
+        "custom-model",
+        headers={"Authorization": "Bearer key-two"},
+    )[0] is False

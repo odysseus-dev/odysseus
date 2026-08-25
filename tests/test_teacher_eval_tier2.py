@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 import pytest
 
@@ -171,7 +172,41 @@ async def test_maybe_escalate_tier2_disabled_by_default(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_background_teacher_learning_never_persists_without_approval(monkeypatch):
+    monkeypatch.setattr(
+        "src.settings.get_setting",
+        lambda key, default=None: {
+            "teacher_model": "teacher-model",
+        }.get(key, default),
+    )
+
+    async def fail_teacher_call(*args, **kwargs):
+        raise AssertionError("background learning spent a teacher call without approval UI")
+
+    async def fail_direct_skill_save(*args, **kwargs):
+        raise AssertionError("background teacher output was persisted directly")
+
+    monkeypatch.setattr("src.teacher_escalation._call_teacher", fail_teacher_call)
+    monkeypatch.setattr(
+        "src.tool_implementations.do_manage_skills",
+        fail_direct_skill_save,
+    )
+
+    saved = await teacher_escalation.escalate_and_learn(
+        user_request="test request",
+        tool_results=[],
+        agent_reply="student failed",
+        failure_reason="test failure",
+        owner="alice",
+    )
+
+    assert saved is None
+
+
+@pytest.mark.asyncio
 async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
+    from src.tool_approvals import tool_approval_store
+
     # Settings and gates
     monkeypatch.setattr("src.settings.get_setting", lambda key, default=None: {"teacher_enabled": True, "teacher_model": "teacher-model", "teacher_tier2_enabled": True}.get(key, default))
     monkeypatch.setattr("src.ai_interaction._resolve_model", lambda spec, owner=None: ("http://teacher.local/v1", "teacher-model", {}))
@@ -188,6 +223,21 @@ async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
     async def fake_stream_agent_loop(*args, **kwargs):
         yield "data: {\"type\": \"tool_output\", \"tool\": \"bash\"}\n\n"
         yield "data: {\"type\": \"text\", \"delta\": \"Teacher reply\"}\n\n"
+        yield "data: " + json.dumps({
+            "type": "metrics",
+            "data": {
+                "model": "teacher-model",
+                "round_texts": ["Teacher reply"],
+                "tool_events": [
+                    {
+                        "round": 1,
+                        "tool": "bash",
+                        "output": "done",
+                        "exit_code": 0,
+                    },
+                ],
+            },
+        }) + "\n\n"
         yield "data: [DONE]\n\n"
     monkeypatch.setattr("src.agent_loop.stream_agent_loop", fake_stream_agent_loop)
 
@@ -196,10 +246,13 @@ async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
         return '```json\n{"action": "add", "name": "test-skill"}\n```'
     monkeypatch.setattr("src.teacher_escalation._call_teacher", fake_call_teacher)
 
-    # Mock do_manage_skills
-    async def fake_do_manage_skills(skill_json, owner=None):
-        return {"success": True}
-    monkeypatch.setattr("src.tool_implementations.do_manage_skills", fake_do_manage_skills)
+    async def fail_direct_skill_save(*args, **kwargs):
+        raise AssertionError("teacher output was persisted without approval")
+
+    monkeypatch.setattr(
+        "src.tool_implementations.do_manage_skills",
+        fail_direct_skill_save,
+    )
 
     events = []
     async for evt in teacher_escalation.run_teacher_inline(
@@ -208,13 +261,123 @@ async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
         student_tool_events=[],
         student_reply="student reply",
         owner="alice",
+        session_id="teacher-approval-session",
     ):
         events.append(evt)
 
-    # Make sure teacher takeover was announced and executed
+    # The teacher takeover runs, but its cross-model skill output is sealed for
+    # an explicit approval instead of being written directly.
     assert any("teacher_takeover" in evt for evt in events)
     assert any("tool_output" in evt for evt in events)
-    assert any("skill_saved" in evt for evt in events)
+    approval_event = next(
+        json.loads(evt[6:])
+        for evt in events
+        if evt.startswith("data: ")
+        and "\"kind\": \"tool_approval\"" in evt
+        and "\"type\": \"tool_output\"" in evt
+    )
+    approval = approval_event["ask_user"]
+    final_metrics = next(
+        json.loads(evt[6:])
+        for evt in reversed(events)
+        if evt.startswith("data: ") and '"type": "metrics"' in evt
+    )
+    persisted_approval = final_metrics["data"]["tool_events"][-1]
+    assert persisted_approval["ask_user"] == approval
+    assert persisted_approval["round"] == 2
+    pending = tool_approval_store.peek(approval["approval_id"])
+    assert pending is not None
+    assert pending.tool_name == "manage_skills"
+    assert json.loads(pending.content)["name"] == "test-skill"
+    assert pending.external_untrusted_context_seen is True
+    tool_approval_store.consume(
+        pending.approval_id,
+        decision="deny",
+        owner="alice",
+        session_id="teacher-approval-session",
+    )
+    assert not any("skill_saved" in evt for evt in events)
+
+
+@pytest.mark.asyncio
+async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "src.settings.get_setting",
+        lambda key, default=None: {
+            "teacher_enabled": True,
+            "teacher_model": "teacher-model",
+        }.get(key, default),
+    )
+    monkeypatch.setattr(
+        "src.ai_interaction._resolve_model",
+        lambda spec, owner=None: (
+            "http://teacher.local/v1",
+            "teacher-model",
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        "src.teacher_escalation.evaluate_turn_regex",
+        lambda *args: ("failure", "student failed"),
+    )
+    captured = {}
+    approval = {
+        "kind": "tool_approval",
+        "approval_id": "opaque-id",
+        "question": "Allow this exact action once?",
+    }
+
+    async def fake_stream_agent_loop(*args, **kwargs):
+        captured.update(kwargs)
+        yield "data: " + json.dumps({
+            "type": "tool_output",
+            "tool": "bash",
+            "output": "Waiting for an exact user approval.",
+            "ask_user": approval,
+        }) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    async def fail_skill_distillation(*args, **kwargs):
+        raise AssertionError("paused teacher trace was distilled into a skill")
+
+    monkeypatch.setattr(
+        "src.agent_loop.stream_agent_loop",
+        fake_stream_agent_loop,
+    )
+    monkeypatch.setattr(
+        "src.teacher_escalation._call_teacher",
+        fail_skill_distillation,
+    )
+    active_document = object()
+    active_email = {"uid": "email-1"}
+    policy = object()
+
+    events = []
+    async for evt in teacher_escalation.run_teacher_inline(
+        student_endpoint_url="http://student.local/v1",
+        student_messages=[{"role": "user", "content": "test request"}],
+        student_tool_events=[],
+        student_reply="student reply",
+        owner="alice",
+        session_id="session-1",
+        workspace="/workspace",
+        disabled_tools={"web_fetch"},
+        tool_policy=policy,
+        active_document=active_document,
+        active_email=active_email,
+    ):
+        events.append(evt)
+
+    assert captured["session_id"] == "session-1"
+    assert captured["workspace"] == "/workspace"
+    assert captured["disabled_tools"] == {"web_fetch"}
+    assert captured["tool_policy"] is policy
+    assert captured["active_document"] is active_document
+    assert captured["active_email"] == active_email
+    assert any("opaque-id" in event for event in events)
+    assert not any("skill_saved" in event for event in events)
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
 <title>Odysseus — Login</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
-<link rel="manifest" href="/static/manifest.json">
-<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<link rel="manifest" href="static/manifest.json">
+<link rel="apple-touch-icon" href="static/icons/icon-192.png">
 <script nonce="{{CSP_NONCE}}">
 (function(){
+  function computeAppBasePath() {
+    var path = window.location.pathname || '/login';
+    if (path === '/login') {
+      return '';
+    }
+    if (path.endsWith('/login')) {
+      return path.slice(0, -'/login'.length).replace(/\/+$/, '');
+    }
+    return '';
+  }
+  var appBasePath = computeAppBasePath();
+  window.__odysseusLoginBasePath = appBasePath;
+  window.__odysseusLoginAppUrl = function(path) {
+    var normalizedPath = String(path || '/');
+    if (!normalizedPath.startsWith('/')) {
+      normalizedPath = '/' + normalizedPath;
+    }
+    return appBasePath + normalizedPath;
+  };
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
   // static/js/theme.js so login picks the same default pattern as the
   // main app for users who never explicitly chose one.
@@ -85,8 +104,8 @@
 })();
 </script>
 <style>
-  @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
-  @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+  @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('static/fonts/FiraCode-Regular.woff2') format('woff2'); }
+  @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
   /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
      uncustomized theme — or a fresh browser with no `odysseus-theme` in
      localStorage — renders the login page in the same palette as the rest
@@ -300,9 +319,10 @@
 
 <script nonce="{{CSP_NONCE}}">
 (async () => {
+  const appUrl = window.__odysseusLoginAppUrl || ((path) => path);
   // Load version
   try {
-    const vr = await fetch('/api/version');
+    const vr = await fetch(appUrl('/api/version'));
     if (vr.ok) {
       const vd = await vr.json();
       document.getElementById('version-label').textContent = 'v' + vd.version;
@@ -363,12 +383,12 @@
 
   // Check auth status and fetch policy in parallel, but don't block the
   // authenticated redirect on the policy response.
-  const policyPromise = fetch('/api/auth/policy', { credentials: 'same-origin' }).catch(() => null);
+  const policyPromise = fetch(appUrl('/api/auth/policy'), { credentials: 'same-origin' }).catch(() => null);
   try {
-    const statusRes = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    const statusRes = await fetch(appUrl('/api/auth/status'), { credentials: 'same-origin' });
     const data = await statusRes.json();
     if (data.authenticated) {
-      window.location.replace('/');
+      window.location.replace(appUrl('/'));
       return;
     }
     signupAllowed = !!data.signup_enabled;
@@ -405,7 +425,7 @@
       if (!code) { totpInput.focus(); submitBtn.disabled = false; return; }
       const remember = document.getElementById('remember').checked;
       try {
-        const res = await fetch('/api/auth/login', {
+        const res = await fetch(appUrl('/api/auth/login'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
@@ -449,7 +469,7 @@
 
     // Setup or signup first
     if (mode === 'setup' || mode === 'signup') {
-      const endpoint = mode === 'setup' ? '/api/auth/setup' : '/api/auth/signup';
+      const endpoint = mode === 'setup' ? appUrl('/api/auth/setup') : appUrl('/api/auth/signup');
       try {
         const res = await fetch(endpoint, {
           method: 'POST',
@@ -477,19 +497,19 @@
       submitBtn.innerHTML = '<span class="login-spinner" aria-hidden="true"></span>';
       submitBtn.disabled = true;
       Promise.all([
-        fetch('/api/sessions', { credentials: 'same-origin' }).then(r => r.json()),
-        fetch('/api/auth/features', { credentials: 'same-origin' }).then(r => r.json()),
-        fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json()),
+        fetch(appUrl('/api/sessions'), { credentials: 'same-origin' }).then(r => r.json()),
+        fetch(appUrl('/api/auth/features'), { credentials: 'same-origin' }).then(r => r.json()),
+        fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' }).then(r => r.json()),
       ]).then(([sess, feat, sett]) => {
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
         sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace('/'); });
+      }).catch(() => {}).finally(() => { window.location.replace(appUrl('/')); });
     }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };
       if (totpCode) loginBody.totp_code = totpCode;
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(appUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -587,7 +607,7 @@ if (window.visualViewport) {
 // `applyBgPattern` would never fire on its own. We call it directly
 // here against the pattern the bootstrap already chose.
 try {
-  const tm = await import('/static/js/theme.js');
+  const tm = await import((window.__odysseusLoginAppUrl || ((path) => path))('/static/js/theme.js'));
   const pattern = window.__loginBgPattern;
   if (pattern && tm.applyBgPattern) tm.applyBgPattern(pattern);
 } catch (e) {

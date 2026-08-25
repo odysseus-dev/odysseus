@@ -719,7 +719,14 @@ async def execute_api_call(
         output = f"HTTP {status}\n{formatted}"
 
         if status >= 400:
-            return {"error": output, "exit_code": 1}
+            return {
+                "error": output,
+                "exit_code": 1,
+                # The error string includes the remote response body.  Preserve
+                # it for diagnostics, but make its provenance explicit so the
+                # agent gate does not treat HTTP failure as content-free.
+                "untrusted_content": True,
+            }
 
         return {"output": output, "exit_code": 0}
 

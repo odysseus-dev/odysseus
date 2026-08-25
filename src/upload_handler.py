@@ -35,6 +35,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+UploadIndexFileSignature = tuple[
+    str,
+    Optional[int],
+    Optional[int],
+    Optional[int],
+    Optional[int],
+    Optional[int],
+]
+UploadIndexSignature = tuple[UploadIndexFileSignature, ...]
+
 
 class UploadCleanupSafetyError(RuntimeError):
     """Raised when cleanup cannot prove that destructive work is safe."""
@@ -242,7 +252,7 @@ class UploadHandler:
 
         # In-memory index cache to avoid O(N) disk I/O on every request
         self._index_cache: Optional[Dict[str, Any]] = None
-        self._index_mtime: float = 0.0
+        self._index_signature: Optional[UploadIndexSignature] = None
     
     def inside_base_dir(self, path: str) -> bool:
         """Check if path is inside base directory"""
@@ -727,62 +737,119 @@ class UploadHandler:
         # Update cache if this is the main index
         if path.endswith("uploads.json"):
             self._index_cache = data
+            self._index_signature = self._upload_index_signature(
+                (path, path + ".bak")
+            )
+
+    @staticmethod
+    def _upload_index_signature(
+        paths: tuple[str, ...],
+    ) -> Optional[UploadIndexSignature]:
+        """Return file identities strong enough to validate the index cache.
+
+        Modification time alone is insufficient: a torn write can change a
+        file without receiving a strictly newer timestamp on some filesystems.
+        Size, inode, and nanosecond change times make those mutations visible
+        while preserving the cache fast path for unchanged files.
+        """
+        signature: list[UploadIndexFileSignature] = []
+        for candidate in paths:
             try:
-                self._index_mtime = os.path.getmtime(path)
+                stat_result = os.stat(candidate)
+            except FileNotFoundError:
+                signature.append((candidate, None, None, None, None, None))
+                continue
             except OSError:
-                self._index_mtime = time.time()
+                return None
+            signature.append(
+                (
+                    candidate,
+                    stat_result.st_dev,
+                    stat_result.st_ino,
+                    stat_result.st_size,
+                    stat_result.st_mtime_ns,
+                    stat_result.st_ctime_ns,
+                )
+            )
+        return tuple(signature)
 
     def _load_upload_index(self, *, fail_on_error: bool = False) -> Dict[str, Any]:
-        """Load the upload index from disk/cache. Uses mtime-based validation
-        to avoid redundant parsing on hot paths. When ``fail_on_error`` is
-        true, a missing, malformed, or unreadable live index raises so
-        destructive callers cannot mistake corruption for an empty store.
+        """Load the upload index from disk/cache. Uses file-identity validation
+        to avoid redundant parsing on hot paths without missing same-timestamp
+        mutations. When ``fail_on_error`` is true, a missing, malformed, or
+        unreadable live index raises so destructive callers cannot mistake
+        corruption for an empty store.
         """
         uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
         candidates = (uploads_db_path, uploads_db_path + ".bak")
-        if fail_on_error:
-            # A backup is intentionally the previous snapshot. It is useful for
-            # non-destructive reads, but cannot authorize deletion when the live
-            # index is missing or corrupt.
-            if not os.path.exists(uploads_db_path):
-                raise ValueError("live uploads database is missing")
-            existing_candidates = [uploads_db_path]
-        else:
-            existing_candidates = [path for path in candidates if os.path.exists(path)]
-        if not existing_candidates:
-            self._index_cache = {}
-            self._index_mtime = 0.0
-            return {}
+        for _attempt in range(3):
+            signature = self._upload_index_signature(candidates)
+            if fail_on_error:
+                # A backup is intentionally the previous snapshot. It is useful for
+                # non-destructive reads, but cannot authorize deletion when the live
+                # index is missing or corrupt.
+                if not os.path.exists(uploads_db_path):
+                    raise ValueError("live uploads database is missing")
+                existing_candidates = [uploads_db_path]
+            else:
+                existing_candidates = [
+                    path for path in candidates if os.path.exists(path)
+                ]
+            if not existing_candidates:
+                self._index_cache = {}
+                self._index_signature = signature
+                return {}
 
-        # Check cache validity
-        try:
-            mtime = max(os.path.getmtime(path) for path in existing_candidates)
+            # Check cache validity
             if (
                 not fail_on_error
+                and signature is not None
                 and self._index_cache is not None
-                and mtime <= self._index_mtime
+                and signature == self._index_signature
             ):
                 return self._index_cache
-        except OSError:
-            mtime = 0.0
 
-        # Try the live file first, fall back to the .bak sibling if the
-        # live file is truncated/corrupted.
-        for candidate in existing_candidates:
-            try:
-                with open(candidate, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    self._index_cache = data
-                    self._index_mtime = mtime
-                    return data
-            except Exception as e:
-                logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+            # Try the live file first, fall back to the .bak sibling if the
+            # live file is truncated/corrupted. A candidate parsed from an old
+            # inode is accepted only when the whole index signature stays
+            # stable through the read; otherwise retry so the cache cannot pair
+            # stale data with a fresh replacement signature.
+            index_changed_during_read = False
+            for candidate in existing_candidates:
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    verified_signature = self._upload_index_signature(candidates)
+                    if (
+                        signature is not None
+                        and verified_signature is not None
+                        and verified_signature != signature
+                    ):
+                        index_changed_during_read = True
+                        break
+                    if isinstance(data, dict):
+                        self._index_cache = data
+                        self._index_signature = verified_signature
+                        return data
+                except Exception as e:
+                    logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+                    verified_signature = self._upload_index_signature(candidates)
+                    if (
+                        signature is not None
+                        and verified_signature is not None
+                        and verified_signature != signature
+                    ):
+                        index_changed_during_read = True
+                        break
+                    continue
+            if index_changed_during_read:
                 continue
+            break
 
         if fail_on_error:
             raise ValueError("live uploads database is unreadable")
         self._index_cache = {}
+        self._index_signature = self._upload_index_signature(candidates)
         return {}
 
     def get_upload_info(self, upload_id: str) -> Optional[Dict[str, Any]]:
