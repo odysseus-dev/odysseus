@@ -1,6 +1,6 @@
 # Google Gemini Provider Shape
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 

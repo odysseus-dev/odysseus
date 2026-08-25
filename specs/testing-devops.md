@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -62,6 +62,7 @@ Use `node --check static/js/<changed-file>.js` for syntax checks on changed JS f
 `requirements-optional.txt` owns optional feature dependencies:
 
 - `faster-whisper` for local STT;
+- `kokoro==0.9.4` and `soundfile` for local TTS on Python 3.11-3.12 only; Kokoro is deliberately skipped on Python 3.13+ because its package metadata excludes those runtimes, and a CUDA-capable torch/GPU is still required at runtime;
 - `ddgs` for DDG library support, while provider code can fall back to HTML scraping;
 - `PyMuPDF` for PDF forms/rendering with AGPL implications for a network-served app;
 - `markitdown[docx,pptx,xlsx,xls]` for Office/EPUB extraction, pinned to a release older than 30 days.
@@ -153,12 +154,16 @@ PR description checks:
 - run on `pull_request_target`;
 - check out only base-branch `.github/scripts`;
 - skip bot PRs;
-- require Summary, Linked Issue, Type of Change, duplicate-search checklist, and substantive How to Test content;
-- update a bot comment and swap `ready for review` / `needs work` labels.
+- require Summary, Linked Issue, Type of Change, duplicate-search checklist, and substantive How to Test content as the hard description gate;
+- classify changed paths as docs-only, tooling, backend/runtime, or UI-sensitive from GitHub's file API while executing only base-branch checker code;
+- treat app-run and screenshot/clip checkboxes as author attestations, require an actual media link/attachment for UI-sensitive changes, and report runtime/visual evidence gaps separately from malformed descriptions;
+- serialize mergeability labeling behind description validation and avoid granting `ready for review` to drafts or changes with outstanding runtime/visual evidence;
+- update a bot comment and reconcile `ready for review`, `needs work`, `needs runtime validation`, and `needs visual evidence` labels where those labels exist.
 
 Issue description checks:
 
 - validate bug or feature sections based on labels;
+- require bug reports to include the exact 12-character revision/date shape produced by `git show -s --abbrev=12 --format='%h (%cs)' HEAD`;
 - flag unfilled dropdown placeholders such as `-- Please Select --`;
 - route public vulnerability reports toward GitHub Security Advisories;
 - update a bot comment and swap status labels;
@@ -203,7 +208,7 @@ Run the app for user-facing or integration changes. Unit tests and syntax checks
 - CI now covers Python compile, first-party JS syntax, focused-test guidance,
   and pytest smoke; it does not cover Docker compose validation, launcher smoke
   tests, browser/module-graph execution, or platform installs.
-- Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper` behavior and provider/OAuth combinations not covered by focused tests.
+- Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper`, Kokoro's Python/GPU degraded matrix, and provider/OAuth combinations not covered by focused tests.
 - GitHub description-check scripts and `scripts/pr_blocker_audit.py` need continued local fixtures for section parsing, placeholder stripping, label swaps, workflow-safe behavior, and duplicate/hot-file heuristics.
 - Spec bootstrap rules lack meta tests for reading `_readme.md`, spec shape, `.env*` handling, draft/report placement, and shared helper conventions.
 - NVIDIA helper install/`.env` mutation paths and real Docker/GPU startup are not covered by local tests.

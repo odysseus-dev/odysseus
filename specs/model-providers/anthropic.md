@@ -1,6 +1,6 @@
 # Anthropic Provider Shape
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -28,11 +28,7 @@ Sampling and thinking support can be version/model specific. The Opus 4.7+ sampl
 
 ## Fallback And Safety
 
-Runtime provider detection uses label-bounded Anthropic host matching. The
-canonical reader helper separately uses a plain `endswith("anthropic.com")`
-hostname hint or explicit endpoint kind. A provider using Anthropic Messages
-through another host must be explicit. Identity-only model cards remain
-unknown.
+Runtime and canonical reader detection use label-bounded Anthropic host matching or an explicit endpoint kind. A provider using Anthropic Messages through another host must be explicit. Identity-only model cards remain unknown.
 
 ## Current Gaps
 

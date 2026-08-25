@@ -1,6 +1,6 @@
 # Canonical Provider And Model Capability Layer
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -88,15 +88,11 @@ stay unknown rather than silently becoming chat-capable in this schema layer.
 Current detection order and behavior are:
 
 1. a recognized explicit endpoint kind;
-2. hostname suffix checks for OpenRouter, OpenAI, Anthropic, Google APIs, and
-   Ollama Cloud;
-3. common local ports: `11434` for Ollama, `1234` for LM Studio, `8000` for
-   vLLM, and `30000` for SGLang;
+2. label-bounded hostname checks for OpenRouter, OpenAI, Anthropic, Google APIs, and Ollama Cloud;
+3. common local ports: `11434` for Ollama, `1234` for LM Studio, `8000` for vLLM, and `30000` for SGLang;
 4. generic OpenAI-compatible for any other parsed host, otherwise unknown.
 
-These are normalization hints, not authorization. Current hostname checks use
-plain string suffixes, and the local-port mappings are intentionally covered by
-tests; callers must not treat the result as proof of endpoint trust.
+These are normalization hints, not authorization. Hostname checks accept an exact domain or its dot-delimited subdomains after lowercasing and removing a trailing dot, so names such as `notopenai.com` do not match `openai.com`; local-port mappings remain intentionally covered by tests. Callers must not treat any result as proof of endpoint trust.
 
 Implemented reader modules are `generic_openai`, `openai`, `openrouter`,
 `google`, `llamacpp`, `ollama`, and `lmstudio`. Anthropic, Hugging Face,
@@ -171,11 +167,9 @@ Focused tests pin:
 
 ## Current Gaps
 
-- Canonical records are not yet used by runtime discovery, endpoint
-  resolution, model context, request shaping, or frontend pickers.
+- Canonical records are not yet used by runtime discovery, endpoint resolution, model context, request shaping, or frontend pickers.
 - Reader output is not persisted, refreshed, merged, or expired.
-- Provider detection uses common-port hints and non-label-bounded hostname
-  suffix checks; consumers must not promote those hints into trust decisions.
+- Provider detection still uses common-port hints; consumers must not promote normalization hints into trust decisions.
 - Only seven concrete readers exist; placeholder and other providers use the
   identity-only generic reader.
 - Generic fallback does not accept bare-list or `key`/`slug`-only payloads.

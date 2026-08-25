@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -56,8 +56,7 @@ concrete readers cover generic OpenAI-compatible identity, OpenAI, OpenRouter,
 Google, Ollama, LM Studio, and llama.cpp. Identity-only model lists remain
 unknown.
 
-Reader dispatch uses an explicit vendor first, then endpoint kind, hostname
-suffix, and common local-port hints. Generic payload handling accepts `data[]`
+Reader dispatch uses an explicit vendor first, then endpoint kind, label-bounded hostname suffix, and common local-port hints. Generic payload handling accepts `data[]`
 or `models[]` items with `id`, `name`, or `model`; it does not accept a bare
 list and never promotes capability-looking fields. Unknown fields remain in
 the in-memory raw record. See [model-capability-canonical.md](model-capability-canonical.md),
@@ -95,7 +94,7 @@ Decrypted endpoint headers can be copied into session metadata for chat use. End
 
 `src.model_discovery` owns host/env/Tailscale/local-port scanning for model servers. Admin `/api/providers` and `/api/discover` use that scanner; endpoint CRUD, test, refresh, and hidden-model controls are frontend-owned by `static/js/admin.js`.
 
-`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. Local endpoints get cheap reachability probes before expensive refreshes where possible, and endpoint responses can include explicit `supports_tools` state for schema-emission heuristics. Google Gemini API endpoints use the native paginated `generativelanguage.googleapis.com/v1beta/models` catalog, send API keys in `x-goog-api-key`, retain only content-generation model IDs, and default to manual refresh unless the caller explicitly chooses another mode. Probe failure returns no curated Google fallback. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
+`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. API/proxy endpoint inventory is visible by default until an explicit `pinned_models` allow-list is saved; an explicit empty list means show none, and legacy hidden-list state is upgraded to the equivalent pins so endpoint settings, picker checkboxes, and chat agree. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. Local endpoints get cheap reachability probes before expensive refreshes where possible, and endpoint responses can include explicit `supports_tools` state for schema-emission heuristics. Google Gemini API endpoints use the native paginated `generativelanguage.googleapis.com/v1beta/models` catalog, send API keys in `x-goog-api-key`, retain only content-generation model IDs, and default to manual refresh unless the caller explicitly chooses another mode. Probe failure returns no curated Google fallback. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
 
 `src.task_endpoint` owns background-task endpoint/model resolution for task routes and scheduler callers. It resolves `task_endpoint_id`/`task_model` through the normal endpoint resolver with owner context.
 

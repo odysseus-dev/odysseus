@@ -1,6 +1,6 @@
 # Speech
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -63,7 +63,7 @@ Provider runtime:
 
 - `disabled` returns unavailable and avoids provider calls;
 - `browser` is client-side only through `speechSynthesis`;
-- `local` currently means Kokoro and requires `torch`, `kokoro`, and CUDA/import availability;
+- `local` currently means Kokoro and requires `torch`, `kokoro`, `soundfile`, and CUDA/import availability;
 - `endpoint:<id>` resolves a `ModelEndpoint` and posts to `/audio/speech`.
 - unknown or non-string `tts_provider` values are treated as unavailable rather
   than being parsed as endpoint strings.
@@ -109,7 +109,7 @@ TTS cached audio can contain sensitive assistant text rendered as speech. The ca
 
 - Optional local speech packages may be absent.
 - Local STT can run CPU-only and tolerates missing/broken torch by falling back to CPU/int8 behavior.
-- Local TTS/Kokoro is unavailable without CUDA/imports.
+- Local TTS/Kokoro extras are declared as `kokoro==0.9.4` plus `soundfile` only for Python 3.11-3.12; Python 3.13+ intentionally skips them because Kokoro excludes those runtimes. Even where installed, local Kokoro remains unavailable without a CUDA-capable torch build/GPU.
 - External endpoint providers can be offline or misconfigured and may only fail at request time.
 - Browser `speechSynthesis`, `SpeechRecognition`, `webkitSpeechRecognition`, secure context, and microphone permissions can be absent.
 - Docker GPU overlays are passthrough-only and do not install speech engines by themselves.
@@ -124,7 +124,6 @@ Missing coverage includes route-level STT/TTS success and failure shapes, auth/A
 ## Current Gaps
 
 - Visible speech settings UI is incomplete relative to backend settings.
-- Optional Kokoro dependencies are mentioned by service errors but are not declared in `requirements-optional.txt`.
 - Speech routes need a deliberate API-token/scope policy.
 - Endpoint speech providers need owner-isolation or explicit global-settings documentation.
 - TTS cache needs privacy policy: owner partition, TTL, no-store response headers, or accepted global cache semantics.

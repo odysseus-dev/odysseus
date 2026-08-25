@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -16,7 +16,7 @@ This spec covers current app runtime wiring in:
 - `src/host_docker_access.py`;
 - `core/middleware.py`;
 - all route setup functions registered from `app.py`, including canonical
-  `routes/admin_wipe/`, `routes/cleanup/`, `routes/compare/`, `routes/contacts/`, `routes/document/`, `routes/gallery/`, `routes/history/`, `routes/mcp/`, `routes/memory/`, `routes/note/`, `routes/research/`, `routes/search/`, `routes/vault/`, and `routes/webhook/` packages plus top-level compatibility shims;
+  `routes/admin_wipe/`, `routes/cleanup/`, `routes/compare/`, `routes/contacts/`, `routes/document/`, `routes/gallery/`, `routes/history/`, `routes/mcp/`, `routes/memory/`, `routes/note/`, `routes/research/`, `routes/search/`, `routes/task/`, `routes/vault/`, and `routes/webhook/` packages plus top-level compatibility shims;
 - `routes/prefs_routes.py`, `routes/workspace_routes.py`, and `companion/routes.py`;
 - `src/generated_images.py` for generated-media file resolution;
 - `launcher.py`, `Odysseus.spec`, and platform launcher scripts where frozen/native startup changes runtime paths;
@@ -42,7 +42,7 @@ Current router call sites include:
 - TTS/STT, documents, signatures, gallery, editor drafts, scheduled tasks, assistant, calendar, shell, Cookbook, HW Fit, compare, preferences, backup, fonts, Copilot and ChatGPT Subscription auth;
 - MCP, webhooks, API tokens, notes, email, Codex/Claude scoped APIs, vault, contacts, and companion routes.
 
-Admin wipe, cleanup, compare, contacts, documents, gallery, history, MCP, memory, notes, research, search, vault, and webhooks have canonical subpackage modules. Their old top-level route modules replace their `sys.modules` entries with the canonical module object so legacy imports, `importlib`, and monkeypatch tests target the same module that `app.py` uses.
+Admin wipe, cleanup, compare, contacts, documents, gallery, history, MCP, memory, notes, research, search, tasks, vault, and webhooks have canonical subpackage modules. Their old top-level route modules replace their `sys.modules` entries with the canonical module object so legacy imports, `importlib`, and monkeypatch tests target the same module that `app.py` uses. `app.py` imports task setup from `routes.task.task_routes`.
 
 The SPA routes `/`, `/notes`, `/calendar`, `/cookbook`, `/email`, `/memory`, `/gallery`, `/tasks`, and `/library` all serve `static/index.html`. `static/` is served with revalidation for `.js`, `.css`, and `.html` because the frontend ships raw browser modules with no hashed build output.
 

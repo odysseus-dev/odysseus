@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -46,12 +46,13 @@ Access policy is split by surface:
 Runtime behavior:
 
 - POSIX and most remote flows run detached through tmux;
-- local Windows uses detached process/log/pid behavior under `%TEMP%\\odysseus-tmux`; Python first publishes a valid Win32 fallback PID, then Git Bash may replace it with `/proc/$$/winpid` after a ready-file handoff, so PowerShell `Stop-Tree` can terminate the actual serving shell and children instead of receiving an MSYS PID;
+- local Windows uses detached process/log/pid behavior under `%TEMP%\\odysseus-tmux`; Python first publishes a valid Win32 fallback PID, then Git Bash may replace it with `/proc/$$/winpid` after a ready-file handoff, so PowerShell `Stop-Tree` can terminate the actual serving shell and children instead of receiving an MSYS PID. Frontend PowerShell venv activation is quoted safely and the local Git Bash runner converts a valid `Scripts\\Activate.ps1` prefix into `source <git-bash-path>/Scripts/activate` so the selected environment actually supplies the serve binary;
 - remote Windows uses PowerShell runner scripts;
 - missing `tmux`, `docker`, or serve-engine binaries return shaped errors where possible;
 - local Docker inside the Odysseus container is available only when the Docker CLI exists, `ODYSSEUS_ENABLE_HOST_DOCKER=true`, and `/var/run/docker.sock` is actually mounted as a socket; otherwise Cookbook should show the host-Docker access hint and prefer remote SSH Docker workflows;
 - model serve auto-registers LLM or image `ModelEndpoint` rows immediately, then frontend readiness probing can repair/create fallback endpoints;
 - diffusion-server serves are registered as image endpoints;
+- MLX image serves use `scripts/mlx_image_server.py`, which pins generation/edit dispatch to the model chosen at process start and ignores OpenAI-compatible per-request model selectors;
 - vLLM recipe routes fetch and cache model recipe manifests/YAML from `vllm-project/recipes`, normalize base args/env/dependencies/tool-calling/reasoning variants, and expose compatible strategy metadata for serve setup;
 - Hugging Face download/setup paths can detect and persist encrypted HF tokens for later Cookbook/agent use;
 - local and remote model paths can contain spaces or non-ASCII characters when helper validation/quoting accepts them;
@@ -179,7 +180,7 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 
 ## Testing Coverage
 
-Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, non-string model catalog fields, and selected frontend progress regressions.
+Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking and request-model pinning, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows venv/path/task helpers, non-numeric GPU counts, non-string model catalog fields, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
 

@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -10,7 +10,7 @@ This spec covers deep research behavior in:
 - canonical browser/API routes in `routes/research/research_routes.py`, with `routes/research_routes.py` as a compatibility shim;
 - chat-triggered research in `routes/chat_routes.py`;
 - diagnostics in `routes/diagnostics_routes.py`;
-- scheduled research in `routes/task_routes.py` and `src/task_scheduler.py`;
+- scheduled research in canonical `routes/task/task_routes.py`, its top-level compatibility shim, and `src/task_scheduler.py`;
 - active runtime code in `src/research_handler.py`, `src/deep_research.py`, `src/research_utils.py`, and `src/visual_report.py`;
 - search/fetch dependencies in `src.search`, `services.search`, and the `src.search.content` compatibility alias;
 - compatibility/public service code in `services/research/research_handler.py` and `services/research/service.py`;
@@ -40,6 +40,8 @@ This spec covers deep research behavior in:
 Internal-tool owner forwarding rejects only request sentinel identities. The reserved Default/Local storage owner is allowed to own research state in explicit no-login storage flows, while named-user lookups and route gates remain authoritative in configured auth mode.
 
 `TaskScheduler` owns scheduled research execution. It uses `DeepResearcher` directly, creates `[Research]` chat sessions, and writes `data/deep_research/*.json` in a compatible library/report shape without going through `ResearchHandler.start_research()`.
+
+The built-in `tidy_research` action removes only empty or unparseable report JSON. Because those broken files have no readable owner stamp, `src.builtin_actions` refuses the sweep unless the stored task owner is an admin or the app is in explicit auth-disabled single-user mode; refusal happens before file enumeration.
 
 Agent tools and the CLI read and mutate persisted research JSON directly. They are separate policy surfaces and must not be assumed to inherit browser route owner gates.
 

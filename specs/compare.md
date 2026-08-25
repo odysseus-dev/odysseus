@@ -1,6 +1,6 @@
 # Compare
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -40,6 +40,8 @@ Frontend compare behavior is split by responsibility:
 - `panes.js` and `stream.js` own paired response rendering;
 - `vote.js` and `scoreboard.js` own voting and history display.
 
+Compare panes can receive `ask_user` or tool-approval controls from the shared chat stream. `static/js/compare/stream.js` routes those controls into the main chat renderer/control plane, pauses pane completion/autograding while a choice is pending, and can resume the pane after the user decision; compare orchestration keeps its busy state until those continuations settle.
+
 Mobile compare layout collapses multi-pane grids to a single column so panes
 remain readable on narrow screens while the desktop grid still uses the
 selected column count.
@@ -74,4 +76,4 @@ Compare frontend code is part of the app DOM security surface. Current stream/se
 - `src/agent_loop.py` advertises stale compare app API endpoints.
 - Compare streaming and chat streaming are separate frontend paths but share model/provider infrastructure; regressions can happen when provider event shape changes.
 - Compare frontend needs explicit fallback/error event handling parity with chat streaming.
-- Compare tests cover endpoint owner helper behavior, blind compare redaction, and portable JS helpers, but not full active `/api/session` pane creation, frontend pane lifecycle, or SSE fallback/error handling.
+- Compare tests cover endpoint owner helper behavior, blind compare redaction, ask-user/tool-approval routing, and portable JS helpers, but not full active `/api/session` pane creation, frontend pane lifecycle, or complete SSE fallback/error handling.

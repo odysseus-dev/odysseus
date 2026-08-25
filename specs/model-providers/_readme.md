@@ -1,6 +1,6 @@
 # Provider Capability Specs
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -27,10 +27,7 @@ must not be copied into every provider file. An OpenAI-compatible provider is
 not OpenAI: an explicitly supplied vendor string is preserved even when it uses
 the generic reader.
 
-Current reader dispatch does not infer a provider from payload shape. It uses
-an explicit vendor, then endpoint kind, hostname suffix, and common local-port
-hints. The port hints map 11434 to Ollama, 1234 to LM Studio, 8000 to vLLM, and
-30000 to SGLang. Those hints are normalization behavior, not endpoint trust.
+Current reader dispatch does not infer a provider from payload shape. It uses an explicit vendor, then endpoint kind, label-bounded hostname matches, and common local-port hints. The port hints map 11434 to Ollama, 1234 to LM Studio, 8000 to vLLM, and 30000 to SGLang. Those hints are normalization behavior, not endpoint trust.
 
 ## Provider Map
 

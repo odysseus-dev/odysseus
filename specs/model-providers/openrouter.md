@@ -1,6 +1,6 @@
 # OpenRouter Provider Shape
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -33,10 +33,7 @@ route class, not a permanent global model limit.
 
 ## Fallback And Safety
 
-The reader receives OpenRouter through explicit selection or the current
-hostname suffix hint. Future fields remain raw. If modalities are absent, it
-falls back to an identity-only OpenRouter record and does not parse the model
-slug; supported-parameter controls are not retained on that fallback path.
+The reader receives OpenRouter through explicit selection or an exact/label-bounded `openrouter.ai` hostname hint. Future fields remain raw. If modalities are absent, it falls back to an identity-only OpenRouter record and does not parse the model slug; supported-parameter controls are not retained on that fallback path.
 
 ## Current Gaps
 

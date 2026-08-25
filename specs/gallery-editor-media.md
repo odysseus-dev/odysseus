@@ -1,6 +1,6 @@
 # Gallery, Editor, And Media
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -10,6 +10,7 @@ This spec covers media surfaces in:
 - canonical models in `core/database.py`, with `src.database` as a compatibility import path;
 - canonical route package `routes/gallery/gallery_routes.py` and `routes/gallery/gallery_helpers.py`, with top-level `routes/gallery_routes.py` and `routes/gallery_helpers.py` compatibility shims;
 - generated-image writers in `src/ai_interaction.py` and `mcp_servers/image_gen_server.py`;
+- local MLX image compatibility server `scripts/mlx_image_server.py`;
 - image tool schemas/dispatch/implementations in `src/tool_schemas.py`, `src/tool_execution.py`, and `src/tool_implementations.py`;
 - `routes/editor_draft_routes.py`;
 - `routes/signature_routes.py` and document signature consumers in canonical `routes/document/document_routes.py`;
@@ -93,7 +94,7 @@ Optional dependency behavior:
 
 `routes.editor_draft_routes` owns server-backed image editor project payloads. `EditorDraft` rows store title, payload JSON, thumbnail, source image, timestamps, and owner.
 
-Frontend editor behavior is split across `static/js/editor/*` and `static/js/galleryEditor.js`: canvas state, layer panel, masks, history, snapping, stroke pipeline, inpaint/rembg/harmonize tools, AI tool runner, model pickers, an AI edit command box that routes natural-language edit requests into existing inpaint/remove/upscale/background/style actions where possible, import wiring, topbar controls, auto-save, resume by draft ID or source image, draft-only open, and cleanup after close.
+Frontend editor behavior is split across `static/js/editor/*` and `static/js/galleryEditor.js`: canvas state, layer panel, masks, history, snapping, stroke pipeline, inpaint/rembg/harmonize tools, AI tool runner, model pickers, an AI edit command box that routes natural-language edit requests into existing inpaint/remove/upscale/background/style actions where possible, import wiring, topbar controls, auto-save, resume by draft ID or source image, draft-only open, and cleanup after close. `static/js/panels.js` loads this module graph on first editor use, shares concurrent imports, retries failed loads, and `static/sw.js` keeps the lazy graph in a separate offline panel precache.
 
 Draft compatibility behavior:
 
@@ -132,6 +133,7 @@ Known boundaries:
 - editor draft source image IDs, payloads, and thumbnails are owner-scoped by draft owner but do not fully validate source-gallery ownership or payload size;
 - emoji proxy constrains codepoint filenames and degrades invalid, unknown, or unreachable SVGs to transparent no-store placeholders, but remote SVG content still deserves security review;
 - visual report Markdown HTML/link/image output needs continued sanitization coverage.
+- `scripts/mlx_image_server.py` pins generation/edit routing to the process-start model and ignores request-selected model names, preventing unauthenticated callers from selecting a local model directory/repository whose model-specific script or bridge would execute.
 
 ## Degraded And Compatibility Behavior
 
@@ -146,7 +148,7 @@ Known boundaries:
 
 ## Testing Coverage
 
-Existing tests cover EXIF dimensions, owner-filter helper behavior, direct upload limits, image-generation privilege source shape, sharpen auth, gallery null-user denial, endpoint SSRF/source checks, editor draft payload validation, font family derivation, visual-report helper behavior, gallery CLI previews, and selected security regressions.
+Existing tests cover EXIF dimensions, owner-filter helper behavior, direct upload limits, image-generation privilege source shape, sharpen auth, gallery null-user denial, endpoint SSRF/source checks, editor draft payload validation, lazy editor loading/offline precache, MLX request-model pinning, font family derivation, visual-report helper behavior, gallery CLI previews, and selected security regressions.
 
 Route-level coverage is thin for full gallery CRUD/album/tag/download/delete flows, generated-image serving, editor draft owner CRUD, signature owner CRUD, emoji proxy/cache behavior, image-tool degraded responses, optional dependency fallbacks, and frontend editor behavior.
 

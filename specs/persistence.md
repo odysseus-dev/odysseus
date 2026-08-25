@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -107,7 +107,7 @@ Current JSON/local stores include:
 
 Cookbook state lives under the shared `DATA_DIR` path through the `COOKBOOK_STATE_FILE` constant. Search cache/analytics, FastEmbed cache fallback, uploads, generated media, logs, and auxiliary SQLite stores also resolve from shared data-dir constants and must work with source, Docker, and frozen data-dir defaults.
 
-`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Its JSON and text writers use a random UUID suffix per write, so concurrent writers in the same process cannot collide on a constant PID-derived temporary path. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Its cache signature covers the live and backup files by device, inode, size, nanosecond mtime, and ctime; reads recheck the whole signature so same-timestamp corruption or replacement cannot pair stale parsed data with a fresh identity. Destructive reads require a valid live index and never use backup recovery as deletion authority. Attachment-bearing chat/session, document, note, and calendar writers take owner-checked upload reservations before durable writes; reservations share the upload-index lock with cleanup and access-time refresh. Cleanup receives a complete reference snapshot and removes only expired uploads proven unreferenced with coherent index state. Missing/incomplete scans fail closed, and index rows are restored when byte deletion fails.
+`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Its JSON and text writers use a random UUID suffix per write, so concurrent writers in the same process cannot collide on a constant PID-derived temporary path, and a `finally` cleanup unlinks any orphaned temp after serialization, fsync, or replace failure while ignoring cleanup errors. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Its cache signature covers the live and backup files by device, inode, size, nanosecond mtime, and ctime; reads recheck the whole signature so same-timestamp corruption or replacement cannot pair stale parsed data with a fresh identity. Destructive reads require a valid live index and never use backup recovery as deletion authority. Attachment-bearing chat/session, document, note, and calendar writers take owner-checked upload reservations before durable writes; reservations share the upload-index lock with cleanup and access-time refresh. Cleanup receives a complete reference snapshot and removes only expired uploads proven unreferenced with coherent index state. Missing/incomplete scans fail closed, and index rows are restored when byte deletion fails.
 
 Memory mutations have their own fail-closed durability contract: `MemoryManager.load_all_for_update()` raises `MemoryStoreUnreadable` for a corrupt or unreadable `memory.json`, and read-modify-write callers use that strict path so they cannot replace an unreadable store with an empty one. Read-only `load_all()` remains lenient and can degrade to no memories; legacy `memory.txt` migration remains supported.
 

@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -15,8 +15,8 @@ This spec covers model-context construction in:
   `routes/chat_helpers.py`;
 - `src/tool_policy.py`;
 - `src/prompt_security.py`;
-- `src/tool_capabilities.py` and `src/tool_approvals.py`;
-- URL fetchers in `src/search/content.py` and `services/search/content.py`;
+- `src/tool_capabilities.py`, `src/tool_approval_scopes.py`, and `src/tool_approvals.py`;
+- transport primitives in `src/outbound_fetch.py` plus fetch/extraction adapters in `src/search/content.py` and `services/search/content.py`;
 - search orchestration in `services/search/core.py` and the compatibility wrapper in `src/search/core.py`;
 - RAG and personal docs in `src/rag_singleton.py`, `src/rag_vector.py`, `src/rag_manager.py`, and `src/personal_docs.py`;
 - research flows in `src/deep_research.py`, `src/research_handler.py`, and `services/research/research_handler.py`;
@@ -68,18 +68,18 @@ Search results and fetched pages are evidence. `web_search` should not force a p
 
 Current behavior is not yet unified:
 
-- successful chat URL prefetch is wrapped as untrusted context, but failed chat URL prefetch can be dropped;
+- successful chat URL prefetch is wrapped as untrusted context; failed prefetch now adds a compact untrusted statement that the page was not read, recognizes only transport-owned HTTP/size/rate-limit categories, and suppresses raw exception/response text;
 - agent `web_fetch` returns explicit URL-specific tool errors for timeout, unsupported scheme, fetch failure, or no readable text;
 - comprehensive search reports provider-chain failures, but individual page-fetch failures can be logged and omitted;
 - YouTube fetching is owned by `ChatHandler`/`youtube_handler`, while `routes.chat_helpers` only wraps the resulting transcript/comment strings.
 
-`services/search/core.py` owns `comprehensive_web_search()` orchestration. `src/search/core.py` is a compatibility wrapper. `src/search/content.py` now aliases the canonical `services.search.content` module so old imports do not create a second fetch/extract implementation.
+`src.outbound_fetch` owns reusable synchronous public-URL classification, per-hop DNS resolution/pinning, redirect handling, and body budgets. `services/search/core.py` owns `comprehensive_web_search()` orchestration. `services.search.content` owns content extraction and adapts the shared transport; `src/search/core.py` and `src/search/content.py` preserve compatibility imports without a second implementation.
 
 ## Tool Result Envelope
 
 `src.tool_execution` executes and formats tools. Tool output caps live in `src.constants` and are re-exported through older facades; shared native-tool truncation lives in `src.tool_utils`. `src.agent_loop._append_tool_results()` owns model re-entry: native tool calls return as provider-style `role: "tool"` messages with untrusted metadata, while fenced-tool results use the untrusted wrapper. Classification considers both the requested tool and the result payload, so remote or stored model-visible content can arm the session gate even on a failed tool status.
 
-Taint is server-owned continuation state, not a model instruction. After untrusted external/workspace context, low-impact reads can continue, but high-impact, unknown, and arbitrary MCP actions become proposals that produce an exact approval card. The server seals the action and consumes a matching one-use approval before dispatch; document actions also bind the current document version and digest. Blocked/approval placeholders and content-free failures do not recursively arm the gate.
+Taint is server-owned continuation state, not a model instruction. After untrusted external/workspace context, low-impact reads can continue, but high-impact, unknown, and arbitrary MCP actions become proposals that produce an exact approval card. The server seals the exact first action plus private continuation tool/query state; document actions also bind the current document version and digest. A chat decision can allow the resumed task or persist a grant for later turns in that exact chat, while non-chat callers remain single-action. Blocked/approval placeholders and content-free failures do not recursively arm the gate.
 
 Context budgeting uses known model context windows when available. `src.context_budget` treats the default 6000-token value as an automatic sentinel, scales to a capped fraction of known context length for non-explicit budgets, and leaves unknown windows on conservative defaults.
 
@@ -107,7 +107,7 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 ## Current Gaps
 
 - URL/search context result shape is not unified across chat prefetch, agent tools, and research.
-- Some failed fetch states are still easier for code to drop than to represent explicitly.
+- Failed fetch representation remains inconsistent outside direct chat URL prefetch, especially in comprehensive search and research aggregation.
 - Tool/context wording is spread across schema, prompt, and retrieval surfaces.
 - Source-specific wrapping and unavailable-state behavior still needs broader focused coverage for literal URL intent, research, RAG/memory/skills, and YouTube; external tool results and approval continuation now have dedicated gate/taint regressions.
 - Compare pre-search context is computed but may not be submitted through the current compare stream form.

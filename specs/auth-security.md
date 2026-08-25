@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@2a6b09b | 2026-08-17
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -13,7 +13,7 @@ This spec covers current security and trust-boundary behavior in:
 - `app.py` auth middleware and token cache;
 - `src/auth_helpers.py`;
 - `src/owner_identity.py`;
-- `src/tool_approvals.py` and `src/tool_capabilities.py`;
+- `src/tool_approval_scopes.py`, `src/tool_approvals.py`, and `src/tool_capabilities.py`;
 - `src/tool_security.py`;
 - `src/tool_execution.py`;
 - `src/task_action_policy.py`;
@@ -28,6 +28,7 @@ This spec covers current security and trust-boundary behavior in:
 - `src/webhook_manager.py`;
 - `src/generated_images.py`;
 - `scripts/diffusion_server.py`;
+- `scripts/mlx_image_server.py`;
 - `companion/routes.py` and `companion/pairing.py`;
 - `routes/auth_routes.py`, `routes/api_token_routes.py`, and canonical `routes/vault/vault_routes.py` plus its top-level compatibility shim;
 - admin-gated call sites in route files;
@@ -105,6 +106,8 @@ Agent tools call admin-gated HTTP routes through an in-process loopback. `core.m
 
 Current admin gates include `require_admin()` call sites across admin wipe, backup, contacts, Cookbook, diagnostics, embeddings, MCP, model, personal docs, presets, skills, uploads, vault, webhook, and companion routes. Local wrappers also exist in auth routes, shell routes, and task action policy; changes to those wrappers need the same trust-boundary review as `require_admin()`. Scheduled task action policy treats `run_local`, `run_script`, `ssh_command`, and `cookbook_serve` as admin-only action tasks across create/update/manual-run/webhook/scheduler execution.
 
+`tidy_research` can remove only empty or unparseable research JSON. Because a broken file has no trustworthy owner stamp, the action checks `owner_is_admin_or_single_user()` before enumerating files; regular users and the pre-setup window cannot run that global unattributable-file sweep.
+
 ## Untrusted Context Policy
 
 `src.prompt_security` owns the model-facing untrusted data contract:
@@ -116,7 +119,7 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 
 `src.tool_capabilities` classifies native and MCP tools by effects and result integrity. After external/workspace-untrusted context becomes model-visible, `ToolRunSecurityContext` keeps a server-owned taint for the session turn: only explicitly low-impact tools can run immediately, while write, execute, network-egress, UI/external-side-effect, admin, destructive, unknown, and arbitrary MCP actions require exact approval. Failed tools can still arm the gate when their result carries remote or stored payload; content-free failures and server-generated blocked/approval placeholders do not.
 
-`src.tool_approvals` owns opaque one-use approvals sealed to the owner, session, origin run, exact tool name/content, workspace, capability effects/result integrity, and expiry. Document actions additionally seal document id, version, content digest, and workspace. Approve/deny is a turn boundary: the browser can submit only the opaque decision, the server restores the sealed action, rechecks current policy/security and document freshness, consumes approval before dispatch, and ignores new composer attachments or mutable action fields. A new ordinary turn or superseding action retires pending approval while preserving the session's taint.
+`src.tool_approvals` owns opaque approvals sealed to the owner, session, origin run, exact first tool name/content, workspace, capability effects/result integrity, selected continuation tool set/query, and expiry. Document actions additionally seal document id, version, content digest, and workspace. Chat cards offer task scope, chat-session scope, or deny: both allow choices consume and execute the exact sealed first action after current-policy/freshness checks, task scope bypasses the gate only for the resumed task, and chat-session scope persists a resolved session-bound grant for later turns in that same chat. The browser submits only the opaque decision and cannot replace the sealed action, selected tools, query, composer text, or attachments. Non-chat callers retain single-action scope. A new ordinary turn or superseding action retires an unresolved approval without clearing taint.
 
 ## URL, Path, And Secret Policy
 
@@ -128,9 +131,7 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
   the public IP set that passed validation immediately before the request.
 - `src.integrations` owns admin-configured integration base URLs and secret
   masking. `api_call` accepts only relative paths, rejects link-local/metadata destinations through `src.url_safety`, can additionally block RFC1918/loopback/private targets with `INTEGRATION_API_BLOCK_PRIVATE_IPS=true`, and pins requests to the IP set that passed SSRF validation while preserving the intended Host/TLS identity.
-- `services.search.content` validates every redirect hop, rejects private/local
-  resolved addresses, and pins the HTTP connection to the validated public IP
-  while preserving original URL/SNI/Host semantics.
+- `src.outbound_fetch` owns reusable public-URL classification, validates every redirect hop, rejects private/local resolved addresses, and pins the HTTP connection to the validated public IP while preserving original URL/SNI/Host semantics. `services.search.content` adapts that transport for extraction and caching.
 - Path-based tools, upload/document/gallery/signature/generated-image routes, embedding cache paths, and research JSON helpers must stay confined to allowed roots and owner-scoped files. Native file/code-navigation tools also apply a case-insensitive sensitive-path denylist so `grep`, `glob`, `ls`, direct reads, and writes cannot reveal `.env`, SSH/GPG material, private-key filenames, or similar secret paths.
 - Durable upload references are owner-reserved before chat/session, document,
   note, or calendar writes. Cleanup scans every current durable reference
@@ -144,6 +145,8 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 - `.env` files are secrets-only inputs and should not be read or printed during agent work.
 
 `scripts/diffusion_server.py` is a local model-serving helper with its own web surface. It defaults CORS to deny, installs a trusted-host allowlist for loopback/bind addresses, and only extends Host/CORS through explicit CLI flags.
+
+`scripts/mlx_image_server.py` serves exactly the model selected when the process starts. OpenAI-compatible request `model` fields are accepted but ignored for generation and edits, so an unauthenticated caller cannot select another local directory or Hugging Face repository and drive model-specific script/bridge execution.
 
 Host Docker socket access is a high-trust admin/deployment choice, not a normal container capability. Default Docker Compose does not mount `/var/run/docker.sock`; `src.host_docker_access` only reports local Docker available inside a container when `ODYSSEUS_ENABLE_HOST_DOCKER=true` and the socket exists. Remote SSH Docker/Cookbook workflows remain the safer default.
 

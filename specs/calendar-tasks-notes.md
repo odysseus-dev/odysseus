@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -9,7 +9,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 - app route wiring, auth exemptions, and scheduler startup in `app.py`;
 - canonical database models in `core/database.py`, with `src/database.py` as a compatibility re-export;
 - `routes/calendar_routes.py`, `src/caldav_sync.py`, and `src/caldav_writeback.py`;
-- `routes/task_routes.py`, `src/task_scheduler.py`, `src/task_endpoint.py`, `src/event_bus.py`, and `src/interactive_gate.py`;
+- canonical `routes/task/task_routes.py`, compatibility shim `routes/task_routes.py`, `src/task_scheduler.py`, `src/task_endpoint.py`, `src/event_bus.py`, and `src/interactive_gate.py`;
 - shared privileged task-action policy in `src/task_action_policy.py`;
 - `routes/assistant_routes.py`;
 - canonical `routes/note/note_routes.py`, compatibility shim
@@ -51,7 +51,7 @@ Calendar credentials are encrypted at rest and are not returned to clients. CalD
 
 Cookbook serve scheduling crosses this domain. The Cookbook UI creates `cookbook_serve` scheduled tasks, can mirror them as Cookbook calendar events with `cookbook_event_uid`, and task deletion cleans up the linked event when present, falling back to exact-summary matching for legacy events without a stored UID. Cookbook command execution/lifecycle details stay in `cookbook-hwfit.md`.
 
-`routes/task_routes.py` owns task CRUD, status, manual run/stop/cancel, pause/resume, owner-scoped run/activity history, metadata, onboarding defaults, cache clearing, parse endpoints, and webhook-token regeneration. Chained-task `then_task_id` values are validated as same-owner relationships on create/update, and scheduler execution also rejects cross-owner or cyclic chains.
+`routes.task.task_routes` owns task CRUD, status, manual run/stop/cancel, pause/resume, owner-scoped run/activity history, metadata, onboarding defaults, cache clearing, parse endpoints, and webhook-token regeneration. `app.py` imports the canonical package path; `routes/task_routes.py` replaces its module entry with the canonical module for legacy import and monkeypatch compatibility. Chained-task `then_task_id` values are validated as same-owner relationships on create/update, and scheduler execution also rejects cross-owner or cyclic chains.
 
 Task webhook paths are auth-exempt at the app middleware layer only for `/api/tasks/{task_id}/webhook/{token}`. The route still validates active task state plus task-specific webhook token before dispatch.
 
@@ -72,6 +72,7 @@ Task runtime behavior:
 - background LLM task execution uses the background workload path, and the
   scheduler can abort/cancel active in-process task runs when foreground browser
   activity appears.
+- `tidy_research` scans all persisted research files because broken JSON has no trustworthy owner stamp, so it runs only for admins or the explicit auth-disabled single-user operator and refuses regular/pre-setup callers before enumeration.
 
 `routes.assistant_routes.py` owns crew/assistant settings and run-status surfaces that use the scheduler. `TaskScheduler.ensure_assistant_defaults()` currently seeds the personal assistant crew member and pinned assistant session, but no longer auto-creates Morning/Midday/Evening check-in tasks. Existing crew-linked check-in tasks are still rendered and managed when present.
 
@@ -116,7 +117,7 @@ locations before their database writes. Missing or wrong-owner uploads fail the
 write instead of creating a dangling durable reference; reservations serialize
 with upload cleanup.
 
-Chat forwards browser timezone offset so natural-language note/calendar tools can anchor dates to the user clock. Chat can auto-promote note/calendar/reminder intents to agent mode.
+Chat forwards browser timezone offset and IANA timezone name so natural-language note/calendar tools can anchor dates to the user clock. A valid IANA zone wins over the fixed offset for current-time/DST reasoning; invalid or absent names fall back to the offset and then server-local/UTC compatibility behavior. Chat can auto-promote note/calendar/reminder intents to agent mode.
 
 Codex todo/calendar wrappers enforce bearer-token owner and `todos:*` or `calendar:*` scopes, then delegate to note/calendar behavior as the token owner. Normal calendar/task/note routes are current-user/cookie routes and should not be treated as scoped bearer-token APIs unless they explicitly use token owner/scope policy.
 
@@ -142,7 +143,7 @@ Natural-language parsers prefer time-first interpretations for short reminder/ev
 
 Calendar frontend week-start preference is browser-local (`cal-week-start`) with Monday/Sunday controls; it is not persisted as a server preference.
 
-Natural-language date parsing and timezone behavior are compatibility-sensitive and need route/tool/frontend regression coverage when changed. Request-local timezone context is ephemeral and must not be persisted as user state.
+Natural-language date parsing and timezone behavior are compatibility-sensitive and need route/tool/frontend regression coverage when changed. Request-local timezone context is ephemeral and must not be persisted as user state. A valid browser IANA timezone is authoritative over a possibly stale or wrong-sign fixed offset because it carries daylight-saving rules.
 
 ## Degraded And Optional Behavior
 
@@ -180,6 +181,6 @@ Route-level coverage is thinner for full calendar route behavior, task CRUD/secu
 - Reminder delivery needs tests across frontend `/fire-reminder`, backend `dispatch_reminder()`, scheduler note pings, channel degradation, and dedupe.
 - Codex todo/calendar scope and owner mapping needs dedicated regression coverage.
 - Direct DB CLIs need either documented route-bypassing support status or shared helpers to avoid owner/timezone/writeback drift.
-- `scripts/odysseus-webhook` appears to reference an older webhook URL shape.
+- `scripts/odysseus-webhook` builds the live `/api/tasks/{task_id}/webhook/{token}` path with percent-encoded path segments; its direct DB token rotation/revocation behavior remains a local compatibility surface.
 - Assistant default documentation/code comments still mention check-ins that are no longer auto-seeded.
 - App backup import/export does not cover the calendar/task/note rows described by this spec.

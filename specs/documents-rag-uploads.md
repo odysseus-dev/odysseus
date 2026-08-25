@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -156,7 +156,7 @@ Some non-route tool/script paths can index ownerless or arbitrary directories an
 
 `src.rag_manager.RAGManager` is a backward-compat wrapper. The live owner-aware vector path is `VectorRAG`.
 
-`services/docs/service.py` is a separate facade and currently has result-shape drift from `VectorRAG`: it maps legacy `text`/`content` and `indexed`/`failed` keys while the live vector path returns `document`/`similarity` and `indexed_count`/`failed_count`.
+`services/docs/service.py` is a separate facade. It accepts live `VectorRAG` query rows (`document`, `similarity`, nested metadata source), retains legacy `text`/`content` and `score` fallbacks, skips non-object rows, and maps live `indexed_count`/`failed_count` plus legacy `indexed`/`failed` index summaries into its dataclasses.
 
 `src.database` re-exports `core.database`; document models and migrations live in `core.database`.
 
@@ -198,7 +198,6 @@ Route-level coverage is thinner for document CRUD, PDF import/render/export/fill
 
 - Direct RAG upload still needs clearer file-type validation and MarkItDown/PDF extraction parity decisions.
 - Document `session_id` relinking and session document listing need owner-scope regressions.
-- `services/docs/service.py` return-shape mapping is stale relative to `VectorRAG`.
 - Chat RAG can remain degraded after startup even if personal routes later initialize the RAG singleton.
 - PyMuPDF-dependent routes do not all share the same optional-runtime helper/error behavior.
 - Signed-reply preparation needs owner-scoped source email account/signature regression coverage.

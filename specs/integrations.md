@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -12,7 +12,7 @@ This spec covers external integration surfaces in:
 - `routes/auth_routes.py` integration CRUD/test routes;
 - `src/integrations.py` and `data/integrations.json`;
 - canonical `routes/webhook/webhook_routes.py` plus its top-level compatibility shim, and `src/webhook_manager.py`;
-- task webhook generation/triggering in `routes/task_routes.py`, `app.py`, and `static/js/tasks.js`;
+- task webhook generation/triggering in canonical `routes/task/task_routes.py`, its top-level compatibility shim, `app.py`, `static/js/tasks.js`, and `scripts/odysseus-webhook`;
 - companion/mobile pairing in `companion/routes.py` and `companion/pairing.py`;
 - provider OAuth/device-flow endpoint links in `routes/copilot_routes.py`, `routes/chatgpt_subscription_routes.py`, `routes/device_flow.py`, and `ProviderAuthSession` rows;
 - integration UI surfaces in `static/js/settings.js` and `static/js/admin.js`;
@@ -118,9 +118,9 @@ Current webhook event emitters include session creation, chat message/completion
 
 ## Task Webhooks And Event Triggers
 
-Task webhook triggers are separate inbound webhooks. `app.py` exempts only `/api/tasks/{task_id}/webhook/{token}` from normal auth so external callers can trigger tasks without cookies. `routes.task_routes` owns token generation/regeneration and validates task id, token, and active status before queueing a run.
+Task webhook triggers are separate inbound webhooks. `app.py` exempts only `/api/tasks/{task_id}/webhook/{token}` from normal auth so external callers can trigger tasks without cookies. `routes.task.task_routes` owns token generation/regeneration and validates task id, token, and active status before queueing a run; the top-level route module is a compatibility alias.
 
-`static/js/tasks.js` displays the live task webhook URL. `scripts/odysseus-webhook` is stale against this route shape and is not authoritative.
+`static/js/tasks.js` displays the live task webhook URL. `scripts/odysseus-webhook url` now emits the same route with percent-encoded task/token path segments; the CLI still reads and mutates task rows directly for list/show/rotate/revoke rather than delegating to HTTP route policy.
 
 Event-triggered tasks use `src.event_bus`; task execution and scheduling ownership lives in `calendar-tasks-notes.md`.
 
@@ -195,4 +195,3 @@ The integration audit also ran the targeted venv subset covering those areas wit
 - Decide whether generic integration base URLs should stay LAN-capable by default or make `INTEGRATION_API_BLOCK_PRIVATE_IPS=true` the default.
 - Admin-authored integration descriptions and `api_call` results enter the untrusted-result/gated-action pipeline, but their product-level trust presentation still needs continued review.
 - The dormant SQLAlchemy `Integration` model should be removed, migrated into use, or documented as legacy.
-- `scripts/odysseus-webhook` still emits the removed `/api/webhook/{token}` path.

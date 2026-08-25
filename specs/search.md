@@ -1,12 +1,13 @@
 # Search
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
 This spec covers web search, URL fetching, and search-derived context in:
 
 - canonical `routes/search/search_routes.py`, with `routes/search_routes.py` as a compatibility shim;
+- reusable outbound transport primitives in `src/outbound_fetch.py`;
 - `services/search/*` and exported `services.search.SearchService`;
 - `src/search/*` compatibility aliases around canonical service modules;
 - search call sites in `src/chat_processor.py`, `src/tool_execution.py`, `src/session_search.py`, `src/research_handler.py`, `src/deep_research.py`, and `services/research/research_handler.py`;
@@ -56,7 +57,7 @@ Runtime behavior:
 
 ## Content Fetching
 
-`services/search/content.py` owns webpage fetch/extract behavior for the services path:
+`src.outbound_fetch.py` owns reusable synchronous public-URL classification, one-resolution-per-hop DNS pinning, redirect handling, and response-body budgets without search/content-extraction dependencies. `services/search/content.py` adapts those primitives and owns webpage extraction/cache/result shaping for the services path:
 
 - public HTTP/HTTPS URL checks;
 - DNS fail-closed behavior;
@@ -82,7 +83,7 @@ Content failures are caller-shaped:
 
 - comprehensive search drops failed page fetches and keeps usable search context;
 - `web_fetch` returns tool errors, including bot-protection and HTTP-status failures;
-- direct URL chat prefetch expects unavailable context rather than fabricated content;
+- direct URL chat prefetch turns failures into compact untrusted unavailable-page context without exposing raw URL/exception/response diagnostics;
 - deep research records search/provider failures separately from extraction failures.
 
 ## Result Shapes

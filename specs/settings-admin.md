@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -20,7 +20,7 @@ This spec covers settings and admin surfaces in:
 - `routes/model_routes.py` for `/api/tools` and settings-bound model endpoint references;
 - `src/agent_tools/admin_tools.py`, `src/tool_implementations.py`, `src/tool_execution.py`, `src/tool_schemas.py`, and `src/tool_index.py` for `manage_settings`;
 - `src/agent_loop.py` for stale agent prompt references to settings APIs;
-- frontend modules `static/js/settings.js`, `static/js/settings/{registry,navigation,lifecycle,search,dom,sidebar}.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
+- frontend modules `static/js/appConfig.js`, `static/js/settings.js`, `static/js/settings/{registry,navigation,lifecycle,search,dom,sidebar}.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
 - CLI helpers `scripts/odysseus-preset` and `scripts/odysseus-theme`.
 
 Generic API integrations are cross-referenced in `integrations.md`. Model endpoint CRUD and endpoint cleanup are covered in `llm-models.md`. Email/contact/calendar legacy setting fallbacks stay with their domain specs.
@@ -75,7 +75,7 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - bundled accessibility font selection such as OpenDyslexic and text-size variable application;
 - CSS variable application.
 
-`static/js/settings.js` owns domain panel load/save behavior and compatibility exports, while `static/js/settings/registry.js` is the canonical group/panel metadata inventory. `navigation.js` activates panels and lazy admin content, `search.js` implements the registry-backed finder while filtering admin-only entries, `lifecycle.js` owns modal open/close/Escape/drag/docking behavior, `sidebar.js` owns persisted collapse/resize state, and `dom.js` holds shared DOM helpers. Registry/DOM consistency is a tested contract; new panels must update both the registry metadata and actual DOM.
+`static/js/settings.js` owns domain panel load/save behavior and compatibility exports, while `static/js/settings/registry.js` is the canonical group/panel metadata inventory. `navigation.js` activates panels and lazy admin content, `search.js` implements the registry-backed finder while filtering admin-only entries, `lifecycle.js` owns modal open/close/Escape/drag/docking behavior, `sidebar.js` owns persisted collapse/resize state, and `dom.js` holds shared DOM helpers. Registry/DOM consistency is a tested contract; new panels must update both the registry metadata and actual DOM. `static/js/appConfig.js` shares one promise cache for settings and tool reads across frontend modules, consumes a login-page settings prefetch once, drops rejected promises for retry, and requires settings/tool writers to invalidate the matching cache; `/api/tools` writes invalidate both entries because disabled tools live in settings state.
 
 Settings panels cover provider/model/search/research/reminder/email/CalDAV/CardDAV/vault, accessibility/font/text-size, scoped tokens, and unified integrations. The hidden legacy fallback editor was removed; no current Settings panel exposes the new foreground fallback keys, so opt-in exists only through owner-scoped preferences/internal callers until a deliberate UI is added. Email OAuth connect preserves the selected SMTP security mode and returns to the Settings surface after callback. `static/js/admin.js` owns user/admin panels, model endpoints, builtin tool toggles, MCP forms, feature toggles, token/webhook panels, diagnostics, backup/import, and danger-zone wipes.
 
@@ -173,7 +173,7 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 
 ## Testing Notes
 
-Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore/list-race safety, cleanup owner scope, diagnostics admin-gate/source/service-health/log-tail checks, admin promote/demote, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, Google email OAuth route/helper behavior, and a token-budget `manage_settings` path.
+Current targeted coverage includes settings store fallback/error paths, settings scrub, shared frontend config caching/invalidation/prefetch behavior, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore/list-race safety, cleanup owner scope, diagnostics admin-gate/source/service-health/log-tail checks, admin promote/demote, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, Google email OAuth route/helper behavior, and a token-budget `manage_settings` path.
 
 ## Current Gaps
 

@@ -1,6 +1,6 @@
 # Chat
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -16,7 +16,7 @@ This spec covers current chat behavior in:
 - `src/attachment_refs.py` and `src/upload_handler.py` for durable attachment
   references and write reservations;
 - `src/context_budget.py`, `src/context_compactor.py`, and `src/topic_analyzer.py`;
-- `src/foreground_model_routing.py`, `src/tool_approvals.py`, and `src/tool_capabilities.py`;
+- `src/foreground_model_routing.py`, `src/tool_approval_scopes.py`, `src/tool_approvals.py`, and `src/tool_capabilities.py`;
 - `routes/workspace_routes.py` for workspace selection support;
 - frontend modules `static/js/chat.js`, `static/js/chatStream.js`, `static/js/chatRenderer.js`, `static/js/sessions.js`, `static/js/search-chat.js`, `static/js/compare/stream.js`, `static/js/workspace.js`, `static/js/composerArrowUpRecall.js`, `static/js/streamingSegmenter.js`, `static/js/group.js`, and `static/js/notes.js`;
 - integration points with uploads, documents, compare, research, agent tools, memory, RAG, search, and model endpoints.
@@ -27,6 +27,8 @@ This spec covers current chat behavior in:
 
 `core.models.Session` and `ChatMessage` are pure data containers. They do not own persistence; `Session.add_message()` delegates to the configured session manager when present.
 
+Startup session discovery selects non-archived sessions by the existence of persisted `ChatMessage` rows rather than trusting the denormalized `Session.message_count`. It computes authoritative counts only for the bounded discovery set, then keeps full message hydration lazy.
+
 ## Streaming
 
 `routes/chat_routes.py` owns `/api/chat`, `/api/chat_stream`, detached stream resume/stop/status, injected context, chat-message search, and rewrite routes. Streaming is the main UI path.
@@ -36,7 +38,7 @@ This spec covers current chat behavior in:
 Runtime behavior:
 
 - the `/api/chat*` prefix is exempt from the global request hard timeout;
-- browser chat sends `X-Tz-Offset`; route code forwards it into `routes.calendar_routes` request-local state so note/calendar tool parsing can anchor natural-language dates to the user clock;
+- browser chat sends `X-Tz-Offset` and an IANA timezone name; request-local helpers prefer a valid IANA zone for DST-aware current-time reasoning, then fall back to the fixed offset;
 - browser chat can send a selected workspace path; route code only resolves it for admin/single-user flows, validates it as an existing directory, and forwards it so agent file/shell tools are confined by `src.tool_execution`;
 - stream callbacks can outlive a deleted session, so persistence must fail closed instead of recreating orphan messages;
 - message metadata carries timestamps, metrics, tool events, sources, hidden
@@ -117,7 +119,7 @@ tool-result metadata, so the UI can recover if a later `doc_update` stream event
 is missed. The chat renderer also hides raw/incomplete leaked tool JSON and
 document fences from normal transcript text.
 
-When untrusted external/workspace content has entered the agent context, high-impact tool calls pause as exact approval cards instead of executing. Approval continuation is bound to the sealed action and session: the browser submits only approve/deny, the server ignores new composer mutations and attachments, revalidates current policy and document freshness, consumes the one-use approval, executes the sealed tool, and resumes the agent. Sending a normal message retires a pending card while preserving the tainted session state.
+When untrusted external/workspace content has entered the agent context, high-impact tool calls pause as exact approval cards instead of executing. The browser can allow the rest of the interrupted task, allow this chat session, or deny; it submits only the opaque id/decision with an empty control-plane message and does not mutate the composer. The server restores the sealed first action plus private selected tools/query, revalidates policy and document freshness, consumes the first action, and resumes without persisting a synthetic user message. Task scope ends with that resumed run. Chat scope persists the resolved card and marks later context only for that exact session; forks do not inherit it. A normal message retires an unresolved card while preserving taint.
 
 ## Security And Provenance
 
@@ -134,6 +136,7 @@ Incognito disables memory, skill, and chat-history tools and skips assistant DB 
 ## Degraded And Compatibility Behavior
 
 - Missing ChromaDB, embeddings, memory vectors, RAG managers, or skills indexes should remove injected context or fall back to keyword/text behavior without failing chat.
+- Direct URL prefetch failures become compact untrusted context stating that the page was not read, with only transport-owned HTTP/size/rate-limit status where recognized; raw URLs, exception text, and response-controlled diagnostics are not echoed into logs or model context.
 - Sessions hydrate legacy string headers and multimodal JSON-array content, export text/HTML/Markdown after flattening non-string blocks, can lazy-load from DB when cached state is empty, and preserve old history/index delete behavior where needed.
 - Initial shell/session loading is non-blocking: the sidebar can render before a selected transcript is hydrated, and full transcript hydration is deferred until display or a model send requires it.
 - Chat repairs empty selected models and orphaned endpoint references before provider calls when possible.

@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -15,6 +15,7 @@ This spec covers agent/tool behavior in:
 - `src/tool_parsing.py`;
 - `src/tool_security.py`;
 - `src/tool_capabilities.py`;
+- `src/tool_approval_scopes.py`;
 - `src/tool_approvals.py`;
 - `src/attachment_refs.py` and shared upload lifecycle helpers in
   `src/upload_handler.py` / `src/tool_utils.py`;
@@ -93,6 +94,8 @@ Long-running bash jobs can be detached with background markers. `src.bg_jobs` ow
 
 Loop-breaker final-answer rounds, explicit repeated-tool/intent-nudge guard events, round-cap continuation signals, optional verifier retries, and teacher escalation are recovery behavior owned by `agent_loop` and `src.teacher_escalation`.
 
+Approval replay injects the sealed first tool result before the resumed model round. If that replay round has neither assistant prose nor reasoning, `_append_tool_results()` omits the empty assistant spacer so Anthropic-compatible payloads do not contain a rejected non-final empty assistant message; reasoning-only carriers remain a documented compatibility edge.
+
 ## Security And Policy
 
 - `src.tool_security` owns non-admin blocked-tool decisions.
@@ -103,7 +106,7 @@ Loop-breaker final-answer rounds, explicit repeated-tool/intent-nudge guard even
 - Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
 - `src.tool_capabilities` classifies each tool's effects and result integrity. Once external/workspace-untrusted content becomes model-visible, the request/session security context permits only explicitly low-impact tools without interruption and requires exact approval for high-impact, unknown, and arbitrary MCP calls.
-- `src.tool_approvals` seals an opaque, expiring, exact one-use action to owner, session, origin run, tool content, workspace, capability snapshot, and—when relevant—document id/version/content digest. Approve/deny resumes only the sealed server record after current-policy and freshness checks; new normal turns and superseding actions retire stale approvals without clearing taint.
+- `src.tool_approvals` seals an opaque, expiring exact first action plus server-only selected tools and continuation query to owner, session, origin run, tool content, workspace, capability snapshot, and—when relevant—document id/version/content digest. Chat choices grant the resumed task or the same chat session; both consume the exact first action, task scope bypasses the gate only during that resumed run, and chat scope is reconstructed only from a resolved card bound to the exact session id. The browser never receives selected tools/query and submits only task/chat/deny. Non-chat callers retain single-action behavior; new normal turns and superseding actions retire unresolved approvals without clearing taint.
 - Tool results that expose remote or stored untrusted content arm the gate even when their tool status is failed. Content-free failures and server-generated policy/approval placeholders do not. Native/provider tool messages and fenced results carry model-visible untrusted metadata/wrapping instead of relying on prompt wording alone.
 - Attachment-bearing document, note, and calendar tools owner-reserve internal
   upload references before durable writes and fail without mutation when the

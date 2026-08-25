@@ -1,6 +1,6 @@
 # Ollama Provider Shape
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@e71f8ce | 2026-08-25
 
 ## Scope
 
@@ -44,11 +44,7 @@ and low-confidence until corroborated.
 
 ## Fallback And Safety
 
-Current reader detection identifies port 11434 as Ollama, in addition to an
-explicit endpoint kind or an `ollama.com` hostname suffix. This is a
-normalization hint, not endpoint trust or capability evidence. Names that
-contain `vision`, `embed`, or `qwen` are not capability evidence (#3743,
-#4487).
+Current reader detection identifies port 11434 as Ollama, in addition to an explicit endpoint kind or an exact/label-bounded `ollama.com` hostname. This is a normalization hint, not endpoint trust or capability evidence. Names that contain `vision`, `embed`, or `qwen` are not capability evidence (#3743, #4487).
 
 ## Current Gaps
 
