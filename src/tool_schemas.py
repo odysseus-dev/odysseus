@@ -36,7 +36,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a shell command through the server-owned process boundary. The default Sandbox confines the command to the selected or default agent workspace; only explicitly confirmed Full Access can reach files available to the Odysseus service user. Process networking is networkless when Web is off and brokered HTTP(S) only when Web is on. Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -50,7 +50,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
+            "description": "Execute Python code with the application's dependency environment through the server-owned process boundary. The default Sandbox confines it to the selected or default agent workspace; only explicitly confirmed Full Access can reach files available to the Odysseus service user. Process networking is networkless when Web is off and brokered HTTP(S) only when Web is on. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -157,7 +157,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_workspace",
-            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
+            "description": "Return the active workspace and effective process boundary. File tools are confined to the workspace. Bash, Python, and detached processes use Sandbox by default and are confined there; only explicitly confirmed Full Access treats it as a starting directory while retaining service-user filesystem access. The result reports the effective network profile: networkless or brokered HTTP(S) only. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },

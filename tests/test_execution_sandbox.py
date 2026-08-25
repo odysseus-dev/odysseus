@@ -18,7 +18,7 @@ from src.execution_sandbox import (
     environment_for_sandbox_launcher,
     full_access_command,
     sandbox_command,
-    sandbox_python_executable,
+    sandbox_python_command,
 )
 
 
@@ -150,6 +150,148 @@ def test_sandbox_argv_is_positive_mount_networkless_by_default_and_clearenv(tmp_
     assert "OPENAI_API_KEY" not in argv
     for variable in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "no_proxy"):
         assert variable not in argv
+
+
+def _configure_fake_native_venv(tmp_path, monkeypatch):
+    import src.execution_sandbox as execution_sandbox
+
+    system_executable = os.path.realpath(execution_sandbox.sys.executable)
+    venv = tmp_path / "venv"
+    executable = venv / "bin" / "python"
+    site_packages = (
+        venv
+        / "lib"
+        / f"python{execution_sandbox.sys.version_info.major}.{execution_sandbox.sys.version_info.minor}"
+        / "site-packages"
+    )
+    executable.parent.mkdir(parents=True)
+    site_packages.mkdir(parents=True)
+    executable.symlink_to(system_executable)
+    (venv / "pyvenv.cfg").write_text(
+        f"home = {Path(system_executable).parent}\n"
+        "include-system-site-packages = false\n"
+        f"version = {execution_sandbox.sys.version.split()[0]}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(execution_sandbox.sys, "prefix", str(venv))
+    monkeypatch.setattr(execution_sandbox.sys, "executable", str(executable))
+    return venv, executable, site_packages, system_executable
+
+
+def test_sandbox_python_preserves_native_virtualenv_read_only(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    venv, _, _, _ = _configure_fake_native_venv(
+        tmp_path,
+        monkeypatch,
+    )
+
+    argv = sandbox_python_command(
+        ["-I", "-c", "import example_dependency"],
+        workspace=str(workspace),
+    )
+    triples = [argv[index:index + 3] for index in range(len(argv) - 2)]
+
+    assert ["--ro-bind", str(venv), "/run/odysseus-python-venv"] in triples
+    assert sum(
+        triple[0] == "--ro-bind"
+        and triple[2] == "/run/odysseus-python-venv"
+        for triple in triples
+    ) == 1
+    assert argv[-4:] == [
+        "/run/odysseus-python-venv/bin/python",
+        "-I",
+        "-c",
+        "import example_dependency",
+    ]
+
+
+def test_sandbox_python_rejects_non_system_virtualenv_interpreter(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _, executable, _, _ = _configure_fake_native_venv(tmp_path, monkeypatch)
+    executable.unlink()
+    executable.write_bytes(b"untrusted interpreter")
+
+    with pytest.raises(SandboxUnavailable, match="cannot be represented safely"):
+        sandbox_python_command(["-I", "-c", "pass"], workspace=str(workspace))
+
+
+def test_sandbox_python_rejects_virtualenv_config_symlink_escape(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    venv, _, _, _ = _configure_fake_native_venv(tmp_path, monkeypatch)
+    outside_config = tmp_path / "outside-pyvenv.cfg"
+    outside_config.write_text("include-system-site-packages = false\n", encoding="utf-8")
+    config = venv / "pyvenv.cfg"
+    config.unlink()
+    config.symlink_to(outside_config)
+
+    with pytest.raises(SandboxUnavailable, match="cannot be represented safely"):
+        sandbox_python_command(["-I", "-c", "pass"], workspace=str(workspace))
+
+
+def test_sandbox_python_rejects_writable_virtualenv_config(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    venv, _, _, _ = _configure_fake_native_venv(tmp_path, monkeypatch)
+    (venv / "pyvenv.cfg").chmod(0o660)
+
+    with pytest.raises(SandboxUnavailable, match="cannot be represented safely"):
+        sandbox_python_command(["-I", "-c", "pass"], workspace=str(workspace))
+
+
+def test_sandbox_python_rejects_virtualenv_inside_writable_workspace(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _configure_fake_native_venv(workspace, monkeypatch)
+
+    with pytest.raises(SandboxUnavailable, match="inside the writable workspace"):
+        sandbox_python_command(["-I", "-c", "pass"], workspace=str(workspace))
+
+
+@requires_bubblewrap
+def test_sandbox_python_imports_native_virtualenv_only_dependency(
+    tmp_path,
+    monkeypatch,
+    runtime_seccomp_launcher,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _, _, site_packages, _ = _configure_fake_native_venv(tmp_path, monkeypatch)
+    (site_packages / "sandbox_venv_only.py").write_text(
+        "VALUE = 'native-venv-preserved'\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        sandbox_python_command(
+            [
+                "-I",
+                "-c",
+                "import sandbox_venv_only; print(sandbox_venv_only.VALUE)",
+            ],
+            workspace=str(workspace),
+        ),
+        cwd=workspace,
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "native-venv-preserved"
 
 
 def test_trusted_executable_rejects_missing_or_writable_install(monkeypatch):
@@ -757,8 +899,8 @@ def test_sandbox_network_namespace_has_no_external_route(
             "\nexcept OSError: raise SystemExit(0)"
             "\nraise SystemExit(1)"
         )
-        argv = sandbox_command(
-            [sandbox_python_executable(), "-I", "-c", code],
+        argv = sandbox_python_command(
+            ["-I", "-c", code],
             workspace=str(workspace),
         )
 

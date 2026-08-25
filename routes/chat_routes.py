@@ -261,7 +261,7 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     """Resolve the posted workspace for this request: (workspace, rejected).
 
     Privilege is checked BEFORE the path ever touches the filesystem. Only
-    admin/single-user callers can use the workspace-backed file/shell tools,
+    admin/single-user callers can use the workspace-backed file/process tools,
     so only they get vet_workspace() and the workspace_rejected signal. For
     any other caller the submitted value is dropped uniformly, with no vetting
     and no event: otherwise the presence/absence of workspace_rejected would
@@ -919,7 +919,7 @@ def setup_chat_routes(
         pending_tool_approval = None
         retired_tool_approval_taint = False
         tool_approval_continuation = False
-        # Workspace: confine the agent's file/shell tools to this folder.
+        # Workspace: confine file tools and the default process Sandbox here.
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
         )

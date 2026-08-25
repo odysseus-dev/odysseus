@@ -1253,8 +1253,8 @@ async function _cmdToggleDoc(args, ctx) {
   return true;
 }
 
-// Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
-// show / set <path> / clear / pick (open the directory browser).
+// Workspace: confine file tools and the default process Sandbox to a folder.
+// Not a boolean: show / set <path> / clear / pick (open the browser).
 async function _cmdWorkspace(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   const rest = args.slice(1).join(' ').trim();

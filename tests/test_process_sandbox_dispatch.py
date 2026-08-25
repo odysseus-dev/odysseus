@@ -1,5 +1,7 @@
 """Regression coverage for native process-tool dispatch."""
 
+import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -150,3 +152,40 @@ async def test_background_bash_launches_before_foreground_dispatch(monkeypatch):
             "network_profile": tool_execution.SandboxNetworkProfile.NETWORKLESS,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_background_policy_construction_does_not_block_request_loop(monkeypatch):
+    import src.bg_jobs as bg_jobs
+    import src.tool_execution as tool_execution
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed_launch(*_args, **_kwargs):
+        started.set()
+        if not release.wait(timeout=2):
+            raise AssertionError("event loop did not remain available during launch")
+        return {"id": "job-async", "execution_mode": "sandbox"}
+
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda _owner: True)
+    monkeypatch.setattr(bg_jobs, "launch", delayed_launch)
+
+    task = asyncio.create_task(
+        tool_execution.execute_tool_block(
+            SimpleNamespace(tool_type="bash", content="#!bg\nprintf background"),
+            session_id="chat-5818",
+            owner="alice",
+            workspace="/tmp/workspace",
+            security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
+        assert not task.done()
+    finally:
+        release.set()
+
+    _, result = await asyncio.wait_for(task, timeout=1)
+    assert result["bg_job_id"] == "job-async"

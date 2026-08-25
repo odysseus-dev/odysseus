@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -283,11 +284,89 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
 # ── get_workspace tool ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_get_workspace_tool(ws, admin):
+async def test_get_workspace_tool_reports_effective_sandbox_contract(
+    ws,
+    admin,
+    monkeypatch,
+):
+    from src import process_execution
+
+    monkeypatch.setattr(
+        process_execution,
+        "configured_process_execution_mode",
+        lambda: process_execution.ProcessExecutionMode.SANDBOX,
+    )
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a", workspace=ws)
-    assert r["exit_code"] == 0 and r["output"].startswith(ws) and "not sandboxed" in r["output"]
+    assert r["exit_code"] == 0 and r["output"].startswith(ws)
+    assert "Process mode: Sandbox" in r["output"]
+    assert "confined to this workspace" in r["output"]
+    assert "Effective process network profile: networkless" in r["output"]
+    assert r["execution_mode"] == "sandbox"
+    assert r["network_profile"] == "networkless"
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a")  # none active
     assert r["exit_code"] == 0 and "No workspace" in r["output"]
+    assert "confined to the default agent workspace" in r["output"]
+
+
+@pytest.mark.asyncio
+async def test_get_workspace_tool_reports_full_access_and_brokered_profile(
+    ws,
+    admin,
+    monkeypatch,
+):
+    from src import process_execution
+    from src.execution_sandbox import SandboxNetworkProfile
+
+    monkeypatch.setattr(
+        process_execution,
+        "configured_process_execution_mode",
+        lambda: process_execution.ProcessExecutionMode.FULL_ACCESS,
+    )
+    _, result = await execute_tool_block(
+        _block("get_workspace", ""),
+        owner="a",
+        workspace=ws,
+        network_profile=SandboxNetworkProfile.BROKERED_ONLY,
+    )
+
+    assert "Process mode: Full Access (explicitly confirmed)" in result["output"]
+    assert "starting directory" in result["output"]
+    assert "brokered HTTP(S) only" in result["output"]
+    assert result["execution_mode"] == "full_access"
+    assert result["network_profile"] == "brokered_only"
+
+
+def test_every_live_workspace_description_matches_process_boundary():
+    from src.agent_loop import TOOL_SECTIONS
+    from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+
+    schema_descriptions = {
+        item["function"]["name"]: item["function"]["description"]
+        for item in FUNCTION_TOOL_SCHEMAS
+    }
+    workspace_js = (
+        Path(__file__).resolve().parents[1] / "static" / "js" / "workspace.js"
+    ).read_text(encoding="utf-8")
+    descriptions = (
+        schema_descriptions["bash"],
+        schema_descriptions["python"],
+        schema_descriptions["get_workspace"],
+        BUILTIN_TOOL_DESCRIPTIONS["bash"],
+        BUILTIN_TOOL_DESCRIPTIONS["python"],
+        BUILTIN_TOOL_DESCRIPTIONS["get_workspace"],
+        TOOL_SECTIONS["bash"],
+        TOOL_SECTIONS["python"],
+        TOOL_SECTIONS["get_workspace"],
+        workspace_js,
+    )
+
+    for description in descriptions:
+        assert "Sandbox" in description
+        assert "Full Access" in description
+        assert "networkless" in description
+        assert "brokered HTTP(S) only" in description
+        assert "not sandboxed" not in description.casefold()
 
 
 # ── no leak across calls ────────────────────────────────────────────────

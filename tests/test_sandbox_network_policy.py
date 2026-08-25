@@ -65,7 +65,19 @@ async def test_subprocess_handlers_apply_network_policy(monkeypatch, tool_name):
     async def fake_run_subprocess_streaming(*args, **kwargs):
         return "", "", 0, False
 
-    monkeypatch.setattr(subprocess_tools, "sandbox_command", fake_sandbox_command)
+    builder_name = (
+        "sandbox_command" if tool_name == "bash" else "sandbox_python_command"
+    )
+    monkeypatch.setattr(subprocess_tools, builder_name, fake_sandbox_command)
+    available = SimpleNamespace(
+        supports=lambda _profile: True,
+        reason_for=lambda _profile: "",
+    )
+    monkeypatch.setattr(
+        subprocess_tools,
+        "process_capability",
+        lambda: SimpleNamespace(sandbox=available),
+    )
     monkeypatch.setattr(
         subprocess_tools.asyncio,
         "create_subprocess_exec",

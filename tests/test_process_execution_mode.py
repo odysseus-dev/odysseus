@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import threading
 
 import pytest
 
@@ -179,6 +180,88 @@ async def test_brokered_process_blocks_when_only_networkless_probe_passes(
 
     assert result["blocked"] is True
     assert "sandbox broker unavailable" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_capability_probe_does_not_block_async_request_loop(
+    monkeypatch,
+    tmp_path,
+):
+    pe = _process_execution()
+    st = _subprocess_tools()
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed_capability():
+        started.set()
+        if not release.wait(timeout=2):
+            raise AssertionError("event loop did not remain available during probe")
+        return _capability(pe, sandbox=False, sandbox_broker=False)
+
+    monkeypatch.setattr(
+        st,
+        "configured_process_execution_mode",
+        lambda: pe.ProcessExecutionMode.SANDBOX,
+    )
+    monkeypatch.setattr(st, "process_capability", delayed_capability)
+    monkeypatch.setattr("src.tool_execution.agent_cwd", lambda: str(tmp_path))
+
+    task = asyncio.create_task(st.BashTool().execute("echo blocked", {}))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
+        assert not task.done()
+    finally:
+        release.set()
+
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result["blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_policy_scan_does_not_block_async_request_loop(
+    monkeypatch,
+    tmp_path,
+):
+    pe = _process_execution()
+    st = _subprocess_tools()
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed_sandbox_command(*_args, **_kwargs):
+        started.set()
+        if not release.wait(timeout=2):
+            raise AssertionError("event loop did not remain available during scan")
+        return ["/trusted/sandbox"]
+
+    monkeypatch.setattr(
+        st,
+        "configured_process_execution_mode",
+        lambda: pe.ProcessExecutionMode.SANDBOX,
+    )
+    monkeypatch.setattr(st, "process_capability", lambda: _capability(pe))
+    monkeypatch.setattr(st, "sandbox_command", delayed_sandbox_command)
+    monkeypatch.setattr("src.tool_execution.agent_cwd", lambda: str(tmp_path))
+
+    async def fake_spawn(*_args, **_kwargs):
+        return _FakeProcess()
+
+    async def fake_stream(*_args, **_kwargs):
+        return "ok", "", 0, False
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(st, "_run_subprocess_streaming", fake_stream)
+
+    task = asyncio.create_task(st.BashTool().execute("echo ok", {}))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
+        assert not task.done()
+    finally:
+        release.set()
+
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result["output"] == "ok"
 
 
 @pytest.mark.asyncio

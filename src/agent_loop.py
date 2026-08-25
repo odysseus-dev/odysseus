@@ -562,6 +562,7 @@ TOOL_SECTIONS = {
 <shell command>
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, system info, process management, etc.
+PROCESS BOUNDARY: Sandbox is the default and confines Bash, Python, and detached processes to the selected or default agent workspace. Only explicitly confirmed Full Access can reach files available to the Odysseus service user. The effective process network is networkless when Web is off and brokered HTTP(S) only when Web is on.
 Do NOT use bash/curl for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.
 NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
@@ -576,7 +577,7 @@ NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats re
 ```python
 <python code>
 ```
-Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same sandbox limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
+Execute Python code with the application's dependency environment. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). It uses the same process boundary as Bash: Sandbox by default, explicitly confirmed Full Access only, and an effective network profile of networkless or brokered HTTP(S) only. There is no TTY, GUI, or `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
 Prefer a dedicated tool whenever one fits the job (reading, searching, or writing files); use python only for computation/processing no dedicated tool covers - not for reading or writing files.
 Do NOT use Python/requests for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.""",
 
@@ -638,7 +639,7 @@ Maintain a structured task list for multi-step coding work. Use it when the task
     "get_workspace": """\
 ```get_workspace
 ```
-Return the absolute path of the active workspace folder. File tools are CONFINED to it (paths can be RELATIVE to it); the shell starts there (cwd) but is NOT sandboxed. Call this first when the user says "the project"/"the code"/"this folder" without a path, instead of asking them. No arguments.""",
+Return the active workspace and effective process boundary. File tools are CONFINED to the workspace (paths can be RELATIVE to it). Bash, Python, and detached processes use Sandbox by default and are confined there; only explicitly confirmed Full Access treats it as a starting directory while retaining service-user filesystem access. The result reports the effective network profile: networkless or brokered HTTP(S) only. Call this first when the user says "the project"/"the code"/"this folder" without a path, instead of asking them. No arguments.""",
 
     "create_document": """\
 ```create_document

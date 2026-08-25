@@ -136,6 +136,7 @@ _TRUSTED_BWRAP = "/usr/bin/bwrap"
 _TRUSTED_SECCOMP_LAUNCHER = "/usr/local/libexec/odysseus-seccomp-launcher"
 _TRUSTED_EGRESS_BROKER = "/usr/local/libexec/odysseus-egress-broker"
 _TRUSTED_EGRESS_BRIDGE = "/usr/local/libexec/odysseus-egress-bridge"
+_SANDBOX_PYTHON_VENV = "/run/odysseus-python-venv"
 _BROKER_SOCKET = "/run/odysseus-egress/broker.sock"
 _BROKER_PROXY_URL = "http://127.0.0.1:3128"
 _CA_CERTIFICATE = "/etc/ssl/certs/ca-certificates.crt"
@@ -485,7 +486,7 @@ def _odysseus_data_overlays(workspace: str) -> tuple[list[str], list[str]]:
     return args, hidden_roots
 
 
-def sandbox_python_executable() -> str:
+def _system_python_executable() -> str:
     """Choose an interpreter path covered by the read-only /usr runtime mount."""
     current = os.path.realpath(sys.executable or "")
     if current.startswith("/usr/") and os.path.isfile(current):
@@ -496,20 +497,99 @@ def sandbox_python_executable() -> str:
     raise SandboxUnavailable("No system Python interpreter is available in /usr.")
 
 
+def _native_virtualenv_runtime() -> str | None:
+    """Return the canonical trusted native venv root, when one is active."""
+    if sys.prefix == sys.base_prefix:
+        return None
+
+    prefix = os.path.realpath(os.path.abspath(sys.prefix or ""))
+    config = os.path.join(prefix, "pyvenv.cfg")
+    resolved_config = os.path.realpath(config)
+    venv_python = os.path.join(prefix, "bin", "python")
+    resolved_executable = os.path.realpath(venv_python)
+    try:
+        prefix_metadata = os.stat(prefix)
+        config_metadata = os.lstat(config)
+        executable_metadata = os.stat(resolved_executable)
+    except OSError:
+        prefix_metadata = None
+        config_metadata = None
+        executable_metadata = None
+    if (
+        os.path.basename(prefix) not in {"venv", ".venv"}
+        or prefix_metadata is None
+        or not stat.S_ISDIR(prefix_metadata.st_mode)
+        or prefix_metadata.st_uid not in {0, os.geteuid()}
+        or prefix_metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or not resolved_executable.startswith("/usr/")
+        or executable_metadata is None
+        or not stat.S_ISREG(executable_metadata.st_mode)
+        or executable_metadata.st_uid != 0
+        or executable_metadata.st_mode
+        & (stat.S_ISUID | stat.S_ISGID | stat.S_IWGRP | stat.S_IWOTH)
+        or not os.access(resolved_executable, os.X_OK)
+        or config_metadata is None
+        or not stat.S_ISREG(config_metadata.st_mode)
+        or config_metadata.st_uid not in {0, os.geteuid()}
+        or config_metadata.st_mode
+        & (stat.S_ISUID | stat.S_ISGID | stat.S_IWGRP | stat.S_IWOTH)
+        or not os.access(config, os.R_OK)
+        or resolved_config != config
+        or not _is_within(resolved_config, prefix)
+    ):
+        raise SandboxUnavailable(
+            "The running Python virtualenv cannot be represented safely inside "
+            "the Sandbox. Use a standard `venv` or `.venv` backed by a trusted "
+            "system Python under /usr."
+        )
+    return prefix
+
+
+def sandbox_python_executable() -> str:
+    """Return the system interpreter exposed by the base Sandbox runtime."""
+    return _system_python_executable()
+
+
+def sandbox_python_command(
+    arguments: Sequence[str],
+    *,
+    workspace: str,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
+) -> list[str]:
+    """Build a Sandbox command using the application's Python environment."""
+    if not all(isinstance(part, str) for part in arguments):
+        raise SandboxUnavailable("Sandbox Python arguments must be strings.")
+    runtime = _native_virtualenv_runtime()
+    if runtime is None:
+        executable = _system_python_executable()
+        readonly_python_venv = None
+    else:
+        executable = f"{_SANDBOX_PYTHON_VENV}/bin/python"
+        readonly_python_venv = runtime
+    return sandbox_command(
+        [executable, *arguments],
+        workspace=workspace,
+        readonly_python_venv=readonly_python_venv,
+        network_profile=network_profile,
+    )
+
+
 def sandbox_command(
     command: Sequence[str],
     *,
     workspace: str,
     readonly_files: Mapping[str, str] | None = None,
+    readonly_python_venv: str | None = None,
     extra_environment: Mapping[str, str] | None = None,
     network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> list[str]:
     """Build a positive-mount bubblewrap command.
 
-    `readonly_files` maps host source files to absolute paths inside the
-    sandbox.  It is intended for server-generated command files, never broad
-    directories. Network authority is a server-owned launch snapshot. Raw
-    container networking is never available in Sandbox mode.
+    `readonly_files` maps trusted server-generated host files to absolute paths
+    inside the sandbox. `readonly_python_venv` accepts only the running trusted
+    native venv and binds it read-only at one fixed destination. Network
+    authority is a server-owned launch snapshot. Raw container networking is
+    never available in Sandbox mode.
     """
     if not command or not all(isinstance(part, str) for part in command):
         raise SandboxUnavailable("Sandbox command must be a non-empty argv list.")
@@ -589,6 +669,19 @@ def sandbox_command(
     data_overlays, hidden_data_roots = _odysseus_data_overlays(root)
     args.extend(data_overlays)
     args.extend(_workspace_overlays(root, excluded_roots=hidden_data_roots))
+
+    if readonly_python_venv is not None:
+        source = os.path.realpath(readonly_python_venv)
+        if source == root or _is_within(source, root):
+            raise SandboxUnavailable(
+                "The trusted Python virtualenv cannot be inside the writable workspace."
+            )
+        expected = _native_virtualenv_runtime()
+        if expected is None or source != expected:
+            raise SandboxUnavailable("Invalid trusted Python virtualenv mount source.")
+        _reject_nested_workspace_mounts(source)
+        args.extend(_directory_creation_args(_SANDBOX_PYTHON_VENV))
+        args.extend(("--ro-bind", source, _SANDBOX_PYTHON_VENV))
 
     for source, destination in (readonly_files or {}).items():
         source_path = os.path.realpath(source)

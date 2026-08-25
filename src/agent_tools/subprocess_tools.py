@@ -15,7 +15,7 @@ from src.execution_sandbox import (
     environment_for_sandbox_launcher,
     full_access_command,
     sandbox_command,
-    sandbox_python_executable,
+    sandbox_python_command,
 )
 from src.process_execution import (
     FULL_ACCESS_WARNING,
@@ -296,7 +296,8 @@ async def _run_tmux_bash(
 
     async with lock:
         try:
-            shell_argv = sandbox_command(
+            shell_argv = await asyncio.to_thread(
+                sandbox_command,
                 ["/bin/bash", "--noprofile", "--norc"],
                 workspace=canonical_cwd,
                 network_profile=network_profile,
@@ -537,7 +538,7 @@ class BashTool:
                     execution_mode,
                     "Full Access with retained network isolation requires Linux and Bubblewrap.",
                 )
-            capability = process_capability().full_access
+            capability = (await asyncio.to_thread(process_capability)).full_access
             if not capability.supports(network_profile):
                 return blocked_process_result(
                     "bash",
@@ -545,7 +546,8 @@ class BashTool:
                     capability.reason_for(network_profile),
                 )
             try:
-                argv = full_access_command(
+                argv = await asyncio.to_thread(
+                    full_access_command,
                     ["/bin/bash", "--noprofile", "--norc", "-c", content],
                     working_directory=workspace,
                     network_profile=network_profile,
@@ -612,7 +614,7 @@ class BashTool:
                 execution_mode,
                 "Sandbox mode requires Linux with bubblewrap.",
             )
-        capability = process_capability().sandbox
+        capability = (await asyncio.to_thread(process_capability)).sandbox
         if not capability.supports(network_profile):
             return blocked_process_result(
                 "bash",
@@ -668,7 +670,8 @@ class BashTool:
             }
 
         try:
-            argv = sandbox_command(
+            argv = await asyncio.to_thread(
+                sandbox_command,
                 ["/bin/bash", "--noprofile", "--norc", "-c", content],
                 workspace=workspace,
                 network_profile=network_profile,
@@ -741,7 +744,7 @@ class PythonTool:
                     execution_mode,
                     "Full Access with retained network isolation requires Linux and Bubblewrap.",
                 )
-            capability = process_capability().full_access
+            capability = (await asyncio.to_thread(process_capability)).full_access
             if not capability.supports(network_profile):
                 return blocked_process_result(
                     "python",
@@ -749,7 +752,8 @@ class PythonTool:
                     capability.reason_for(network_profile),
                 )
             try:
-                argv = full_access_command(
+                argv = await asyncio.to_thread(
+                    full_access_command,
                     [sys.executable, "-I", "-c", content],
                     working_directory=workspace,
                     network_profile=network_profile,
@@ -816,7 +820,7 @@ class PythonTool:
                 execution_mode,
                 "Sandbox mode requires Linux with bubblewrap.",
             )
-        capability = process_capability().sandbox
+        capability = (await asyncio.to_thread(process_capability)).sandbox
         if not capability.supports(network_profile):
             return blocked_process_result(
                 "python",
@@ -824,8 +828,9 @@ class PythonTool:
                 capability.reason_for(network_profile),
             )
         try:
-            argv = sandbox_command(
-                [sandbox_python_executable(), "-I", "-c", content],
+            argv = await asyncio.to_thread(
+                sandbox_python_command,
+                ["-I", "-c", content],
                 workspace=workspace,
                 network_profile=network_profile,
             )
