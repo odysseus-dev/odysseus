@@ -139,6 +139,13 @@ docker info --format '{{.DockerRootDir}}'
     assert guarded_command in setup
 
 
+def test_preview_encoder_targets_pages_source():
+    encoder = (REPO / "scripts/encode_previews.sh").read_text(encoding="utf-8")
+
+    assert "landing page: website/<name>.webm" in encoder
+    assert 'OUT_DIR="$(cd "$(dirname "$0")/../website" && pwd)"' in encoder
+
+
 def test_ci_runs_asset_ownership_guards_for_managed_roots():
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     match = re.search(r"grep -Ev '([^']+)'", workflow)
