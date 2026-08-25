@@ -7,12 +7,21 @@
 # namespaces, a writable selected directory, and the broker socket bridge.
 set -eu
 
+SYSTEM_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH="$SYSTEM_PATH"
+export PATH
+
 fail() {
     echo "odysseus-sandbox-self-test: $*" >&2
     exit 1
 }
 
-[ "$(id -u)" != "0" ] || fail "the sandbox boot check must run as the dropped non-root service user"
+ID=/usr/bin/id
+STAT=/usr/bin/stat
+FIND=/usr/bin/find
+MKTEMP=/usr/bin/mktemp
+CHMOD=/usr/bin/chmod
+RM=/usr/bin/rm
 
 LAUNCHER=/usr/local/libexec/odysseus-seccomp-launcher
 BWRAP=/usr/bin/bwrap
@@ -22,12 +31,14 @@ PRLIMIT=/usr/bin/prlimit
 PYTHON=/usr/local/bin/python3
 [ -x "$PYTHON" ] || PYTHON=/usr/bin/python3
 
+[ "$("$ID" -u)" != "0" ] || fail "the sandbox boot check must run as the dropped non-root service user"
+
 check_trusted_file() {
     path="$1"
     description="$2"
     [ -f "$path" ] && [ -x "$path" ] || fail "missing trusted $description at $path"
-    [ "$(stat -c '%u:%g' "$path")" = "0:0" ] || fail "trusted $description is not root-owned: $path"
-    if [ -n "$(find "$path" -maxdepth 0 \( -perm /022 -o -perm /6000 \) -print -quit)" ]; then
+    [ "$("$STAT" -c '%u:%g' "$path")" = "0:0" ] || fail "trusted $description is not root-owned: $path"
+    if [ -n "$("$FIND" "$path" -maxdepth 0 \( -perm /022 -o -perm /6000 \) -print -quit)" ]; then
         fail "trusted $description is writable or set-id: $path"
     fi
 }
@@ -39,12 +50,15 @@ check_trusted_file "$BRIDGE" "egress bridge"
 check_trusted_file "$PRLIMIT" "prlimit helper"
 check_trusted_file "$PYTHON" "Python interpreter"
 
-[ "$(bwrap --version)" = "bubblewrap 0.11.0" ] || fail "unsupported Bubblewrap version"
+[ "$("$BWRAP" --version)" = "bubblewrap 0.11.0" ] || fail "unsupported Bubblewrap version"
 [ -r /proc/self/mountinfo ] || fail "container /proc mountinfo is unavailable"
 
-WORKSPACE="$(mktemp -d /tmp/odysseus-sandbox-self-test.XXXXXX)" || fail "unable to create a self-test workspace"
-trap 'rm -rf "$WORKSPACE"' EXIT HUP INT TERM
-chmod 700 "$WORKSPACE"
+WORKSPACE="$("$MKTEMP" -d /tmp/odysseus-sandbox-self-test.XXXXXX)" || fail "unable to create a self-test workspace"
+cleanup() {
+    "$RM" -rf "$WORKSPACE"
+}
+trap cleanup EXIT HUP INT TERM
+"$CHMOD" 700 "$WORKSPACE"
 
 run_boundary() {
     brokered="$1"
@@ -125,10 +139,12 @@ run_boundary no "$NETWORKLESS_PROBE" networkless
 
 BROKER_PROBE='import socket
 client = socket.create_connection(("127.0.0.1", 3128), timeout=2)
-client.sendall(b"GET http://127.0.0.1/ HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n")
+client.sendall(b"GET http://127.0.0.1/ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
 response = client.recv(4096)
 client.close()
-assert response.startswith(b"HTTP/1.1"), "broker bridge returned no HTTP response"
+status_line, separator, _ = response.partition(b"\r\n")
+status_parts = status_line.split(b" ", 2)
+assert separator and status_parts[:2] == [b"HTTP/1.1", b"403"], f"broker bridge returned unexpected policy result: {status_line!r}"
 print("broker bridge passed")'
 
 run_boundary yes "$BROKER_PROBE" brokered

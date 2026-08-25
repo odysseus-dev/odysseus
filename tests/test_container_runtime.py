@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -21,6 +24,46 @@ EXPECTED_CAPS = {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}
 
 def _compose(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _broker_probe_source() -> str:
+    source = (ROOT / "docker" / "sandbox-self-test.sh").read_text(encoding="utf-8")
+    start_marker = "BROKER_PROBE='"
+    end_marker = "'\n\nrun_boundary yes \"$BROKER_PROBE\" brokered"
+    start = source.index(start_marker) + len(start_marker)
+    end = source.index(end_marker, start)
+    return source[start:end]
+
+
+class _BrokerClient:
+    def __init__(self, response: bytes):
+        self.response = response
+        self.request = b""
+        self.closed = False
+
+    def sendall(self, request: bytes) -> None:
+        self.request += request
+
+    def recv(self, _size: int) -> bytes:
+        return self.response
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _run_broker_probe(monkeypatch, response: bytes) -> _BrokerClient:
+    client = _BrokerClient(response)
+    socket_module = types.ModuleType("socket")
+
+    def create_connection(address, timeout):
+        assert address == ("127.0.0.1", 3128)
+        assert timeout == 2
+        return client
+
+    socket_module.create_connection = create_connection
+    monkeypatch.setitem(sys.modules, "socket", socket_module)
+    exec(compile(_broker_probe_source(), "<broker-probe>", "exec"), {})
+    return client
 
 
 @pytest.mark.parametrize("path", COMPOSE_FILES)
@@ -67,7 +110,81 @@ def test_dockerfile_installs_pinned_helpers_and_runs_the_boot_check():
         assert required in dockerfile
 
     entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
-    assert '"$GOSU_BIN" "$ODY_USER" /usr/local/bin/odysseus-sandbox-self-test' in entrypoint
+    assert (
+        '"$GOSU_BIN" "$ODY_USER" /usr/bin/env PATH="$SYSTEM_PATH" '
+        "/usr/local/bin/odysseus-sandbox-self-test"
+    ) in entrypoint
+
+
+def test_broker_probe_sends_crlf_and_requires_the_policy_denial(monkeypatch):
+    client = _run_broker_probe(
+        monkeypatch,
+        b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
+    )
+
+    assert client.request == (
+        b"GET http://127.0.0.1/ HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Connection: close\r\n"
+        b"\r\n"
+    )
+    assert client.closed
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n",
+        b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
+    ),
+)
+def test_broker_probe_rejects_malformed_and_upstream_failures(monkeypatch, response):
+    with pytest.raises(AssertionError, match="unexpected policy result"):
+        _run_broker_probe(monkeypatch, response)
+
+
+def test_boot_self_test_cannot_resolve_helpers_from_a_user_writable_path(tmp_path):
+    poisoned_bin = tmp_path / "app" / ".local" / "bin"
+    poisoned_bin.mkdir(parents=True)
+    marker = tmp_path / "poisoned-helper-ran"
+    malicious_id = poisoned_bin / "id"
+    malicious_id.write_text(
+        "#!/bin/sh\nprintf 'ran' > \"$POISON_MARKER\"\nprintf '1000\\n'\n",
+        encoding="utf-8",
+    )
+    malicious_id.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = str(poisoned_bin)
+    env["POISON_MARKER"] = str(marker)
+    subprocess.run(
+        ["/bin/sh", str(ROOT / "docker" / "sandbox-self-test.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert not marker.exists()
+
+
+def test_boot_self_test_pins_every_trust_check_helper_to_the_system_image():
+    """The root-owned image paths cannot be substituted in the unit-test runner."""
+    source = (ROOT / "docker" / "sandbox-self-test.sh").read_text(encoding="utf-8")
+
+    assert "SYSTEM_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" in source
+    for assignment, invocation in (
+        ("ID=/usr/bin/id", '"$ID" -u'),
+        ("STAT=/usr/bin/stat", '"$STAT" -c'),
+        ("FIND=/usr/bin/find", '"$FIND" "$path"'),
+        ("MKTEMP=/usr/bin/mktemp", '"$MKTEMP" -d'),
+        ("CHMOD=/usr/bin/chmod", '"$CHMOD" 700'),
+        ("RM=/usr/bin/rm", '"$RM" -rf'),
+        ("BWRAP=/usr/bin/bwrap", '"$BWRAP" --version'),
+    ):
+        assert assignment in source
+        assert invocation in source
 
 
 def test_apparmor_profile_is_loaded_by_name_and_has_no_unconfined_mode():

@@ -95,8 +95,8 @@ def test_docker_entrypoint_gates_socket_group_plumbing_on_explicit_opt_in():
 def test_docker_entrypoint_does_not_resolve_root_commands_from_app_local_path():
     script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
     path_export = script.index('export PATH="/app/.local/bin:$PATH"')
-    gosu_capture = script.index('GOSU_BIN="$(command -v gosu)"')
-    python_capture = script.index('PYTHON_BIN="$(command -v python)"')
+    gosu_capture = script.index('GOSU_BIN="$(PATH="$SYSTEM_PATH" command -v gosu)"')
+    python_capture = script.index('PYTHON_BIN="$(PATH="$SYSTEM_PATH" command -v python)"')
     setup_call = script.index('"$GOSU_BIN" "$ODY_USER" "$PYTHON_BIN" /app/setup.py')
     final_exec = script.index('exec "$GOSU_BIN" "$ODY_USER" "$@"')
 

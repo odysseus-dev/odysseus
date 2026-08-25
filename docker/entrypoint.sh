@@ -13,8 +13,9 @@ set -e
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
-GOSU_BIN="$(command -v gosu)"
-PYTHON_BIN="$(command -v python)"
+SYSTEM_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+GOSU_BIN="$(PATH="$SYSTEM_PATH" command -v gosu)"
+PYTHON_BIN="$(PATH="$SYSTEM_PATH" command -v python)"
 
 # Reuse an existing matching group/user if the host's UID/GID already
 # corresponds to one in /etc/passwd (e.g. when the image is rebuilt
@@ -139,7 +140,7 @@ export PATH="/app/.local/bin:$PATH"
 # check after dropping to the configured service user, before setup or uvicorn,
 # so a missing host profile or broken namespace cannot silently become an
 # unrestricted application runtime.
-if ! "$GOSU_BIN" "$ODY_USER" /usr/local/bin/odysseus-sandbox-self-test; then
+if ! "$GOSU_BIN" "$ODY_USER" /usr/bin/env PATH="$SYSTEM_PATH" /usr/local/bin/odysseus-sandbox-self-test; then
     echo "Odysseus sandbox boot check failed; refusing to start without the supported container boundary." >&2
     exit 78
 fi
