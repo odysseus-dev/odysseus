@@ -19,7 +19,10 @@ def test_windows_graceful_kill_uses_verified_native_process_tree_helper():
     helper = _between(source, "function _winSessionStopTreePs(task)", "function _tmuxGracefulKill(task)")
     graceful = _between(source, "function _tmuxGracefulKill(task)", "function _shQuote(value)")
     win_session = _between(source, "function _winSessionCmd(task, tmuxArgs)", "function _winPowerShellCmd(task, ps)")
+    port_helper = _between(source, "function _taskServePort(task)", "function _taskProcessIdentity(task)")
+    identity_helper = _between(source, "function _taskProcessIdentity(task)", "function _psLit(value)")
 
+    # Native process-tree walk + force kill retained.
     assert "function Add-Tree([int]$Id)" in helper
     assert "('ParentProcessId = ' + $Id)" in helper
     assert "Add-Tree ([int]$p)" in helper
@@ -28,16 +31,37 @@ def test_windows_graceful_kill_uses_verified_native_process_tree_helper():
     assert "exit 1" in helper
     # Final artifact cleanup happens only after the liveness verification.
     assert helper.index("$alive.Count -gt 0") < helper.rindex("Remove-Item")
-    # The listening owner of the serve port is the real llama-server.exe, not
-    # the recorded Git Bash wrapper, so it is the authoritative kill target and
-    # is resolved before the wrapper-PID fallback is folded in.
-    assert "task?.payload?._cmd?.match(/--port" in helper
-    assert "Get-NetTCPConnection -LocalPort $port -State Listen" in helper
+
+    # Ownership binding: a port listener is force-killed only once its command
+    # line is proven to belong to this task (identity match), and it is proven
+    # before any kill runs. A bound port whose owner cannot be proven ours fails
+    # closed and retains the task instead of killing an unrelated service.
+    assert "function Test-Owned([int]$Id)" in helper
+    assert ".CommandLine" in helper
+    assert "refusing to force-kill" in helper
+    assert helper.index("Test-Owned") < helper.index("taskkill.exe")
+    assert "Get-NetTCPConnection -LocalPort $Prt -State Listen" in helper
     assert "Select-Object -ExpandProperty OwningProcess" in helper
-    assert helper.index("Get-NetTCPConnection") < helper.index("Get-Content")
-    # Verification is against the port: a still-bound serve port fails the stop
-    # even when the recorded wrapper PID is already dead.
-    assert "still bound after kill" in helper
+    # Verification is scoped to an owned process still holding the port, not the
+    # wrapper alone.
+    assert "still held by a task process after kill" in helper
+    # A genuinely dead task (no owned listener, no live PID) cleans up and exits
+    # 0 so Remove can clear the row; a serve task with no resolvable port fails
+    # closed rather than reporting an unverifiable stop as clean.
+    assert "cannot verify shutdown" in helper
+    assert helper.index("refusing to force-kill") < helper.index("Remove-Item")
+
+    # Port resolution covers -p and Ollama forms (not just --port) and prefers a
+    # backend-persisted authoritative port; identity keys off the model file/name.
+    assert "task?.payload?.port ?? task?.port" in port_helper
+    assert "--port" in port_helper
+    assert "-p[=\\s]+" in port_helper
+    assert "OLLAMA_HOST" in port_helper
+    assert "11434" in port_helper
+    assert ".gguf" in identity_helper
+    assert "--model" in identity_helper
+
+    # Routing unchanged.
     assert "${_shQuote(command)}" in wrapper
     assert "_winSessionStopTreePs(task)" in win_session
     assert "_winPowerShellCmd(task, ps)" in win_session

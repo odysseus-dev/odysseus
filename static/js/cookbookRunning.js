@@ -1056,35 +1056,83 @@ function _winPowerShellCmd(task, ps) {
   return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(command)}`;
 }
 
+// Resolve the serve port for a task. Prefers an authoritative runtime port
+// persisted by the backend, then the supported command forms — `--port`, `-p`,
+// `OLLAMA_HOST=host:port`, and the Ollama default — so `-p` and Ollama serves
+// are verified rather than silently skipped. Returns '' when unknown so callers
+// fail closed instead of reporting an unverifiable stop as clean.
+function _taskServePort(task) {
+  const persisted = task?.payload?.port ?? task?.port;
+  if (persisted != null && /^\d+$/.test(String(persisted))) return String(persisted);
+  const cmd = task?.payload?._cmd || '';
+  let m = cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
+  if (m) return m[1];
+  m = cmd.match(/OLLAMA_HOST=[^\s'"]*?:(\d+)/i);
+  if (m) return m[1];
+  if (/\bollama\s+serve\b/i.test(cmd)) return '11434';
+  return '';
+}
+
+// A distinctive token the genuine server's Win32 command line must contain,
+// used to prove a port listener actually belongs to this task before
+// force-killing it. The model file/name is far more specific than the port,
+// which can be stale, reused, or backend-reassigned. '' means no reliable
+// identity, so the port owner is treated as unproven and not killed.
+function _taskProcessIdentity(task) {
+  const cmd = task?.payload?._cmd || '';
+  let m = cmd.match(/([^\s"'\\/]+\.gguf)/i);
+  if (m) return m[1];
+  m = cmd.match(/--model[=\s]+"?([^"\s]+)"?/);
+  if (m) {
+    const seg = m[1].split(/[\\/]/).pop();
+    if (seg && seg.length >= 4) return seg;
+  }
+  m = cmd.match(/\bollama\s+run\s+([^\s'"]+)/i);
+  if (m) return m[1];
+  return '';
+}
+
+// PowerShell single-quoted string literal (doubles embedded quotes).
+function _psLit(value) {
+  return `'${String(value ?? '').replace(/'/g, "''")}'`;
+}
+
 function _winSessionStopTreePs(task) {
   const host = _taskRemoteHost(task);
   const sessionDir = host ? 'odysseus-sessions' : 'odysseus-tmux';
   const sid = task.sessionId;
   const pidPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.pid')`;
   const artifactPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.*')`;
-  // The LISTENING serve port is the source of truth for "is the model still
-  // up", not the recorded PID. That PID is only a Git Bash wrapper in the
-  // launch chain, never llama-server.exe itself: a native binary started
-  // through the bash runner (or a ~/bin shim that `exec`s it) is reparented
-  // into a separate Win32 subtree, so a tree walk from the wrapper PID can miss
-  // the live GPU process and then wrongly report a clean stop. Kill the port
-  // owner first (that is the real server), fold in the recorded wrapper tree to
-  // clean up logs/children, then verify against the port — never the wrapper
-  // alone. Keep the PID/artifacts while the port stays bound so the UI retries
-  // instead of losing its only handle to the live GPU process.
-  const portMatch = task?.payload?._cmd?.match(/--port[=\s]+(\d+)/);
-  const port = portMatch ? portMatch[1] : '';
+  // The recorded PID is only a Git Bash wrapper in the launch chain, never
+  // llama-server.exe itself: a native binary started through the bash runner
+  // (or a ~/bin shim that `exec`s it) is reparented into a separate Win32
+  // subtree, so a tree walk from the wrapper PID can miss the live GPU process.
+  // The authoritative signal is the LISTENING serve port — but its owner is
+  // killed only after its command line is proven to belong to this task
+  // (identity match), so a stale task or a reused port can never take down an
+  // unrelated service. A bound port whose owner cannot be proven ours fails
+  // closed and keeps the task so the UI can retry, while a task with no live
+  // process or listener is cleaned up so Remove can clear a dead row.
+  const isServe = task?.type === 'serve';
+  const port = _taskServePort(task);
+  const portLit = /^\d+$/.test(port) ? port : '0';
+  const idLit = _psLit(_taskProcessIdentity(task));
   const addTree = `$targets = [System.Collections.Generic.List[int]]::new(); function Add-Tree([int]$Id) { if ($Id -le 0) { return }; Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Add-Tree ([int]$_.ProcessId) }; if (-not $targets.Contains($Id)) { $targets.Add($Id) } }`;
-  const portOwners = port
-    ? `$port = ${port}; foreach ($o in @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique)) { Add-Tree ([int]$o) }; `
-    : `$port = 0; `;
-  const recordedPid = `$p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Add-Tree ([int]$p) }; `;
-  const portBound = `($port -gt 0 -and @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue).Count -gt 0)`;
-  return `${addTree}; ${portOwners}${recordedPid}`
-    + `if ($targets.Count -eq 0) { if ($port -le 0) { Write-Error 'No serve port or recorded PID to stop'; exit 1 }; if (${portBound}) { Write-Error ('Serve port ' + $port + ' bound but owner unresolved'); exit 1 }; Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0 }; `
+  const ownedFn = `$identity = ${idLit}; function Test-Owned([int]$Id) { if ($Id -le 0 -or $identity -eq '') { return $false }; $cl = (Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $Id) -ErrorAction SilentlyContinue).CommandLine; if ($null -eq $cl) { return $false }; return $cl.ToLower().Contains($identity.ToLower()) }`;
+  const listenersFn = `function Get-Listeners([int]$Prt) { $r = [System.Collections.Generic.List[int]]::new(); if ($Prt -le 0) { return ,$r }; foreach ($o in @(Get-NetTCPConnection -LocalPort $Prt -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique)) { if ([int]$o -gt 0) { $r.Add([int]$o) } }; return ,$r }`;
+  return `${addTree}; ${ownedFn}; ${listenersFn}; `
+    + `$port = ${portLit}; $isServe = ${isServe ? '$true' : '$false'}; `
+    + `$p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Add-Tree ([int]$p) }; `
+    + `$unverified = $false; foreach ($o in @(Get-Listeners $port)) { if (Test-Owned $o) { Add-Tree $o } else { $unverified = $true } }; `
+    + `if ($targets.Count -eq 0) { `
+    +   `if ($unverified) { Write-Error ('Serve port ' + $port + ' bound by an unverified process; refusing to force-kill'); exit 1 }; `
+    +   `if ($isServe -and $port -le 0) { Write-Error 'Serve task has no resolvable port; cannot verify shutdown'; exit 1 }; `
+    +   `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0 `
+    + `}; `
     + `foreach ($target in @($targets)) { if (Get-Process -Id $target -ErrorAction SilentlyContinue) { & taskkill.exe /PID $target /T /F 2>$null | Out-Null } }; `
     + `Start-Sleep -Milliseconds 250; `
-    + `if (${portBound}) { Write-Error ('Serve port ' + $port + ' still bound after kill'); exit 1 }; `
+    + `$stillOwned = $false; foreach ($o in @(Get-Listeners $port)) { if (Test-Owned $o) { $stillOwned = $true } }; `
+    + `if ($stillOwned) { Write-Error ('Serve port ' + $port + ' still held by a task process after kill'); exit 1 }; `
     + `$alive = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if ($alive.Count -gt 0) { Write-Error ('Processes still alive: ' + ($alive -join ',')); exit 1 }; `
     + `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0`;
 }
