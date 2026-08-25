@@ -26,8 +26,6 @@ CALENDAR_READ_SCOPES = frozenset({"calendar:read", "calendar:write"})
 CALENDAR_WRITE_SCOPES = frozenset({"calendar:write"})
 DOCS_READ_SCOPES = frozenset({"documents:read", "documents:write"})
 DOCS_WRITE_SCOPES = frozenset({"documents:write"})
-COOKBOOK_READ_SCOPES = frozenset({"cookbook:read", "cookbook:launch"})
-COOKBOOK_LAUNCH_SCOPES = frozenset({"cookbook:launch"})
 
 ALL_API_TOKEN_SCOPES = frozenset().union(
     CHAT_SCOPES,

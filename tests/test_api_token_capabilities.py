@@ -401,5 +401,34 @@ def test_token_minting_and_route_checks_share_the_scope_catalog():
     assert ALLOWED_SCOPES is ALL_API_TOKEN_SCOPES
     assert codex_routes.TODO_READ_SCOPES <= ALL_API_TOKEN_SCOPES
     assert codex_routes.EMAIL_READ_SCOPES <= ALL_API_TOKEN_SCOPES
-    assert codex_routes.COOKBOOK_READ_SCOPES.isdisjoint(ALL_API_TOKEN_SCOPES)
-    assert codex_routes.COOKBOOK_LAUNCH_SCOPES.isdisjoint(ALL_API_TOKEN_SCOPES)
+    assert not hasattr(codex_routes, "COOKBOOK_READ_SCOPES")
+    assert not hasattr(codex_routes, "COOKBOOK_LAUNCH_SCOPES")
+
+
+def test_bundled_integrations_do_not_advertise_retired_cookbook_access():
+    from pathlib import Path
+
+    files = [
+        Path("static/js/admin.js"),
+        Path("static/js/settings.js"),
+        Path("integrations/codex/skills/odysseus/SKILL.md"),
+        Path("integrations/claude/skills/odysseus/SKILL.md"),
+        Path("integrations/codex/scripts/odysseus_api.py"),
+        Path("integrations/claude/skills/odysseus/scripts/odysseus_api.py"),
+    ]
+    for path in files:
+        source = path.read_text(encoding="utf-8")
+        assert "cookbook:read" not in source, path
+        assert "cookbook:launch" not in source, path
+
+    for path in files[-2:]:
+        source = path.read_text(encoding="utf-8")
+        assert 'command == "cookbook"' not in source, path
+        assert "/api/codex/cookbook/" not in source, path
+
+    admin_ui = files[0].read_text(encoding="utf-8")
+    settings_ui = files[1].read_text(encoding="utf-8")
+    for source in (admin_ui, settings_ui):
+        assert "retired_scopes" in source
+        assert "are inactive and will be removed" in source
+    assert "no active scopes; retired:" in settings_ui

@@ -231,7 +231,7 @@ def test_list_tokens_returns_safe_display_fields_only(monkeypatch, token_routes_
         owner="alice",
         token_prefix="ody_prod",
         token_hash="$2b$12$SHOULDNEVERAPPEAR",
-        scopes="chat,research",
+        scopes="chat,research,cookbook:read,cookbook:launch",
         is_active=True,
         last_used_at=datetime.datetime(2024, 1, 15, 10, 0),
         created_at=datetime.datetime(2024, 1, 1, 0, 0),
@@ -259,14 +259,16 @@ def test_list_tokens_returns_safe_display_fields_only(monkeypatch, token_routes_
 
     assert len(result) == 2
 
-    safe_fields = {"id", "name", "owner", "token_prefix", "scopes", "is_active", "last_used_at", "created_at"}
+    safe_fields = {"id", "name", "owner", "token_prefix", "scopes", "retired_scopes", "is_active", "last_used_at", "created_at"}
     for item in result:
         assert set(item.keys()) == safe_fields
         assert "token" not in item
         assert "token_hash" not in item
 
     assert result[0]["scopes"] == ["chat", "research"]
+    assert result[0]["retired_scopes"] == ["cookbook:read", "cookbook:launch"]
     assert result[1]["scopes"] == ["chat"]
+    assert result[1]["retired_scopes"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +350,7 @@ def test_update_token_rename_preserves_scopes(monkeypatch, token_routes_mod):
 
     token = SimpleNamespace(
         id="tok123", name="original", owner="alice",
-        token_prefix="ody_orig", scopes="email:read,email:draft", is_active=True,
+        token_prefix="ody_orig", scopes="email:read,email:draft,cookbook:read", is_active=True,
     )
     fake_session = MagicMock()
     fake_session.query.return_value.filter.return_value.first.return_value = token
@@ -359,8 +361,9 @@ def test_update_token_rename_preserves_scopes(monkeypatch, token_routes_mod):
     update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
     resp = asyncio.run(update_token(request=req, token_id="tok123"))
 
-    assert token.scopes == "email:read,email:draft"  # untouched
+    assert token.scopes == "email:read,email:draft,cookbook:read"  # untouched
     assert resp["scopes"] == ["email:read", "email:draft"]
+    assert resp["retired_scopes"] == ["cookbook:read"]
     assert token.name == "renamed"
     invalidator.assert_called_once()
 
@@ -372,18 +375,50 @@ def test_update_token_applies_explicit_scopes(monkeypatch, token_routes_mod):
 
     token = SimpleNamespace(
         id="tok123", name="original", owner="alice",
-        token_prefix="ody_orig", scopes="email:read,email:draft", is_active=True,
+        token_prefix="ody_orig", scopes="email:read,email:draft,cookbook:read", is_active=True,
     )
     fake_session = MagicMock()
     fake_session.query.return_value.filter.return_value.first.return_value = token
     monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
 
-    req = _patch_request(MagicMock(), {"scopes": ["chat"]})
+    req = _patch_request(MagicMock(), {"scopes": ["chat", "cookbook:read"]})
     update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
     resp = asyncio.run(update_token(request=req, token_id="tok123"))
 
     assert token.scopes == "chat"
     assert resp["scopes"] == ["chat"]
+    assert resp["retired_scopes"] == []
+
+
+@pytest.mark.parametrize("scopes", [None, "", [], ["cookbook:read", "cookbook:launch"]])
+def test_update_token_rejects_permission_edit_without_active_scopes(
+    monkeypatch,
+    token_routes_mod,
+    scopes,
+):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="cookbook:read,cookbook:launch", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _patch_request(invalidator, {"scopes": scopes})
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_token(request=req, token_id="tok123"))
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "At least one active token scope is required"
+    assert token.scopes == "cookbook:read,cookbook:launch"
+    fake_session.add.assert_not_called()
+    invalidator.assert_not_called()
 
 
 def test_update_missing_token_returns_404(monkeypatch, token_routes_mod):
