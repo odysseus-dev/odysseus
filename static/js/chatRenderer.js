@@ -440,6 +440,7 @@ function _openVisionEditor(att, userMsgEl) {
       ta.disabled = false;
       saveBtn.disabled = false;
       regenBtn.disabled = !userMsgEl;
+      rerunBtn.disabled = false;
     });
 }
 
