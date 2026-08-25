@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 # Attachment References and Upload Storage
 
 Odysseus stores uploaded bytes once under the configured upload directory and

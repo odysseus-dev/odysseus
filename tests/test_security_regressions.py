@@ -123,10 +123,10 @@ def test_docker_compose_binds_web_ui_to_loopback_by_default():
 
 
 def test_readme_native_quickstart_uses_loopback():
-    # The README refresh (#4306) moved the native quickstart into docs/setup.md,
+    # The Pages source split (#6175) moved the native quickstart into website/setup.md,
     # so accept the loopback guidance from either the README or the setup guide.
     docs = Path("README.md").read_text(encoding="utf-8")
-    docs += "\n" + Path("docs/setup.md").read_text(encoding="utf-8")
+    docs += "\n" + Path("website/setup.md").read_text(encoding="utf-8")
     assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in docs
     assert "0.0.0.0` only when you intentionally want" in docs
 

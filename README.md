@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
-  <a href="docs/setup.md">Setup Guide</a> ·
+  <a href="website/setup.md">Setup Guide</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="ROADMAP.md">Roadmap</a>
 </p>
@@ -36,7 +36,7 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
-Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
+Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](website/setup.md).
 
 ## Features
 
@@ -64,7 +64,7 @@ Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
 
-Deployment details are in the [setup guide](docs/setup.md#security-notes).
+Deployment details are in the [setup guide](website/setup.md#security-notes).
 
 ## Star History
 

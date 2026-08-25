@@ -1,9 +1,9 @@
 """Repository asset ownership guards for issues #1335 and #6175.
 
-Public Markdown belongs in docs/, the GitHub Pages bundle belongs in website/,
-and shared README/packaging imagery belongs in assets/branding/. Images in the
-documentation or branding roots must be referenced by tracked text, and every
-tracked website video must be referenced by the site's entry point.
+Public Markdown and landing-page media belong in website/, while shared
+README/packaging imagery belongs in assets/branding/. Images in either managed
+root must be referenced by tracked text, and every tracked website video must
+be referenced by the site's entry point.
 """
 import subprocess
 from pathlib import Path
@@ -13,6 +13,15 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 VIDEO_EXTS = {".webm", ".mp4", ".mov", ".m4v"}
+PUBLIC_GUIDES = {
+    "agent-migration.md",
+    "attachments.md",
+    "backup-restore.md",
+    "email-outlook.md",
+    "pr-blocker-audit.md",
+    "security-ci.md",
+    "setup.md",
+}
 # Files a referenced image name could legitimately appear in.
 TEXT_EXTS = {".md", ".html", ".htm", ".js", ".ts", ".css", ".py", ".sh",
              ".json", ".yml", ".yaml", ".txt"}
@@ -33,7 +42,7 @@ def _tracked(*paths_under):
 
 
 def test_no_orphan_documentation_or_branding_images():
-    managed_files = _tracked("docs", "assets/branding")
+    managed_files = _tracked("website", "assets/branding")
     if managed_files is None:
         pytest.skip("not a git checkout")
     managed_images = [p for p in managed_files if p.suffix.lower() in IMAGE_EXTS]
@@ -59,7 +68,7 @@ def test_no_orphan_documentation_or_branding_images():
         if img.name not in blob
     ]
     assert not orphans, (
-        "unreferenced image(s) committed under docs/ or assets/branding/ "
+        "unreferenced image(s) committed under website/ or assets/branding/ "
         f"(see #1335 and #6175): {orphans}"
     )
 
@@ -72,7 +81,13 @@ def test_pages_site_owns_its_entrypoint_and_media():
 
     assert REPO / "website/index.html" in website_files
     assert REPO / "docs/index.html" not in docs_files
-    assert not [p for p in docs_files if p.suffix.lower() in VIDEO_EXTS]
+    assert not [p for p in docs_files if p.suffix.lower() in VIDEO_EXTS | {".md"}]
+
+    website_paths = {p.relative_to(REPO / "website").as_posix() for p in website_files}
+    assert PUBLIC_GUIDES <= website_paths
+    for guide in PUBLIC_GUIDES:
+        text = (REPO / "website" / guide).read_text(encoding="utf-8")
+        assert text.startswith("---\nlayout: default\n---\n"), guide
 
     website_videos = [p for p in website_files if p.suffix.lower() in VIDEO_EXTS]
     assert website_videos, "expected website/ to contain the landing-page videos"
@@ -84,3 +99,9 @@ def test_pages_site_owns_its_entrypoint_and_media():
         if video.name not in entrypoint
     ]
     assert not unreferenced, f"unreferenced website video(s): {unreferenced}"
+
+    workflow = (REPO / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
+    assert "actions/jekyll-build-pages@" in workflow
+    assert "source: website" in workflow
+    assert "destination: _site" in workflow
+    assert "path: _site" in workflow
