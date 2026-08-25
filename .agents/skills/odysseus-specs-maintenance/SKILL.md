@@ -35,7 +35,7 @@ Keep `specs/` aligned with the final implementation on the latest upstream `dev`
 ## Validate
 
 1. Re-read the resulting diff against the final `origin/dev` source and confirm that every changed factual claim is source-grounded.
-2. Run focused existing tests or checks when they materially validate the documented behavior. Record commands, outcomes, and any residual validation gap; do not claim that passing tests prove untested behavior.
+2. Run focused existing tests or checks when they materially validate the documented behavior. Static Git and Markdown inspection that does not execute repository-controlled code may run in the controller. Run every repository-controlled test, build, install, or reproduction command only through the project's secretless `review-run <source-or-worktree> -- <command...>` boundary; if that boundary is unavailable or bypassed, do not run the command and record it as not run with the residual validation gap. Record commands and outcomes, and do not claim that passing tests prove untested behavior.
 3. Verify Markdown structure and links, confirm every non-index top-level `specs/*.md` file appears exactly once in the subsystem map, confirm provider specs remain routed through `specs/model-providers/_readme.md`, and run `git diff --check`.
 4. Confirm the task diff contains no unintended product-code changes and no private paths, credentials, raw logs, or environment-specific workspace details.
 5. Append the completed check to `specs/last_specs_check.txt` only after reconciliation and validation finish. Include the date, full checked `dev` SHA, whether specs changed, relevant validation, and the local spec-update branch or commit when available.
