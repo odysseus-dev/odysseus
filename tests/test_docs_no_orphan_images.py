@@ -119,3 +119,26 @@ def test_ci_runs_asset_ownership_guards_for_managed_roots():
     assert not docs_only.match("website/setup.md")
     assert not docs_only.match("website/new-preview.webm")
     assert not docs_only.match("assets/branding/new-logo.png")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "website/favicon.png",
+        "website/media/social-card.jpg",
+        "website/guides/reference.pdf",
+        "assets/branding/new-logo.gif",
+        "assets/branding/print/logo.tiff",
+    ],
+)
+def test_managed_site_media_is_not_ignored(path):
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--quiet", path],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 128:
+        pytest.skip("not a git checkout")
+    assert result.returncode == 1, f"{path} is unexpectedly ignored"
