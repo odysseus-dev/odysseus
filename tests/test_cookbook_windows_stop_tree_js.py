@@ -127,3 +127,29 @@ def test_stop_keeps_task_and_endpoint_until_process_exit_is_confirmed():
     assert "process exit was not confirmed" in stop_handler
     assert stop_handler.index("if (!stopped)") < stop_handler.index("_removeEndpointByUrl")
     assert stop_handler.index("if (!stopped)") < stop_handler.index("_animateOutThenRemove")
+
+
+def test_remediation_paths_route_through_verified_stop():
+    # Restart, serve auto-fix/retry, download auto-retry, and same-port replace
+    # must gate the relaunch on the verified stop result and retain the task when
+    # termination is not confirmed — never kill-and-relaunch into a bound port.
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    retry = _between(source, "async function _retryTask(el, task)", "async function _retryDownload(")
+    autofix = _between(source, "export async function _serveAutoFix(", "async function _openServeEditForTask(")
+    launch = _between(source, "if (_replaceTaskId) {", "// Capture the env + GPU pin")
+
+    # Restart/retry verifies the stop and bails on failure, no direct kill.
+    assert "await _stopTaskSession(task)" in retry
+    assert "Restart aborted" in retry
+    assert "_tmuxGracefulKill(task)" not in retry
+
+    # Serve auto-fix gates the relaunch and re-enables the panel on failure.
+    assert "await _stopTaskSession(task)" in autofix
+    assert "_unguardServeRetry(panel, taskEl)" in autofix
+    assert "_tmuxCmd(task, `kill-session" not in autofix
+
+    # Launch-time replace of the old / same-port server verifies before relaunch.
+    assert "await _stopTaskSession(_old)" in launch
+    assert "await _stopTaskSession(_t)" in launch
+    assert "_tmuxGracefulKill(_old)" not in launch
+    assert "_tmuxGracefulKill(_t)" not in launch

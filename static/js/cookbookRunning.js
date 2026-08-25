@@ -1575,13 +1575,15 @@ async function _retryTask(el, task) {
   if (el && el._abort) el._abort.abort();
   const badge = el?.querySelector('.cookbook-task-status');
   if (badge) { badge.textContent = 'restarting...'; badge.className = 'cookbook-task-status'; }
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-    });
-  } catch {}
+  // Route the kill through the verified stop: never relaunch into a still-bound
+  // port or drop the retry handle when the old process is not confirmed gone.
+  if (!(await _stopTaskSession(task))) {
+    const priorStatus = task.status || 'running';
+    if (badge) { badge.textContent = _statusLabel(priorStatus, task.type); badge.className = `cookbook-task-status cookbook-task-${priorStatus}`; }
+    _updateTask(task.sessionId, { status: priorStatus });
+    uiModule.showToast('Restart aborted: the previous process could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
   if (task.payload) {
     if (task.type === 'serve' && task.payload._cmd) {
       _removeTask(task.sessionId);
@@ -1667,6 +1669,19 @@ function _guardServeRetry(panel, taskEl) {
   return true;
 }
 
+// Reverse _guardServeRetry: re-enable the panel and clear the retry flag so the
+// user can try again after a remediation was aborted (e.g. the previous process
+// could not be confirmed stopped).
+function _unguardServeRetry(panel, taskEl) {
+  if (taskEl) delete taskEl.dataset.retrying;
+  if (!panel) return;
+  panel.querySelectorAll('button').forEach(b => {
+    b.disabled = false;
+    b.style.opacity = '';
+    b.style.pointerEvents = '';
+  });
+}
+
 export async function _serveAutoFix(panel, envVar) {
   const taskEl = panel.closest('.cookbook-task');
   if (!taskEl) return;
@@ -1676,14 +1691,11 @@ export async function _serveAutoFix(panel, envVar) {
   if (!task || !task.payload) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  const killCmd = _tmuxCmd(task, `kill-session -t ${taskId}`);
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: killCmd }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1740,13 +1752,11 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
   if (!task || !task.payload || !task.payload._cmd) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1782,13 +1792,11 @@ export async function _serveAutoRetryRemove(panel, flag) {
   if (!task || !task.payload || !task.payload._cmd) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1815,13 +1823,11 @@ export async function _serveAutoRetry(panel, flag) {
   if (!task || !task.payload || !task.payload._cmd) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -2036,17 +2042,16 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   const _replaceTaskId = fields?._replaceTaskId || '';
   const _launchAnyway = !!targetMeta?.launchAnyway;
   if (_replaceTaskId) {
-    try {
-      const _old = _loadTasks().find(t => t.sessionId === _replaceTaskId);
-      if (_old && _old.type === 'serve') {
-        await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(_old) }),
-        });
-        _removeTask(_old.sessionId);
+    const _old = _loadTasks().find(t => t.sessionId === _replaceTaskId);
+    if (_old && _old.type === 'serve') {
+      // Verify the old server is actually gone before relaunching — otherwise a
+      // failed cleanup relaunches into a still-bound port and orphans the GPU.
+      if (!(await _stopTaskSession(_old))) {
+        uiModule.showToast('Launch aborted: the existing server could not be confirmed stopped. It was kept to avoid a port collision.', 'error');
+        return;
       }
-    } catch {}
+      _removeTask(_old.sessionId);
+    }
   }
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
@@ -2060,13 +2065,10 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
         if (_t.type !== 'serve' || !_t.payload || !_t.payload._cmd) continue;
         const _tm = _t.payload._cmd.match(/--port[=\s]+(\d+)/) || _t.payload._cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
         if ((_tm ? _tm[1] : '') === _newPort && (_t.remoteHost || '') === _host) {
-          try {
-            await fetch('/api/shell/exec', {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command: _tmuxGracefulKill(_t) }),
-            });
-          } catch {}
+          if (!(await _stopTaskSession(_t))) {
+            uiModule.showToast(`Launch aborted: an existing server on port ${_newPort} could not be confirmed stopped.`, 'error');
+            return;
+          }
           _removeTask(_t.sessionId);
         }
       }
@@ -3470,13 +3472,12 @@ async function _reconnectTask(el, task) {
               badge.textContent = _startupStalled ? '0% stall — retrying' : 'stale — restarting';
               badge.className = 'cookbook-task-status cookbook-task-error';
               _showCookbookNotif(true);
-              try {
-                await fetch('/api/shell/exec', {
-                  method: 'POST', credentials: 'same-origin',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-                });
-              } catch {}
+              if (!(await _stopTaskSession(task))) {
+                badge.textContent = 'stale — stop unconfirmed';
+                badge.className = 'cookbook-task-status cookbook-task-error';
+                _showCookbookNotif(true);
+                break;
+              }
               try {
                 // Reuse original payload so the full repo_id (e.g. "Qwen/Qwen3.5-...")
                 // is preserved — rebuilding from task.repo/task.name drops the org prefix.
@@ -3585,13 +3586,11 @@ async function _reconnectTask(el, task) {
                 badge.className = 'cookbook-task-status cookbook-task-running';
                 uiModule.showToast(`Download interrupted — retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY}), resumes where it stopped…`, 6000);
                 const _p = task.payload, _nm = task.name;
-                try {
-                  await fetch('/api/shell/exec', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-                  });
-                } catch {}
+                if (!(await _stopTaskSession(task))) {
+                  badge.textContent = 'interrupted — stop unconfirmed';
+                  badge.className = 'cookbook-task-status cookbook-task-error';
+                  break;
+                }
                 _removeTask(task.sessionId);
                 setTimeout(() => { _retryDownload(_nm, _p); }, 8000);
                 break;
