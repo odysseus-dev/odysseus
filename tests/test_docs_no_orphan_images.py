@@ -106,6 +106,7 @@ def test_pages_site_owns_its_entrypoint_and_media():
     assert "source: website" in workflow
     assert "destination: _site" in workflow
     assert "path: _site" in workflow
+    assert "cancel-in-progress: false" in workflow
 
 
 def test_ci_runs_asset_ownership_guards_for_managed_roots():
