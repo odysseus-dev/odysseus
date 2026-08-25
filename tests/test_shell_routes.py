@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,12 +23,127 @@ from routes.shell_routes import (
     _package_pip_update_status,
     _package_probe_script,
     _package_status_note,
+    _parse_llama_cpp_gpu_probe,
+    _probe_local_llama_cpp_gpu_offload,
+    _mark_llama_cpp_probe_unusable,
+    _should_offer_llama_cpp_cuda_reinstall,
     _prepend_user_install_bins_to_path,
     _reject_cross_site,
     _ssh_base_argv,
     _venv_activate_prefix,
     DOCKER_IN_CONTAINER_HINT,
 )
+
+
+class TestLocalLlamaCppGpuProbe:
+    """Native llama.cpp capability checks must not run in the API process."""
+
+    def test_gpu_capable_child_reports_true(self, monkeypatch):
+        import routes.shell_routes as shell_routes
+
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen["argv"] = argv
+            seen["kwargs"] = kwargs
+            return subprocess.CompletedProcess(argv, 0)
+
+        monkeypatch.setattr(shell_routes.subprocess, "run", fake_run)
+
+        assert _probe_local_llama_cpp_gpu_offload() is True
+        assert seen["argv"][0] == sys.executable
+        assert seen["argv"][1] == "-c"
+        assert "llama_supports_gpu_offload" in seen["argv"][2]
+        assert seen["kwargs"]["timeout"] <= 3.0
+        assert seen["kwargs"]["stdin"] is subprocess.DEVNULL
+        assert seen["kwargs"]["stdout"] is subprocess.DEVNULL
+        assert seen["kwargs"]["stderr"] is subprocess.DEVNULL
+
+    def test_cpu_only_child_reports_false(self, monkeypatch):
+        import routes.shell_routes as shell_routes
+
+        monkeypatch.setattr(
+            shell_routes.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 10),
+        )
+
+        assert _probe_local_llama_cpp_gpu_offload() is False
+
+    @pytest.mark.parametrize("returncode", [-4, 1, 2, 127])
+    def test_crash_or_unexpected_child_exit_is_unknown(
+        self, monkeypatch, returncode
+    ):
+        import routes.shell_routes as shell_routes
+
+        monkeypatch.setattr(
+            shell_routes.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args[0], returncode
+            ),
+        )
+
+        assert _probe_local_llama_cpp_gpu_offload() is None
+
+    def test_timeout_is_unknown(self, monkeypatch):
+        import routes.shell_routes as shell_routes
+
+        def time_out(*args, **kwargs):
+            raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+        monkeypatch.setattr(shell_routes.subprocess, "run", time_out)
+
+        assert _probe_local_llama_cpp_gpu_offload() is None
+
+    @pytest.mark.parametrize(
+        ("output", "expected"),
+        [
+            ("llama_cpp_gpu=1\n", True),
+            ("noise\nllama_cpp_gpu=0\nnvidia=1\n", False),
+            ("llama_cpp_gpu=unknown\n", None),
+            ("", None),
+            ("llama_cpp_gpu=10\n", None),
+            ("llama_cpp_gpu=0\nllama_cpp_gpu=1\n", None),
+        ],
+    )
+    def test_remote_probe_output_is_strictly_tri_state(
+        self, output, expected
+    ):
+        assert _parse_llama_cpp_gpu_probe(output) is expected
+
+    def test_unknown_probe_marks_python_fallback_unusable(self):
+        package = {
+            "installed": True,
+            "status_note": "python package: llama-cpp-python 1.2.3",
+        }
+
+        _mark_llama_cpp_probe_unusable(package)
+
+        assert package["installed"] is False
+        assert package["probe_error"]
+        assert "compatibility check" in package["status_note"]
+        assert "SIGILL" not in package["status_note"]
+
+    @pytest.mark.parametrize(
+        ("gpu_capable", "has_nvidia", "expected"),
+        [
+            (True, True, False),
+            (False, True, True),
+            (None, True, False),
+            (False, False, False),
+        ],
+    )
+    def test_cuda_reinstall_requires_definite_cpu_only_result(
+        self, gpu_capable, has_nvidia, expected
+    ):
+        assert (
+            _should_offer_llama_cpp_cuda_reinstall(
+                gpu_capable=gpu_capable,
+                has_nvidia=has_nvidia,
+            )
+            is expected
+        )
 
 
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):

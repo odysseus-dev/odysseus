@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 import tempfile
 from collections import namedtuple
@@ -145,6 +146,74 @@ def _pip_dist_name(pkg: dict) -> str:
 def _import_optional_dependency_for_status(name: str):
     prepare_optional_dependency_import(name)
     return importlib.import_module(name)
+
+
+_LLAMA_CPP_GPU_PROBE_TIMEOUT_SECONDS = 3.0
+_LLAMA_CPP_GPU_PROBE_CODE = (
+    "import llama_cpp, sys; "
+    "sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 10)"
+)
+
+
+def _probe_local_llama_cpp_gpu_offload(
+    timeout: float = _LLAMA_CPP_GPU_PROBE_TIMEOUT_SECONDS,
+) -> bool | None:
+    """Safely probe llama-cpp-python GPU support in a disposable process.
+
+    Importing ``llama_cpp`` loads native code. An incompatible wheel can abort
+    with SIGILL before Python can raise an exception, so this must never run in
+    the Uvicorn process. ``None`` means the child crashed, timed out, or could
+    not be started; only the dedicated exit code 10 is a definite CPU-only
+    result. Ordinary Python failures use exit code 1 and remain unknown.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _LLAMA_CPP_GPU_PROBE_CODE],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode == 0:
+        return True
+    if result.returncode == 10:
+        return False
+    return None
+
+
+def _should_offer_llama_cpp_cuda_reinstall(
+    *, gpu_capable: bool | None, has_nvidia: bool
+) -> bool:
+    """Only label a wheel CPU-only when the isolated probe proved it."""
+    return gpu_capable is False and has_nvidia
+
+
+def _parse_llama_cpp_gpu_probe(output: str) -> bool | None:
+    """Parse one unambiguous remote capability marker."""
+    values = {
+        line.partition("=")[2]
+        for line in output.splitlines()
+        if line.startswith("llama_cpp_gpu=")
+    }
+    if values == {"1"}:
+        return True
+    if values == {"0"}:
+        return False
+    return None
+
+
+def _mark_llama_cpp_probe_unusable(pkg: dict[str, Any]) -> None:
+    """Expose a failed compatibility check without leaking child details."""
+    note = (
+        "llama-cpp-python is present, but its isolated compatibility check "
+        "did not complete. Reinstall a build compatible with this host."
+    )
+    pkg["installed"] = False
+    pkg["probe_error"] = "llama-cpp-python compatibility check failed."
+    pkg["status_note"] = note
 
 
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
@@ -1620,6 +1689,23 @@ def setup_shell_routes() -> APIRouter:
                         "dists": {"vllm": _vllm_version} if _vllm_version else {},
                     }
                     pkg["status_note"] = _package_status_note("vllm", probe)
+            elif pkg["name"] == "llama_cpp":
+                # Importing llama_cpp loads native code and can terminate the
+                # interpreter with SIGILL when the wheel targets unsupported
+                # CPU instructions. Distribution metadata is sufficient for
+                # presence; usability/GPU support is probed below in a child.
+                try:
+                    _llama_cpp_version = importlib_metadata.version(
+                        _pip_dist_name(pkg)
+                    )
+                    pkg["installed"] = True
+                    probe = {
+                        "binaries": {},
+                        "dists": {"llama-cpp-python": _llama_cpp_version},
+                    }
+                    pkg["status_note"] = _package_status_note("llama_cpp", probe)
+                except importlib_metadata.PackageNotFoundError:
+                    pkg["installed"] = False
             else:
                 try:
                     _import_optional_dependency_for_status(pkg["name"])
@@ -1653,7 +1739,7 @@ def setup_shell_routes() -> APIRouter:
                     and isinstance(probe.get("binaries"), dict)
                     and probe["binaries"].get("llama-server")
                 )
-                _gpu_capable = False
+                _gpu_capable: bool | None = None
                 _has_nvidia_target = False
                 if _native_llama_server:
                     # Native llama-server is the launcher path Cookbook now
@@ -1673,8 +1759,11 @@ def setup_shell_routes() -> APIRouter:
                         _vp = _venv_activate_prefix(venv)
                         probe = (
                             f'{_vp}python3 -c "import llama_cpp; import sys; '
-                            'sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 1)" '
-                            '&& echo llama_cpp_gpu=1 || echo llama_cpp_gpu=0; '
+                            'sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 10)"; '
+                            '_lcp_rc=$?; '
+                            'if [ "$_lcp_rc" -eq 0 ]; then echo llama_cpp_gpu=1; '
+                            'elif [ "$_lcp_rc" -eq 10 ]; then echo llama_cpp_gpu=0; '
+                            'else echo llama_cpp_gpu=unknown; fi; '
                             'command -v nvidia-smi >/dev/null 2>&1 '
                             '&& nvidia-smi -L 2>/dev/null | grep -q "GPU " '
                             '&& echo nvidia=1 || echo nvidia=0'
@@ -1685,20 +1774,23 @@ def setup_shell_routes() -> APIRouter:
                         )
                         out, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
                         txt = out.decode("utf-8", errors="replace")
-                        if "llama_cpp_gpu=1" in txt:
-                            _gpu_capable = True
+                        _gpu_capable = _parse_llama_cpp_gpu_probe(txt)
                         if "nvidia=1" in txt:
                             _has_nvidia_target = True
                     except Exception:
                         pass
                 else:
-                    try:
-                        import llama_cpp as _lcp  # type: ignore
-                        _gpu_capable = bool(_lcp.llama_supports_gpu_offload())
-                    except Exception:
-                        _gpu_capable = False
+                    _gpu_capable = await asyncio.to_thread(
+                        _probe_local_llama_cpp_gpu_offload
+                    )
                     _has_nvidia_target = shutil.which("nvidia-smi") is not None
-                if (not _gpu_capable) and _has_nvidia_target:
+                pkg["gpu_offload_capable"] = _gpu_capable
+                if _gpu_capable is None:
+                    _mark_llama_cpp_probe_unusable(pkg)
+                elif _should_offer_llama_cpp_cuda_reinstall(
+                    gpu_capable=_gpu_capable,
+                    has_nvidia=_has_nvidia_target,
+                ):
                     pkg["partial"] = True
                     pkg["partial_reason"] = "Installed but CPU-only wheel — GPU detected on this target. Upgrade to a CUDA wheel for ~10× faster inference."
                     pkg["partial_action"] = "reinstall_llama_cpp_cuda"

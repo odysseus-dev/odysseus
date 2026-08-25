@@ -72,7 +72,6 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'fi'
 )
 
-
 def _windows_local_pid_record_line(pid_path: Path, ready_path: Path) -> str:
     """Build the Git Bash prelude that records a Win32-stoppable PID.
 
@@ -306,7 +305,7 @@ def _remote_tmux_launch_command(session_id: str, runner: str) -> str:
     runner_exec = shlex.quote(f"./{runner}")
     return (
         f'{_remote_posix_path_prefix()}{tmux}'
-        f'chmod +x {runner_q} && '
+        f'chmod 700 {runner_q} && '
         f'"$ODYSSEUS_TMUX" set-option -g history-limit 100000 2>/dev/null; '
         f'"$ODYSSEUS_TMUX" new-session -d -s {sid} {runner_exec}'
     )
@@ -392,6 +391,106 @@ def _append_local_ollama_download_command_lines(
         lines.append(f"  printf '%s\\n' {hint}; exit 127")
     lines.append('fi')
     lines.append('if [ -z "$ODYSSEUS_OLLAMA_PULL_CMD" ]; then echo "ERROR: Ollama not found on this server. Install Ollama or start an ollama-rocm/ollama-test container."; exit 127; fi')
+_HF_DOWNLOAD_ATTEMPT_TIMEOUT_ENV = "ODYSSEUS_HF_DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS"
+_HF_DOWNLOAD_ATTEMPT_TIMEOUT_DEFAULT = 900
+_HF_DOWNLOAD_ATTEMPT_TIMEOUT_MAX = 86_400
+
+
+def _hf_download_attempt_timeout_seconds() -> int:
+    """Return the bounded per-attempt watchdog duration for POSIX downloads.
+
+    Zero explicitly disables the best-effort watchdog. Invalid and negative
+    values fall back to the default so a typo cannot silently remove the bound.
+    """
+    raw = os.environ.get(
+        _HF_DOWNLOAD_ATTEMPT_TIMEOUT_ENV,
+        str(_HF_DOWNLOAD_ATTEMPT_TIMEOUT_DEFAULT),
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %s=%r; using %ss",
+            _HF_DOWNLOAD_ATTEMPT_TIMEOUT_ENV,
+            raw,
+            _HF_DOWNLOAD_ATTEMPT_TIMEOUT_DEFAULT,
+        )
+        return _HF_DOWNLOAD_ATTEMPT_TIMEOUT_DEFAULT
+    if value < 0:
+        logger.warning(
+            "Negative %s=%r; using %ss",
+            _HF_DOWNLOAD_ATTEMPT_TIMEOUT_ENV,
+            raw,
+            _HF_DOWNLOAD_ATTEMPT_TIMEOUT_DEFAULT,
+        )
+        return _HF_DOWNLOAD_ATTEMPT_TIMEOUT_DEFAULT
+    return min(value, _HF_DOWNLOAD_ATTEMPT_TIMEOUT_MAX)
+
+
+def _append_posix_download_watchdog(lines: list[str], timeout_seconds: int) -> None:
+    """Append a portable, attempt-scoped timeout wrapper.
+
+    GNU ``timeout`` is preferred, with Homebrew's ``gtimeout`` as the macOS
+    equivalent. Hosts without either tool keep working without a watchdog and
+    emit one warning. The timeout owns only the command it starts; no parent or
+    unrelated process group is signalled.
+    """
+    lines.extend(
+        [
+            f"_ODYSSEUS_DOWNLOAD_ATTEMPT_TIMEOUT={timeout_seconds}",
+            "_odysseus_timeout_warning_shown=0",
+            "_odysseus_run_with_timeout() {",
+            '  if [ "$_ODYSSEUS_DOWNLOAD_ATTEMPT_TIMEOUT" -eq 0 ]; then "$@"; return $?; fi',
+            '  if command -v timeout >/dev/null 2>&1; then _odysseus_timeout_cmd=timeout',
+            '  elif command -v gtimeout >/dev/null 2>&1; then _odysseus_timeout_cmd=gtimeout',
+            "  else",
+            '    if [ "$_odysseus_timeout_warning_shown" -eq 0 ]; then',
+            '      echo "[odysseus] WARNING: timeout/gtimeout unavailable; attempt watchdog disabled."',
+            "      _odysseus_timeout_warning_shown=1",
+            "    fi",
+            '    "$@"; return $?',
+            "  fi",
+            '  if "$_odysseus_timeout_cmd" --help 2>&1 | grep -q -- "--kill-after"; then',
+            '    "$_odysseus_timeout_cmd" --signal=TERM --kill-after=30s "${_ODYSSEUS_DOWNLOAD_ATTEMPT_TIMEOUT}s" "$@"',
+            "  else",
+            '    "$_odysseus_timeout_cmd" "${_ODYSSEUS_DOWNLOAD_ATTEMPT_TIMEOUT}s" "$@"',
+            "  fi",
+            "}",
+        ]
+    )
+
+
+def _append_hf_download_environment(lines: list[str], *, reliable: bool) -> None:
+    """Set Hugging Face network defaults without overriding caller tuning."""
+    lines.append('export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"')
+    lines.append('export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-30}"')
+    if reliable:
+        # Modern huggingface_hub uses Xet by default. HF_TRANSFER is deprecated,
+        # so disabling that legacy path alone does not select the reliable HTTP
+        # downloader anymore.
+        lines.append("export HF_HUB_DISABLE_XET=1")
+        lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+
+
+def _write_private_text(path: Path, text: str, *, executable: bool) -> None:
+    """Create a token-capable runner without a world-readable mode window."""
+    mode = 0o700 if executable else 0o600
+    path.touch(mode=mode, exist_ok=True)
+    safe_chmod(path, mode)
+    path.write_text(text, encoding="utf-8")
+    safe_chmod(path, mode)
+
+
+def _posix_private_wrapper_prelude() -> list[str]:
+    """Return signal-safe self-cleanup for token-capable shell runners."""
+    return [
+        "#!/bin/bash",
+        '_odysseus_cleanup() { rm -f -- "$0"; }',
+        "trap _odysseus_cleanup EXIT",
+        "trap 'exit 129' HUP",
+        "trap 'exit 130' INT",
+        "trap 'exit 143' TERM",
+    ]
 
 
 def setup_cookbook_routes() -> APIRouter:
@@ -1011,17 +1110,19 @@ def setup_cookbook_routes() -> APIRouter:
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
             pid_ready_path = TMUX_LOG_DIR / f"{session_id}.pid.ready"
             pid_ready_path.unlink(missing_ok=True)
-            inner.write_text(
+            _write_private_text(
+                inner,
                 _windows_local_pid_record_line(pid_path, pid_ready_path) + "\n"
                 + "\n".join(bash_lines) + "\n",
-                encoding="utf-8",
+                executable=True,
             )
             lp = shlex.quote(log_path.as_posix())
             ip = shlex.quote(inner.as_posix())
             script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-            script_path.write_text(
+            _write_private_text(
+                script_path,
                 f"bash {ip} > {lp} 2>&1\n",
-                encoding="utf-8",
+                executable=True,
             )
             argv = [bash, str(script_path)]
         else:
@@ -1110,7 +1211,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         # Build the shell wrapper — runs hf download directly in tmux (which is a TTY)
         # No script/tee needed — we'll use tmux capture-pane to read output
-        lines = ["#!/bin/bash"]
+        lines = _posix_private_wrapper_prelude()
         lines.extend(_user_shell_path_bootstrap())
         if req.hf_token:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
@@ -1141,9 +1242,9 @@ def setup_cookbook_routes() -> APIRouter:
                 docker_fallback_blocked=_local_ollama_docker_access_blocked(),
             )
         else:
+            _append_hf_download_environment(lines, reliable=req.disable_hf_transfer)
             lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
             if req.disable_hf_transfer:
-                lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
                 lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
             else:
                 lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer')}")
@@ -1151,6 +1252,7 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
+        local_setup_artifact: Path | None = None
         is_windows = req.platform == "windows"
         # LOCAL execution on a native-Windows host never uses tmux (it uses the
         # detached-process path below), regardless of the UI-supplied platform.
@@ -1180,6 +1282,13 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append(f"$env:HF_HOME = '{_dl_ps}'")
                 ps_lines.append(f"$env:HUGGINGFACE_HUB_CACHE = '{_dl_ps}/hub'")
                 ps_lines.append(f"$env:HF_HUB_CACHE = '{_dl_ps}/hub'")
+            if not is_ollama_download:
+                ps_lines.append('if (-not $env:HF_HUB_DOWNLOAD_TIMEOUT) { $env:HF_HUB_DOWNLOAD_TIMEOUT = "60" }')
+                ps_lines.append('if (-not $env:HF_HUB_ETAG_TIMEOUT) { $env:HF_HUB_ETAG_TIMEOUT = "30" }')
+                if req.disable_hf_transfer:
+                    ps_lines.append('$env:HF_HUB_DISABLE_XET = "1"')
+                    ps_lines.append('$env:HF_HUB_ENABLE_HF_TRANSFER = "0"')
+                    ps_lines.append('$env:HF_HUB_DOWNLOAD_MAX_WORKERS = "4"')
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             if is_ollama_download:
@@ -1197,14 +1306,18 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('    python -c "import huggingface_hub" 2>$null')
                 ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
                 ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
-                ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
-                ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
-                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+                if not req.disable_hf_transfer:
+                    ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
+                    ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+                _win_mw = 4 if req.disable_hf_transfer else 8
+                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers={_win_mw})\"")
                 ps_lines.append('    }} else {{')
                 ps_lines.append('      Write-Host "Installing huggingface-hub..."')
-                ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
-                ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
-                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+                _win_packages = "huggingface-hub" if req.disable_hf_transfer else "huggingface-hub hf_transfer"
+                ps_lines.append(f'      python -m pip install -q {_win_packages}')
+                if not req.disable_hf_transfer:
+                    ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers={_win_mw})\"")
                 ps_lines.append('    }}')
                 ps_lines.append('  }}')
                 ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
@@ -1214,7 +1327,10 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('}}')
             ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_runner}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-            runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
+            local_setup_artifact = runner_path
+            _write_private_text(
+                runner_path, "\r\n".join(ps_lines) + "\r\n", executable=False
+            )
 
             # scp the .ps1 script, then launch it as a detached process with log + pid files
             _port = req.ssh_port
@@ -1236,7 +1352,7 @@ def setup_cookbook_routes() -> APIRouter:
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
             remote_runner = f".{session_id}_run.sh"
-            runner_lines = ["#!/bin/bash"]
+            runner_lines = _posix_private_wrapper_prelude()
             runner_lines.extend(_user_shell_path_bootstrap())
             runner_lines.append("# Auto-detect environment")
             runner_lines.append("deactivate 2>/dev/null; hash -r")
@@ -1274,6 +1390,9 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('fi')
                 runner_lines.append('if [ -z "$ODYSSEUS_OLLAMA_PULL_CMD" ]; then echo "ERROR: Ollama not found on this server. Install Ollama or start an ollama-rocm/ollama-test container."; exit 127; fi')
             else:
+                _append_hf_download_environment(
+                    runner_lines, reliable=req.disable_hf_transfer
+                )
                 hf_hub_install = _pip_install_fallback_chain(
                     "huggingface_hub",
                     python_cmd='"$ODYSSEUS_PY" -m pip',
@@ -1284,7 +1403,6 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('ODYSSEUS_HF_CLI="$(command -v hf || command -v huggingface-cli || true)"')
                 runner_lines.append('if [ -z "$ODYSSEUS_HF_CLI" ]; then echo "ERROR: HF CLI not found after installing huggingface_hub."; exit 127; fi')
                 if req.disable_hf_transfer:
-                    runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
                     runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
                 else:
                     hf_transfer_install = _pip_install_fallback_chain(
@@ -1301,13 +1419,19 @@ def setup_cookbook_routes() -> APIRouter:
             # Wrap the download in a retry loop. Large HF/Ollama transfers can
             # hit transient network failures; both backends resume cached partials.
             mw = 4 if req.disable_hf_transfer else 8
+            if not is_ollama_download:
+                _append_posix_download_watchdog(
+                    runner_lines, _hf_download_attempt_timeout_seconds()
+                )
             runner_lines.append('_max_retries=10; _attempt=0; _ec=0')
             runner_lines.append('while [ $_attempt -lt $_max_retries ]; do')
             runner_lines.append('  _attempt=$((_attempt+1))')
             if is_ollama_download:
                 runner_lines.append('  eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null')
             else:
-                runner_lines.append(f'  "$ODYSSEUS_HF_CLI" {hf_download_args} < /dev/null')
+                runner_lines.append(
+                    f'  _odysseus_run_with_timeout "$ODYSSEUS_HF_CLI" {hf_download_args} < /dev/null'
+                )
             runner_lines.append('  _ec=$?')
             runner_lines.append('  if [ $_ec -eq 0 ]; then break; fi')
             runner_lines.append('  if [ $_attempt -lt $_max_retries ]; then')
@@ -1316,13 +1440,16 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append('  fi')
             runner_lines.append('done')
             runner_lines.append('if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"; fi')
-            runner_lines.append(f"rm -f {remote_runner}")
+            runner_lines.append("_odysseus_cleanup")
+            runner_lines.append("trap - EXIT HUP INT TERM")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
-            # Local temp file is scp'd then chmod'd on the remote; the local bit
-            # is irrelevant (no-op on Windows).
-            safe_chmod(runner_path, 0o755)
+            local_setup_artifact = runner_path
+            # Local temp file is scp'd then chmod'd on the remote; keep the
+            # token-capable local copy private as well.
+            _write_private_text(
+                runner_path, "\n".join(runner_lines) + "\n", executable=True
+            )
 
             # scp the runner script, then create tmux session on the remote
             _port = req.ssh_port
@@ -1343,8 +1470,12 @@ def setup_cookbook_routes() -> APIRouter:
             # "not authorized" failure apart from a missing token.
             if not is_ollama_download:
                 lines.append(_HF_TOKEN_STATUS_SNIPPET)
+                if not IS_WINDOWS:
+                    _append_posix_download_watchdog(
+                        lines, _hf_download_attempt_timeout_seconds()
+                    )
             # Retry loop — same rationale as the remote-bash path. Issue #2722.
-            _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null' if is_ollama_download else (hf_cmd if IS_WINDOWS else f"{hf_cmd} < /dev/null")
+            _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null' if is_ollama_download else (hf_cmd if IS_WINDOWS else f"_odysseus_run_with_timeout {hf_cmd} < /dev/null")
             lines.append('_max_retries=10; _attempt=0; _ec=0')
             lines.append('while [ $_attempt -lt $_max_retries ]; do')
             lines.append('  _attempt=$((_attempt+1))')
@@ -1358,10 +1489,12 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append('done')
             lines.append('if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"; fi')
             if not IS_WINDOWS:
-                lines.append(f"rm -f '{wrapper_script}'")
+                lines.append("_odysseus_cleanup")
+                lines.append("trap - EXIT HUP INT TERM")
                 lines.append('exec "${SHELL:-/bin/bash}"')
-                wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                wrapper_script.chmod(0o755)
+                _write_private_text(
+                    wrapper_script, "\n".join(lines) + "\n", executable=True
+                )
             setup_cmd = None if IS_WINDOWS else f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (backend={'ollama' if is_ollama_download else 'hf'}, include={req.include}, session={session_id}, remote={remote})")
@@ -1375,17 +1508,28 @@ def setup_cookbook_routes() -> APIRouter:
                 logger.error(f"Local detached download launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
-            proc = await asyncio.create_subprocess_shell(
-                setup_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    setup_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.wait()
 
-            if proc.returncode != 0:
-                stderr = (await proc.stderr.read()).decode(errors="replace")
-                logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
-                return {"ok": False, "error": stderr, "session_id": session_id}
+                if proc.returncode != 0:
+                    stderr = (await proc.stderr.read()).decode(errors="replace")
+                    logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
+                    return {"ok": False, "error": stderr, "session_id": session_id}
+            finally:
+                if local_setup_artifact is not None:
+                    try:
+                        local_setup_artifact.unlink(missing_ok=True)
+                    except OSError as exc:
+                        logger.warning(
+                            "Failed to remove local download setup artifact %s: %s",
+                            local_setup_artifact,
+                            exc,
+                        )
 
         # Log to assistant
         try:

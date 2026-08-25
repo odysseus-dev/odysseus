@@ -1068,16 +1068,49 @@ export function _persistEnvState() {
 
 // Category colors removed — using theme CSS classes instead
 
+const _DEPENDENCY_FETCH_TIMEOUT_MS = 60000;
+let _dependencyFetchController = null;
+let _dependencyFetchRequestId = 0;
+
+function _renderDependenciesFetchError(list, kind) {
+  const messages = {
+    timeout: 'Loading packages took too long. Check the selected server and try again.',
+    server: 'The package service could not complete the request. Please try again.',
+    invalid: 'The package service returned an invalid response. Please try again.',
+    network: 'Could not reach the package service. Check your connection and try again.',
+  };
+  const message = messages[kind] || messages.network;
+  list.innerHTML = `<div class="hwfit-loading cookbook-deps-error" role="alert" style="text-align:center;">`
+    + `<div>${message}</div>`
+    + `<button type="button" class="memory-toolbar-btn cookbook-deps-retry" style="margin-top:8px;">Retry</button>`
+    + `</div>`;
+  list.querySelector('.cookbook-deps-retry')?.addEventListener('click', () => {
+    _fetchDependencies();
+  });
+}
+
 async function _fetchDependencies() {
   const list = document.getElementById('cookbook-deps-list');
   if (!list) return;
+  // Only the newest refresh may update the list. This matters when changing
+  // servers quickly or pressing Retry while a slow SSH-backed request is
+  // still in flight.
+  _dependencyFetchController?.abort();
+  const requestId = ++_dependencyFetchRequestId;
+  const controller = new AbortController();
+  _dependencyFetchController = controller;
+  let timedOut = false;
+  let failureKind = 'network';
+  let timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, _DEPENDENCY_FETCH_TIMEOUT_MS);
   // Use the shared whirlpool spinner so the user sees the request is in
   // flight (the package list takes a few seconds to enumerate on slow links).
   list.innerHTML = '';
-  let _spin = null;
   try {
     const sp = (await import('./spinner.js')).default;
-    _spin = sp.createWhirlpool(22);
+    const _spin = sp.createWhirlpool(22);
     _spin.element.classList.add('cookbook-section-loading-wp');
     _spin.element.style.cssText = 'margin:24px auto 0;display:block;width:22px;height:22px;';
     list.appendChild(_spin.element);
@@ -1122,9 +1155,31 @@ async function _fetchDependencies() {
         .join(',');
       if (_hint) _pkgParams.set('model_hint', _hint);
     }
-    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
-    const data = await resp.json();
-    const pkgs = data.packages || [];
+    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''), {
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+    if (requestId !== _dependencyFetchRequestId) return;
+    if (!resp.ok) {
+      failureKind = 'server';
+      throw new Error('dependency request failed');
+    }
+    failureKind = 'invalid';
+    let data;
+    try {
+      data = await resp.json();
+    } catch {
+      throw new Error('dependency response was not JSON');
+    }
+    if (requestId !== _dependencyFetchRequestId) return;
+    clearTimeout(timeoutId);
+    timeoutId = null;
+    if (!data || typeof data !== 'object' || Array.isArray(data)
+        || !Array.isArray(data.packages)
+        || !data.packages.every(pkg => pkg && typeof pkg === 'object' && !Array.isArray(pkg))) {
+      throw new Error('dependency response had an invalid shape');
+    }
+    const pkgs = data.packages;
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
     const _systemInstallable = new Set(['tmux']);
@@ -1888,7 +1943,15 @@ async function _fetchDependencies() {
       });
     });
   } catch (err) {
-    list.innerHTML = `<div class="hwfit-loading">Error loading packages: ${esc(err.message)}</div>`;
+    if (requestId !== _dependencyFetchRequestId) return;
+    // A superseded refresh is expected and must not replace the newer UI.
+    if (err?.name === 'AbortError' && !timedOut) return;
+    _renderDependenciesFetchError(list, timedOut ? 'timeout' : failureKind);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    if (requestId === _dependencyFetchRequestId && _dependencyFetchController === controller) {
+      _dependencyFetchController = null;
+    }
   }
 }
 
