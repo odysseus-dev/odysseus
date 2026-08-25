@@ -532,6 +532,7 @@ class ModelEndpoint(TimestampMixin, Base):
     is_enabled = Column(Boolean, default=True)
     hidden_models = Column(Text, nullable=True)    # JSON list of model IDs that failed probing
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
+    cached_model_capabilities = Column(Text, nullable=True)  # Canonical provider evidence for cached models
     pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
     # auto = classify by URL; local = self-hosted server; api/proxy = external
@@ -1179,6 +1180,28 @@ def _migrate_add_cached_models_column():
             conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"cached_models migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_cached_model_capabilities_column():
+    """Add the canonical cached model-capability records column if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(model_endpoints)").fetchall()]
+        if columns and "cached_model_capabilities" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN cached_model_capabilities TEXT")
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"cached_model_capabilities migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -2135,6 +2158,7 @@ def init_db():
                 )
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
+    _migrate_add_cached_model_capabilities_column()
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()

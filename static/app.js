@@ -53,7 +53,7 @@ import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { getSettings } from './js/appConfig.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
-import { modelControlCapabilities } from './js/modelControls.js';
+import { modelCapabilityForContext, modelControlCapabilities, normalizeModelControlValue } from './js/modelControls.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -2017,15 +2017,9 @@ function initializeEventListeners() {
       },
     ];
 
-    const normalizeValue = (value, labels) => {
-      const v = String(value || 'auto').toLowerCase();
-      return Object.prototype.hasOwnProperty.call(labels, v) ? v : 'auto';
-    };
-    const normalizeDefaultControl = (key, value) => {
-      let normalized = String(value || 'auto').toLowerCase().replace(/-/g, '_');
-      if (normalized === 'none') normalized = 'off';
-      const config = controls.find(c => c.key === key);
-      return config ? normalizeValue(normalized, config.labels) : 'auto';
+    const controlLabel = (config, value) => {
+      if (config.labels[value]) return config.labels[value];
+      return String(value || 'auto').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     };
     let modelControlDefaults = {
       reasoning_effort: 'auto',
@@ -2033,12 +2027,10 @@ function initializeEventListeners() {
     };
     function setModelControlDefaults(values = {}) {
       modelControlDefaults = {
-        reasoning_effort: normalizeDefaultControl(
-          'reasoning_effort',
+        reasoning_effort: normalizeModelControlValue(
           values.reasoning_effort || values.default_reasoning_effort || 'auto',
         ),
-        verbosity: normalizeDefaultControl(
-          'verbosity',
+        verbosity: normalizeModelControlValue(
           values.verbosity || values.default_verbosity || 'auto',
         ),
       };
@@ -2060,11 +2052,20 @@ function initializeEventListeners() {
       const sessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
       const meta = sid ? sessions.find(s => s.id === sid) : null;
       const pending = sessionModule && sessionModule.getPendingChat ? sessionModule.getPendingChat() : null;
+      const model = (override && override.model) || (meta && meta.model) || (pending && pending.modelId) || '';
+      const endpointId = (override && override.endpointId) || (meta && meta.endpoint_id) || (pending && pending.endpointId) || '';
+      const endpointUrl = (override && override.endpointUrl) || (meta && meta.endpoint_url) || (pending && pending.url) || '';
+      const modelCapability = (override && override.modelCapability) || modelCapabilityForContext(
+        modelsModule && modelsModule.getCachedItems ? modelsModule.getCachedItems() : [],
+        { model, endpointId, endpointUrl },
+      );
       return {
         sessionId: sid,
         meta,
-        model: (override && override.model) || (meta && meta.model) || (pending && pending.modelId) || '',
-        endpointUrl: (override && override.endpointUrl) || (meta && meta.endpoint_url) || (pending && pending.url) || '',
+        model,
+        endpointId,
+        endpointUrl,
+        modelCapability,
       };
     }
 
@@ -2117,7 +2118,7 @@ function initializeEventListeners() {
       const config = controls.find(item => item.key === key);
       if (!config) return 'auto';
       const capability = capabilitiesFor(key, contextOverride);
-      const normalized = normalizeDefaultControl(key, value);
+      const normalized = normalizeModelControlValue(value);
       return capability.allowed.has(normalized) ? normalized : 'auto';
     }
 
@@ -2169,22 +2170,48 @@ function initializeEventListeners() {
       if (!btn || !menu || !label) return;
       const ownerWrap = menu.parentElement;
       const wrapper = btn.closest('.model-control-wrapper');
-      const options = Array.from(menu.querySelectorAll('.model-control-option'));
+      let options = Array.from(menu.querySelectorAll('.model-control-option'));
       let currentValue = 'auto';
+
+      function bindOption(opt) {
+        opt.addEventListener('pointerdown', e => e.preventDefault());
+        opt.addEventListener('click', e => {
+          e.stopPropagation();
+          if (opt.disabled) return;
+          setValue(opt.dataset.value);
+          closeMenu();
+        });
+      }
+
+      function addProviderOptions(capability) {
+        capability.allowed.forEach(value => {
+          if (options.some(opt => opt.dataset.value === value)) return;
+          const display = controlLabel(config, value);
+          config.labels[value] = display;
+          const option = document.createElement('button');
+          option.type = 'button';
+          option.className = 'model-control-option';
+          option.dataset.value = value;
+          option.textContent = display;
+          bindOption(option);
+          menu.appendChild(option);
+          options.push(option);
+        });
+      }
 
       function setValue(value, optionsArg = {}) {
         const capability = capabilitiesFor(config.key, optionsArg.contextOverride || null);
-        let normalized = normalizeValue(value, config.labels);
+        let normalized = normalizeModelControlValue(value);
         if (!capability.allowed.has(normalized)) normalized = 'auto';
         currentValue = normalized;
         const state = loadToggleState();
         state[config.key] = normalized;
         saveToggleState(state);
-        label.textContent = config.labels[normalized] || 'Auto';
+        label.textContent = controlLabel(config, normalized);
         const active = normalized !== 'auto';
         btn.classList.toggle('active', active);
         btn.setAttribute('aria-pressed', String(active));
-        btn.title = `${config.name}: ${config.labels[normalized] || 'Auto'}`;
+        btn.title = `${config.name}: ${controlLabel(config, normalized)}`;
         options.forEach(opt => {
           opt.classList.toggle('active', opt.dataset.value === normalized);
         });
@@ -2195,12 +2222,13 @@ function initializeEventListeners() {
 
       function refreshCapability(override = null) {
         const capability = capabilitiesFor(config.key, override);
+        addProviderOptions(capability);
         const disabled = !capability.supported;
         if (wrapper) wrapper.classList.toggle('disabled', disabled);
         btn.disabled = disabled;
         btn.title = disabled
           ? capability.reason
-          : `${config.name}: ${config.labels[currentValue] || 'Auto'}`;
+          : `${config.name}: ${controlLabel(config, currentValue)}`;
         options.forEach(opt => {
           const allowed = capability.allowed.has(opt.dataset.value);
           opt.disabled = !allowed;
@@ -2238,15 +2266,7 @@ function initializeEventListeners() {
         if (menu.classList.contains('hidden')) openMenu();
         else closeMenu();
       });
-      options.forEach(opt => {
-        opt.addEventListener('pointerdown', e => e.preventDefault());
-        opt.addEventListener('click', e => {
-          e.stopPropagation();
-          if (opt.disabled) return;
-          setValue(opt.dataset.value);
-          closeMenu();
-        });
-      });
+      options.forEach(bindOption);
       document.addEventListener('model-control-close-all', e => {
         if (e.detail && e.detail.except === config.menuId) return;
         closeMenu();
@@ -2272,13 +2292,13 @@ function initializeEventListeners() {
 
     window.odysseusModelControls = {
       applySession(meta = {}) {
+        refreshCapabilities();
         if (registry.reasoning_effort) {
           registry.reasoning_effort.setValue(meta.reasoning_effort || 'auto', { persist: false });
         }
         if (registry.verbosity) {
           registry.verbosity.setValue(meta.verbosity || 'auto', { persist: false });
         }
-        refreshCapabilities();
       },
       getDefaults() {
         return { ...modelControlDefaults };
@@ -2301,9 +2321,15 @@ function initializeEventListeners() {
 
     document.addEventListener('odysseus:model-picked', e => {
       const detail = (e && e.detail) || {};
-      refreshCapabilities({ model: detail.mid, endpointUrl: detail.url });
+      refreshCapabilities({
+        model: detail.mid,
+        endpointId: detail.endpointId,
+        endpointUrl: detail.url,
+        modelCapability: detail.modelCapability || null,
+      });
       setTimeout(() => refreshCapabilities(), 250);
     });
+    document.addEventListener('odysseus:model-catalog-updated', () => refreshCapabilities());
   })();
 
   try { workspaceModule.initWorkspace(); } catch (_) {}

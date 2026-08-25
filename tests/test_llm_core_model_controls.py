@@ -1,4 +1,4 @@
-"""Tests for optional reasoning-effort and verbosity request controls."""
+"""Tests for capability-backed reasoning-effort and verbosity controls."""
 
 import asyncio
 
@@ -30,9 +30,6 @@ class _FakeJsonResp:
 
 
 class _FakeStreamCtx:
-    def __init__(self, captured):
-        self._captured = captured
-
     async def __aenter__(self):
         return _FakeResp()
 
@@ -46,116 +43,102 @@ class _FakeClient:
 
     def stream(self, method, url, **kwargs):
         self.captured_payload = kwargs.get("json") or {}
-        return _FakeStreamCtx(self.captured_payload)
-
-    async def post(self, url, **kwargs):
-        self.captured_payload = kwargs.get("json") or {}
-        return _FakeJsonResp()
+        return _FakeStreamCtx()
 
 
-def _capture_stream_payload(monkeypatch, url, model, **kwargs):
-    client = _FakeClient()
-    monkeypatch.setattr(llm_core, "_get_http_client", lambda: client)
-    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
-    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "get_context_length", lambda u, m: 32768)
-
-    async def run():
-        return [chunk async for chunk in llm_core.stream_llm(
-            url,
-            model,
-            [{"role": "user", "content": "Hi"}],
-            **kwargs,
-        )]
-
-    asyncio.run(run())
-    return client.captured_payload
-
-
-def _capture_async_payload(monkeypatch, url, model, **kwargs):
-    client = _FakeClient()
-    llm_core._response_cache.clear()
-    monkeypatch.setattr(llm_core, "_get_http_client", lambda: client)
-    monkeypatch.setattr(llm_core, "_is_host_dead", lambda _url: False)
-    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "get_context_length", lambda _url, _model: 32768)
-
-    asyncio.run(llm_core.llm_call_async(
-        url,
-        model,
-        [{"role": "user", "content": "Hi"}],
-        max_retries=1,
-        **kwargs,
-    ))
-    return client.captured_payload
+def _record(*, reasoning=(), verbosity=(), status="claimed"):
+    controls = []
+    if reasoning:
+        controls.append({
+            "control": "reasoning_effort",
+            "status": status,
+            "source": "provider_reader",
+            "confidence": "provider_reported",
+            "evidence": {"allowed_values": list(reasoning)},
+        })
+    if verbosity:
+        controls.append({
+            "control": "verbosity",
+            "status": status,
+            "source": "provider_reader",
+            "confidence": "provider_reported",
+            "evidence": {"allowed_values": list(verbosity)},
+        })
+    return {"model_id": "opaque-model", "deterministic_controls": controls}
 
 
-def _capture_sync_payload(monkeypatch, url, model, **kwargs):
-    captured = {}
-    llm_core._response_cache.clear()
-
-    def fake_post(_url, _headers, **request_kwargs):
-        captured.update(request_kwargs.get("json") or {})
-        return _FakeJsonResp()
-
-    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware", fake_post)
-    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "get_context_length", lambda _url, _model: 32768)
-    llm_core.llm_call(
-        url,
-        model,
-        [{"role": "user", "content": "Hi"}],
-        **kwargs,
-    )
-    return captured
-
-
-def test_chatgpt_subscription_payload_adds_supported_controls():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.1-codex",
+def _chatgpt_payload(capability, **controls):
+    return llm_core._build_chatgpt_responses_payload(
+        "opaque-model",
         [{"role": "user", "content": "Hi"}],
         temperature=0.2,
         max_tokens=0,
-        reasoning_effort="high",
-        verbosity="low",
+        model_capability=capability,
+        **controls,
     )
 
-    assert payload["reasoning"] == {"effort": "high"}
+
+def test_chatgpt_payload_sends_only_provider_advertised_values():
+    capability = _record(
+        reasoning=("low", "high", "xhigh"),
+        verbosity=("low", "medium", "high"),
+    )
+
+    payload = _chatgpt_payload(capability, reasoning_effort="xhigh", verbosity="low")
+
+    assert payload["reasoning"] == {"effort": "xhigh"}
     assert payload["text"] == {"verbosity": "low"}
 
 
-def test_chatgpt_subscription_payload_maps_off_to_none_for_newer_gpt5():
+def test_chatgpt_payload_omits_unadvertised_values_even_for_suggestive_model_name():
+    capability = _record(reasoning=("low",), verbosity=("low",))
+
     payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.5",
+        "gpt-5.6-reasoning-max",
         [{"role": "user", "content": "Hi"}],
         temperature=0.2,
         max_tokens=0,
-        reasoning_effort="off",
+        model_capability=capability,
+        reasoning_effort="max",
+        verbosity="high",
     )
 
-    assert payload["reasoning"] == {"effort": "none"}
+    assert "reasoning" not in payload
+    assert "text" not in payload
 
 
-def test_chatgpt_subscription_payload_omits_none_for_pre_5_1_gpt5():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="off",
+def test_chatgpt_payload_unknown_or_missing_evidence_is_conservative():
+    unknown = _chatgpt_payload(
+        _record(reasoning=("high",), verbosity=("high",), status="unknown"),
+        reasoning_effort="high",
+        verbosity="high",
     )
+    missing = _chatgpt_payload(None, reasoning_effort="high", verbosity="high")
+
+    assert "reasoning" not in unknown and "text" not in unknown
+    assert "reasoning" not in missing and "text" not in missing
+
+
+def test_chatgpt_payload_rejects_evidence_for_a_different_model():
+    capability = _record(reasoning=("high",))
+    capability["model_id"] = "different-model"
+
+    payload = _chatgpt_payload(capability, reasoning_effort="high")
 
     assert "reasoning" not in payload
 
 
-def test_chatgpt_subscription_payload_auto_omits_controls():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.1-codex",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
+def test_chatgpt_payload_maps_ui_off_only_when_provider_advertises_none():
+    supported = _chatgpt_payload(_record(reasoning=("none", "high")), reasoning_effort="off")
+    unsupported = _chatgpt_payload(_record(reasoning=("high",)), reasoning_effort="off")
+
+    assert supported["reasoning"] == {"effort": "none"}
+    assert "reasoning" not in unsupported
+
+
+def test_auto_omits_controls_even_when_supported():
+    payload = _chatgpt_payload(
+        _record(reasoning=("low", "high"), verbosity=("low", "high")),
         reasoning_effort="auto",
         verbosity="auto",
     )
@@ -164,313 +147,44 @@ def test_chatgpt_subscription_payload_auto_omits_controls():
     assert "text" not in payload
 
 
-def test_chatgpt_subscription_payload_unsupported_model_omits_controls():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-4o",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="high",
-        verbosity="high",
-    )
-
-    assert "reasoning" not in payload
-    assert "text" not in payload
-
-
-def test_chatgpt_subscription_payload_o_series_omits_minimal_reasoning():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "o3-mini",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="minimal",
-        verbosity="high",
-    )
-
-    assert "reasoning" not in payload
-    assert "text" not in payload
-
-
-def test_chatgpt_subscription_payload_o_series_accepts_high_reasoning():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "o3-mini",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="high",
-    )
-
-    assert payload["reasoning"] == {"effort": "high"}
-
-
-def test_chatgpt_subscription_payload_invalid_values_omit_controls():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.1-codex",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="maximum",
-        verbosity="long",
-    )
-
-    assert "reasoning" not in payload
-    assert "text" not in payload
-
-
-def test_chatgpt_subscription_gpt_51_omits_unsupported_minimal():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.1-codex",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="minimal",
-    )
-
-    assert "reasoning" not in payload
-
-
-def test_chatgpt_subscription_gpt_52_supports_xhigh_but_not_minimal():
-    xhigh = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.2",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="xhigh",
-    )
-    minimal = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.2",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="minimal",
-    )
-
-    assert xhigh["reasoning"] == {"effort": "xhigh"}
-    assert "reasoning" not in minimal
-
-
-def test_chatgpt_subscription_gpt_56_supports_max():
-    payload = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.6-sol",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="max",
-    )
-
-    assert payload["reasoning"] == {"effort": "max"}
-
-
-def test_chatgpt_subscription_gpt5_pro_only_accepts_high():
-    low = llm_core._build_chatgpt_responses_payload(
-        "gpt-5-pro",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="low",
-    )
-    high = llm_core._build_chatgpt_responses_payload(
-        "gpt-5-pro",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="high",
-    )
-
-    assert "reasoning" not in low
-    assert high["reasoning"] == {"effort": "high"}
-
-
-def test_chatgpt_subscription_versioned_pro_uses_its_documented_levels():
-    medium = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.2-pro",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="medium",
-    )
-    low = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.2-pro",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="low",
-    )
-
-    assert medium["reasoning"] == {"effort": "medium"}
-    assert "reasoning" not in low
-
-
-def test_chatgpt_subscription_codex_variants_do_not_inherit_none():
-    off = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.2-codex",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="off",
-    )
-    xhigh = llm_core._build_chatgpt_responses_payload(
-        "gpt-5.2-codex",
-        [{"role": "user", "content": "Hi"}],
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="xhigh",
-    )
-
-    assert "reasoning" not in off
-    assert xhigh["reasoning"] == {"effort": "xhigh"}
-
-
-def test_ollama_native_reasoning_control_maps_to_binary_think():
-    messages = [{"role": "user", "content": "Hi"}]
-
-    auto_payload = llm_core._build_ollama_payload(
+def test_ollama_native_does_not_receive_user_control_without_exact_evidence():
+    payload = llm_core._build_ollama_payload(
         "qwen3:14b",
-        messages,
+        [{"role": "user", "content": "Hi"}],
         temperature=0.2,
         max_tokens=0,
-        reasoning_effort="auto",
-    )
-    off_payload = llm_core._build_ollama_payload(
-        "qwen3:14b",
-        messages,
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="off",
-    )
-    on_payload = llm_core._build_ollama_payload(
-        "qwen3:14b",
-        messages,
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="high",
-    )
-
-    assert "think" not in auto_payload
-    assert off_payload["think"] is False
-    assert on_payload["think"] is True
-
-
-def test_ollama_gpt_oss_uses_thinking_levels_and_cannot_be_disabled():
-    messages = [{"role": "user", "content": "Hi"}]
-    high = llm_core._build_ollama_payload(
-        "gpt-oss:20b",
-        messages,
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="high",
-    )
-    off = llm_core._build_ollama_payload(
-        "gpt-oss:20b",
-        messages,
-        temperature=0.2,
-        max_tokens=0,
-        reasoning_effort="off",
-    )
-
-    assert high["think"] == "high"
-    assert "think" not in off
-
-
-def test_generic_openai_compatible_endpoint_does_not_receive_controls(monkeypatch):
-    payload = _capture_stream_payload(
-        monkeypatch,
-        "https://api.openai.com/v1/chat/completions",
-        "gpt-5.1-codex",
-        reasoning_effort="high",
-        verbosity="high",
-    )
-
-    assert payload["model"] == "gpt-5.1-codex"
-    assert "reasoning" not in payload
-    assert "text" not in payload
-    assert "reasoning_effort" not in payload
-    assert "verbosity" not in payload
-
-
-def test_ollama_openai_compat_auto_preserves_think_false(monkeypatch):
-    payload = _capture_stream_payload(
-        monkeypatch,
-        "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3:14b",
-        reasoning_effort="auto",
-    )
-
-    assert payload["think"] is False
-
-
-def test_ollama_openai_compat_explicit_reasoning_enables_think(monkeypatch):
-    payload = _capture_stream_payload(
-        monkeypatch,
-        "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3:14b",
-        reasoning_effort="high",
-    )
-
-    assert payload["think"] is True
-
-
-def test_ollama_openai_compat_off_disables_think(monkeypatch):
-    payload = _capture_stream_payload(
-        monkeypatch,
-        "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3:14b",
-        reasoning_effort="off",
-    )
-
-    assert payload["think"] is False
-
-
-def test_ollama_openai_compat_non_thinking_model_omits_think(monkeypatch):
-    payload = _capture_stream_payload(
-        monkeypatch,
-        "http://127.0.0.1:11434/v1/chat/completions",
-        "llama3.2:3b",
         reasoning_effort="high",
     )
 
     assert "think" not in payload
 
 
-def test_ollama_openai_compat_gpt_oss_uses_level_in_stream(monkeypatch):
-    payload = _capture_stream_payload(
-        monkeypatch,
-        "http://localhost:12345/v1/chat/completions",
-        "gpt-oss:20b",
-        reasoning_effort="medium",
-    )
+def test_ollama_openai_compat_keeps_preexisting_tool_safe_default(monkeypatch):
+    client = _FakeClient()
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: client)
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda _url: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *args, **kwargs: None)
+    monkeypatch.setattr(llm_core, "get_context_length", lambda _url, _model: 32768)
 
-    assert payload["think"] == "medium"
+    async def run():
+        return [chunk async for chunk in llm_core.stream_llm(
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "qwen3:14b",
+            [{"role": "user", "content": "Hi"}],
+            reasoning_effort="high",
+        )]
 
+    asyncio.run(run())
 
-def test_ollama_openai_compat_controls_apply_to_async_nonstream(monkeypatch):
-    payload = _capture_async_payload(
-        monkeypatch,
-        "http://localhost:12345/v1/chat/completions",
-        "qwen3:14b",
-        reasoning_effort="high",
-    )
-
-    assert payload["think"] is True
-
-
-def test_ollama_openai_compat_controls_apply_to_sync_nonstream(monkeypatch):
-    payload = _capture_sync_payload(
-        monkeypatch,
-        "http://localhost:12345/v1/chat/completions",
-        "qwen3:14b",
-        reasoning_effort="off",
-    )
-
-    assert payload["think"] is False
+    assert client.captured_payload["think"] is False
 
 
 def test_response_cache_key_includes_model_controls():
     messages = [{"role": "user", "content": "Hi"}]
     low = llm_core._get_cache_key(
         "https://example.test/v1",
-        "gpt-5.2",
+        "opaque-model",
         messages,
         0.2,
         100,
@@ -479,7 +193,7 @@ def test_response_cache_key_includes_model_controls():
     )
     high = llm_core._get_cache_key(
         "https://example.test/v1",
-        "gpt-5.2",
+        "opaque-model",
         messages,
         0.2,
         100,
@@ -488,3 +202,25 @@ def test_response_cache_key_includes_model_controls():
     )
 
     assert low != high
+
+
+def test_fallback_threads_exact_endpoint_identity_to_request_shaping(monkeypatch):
+    captured = {}
+
+    async def fake_stream(url, model, messages, **kwargs):
+        captured.update(kwargs)
+        yield 'data: {"delta":"ok"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+
+    async def run():
+        return [chunk async for chunk in llm_core.stream_llm_with_fallback(
+            [("https://chatgpt.com/backend-api/codex/responses", "opaque-model", {})],
+            [{"role": "user", "content": "Hi"}],
+            candidate_route_descriptors=[{"endpoint_id": "endpoint-exact"}],
+        )]
+
+    asyncio.run(run())
+
+    assert captured["endpoint_id"] == "endpoint-exact"

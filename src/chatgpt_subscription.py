@@ -31,6 +31,14 @@ _AUTH_REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _AUTH_REFRESH_LOCKS_GUARD = threading.Lock()
 
 
+class ModelCatalog(list[str]):
+    """List-compatible catalog carrying canonical capability records."""
+
+    def __init__(self, records=()):
+        self.capability_records = tuple(records or ())
+        super().__init__(record.model_id for record in self.capability_records)
+
+
 def _database_handles():
     from core.database import ProviderAuthSession, SessionLocal, utcnow_naive
     return ProviderAuthSession, SessionLocal, utcnow_naive
@@ -87,9 +95,14 @@ def chatgpt_headers(access_token: Optional[str]) -> Dict[str, str]:
     return headers
 
 
-def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str]:
+def fetch_available_models(
+    access_token: str,
+    timeout: float = 10.0,
+    *,
+    endpoint_id: str = "",
+) -> ModelCatalog:
     if not access_token:
-        return []
+        return ModelCatalog()
     try:
         response = httpx.get(
             "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0",
@@ -97,32 +110,21 @@ def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str
             timeout=timeout,
         )
         if response.status_code != 200:
-            return []
+            return ModelCatalog()
         data = response.json()
     except Exception:
-        return []
-    entries = data.get("models", []) if isinstance(data, dict) else []
-    sortable: list[tuple[int, str]] = []
-    for item in entries:
-        if not isinstance(item, dict):
-            continue
-        slug = item.get("slug")
-        if not isinstance(slug, str) or not slug.strip():
-            continue
-        visibility = item.get("visibility", "")
-        if isinstance(visibility, str) and visibility.strip().lower() in {"hide", "hidden"}:
-            continue
-        priority = item.get("priority")
-        rank = int(priority) if isinstance(priority, (int, float)) else 10_000
-        sortable.append((rank, slug.strip()))
-    sortable.sort(key=lambda item: (item[0], item[1]))
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for _, slug in sortable:
-        if slug not in seen:
-            ordered.append(slug)
-            seen.add(slug)
-    return ordered
+        return ModelCatalog()
+
+    from src.model_capability_readers import records_from_payload
+    from src.model_capability_readers.base import VENDOR_CHATGPT_SUBSCRIPTION
+
+    records = records_from_payload(
+        data,
+        vendor=VENDOR_CHATGPT_SUBSCRIPTION,
+        base_url=DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL,
+        endpoint_id=endpoint_id,
+    )
+    return ModelCatalog(records)
 
 
 def _raise_for_oauth_response(response: httpx.Response, action: str) -> None:

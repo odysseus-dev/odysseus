@@ -2219,7 +2219,7 @@ function _normalizePendingReasoning(value) {
   let v = String(value || '').trim().toLowerCase().replace(/-/g, '_');
   if (v === 'x_high') v = 'xhigh';
   if (v === 'none') v = 'off';
-  return ['off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v) ? v : '';
+  return /^[a-z][a-z0-9_]{0,31}$/.test(v) && !['auto', 'default'].includes(v) ? v : '';
 }
 
 function _normalizePendingVerbosity(value) {

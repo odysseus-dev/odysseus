@@ -40,7 +40,6 @@ def _public_model(name: str, model: str) -> str:
     return model
 
 
-_SESSION_REASONING_VALUES = {"auto", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 _SESSION_VERBOSITY_VALUES = {"auto", "low", "medium", "high"}
 
 
@@ -58,7 +57,16 @@ def _normalize_session_control(value, allowed_values, field_name: str):
 
 
 def _normalize_session_reasoning(value):
-    return _normalize_session_control(value, _SESSION_REASONING_VALUES, "reasoning_effort")
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("-", "_")
+    if normalized == "x_high":
+        normalized = "xhigh"
+    if normalized in ("", "auto", "default"):
+        return None
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", normalized):
+        raise HTTPException(400, f"Unsupported reasoning_effort: {value}")
+    return normalized
 
 
 def _normalize_session_verbosity(value):

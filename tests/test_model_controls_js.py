@@ -1,4 +1,4 @@
-"""Node-driven tests for browser model-control capability gating."""
+"""Node-driven tests for canonical browser model-control gating."""
 
 import json
 import re
@@ -32,114 +32,96 @@ def test_app_reuses_the_canonical_sessions_module_instance():
     assert match.group(1) == "./js/sessions.js"
 
 
-def test_endpoint_detection_uses_parsed_host_path_and_local_ollama_surfaces():
+def test_provider_evidence_supplies_exact_reasoning_and_verbosity_values():
     values = _node_eval(
         """
-        const controls = await import('./static/js/modelControls.js');
+        const { modelControlCapabilities, normalizeModelControlValue } = await import('./static/js/modelControls.js');
+        const modelCapability = {
+          model_id: 'opaque-slug',
+          deterministic_controls: [
+            { control: 'reasoning_effort', status: 'claimed', evidence: { allowed_values: ['none', 'low', 'high', 'xhigh', 'ultra'] } },
+            { control: 'verbosity', status: 'verified', evidence: { allowed_values: ['low', 'medium', 'high'] } },
+          ],
+        };
         console.log(JSON.stringify({
-          subscription: controls.isChatGptSubscriptionEndpoint('https://chatgpt.com/backend-api/codex/responses'),
-          subscriptionSubdomain: controls.isChatGptSubscriptionEndpoint('https://api.chatgpt.com/backend-api/codex'),
-          subscriptionSpoof: controls.isChatGptSubscriptionEndpoint('https://chatgpt.com.evil.test/backend-api/codex'),
-          subscriptionInQuery: controls.isChatGptSubscriptionEndpoint('https://evil.test/?next=https://chatgpt.com/backend-api/codex'),
-          ollamaNativeCustomPort: controls.isOllamaEndpoint('http://localhost:12345/api/chat'),
-          ollamaCompatCustomPort: controls.isOllamaEndpoint('http://127.0.0.1:12345/v1/chat/completions'),
-          ollamaContainerPort: controls.isOllamaEndpoint('http://ollama:11434/v1/chat/completions'),
-          ollamaSpoof: controls.isOllamaEndpoint('https://ollama.evil.test/v1/chat/completions'),
-          ollamaInQuery: controls.isOllamaEndpoint('https://api.example.test/v1/chat/completions?provider=ollama'),
+          reasoning: modelControlCapabilities('reasoning_effort', { model: 'opaque-slug', modelCapability }),
+          verbosity: modelControlCapabilities('verbosity', { model: 'opaque-slug', modelCapability }),
+          future: normalizeModelControlValue('Ultra'),
         }));
         """
     )
 
-    assert values == {
-        "subscription": True,
-        "subscriptionSubdomain": False,
-        "subscriptionSpoof": False,
-        "subscriptionInQuery": False,
-        "ollamaNativeCustomPort": True,
-        "ollamaCompatCustomPort": True,
-        "ollamaContainerPort": True,
-        "ollamaSpoof": False,
-        "ollamaInQuery": False,
+    assert values["reasoning"] == {
+        "supported": True,
+        "allowed": ["auto", "off", "low", "high", "xhigh", "ultra"],
+        "reason": "",
     }
-
-
-def test_openai_reasoning_capabilities_match_model_contracts():
-    values = _node_eval(
-        """
-        const { modelControlCapabilities } = await import('./static/js/modelControls.js');
-        const endpointUrl = 'https://chatgpt.com/backend-api/codex';
-        const allowed = model => modelControlCapabilities('reasoning_effort', { model, endpointUrl }).allowed;
-        console.log(JSON.stringify({
-          gpt5: allowed('gpt-5'),
-          gpt51: allowed('gpt-5.1'),
-          gpt51Codex: allowed('gpt-5.1-codex'),
-          gpt51CodexMax: allowed('gpt-5.1-codex-max'),
-          gpt52: allowed('gpt-5.2'),
-          gpt52Codex: allowed('gpt-5.2-codex'),
-          gpt52pro: allowed('gpt-5.2-pro'),
-          gpt54pro: allowed('gpt-5.4-pro'),
-          gpt56: allowed('gpt-5.6-sol'),
-          gpt5pro: allowed('gpt-5-pro'),
-          o3: allowed('o3-mini'),
-          nearMatch: allowed('gpt-50'),
-        }));
-        """
-    )
-
-    assert values == {
-        "gpt5": ["auto", "minimal", "low", "medium", "high"],
-        "gpt51": ["auto", "off", "low", "medium", "high"],
-        "gpt51Codex": ["auto", "low", "medium", "high"],
-        "gpt51CodexMax": ["auto", "low", "medium", "high", "xhigh"],
-        "gpt52": ["auto", "off", "low", "medium", "high", "xhigh"],
-        "gpt52Codex": ["auto", "low", "medium", "high", "xhigh"],
-        "gpt52pro": ["auto", "medium", "high", "xhigh"],
-        "gpt54pro": ["auto", "medium", "high", "xhigh"],
-        "gpt56": ["auto", "off", "low", "medium", "high", "xhigh", "max"],
-        "gpt5pro": ["auto", "high"],
-        "o3": ["auto", "low", "medium", "high"],
-        "nearMatch": ["auto"],
+    assert values["verbosity"] == {
+        "supported": True,
+        "allowed": ["auto", "low", "medium", "high"],
+        "reason": "",
     }
+    assert values["future"] == "ultra"
 
 
-def test_ollama_reasoning_capabilities_distinguish_boolean_and_level_models():
+def test_names_and_urls_never_infer_controls_without_canonical_evidence():
     values = _node_eval(
         """
         const { modelControlCapabilities } = await import('./static/js/modelControls.js');
-        const endpointUrl = 'http://localhost:12345/v1/chat/completions';
-        const allowed = model => modelControlCapabilities('reasoning_effort', { model, endpointUrl }).allowed;
+        const allowed = (model, endpointUrl) => modelControlCapabilities(
+          'reasoning_effort', { model, endpointUrl }
+        ).allowed;
         console.log(JSON.stringify({
-          qwen: allowed('qwen3:14b'),
-          deepseek: allowed('deepseek-v3.1:671b'),
-          gptOss: allowed('gpt-oss:20b'),
-          llama: allowed('llama3.2:3b'),
+          chatgpt: allowed('gpt-5.6-sol', 'https://chatgpt.com/backend-api/codex'),
+          ollama: allowed('qwen3:14b', 'http://127.0.0.1:11434/v1/chat/completions'),
+          generic: allowed('reasoning-super-model', 'https://example.test/v1/chat/completions'),
         }));
         """
     )
 
-    assert values == {
-        "qwen": ["auto", "off", "on"],
-        "deepseek": ["auto", "off", "on"],
-        "gptOss": ["auto", "low", "medium", "high"],
-        "llama": ["auto"],
-    }
+    assert values == {"chatgpt": ["auto"], "ollama": ["auto"], "generic": ["auto"]}
 
 
-def test_verbosity_stays_subscription_and_gpt5_specific():
+def test_unknown_or_unsupported_evidence_remains_conservative():
     values = _node_eval(
         """
         const { modelControlCapabilities } = await import('./static/js/modelControls.js');
-        const allowed = (model, endpointUrl) => modelControlCapabilities('verbosity', { model, endpointUrl }).allowed;
+        const cap = status => ({ model_id: 'm', deterministic_controls: [
+          { control: 'reasoning_effort', status, evidence: { allowed_values: ['high'] } },
+        ] });
         console.log(JSON.stringify({
-          supported: allowed('gpt-5.6-sol', 'https://chatgpt.com/backend-api/codex'),
-          generic: allowed('gpt-5.6-sol', 'https://api.example.test/v1/chat/completions'),
-          older: allowed('gpt-4o', 'https://chatgpt.com/backend-api/codex'),
+          unknown: modelControlCapabilities('reasoning_effort', { model: 'm', modelCapability: cap('unknown') }).allowed,
+          unsupported: modelControlCapabilities('reasoning_effort', { model: 'm', modelCapability: cap('unsupported') }).allowed,
+          missingValues: modelControlCapabilities('reasoning_effort', {
+            model: 'm', modelCapability: { model_id: 'm', deterministic_controls: [
+              { control: 'reasoning_effort', status: 'claimed', evidence: {} },
+            ] },
+          }).allowed,
         }));
         """
     )
 
-    assert values == {
-        "supported": ["auto", "low", "medium", "high"],
-        "generic": ["auto"],
-        "older": ["auto"],
-    }
+    assert values == {"unknown": ["auto"], "unsupported": ["auto"], "missingValues": ["auto"]}
+
+
+def test_catalog_lookup_uses_exact_endpoint_and_model_identity():
+    values = _node_eval(
+        """
+        const { modelCapabilityForContext } = await import('./static/js/modelControls.js');
+        const first = { model_id: 'same-model', deterministic_controls: [{ control: 'verbosity', status: 'claimed', evidence: { allowed_values: ['low'] } }] };
+        const second = { model_id: 'same-model', deterministic_controls: [{ control: 'verbosity', status: 'claimed', evidence: { allowed_values: ['high'] } }] };
+        const items = [
+          { endpoint_id: 'ep-a', url: 'https://same.test/chat', model_capabilities: [first] },
+          { endpoint_id: 'ep-b', url: 'https://same.test/chat', model_capabilities: [second] },
+        ];
+        console.log(JSON.stringify({
+          exact: modelCapabilityForContext(items, { model: 'same-model', endpointId: 'ep-b' }),
+          ambiguousUrl: modelCapabilityForContext(items, { model: 'same-model', endpointUrl: 'https://same.test/chat' }),
+          nearMatch: modelCapabilityForContext(items, { model: 'same-model-v2', endpointId: 'ep-b' }),
+        }));
+        """
+    )
+
+    assert values["exact"]["deterministic_controls"][0]["evidence"]["allowed_values"] == ["high"]
+    assert values["ambiguousUrl"] is None
+    assert values["nearMatch"] is None

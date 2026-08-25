@@ -262,7 +262,7 @@ def test_default_chat_uses_owned_endpoint_as_regular_user_last_resort(monkeypatc
     }
 
 
-def test_default_chat_preserves_max_reasoning_default(monkeypatch):
+def test_default_chat_drops_controls_without_endpoint_capability_evidence(monkeypatch):
     _install_model_route_import_stubs(monkeypatch)
     import routes.model_routes as model_routes
 
@@ -272,7 +272,7 @@ def test_default_chat_preserves_max_reasoning_default(monkeypatch):
         "default_endpoint_id": "",
         "default_model": "",
         "default_model_fallbacks": [],
-        "default_reasoning_effort": "max",
+        "default_reasoning_effort": "ultra",
         "default_verbosity": "high",
     })
 
@@ -287,8 +287,8 @@ def test_default_chat_preserves_max_reasoning_default(monkeypatch):
         "endpoint_id": "",
         "endpoint_url": "",
         "model": "",
-        "default_reasoning_effort": "max",
-        "default_verbosity": "high",
+        "default_reasoning_effort": "",
+        "default_verbosity": "",
     }
 
 

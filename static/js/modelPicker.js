@@ -278,7 +278,12 @@ function _initModelPickerDropdown() {
     }
     try {
       await window.odysseusModelControls.applyDefaultsForContext(
-        { model: m.mid || '', endpointUrl: m.url || '' },
+        {
+          model: m.mid || '',
+          endpointId: m.endpointId || '',
+          endpointUrl: m.url || '',
+          modelCapability: m.modelCapability || null,
+        },
         { persist: !!persist, sessionId: sessionId || null },
       );
     } catch (e) {
@@ -301,6 +306,9 @@ function _initModelPickerDropdown() {
       const epOffline = !!item.offline;
       const allModels = (item.models || []).concat(item.models_extra || []);
       const allDisplay = (item.models_display || []).concat(item.models_extra_display || []);
+      const capabilityByModel = new Map(
+        (item.model_capabilities || []).map(record => [record.model_id, record]),
+      );
       // Mark local endpoints whose live probe failed.
       const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
       const isLocalDead = !!(probeResult && probeResult.alive === false);
@@ -322,6 +330,7 @@ function _initModelPickerDropdown() {
           display: (allDisplay[i] || mid).split('/').pop(),
           url: item.url,
           endpointId: item.endpoint_id,
+          modelCapability: capabilityByModel.get(mid) || null,
           epName: item.endpoint_name || '',
           category: item.category || '',
           providerText: [
