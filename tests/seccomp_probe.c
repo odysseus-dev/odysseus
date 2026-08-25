@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/personality.h>
 #include <sys/ptrace.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -44,6 +45,15 @@ static int expect_socket_denied(int family)
     return expect_errno(descriptor, EPERM);
 }
 
+static int expect_socket_allowed(int family)
+{
+    int descriptor = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (descriptor < 0) {
+        return 1;
+    }
+    return close(descriptor) == 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -68,6 +78,20 @@ int main(int argc, char **argv)
             syscall(SYS_clone, (unsigned long)CLONE_NEWNS | SIGCHLD, NULL, NULL, NULL, 0),
             EPERM
         );
+    }
+    if (strcmp(probe, "clone_process") == 0) {
+        pid_t child = (pid_t)syscall(SYS_clone, SIGCHLD, NULL, NULL, NULL, 0);
+        if (child < 0) {
+            return 1;
+        }
+        if (child == 0) {
+            _exit(0);
+        }
+        int status = 0;
+        return waitpid(child, &status, 0) == child && WIFEXITED(status)
+            && WEXITSTATUS(status) == 0
+            ? 0
+            : 1;
     }
 #endif
 #ifdef SYS_clone3
@@ -134,6 +158,29 @@ int main(int argc, char **argv)
     if (strcmp(probe, "af_packet") == 0) {
         return expect_socket_denied(AF_PACKET);
     }
+    if (strcmp(probe, "socket_unix") == 0) {
+        return expect_socket_allowed(AF_UNIX);
+    }
+    if (strcmp(probe, "socket_inet") == 0) {
+        return expect_socket_allowed(AF_INET);
+    }
+    if (strcmp(probe, "socket_inet6") == 0) {
+        return expect_socket_allowed(AF_INET6);
+    }
+    if (strcmp(probe, "socketpair_unix") == 0) {
+        int descriptors[2] = {-1, -1};
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, descriptors) < 0) {
+            return 1;
+        }
+        return close(descriptors[0]) == 0 && close(descriptors[1]) == 0 ? 0 : 1;
+    }
+    if (strcmp(probe, "socketpair_inet_denied") == 0) {
+        int descriptors[2] = {-1, -1};
+        return expect_errno(
+            socketpair(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0, descriptors),
+            EPERM
+        );
+    }
 #ifdef AF_ALG
     if (strcmp(probe, "af_alg") == 0) {
         return expect_socket_denied(AF_ALG);
@@ -166,19 +213,26 @@ int main(int argc, char **argv)
         return expect_errno(syscall(SYS_io_uring_setup, 1, NULL), EPERM);
     }
 #endif
-    if (strcmp(probe, "fork") == 0) {
-        pid_t child = fork();
-        if (child < 0) {
-            return 1;
-        }
-        if (child == 0) {
-            _exit(0);
-        }
-        int status = 0;
-        return waitpid(child, &status, 0) == child && WIFEXITED(status)
-            && WEXITSTATUS(status) == 0
-            ? 0
-            : 1;
+#ifdef SYS_personality
+    if (strcmp(probe, "personality_query") == 0) {
+        return syscall(SYS_personality, UINT32_MAX) >= 0 ? 0 : 1;
+    }
+    if (strcmp(probe, "personality_denied") == 0) {
+        return expect_errno(syscall(SYS_personality, 1UL), EPERM);
+    }
+#endif
+    if (strcmp(probe, "direct_bwrap") == 0) {
+        char *const arguments[] = {
+            "/usr/bin/bwrap",
+            "--ro-bind",
+            "/",
+            "/",
+            "--",
+            "/bin/true",
+            NULL,
+        };
+        execv(arguments[0], arguments);
+        return expect_errno(-1, EACCES);
     }
     return 77;
 }

@@ -89,11 +89,44 @@ def test_tiocsti_allow_rule_rejects_truncation_bypass_values():
     launcher = (SECCOMP_DIR / "odysseus-seccomp-launcher.c").read_text(
         encoding="utf-8"
     )
+    generated = (SECCOMP_DIR / "generated_inner_policy.h").read_text(
+        encoding="utf-8"
+    )
 
     assert "SCMP_CMP_MASKED_EQ" in launcher
     assert ".datum_a = UINT32_MAX" in launcher
     assert ".datum_b = TIOCSTI" in launcher
-    assert "SCMP_ACT_ERRNO(EACCES)" in launcher
+    assert "SCMP_ACT_ERRNO(ODYSSEUS_TIOCSTI_ERRNO)" in launcher
+    assert "#define ODYSSEUS_TIOCSTI_ERRNO EACCES" in generated
+
+
+def test_generated_header_owns_every_conditional_policy_value():
+    launcher = (SECCOMP_DIR / "odysseus-seccomp-launcher.c").read_text(
+        encoding="utf-8"
+    )
+    generated = (SECCOMP_DIR / "generated_inner_policy.h").read_text(
+        encoding="utf-8"
+    )
+
+    for expected in (
+        "#define ODYSSEUS_DEFAULT_ERRNO EPERM",
+        "#define ODYSSEUS_CLONE3_ERRNO ENOSYS",
+        "#define ODYSSEUS_TIOCSTI_ERRNO EACCES",
+        "#define ODYSSEUS_CLONE_NAMESPACE_MASK 2114060288ULL",
+        "static const uint64_t ODYSSEUS_SOCKET_FAMILIES[] = {",
+        "static const uint64_t ODYSSEUS_SOCKETPAIR_FAMILIES[] = {",
+        "static const uint64_t ODYSSEUS_PERSONALITY_VALUES[] = {",
+    ):
+        assert expected in generated
+    for generated_name in (
+        "ODYSSEUS_DEFAULT_ERRNO",
+        "ODYSSEUS_CLONE3_ERRNO",
+        "ODYSSEUS_TIOCSTI_ERRNO",
+        "ODYSSEUS_SOCKET_FAMILIES",
+        "ODYSSEUS_SOCKETPAIR_FAMILIES",
+        "ODYSSEUS_PERSONALITY_VALUES",
+    ):
+        assert generated_name in launcher
 
 
 def test_bubblewrap_provenance_records_the_release_commit_not_only_the_tag():

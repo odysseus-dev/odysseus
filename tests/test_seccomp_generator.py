@@ -80,3 +80,28 @@ def test_arch_verification_rejects_missing_required_syscalls(monkeypatch):
         match=r"libseccomp cannot resolve x86_64 syscalls: clone3, socketpair",
     ):
         generator._verify_arches(policy)
+
+
+def test_conditional_values_deterministically_change_the_generated_header():
+    generator = _load_generator()
+    policy = _policy(generator)
+    source = generator._load_json(generator.SOURCE)
+    policy.update(
+        {
+            "default_errno": "EACCES",
+            "clone3_errno": "EPERM",
+            "tiocsti_errno": "ENOSYS",
+            "socket_families": ["AF_UNIX"],
+            "socketpair_families": ["AF_INET"],
+            "personality_values": [7, 9],
+        }
+    )
+
+    generated = generator._render_header(source, policy)
+
+    assert "#define ODYSSEUS_DEFAULT_ERRNO EACCES" in generated
+    assert "#define ODYSSEUS_CLONE3_ERRNO EPERM" in generated
+    assert "#define ODYSSEUS_TIOCSTI_ERRNO ENOSYS" in generated
+    assert "static const uint64_t ODYSSEUS_SOCKET_FAMILIES[] = {\n    AF_UNIX," in generated
+    assert "static const uint64_t ODYSSEUS_SOCKETPAIR_FAMILIES[] = {\n    AF_INET," in generated
+    assert "static const uint64_t ODYSSEUS_PERSONALITY_VALUES[] = {\n    7,\n    9," in generated

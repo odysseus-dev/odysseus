@@ -42,7 +42,10 @@ struct scmp_arg_cmp {
 #define SCMP_ACT_ALLOW 0x7fff0000U
 
 #define TRUSTED_BWRAP "/usr/bin/bwrap"
+#define BROKER_RUNTIME_DESTINATION "/run/odysseus-egress"
+#define NATIVE_VENV_DESTINATION "/run/odysseus-python-venv"
 #define FILTER_FD 3
+#define MAX_SETENV_VALUE 4096U
 
 enum launcher_exit {
     EXIT_INVALID_BWRAP = 64,
@@ -210,15 +213,6 @@ static int add_exact_argument_rules(
 
 static scmp_filter_ctx build_filter(const struct seccomp_api *api)
 {
-    static const uint64_t socket_families[] = {AF_UNIX, AF_INET, AF_INET6};
-    static const uint64_t socketpair_families[] = {AF_UNIX};
-    static const uint64_t personality_values[] = {
-        0,
-        8,
-        131072,
-        131080,
-        UINT32_MAX,
-    };
 #if defined(__x86_64__)
     const char *const *allowlist = ODYSSEUS_ALLOWED_X86_64;
     const size_t allowlist_count = ODYSSEUS_ALLOWED_X86_64_COUNT;
@@ -232,7 +226,7 @@ static scmp_filter_ctx build_filter(const struct seccomp_api *api)
     if (injected_failure("filter")) {
         return NULL;
     }
-    scmp_filter_ctx filter = api->init(SCMP_ACT_ERRNO(EPERM));
+    scmp_filter_ctx filter = api->init(SCMP_ACT_ERRNO(ODYSSEUS_DEFAULT_ERRNO));
     if (filter == NULL) {
         return NULL;
     }
@@ -260,7 +254,14 @@ static scmp_filter_ctx build_filter(const struct seccomp_api *api)
 
     if (add_allowlist(api, filter, allowlist, allowlist_count) < 0
         || add_rule(api, filter, SCMP_ACT_ALLOW, "clone", 1, &clone_comparison) < 0
-        || add_rule(api, filter, SCMP_ACT_ERRNO(ENOSYS), "clone3", 0, NULL) < 0
+        || add_rule(
+            api,
+            filter,
+            SCMP_ACT_ERRNO(ODYSSEUS_CLONE3_ERRNO),
+            "clone3",
+            0,
+            NULL
+        ) < 0
         /* The action must differ from the default EPERM for libseccomp to
          * retain a masked deny rule alongside the compatibility allow rule.
          * Add the deny first: affected libseccomp releases can otherwise
@@ -268,7 +269,7 @@ static scmp_filter_ctx build_filter(const struct seccomp_api *api)
         || add_rule(
             api,
             filter,
-            SCMP_ACT_ERRNO(EACCES),
+            SCMP_ACT_ERRNO(ODYSSEUS_TIOCSTI_ERRNO),
             "ioctl",
             1,
             &tiocsti_comparison
@@ -279,24 +280,24 @@ static scmp_filter_ctx build_filter(const struct seccomp_api *api)
             filter,
             "personality",
             0,
-            personality_values,
-            sizeof(personality_values) / sizeof(personality_values[0])
+            ODYSSEUS_PERSONALITY_VALUES,
+            ODYSSEUS_PERSONALITY_VALUES_COUNT
         ) < 0
         || add_exact_argument_rules(
             api,
             filter,
             "socket",
             0,
-            socket_families,
-            sizeof(socket_families) / sizeof(socket_families[0])
+            ODYSSEUS_SOCKET_FAMILIES,
+            ODYSSEUS_SOCKET_FAMILIES_COUNT
         ) < 0
         || add_exact_argument_rules(
             api,
             filter,
             "socketpair",
             0,
-            socketpair_families,
-            sizeof(socketpair_families) / sizeof(socketpair_families[0])
+            ODYSSEUS_SOCKETPAIR_FAMILIES,
+            ODYSSEUS_SOCKETPAIR_FAMILIES_COUNT
         ) < 0) {
         api->release(filter);
         return NULL;
@@ -321,28 +322,521 @@ static bool valid_bwrap(const char *path)
         && access(path, X_OK) == 0;
 }
 
-static bool forbidden_seccomp_option(const char *argument)
+struct bwrap_contract {
+    bool unshare_user;
+    bool unshare_ipc;
+    bool unshare_pid;
+    bool unshare_net;
+    bool unshare_uts;
+    bool unshare_cgroup;
+    bool die_with_parent;
+    bool new_session;
+    bool clearenv;
+    bool cap_drop;
+    bool proc_mount;
+    bool dev_mount;
+    bool chdir;
+    bool usr_runtime;
+    bool full_access;
+    bool symlink_bin;
+    bool symlink_lib;
+    bool symlink_lib64;
+    bool broker_runtime;
+    bool native_venv;
+    unsigned int writable_binds;
+    uint32_t environment_names;
+    const char *broker_runtime_source;
+    const char *native_venv_source;
+    const char *writable_root;
+};
+
+static bool set_once(bool *field)
 {
-    return strcmp(argument, "--seccomp") == 0
-        || strncmp(argument, "--seccomp=", 10) == 0
-        || strcmp(argument, "--add-seccomp-fd") == 0
-        || strncmp(argument, "--add-seccomp-fd=", 17) == 0
-        /* An args file could smuggle either seccomp option past this scan. */
-        || strcmp(argument, "--args") == 0
-        || strncmp(argument, "--args=", 7) == 0;
+    if (*field) {
+        return false;
+    }
+    *field = true;
+    return true;
 }
 
-static int find_command_separator(int argc, char **argv)
+static bool safe_absolute_path(const char *path)
 {
-    for (int index = 2; index < argc; index++) {
-        if (strcmp(argv[index], "--") == 0) {
-            return index;
+    if (path == NULL || path[0] != '/') {
+        return false;
+    }
+    const char *component = path;
+    while (*component != '\0') {
+        while (*component == '/') {
+            component++;
         }
-        if (forbidden_seccomp_option(argv[index])) {
-            return -2;
+        const char *end = component;
+        while (*end != '\0' && *end != '/') {
+            end++;
+        }
+        size_t length = (size_t)(end - component);
+        if ((length == 1U && component[0] == '.')
+            || (length == 2U && component[0] == '.' && component[1] == '.')) {
+            return false;
+        }
+        component = end;
+    }
+    return true;
+}
+
+static bool sensitive_mount_source(const char *path)
+{
+    static const char *const names[] = {
+        "/.aws",
+        "/.azure",
+        "/.codex",
+        "/.config/gh",
+        "/.docker",
+        "/.gnupg",
+        "/.kube",
+        "/.ssh",
+    };
+    size_t length = strlen(path);
+    if (length >= 5U && strcmp(path + length - 5U, "/.env") == 0) {
+        return true;
+    }
+    if (strstr(path, "/.env.") != NULL) {
+        return true;
+    }
+    for (size_t index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        const char *match = strstr(path, names[index]);
+        size_t name_length = strlen(names[index]);
+        if (match != NULL
+            && (match[name_length] == '\0' || match[name_length] == '/')) {
+            return true;
         }
     }
-    return -1;
+    return false;
+}
+
+static bool same_resolved_path(const char *first, const char *second)
+{
+    char first_resolved[PATH_MAX];
+    char second_resolved[PATH_MAX];
+    return realpath(first, first_resolved) != NULL
+        && realpath(second, second_resolved) != NULL
+        && strcmp(first_resolved, second_resolved) == 0;
+}
+
+static bool canonical_existing_path(const char *path)
+{
+    char resolved[PATH_MAX];
+    return realpath(path, resolved) != NULL && strcmp(path, resolved) == 0;
+}
+
+static bool path_at_or_below(const char *path, const char *root)
+{
+    size_t length = strlen(root);
+    return strcmp(path, root) == 0
+        || (strncmp(path, root, length) == 0 && path[length] == '/');
+}
+
+static bool trusted_native_venv(const char *source)
+{
+    struct stat metadata;
+    char config[PATH_MAX];
+    char interpreter[PATH_MAX];
+    char resolved[PATH_MAX];
+    const char *name = strrchr(source, '/');
+    if (!canonical_existing_path(source)
+        || name == NULL
+        || (strcmp(name + 1, "venv") != 0 && strcmp(name + 1, ".venv") != 0)
+        || stat(source, &metadata) != 0
+        || !S_ISDIR(metadata.st_mode)
+        || (metadata.st_uid != 0 && metadata.st_uid != getuid())
+        || (metadata.st_mode & (S_ISUID | S_ISGID | S_IWGRP | S_IWOTH)) != 0) {
+        return false;
+    }
+    int config_length = snprintf(config, sizeof(config), "%s/pyvenv.cfg", source);
+    if (config_length <= 0 || (size_t)config_length >= sizeof(config)
+        || realpath(config, resolved) == NULL
+        || strcmp(config, resolved) != 0
+        || !path_at_or_below(resolved, source)
+        || stat(config, &metadata) != 0
+        || !S_ISREG(metadata.st_mode)
+        || (metadata.st_uid != 0 && metadata.st_uid != getuid())
+        || (metadata.st_mode & (S_ISUID | S_ISGID | S_IWGRP | S_IWOTH)) != 0) {
+        return false;
+    }
+    int interpreter_length = snprintf(
+        interpreter,
+        sizeof(interpreter),
+        "%s/bin/python",
+        source
+    );
+    if (interpreter_length <= 0
+        || (size_t)interpreter_length >= sizeof(interpreter)
+        || realpath(interpreter, resolved) == NULL
+        || !path_at_or_below(resolved, "/usr")
+        || stat(resolved, &metadata) != 0
+        || !S_ISREG(metadata.st_mode)
+        || metadata.st_uid != 0
+        || (metadata.st_mode & (S_ISUID | S_ISGID | S_IWGRP | S_IWOTH)) != 0
+        || access(resolved, X_OK) != 0) {
+        return false;
+    }
+    return true;
+}
+
+static bool trusted_broker_runtime(const char *source)
+{
+    static const char prefix[] = "/tmp/odysseus-egress-";
+    struct stat metadata;
+    if (strncmp(source, prefix, sizeof(prefix) - 1U) != 0) {
+        return false;
+    }
+    const char *suffix = source + sizeof(prefix) - 1U;
+    if (*suffix == '\0'
+        || strchr(suffix, '/') != NULL
+        || !canonical_existing_path(source)
+        || stat(source, &metadata) != 0
+        || !S_ISDIR(metadata.st_mode)
+        || metadata.st_uid != getuid()
+        || (metadata.st_mode & 07777) != 0700) {
+        return false;
+    }
+    return true;
+}
+
+static bool allowed_environment_name(const char *name, uint32_t *mask)
+{
+    static const char *const names[] = {
+        "COLUMNS",
+        "HOME",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "LANG",
+        "LC_ALL",
+        "LINES",
+        "PATH",
+        "SSL_CERT_FILE",
+        "TERM",
+        "TMPDIR",
+        "http_proxy",
+        "https_proxy",
+    };
+    for (size_t index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        if (strcmp(name, names[index]) == 0) {
+            uint32_t bit = UINT32_C(1) << index;
+            if ((*mask & bit) != 0U) {
+                return false;
+            }
+            *mask |= bit;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool validate_ro_bind(
+    struct bwrap_contract *contract,
+    const char *source,
+    const char *destination
+)
+{
+    struct stat metadata;
+    if (!safe_absolute_path(source) || !safe_absolute_path(destination)
+        || sensitive_mount_source(source)
+        || same_resolved_path(source, TRUSTED_BWRAP)) {
+        return false;
+    }
+    if (strcmp(source, "/usr") == 0 && strcmp(destination, "/usr") == 0) {
+        contract->usr_runtime = canonical_existing_path(source);
+        return contract->usr_runtime;
+    }
+#ifdef ODYSSEUS_LAUNCHER_TESTING
+    /* The secretless review runner forbids mounting a fresh procfs. Retaining
+     * its read-only proc mount keeps runtime filter probes executable without
+     * weakening the production launcher's mandatory --proc /proc contract. */
+    if (strcmp(source, "/proc") == 0 && strcmp(destination, "/proc") == 0) {
+        contract->proc_mount = true;
+        return true;
+    }
+#endif
+    if (strcmp(source, "/dev/null") == 0) {
+        return true;
+    }
+    if (strcmp(destination, BROKER_RUNTIME_DESTINATION) == 0) {
+        if (!set_once(&contract->broker_runtime)
+            || !trusted_broker_runtime(source)) {
+            return false;
+        }
+        contract->broker_runtime_source = source;
+        return true;
+    }
+    if (strcmp(destination, NATIVE_VENV_DESTINATION) == 0) {
+        if (!set_once(&contract->native_venv)
+            || !trusted_native_venv(source)) {
+            return false;
+        }
+        contract->native_venv_source = source;
+        return true;
+    }
+    if (strcmp(source, destination) == 0) {
+        return canonical_existing_path(source)
+            && (strcmp(source, "/etc/ssl/certs/ca-certificates.crt") == 0
+                || strstr(source, "/.git/") != NULL
+                || (strlen(source) >= 5U
+                    && strcmp(source + strlen(source) - 5U, "/.git") == 0));
+    }
+#ifdef ODYSSEUS_LAUNCHER_TESTING
+    return strcmp(destination, "/run/odysseus/command.sh") == 0
+        && stat(source, &metadata) == 0
+        && S_ISREG(metadata.st_mode)
+        && metadata.st_nlink == 1;
+#else
+    char resolved[PATH_MAX];
+    const char *filename = strrchr(source, '/');
+    const char *jobs = strstr(source, "/bg_jobs/");
+    return strcmp(destination, "/run/odysseus/command.sh") == 0
+        && filename != NULL
+        && strlen(filename + 1) == 19U
+        && strcmp(filename + 13, ".cmd.sh") == 0
+        && jobs != NULL
+        && realpath(source, resolved) != NULL
+        && strcmp(source, resolved) == 0
+        && stat(source, &metadata) == 0
+        && S_ISREG(metadata.st_mode)
+        && metadata.st_uid == getuid()
+        && metadata.st_nlink == 1
+        && (metadata.st_mode & (S_IRWXG | S_IRWXO)) == 0;
+#endif
+}
+
+static bool validate_bind(
+    struct bwrap_contract *contract,
+    const char *source,
+    const char *destination
+)
+{
+    if (!safe_absolute_path(source) || strcmp(source, destination) != 0
+        || !canonical_existing_path(source)
+        || sensitive_mount_source(source)
+        || same_resolved_path(source, TRUSTED_BWRAP)) {
+        return false;
+    }
+    contract->writable_binds++;
+    if (strcmp(source, "/") == 0) {
+        contract->full_access = true;
+        contract->writable_root = source;
+        return true;
+    }
+    static const char *const system_roots[] = {
+        "/bin",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/lib",
+        "/lib64",
+        "/proc",
+        "/root",
+        "/run",
+        "/sys",
+        "/usr",
+    };
+    for (size_t index = 0;
+         index < sizeof(system_roots) / sizeof(system_roots[0]);
+         index++) {
+        if (path_at_or_below(source, system_roots[index])) {
+            return false;
+        }
+    }
+    bool allowed = strcmp(source, "/home") != 0
+        && strcmp(source, "/opt") != 0
+        && strcmp(source, "/srv") != 0
+        && strcmp(source, "/tmp") != 0
+        && strcmp(source, "/var") != 0;
+    if (allowed) {
+        contract->writable_root = source;
+    }
+    return allowed;
+}
+
+static bool validate_symlink(
+    struct bwrap_contract *contract,
+    const char *source,
+    const char *destination
+)
+{
+    if (strcmp(source, "usr/bin") == 0 && strcmp(destination, "/bin") == 0) {
+        return set_once(&contract->symlink_bin);
+    }
+    if (strcmp(source, "usr/lib") == 0 && strcmp(destination, "/lib") == 0) {
+        return set_once(&contract->symlink_lib);
+    }
+    if (strcmp(source, "usr/lib64") == 0
+        && strcmp(destination, "/lib64") == 0) {
+        return set_once(&contract->symlink_lib64);
+    }
+    return false;
+}
+
+static int validate_bwrap_arguments(int argc, char **argv)
+{
+    struct bwrap_contract contract = {0};
+    int index = 2;
+    while (index < argc) {
+        const char *option = argv[index];
+        if (strcmp(option, "--") == 0) {
+            break;
+        }
+#define FIXED_FLAG(name, field) \
+        if (strcmp(option, name) == 0) { \
+            if (!set_once(&contract.field)) { \
+                return -1; \
+            } \
+            index++; \
+            continue; \
+        }
+        FIXED_FLAG("--unshare-user", unshare_user)
+        FIXED_FLAG("--unshare-ipc", unshare_ipc)
+        FIXED_FLAG("--unshare-pid", unshare_pid)
+        FIXED_FLAG("--unshare-net", unshare_net)
+        FIXED_FLAG("--unshare-uts", unshare_uts)
+        FIXED_FLAG("--unshare-cgroup", unshare_cgroup)
+        FIXED_FLAG("--die-with-parent", die_with_parent)
+        FIXED_FLAG("--new-session", new_session)
+        FIXED_FLAG("--clearenv", clearenv)
+#undef FIXED_FLAG
+        if (strcmp(option, "--cap-drop") == 0) {
+            if (index + 1 >= argc || strcmp(argv[index + 1], "ALL") != 0
+                || !set_once(&contract.cap_drop)) {
+                return -1;
+            }
+            index += 2;
+            continue;
+        }
+        if (strcmp(option, "--setenv") == 0) {
+            if (index + 2 >= argc
+                || !allowed_environment_name(
+                    argv[index + 1],
+                    &contract.environment_names
+                )
+                || strlen(argv[index + 2]) > MAX_SETENV_VALUE) {
+                return -1;
+            }
+            index += 3;
+            continue;
+        }
+        if (strcmp(option, "--ro-bind") == 0) {
+            if (index + 2 >= argc
+                || !validate_ro_bind(
+                    &contract,
+                    argv[index + 1],
+                    argv[index + 2]
+                )) {
+                return -1;
+            }
+            index += 3;
+            continue;
+        }
+        if (strcmp(option, "--bind") == 0) {
+            if (index + 2 >= argc
+                || !validate_bind(
+                    &contract,
+                    argv[index + 1],
+                    argv[index + 2]
+                )) {
+                return -1;
+            }
+            index += 3;
+            continue;
+        }
+        if (strcmp(option, "--symlink") == 0) {
+            if (index + 2 >= argc
+                || !validate_symlink(
+                    &contract,
+                    argv[index + 1],
+                    argv[index + 2]
+                )) {
+                return -1;
+            }
+            index += 3;
+            continue;
+        }
+        if (strcmp(option, "--dev") == 0) {
+            if (index + 1 >= argc || strcmp(argv[index + 1], "/dev") != 0
+                || !set_once(&contract.dev_mount)) {
+                return -1;
+            }
+            index += 2;
+            continue;
+        }
+        if (strcmp(option, "--proc") == 0) {
+            if (index + 1 >= argc || strcmp(argv[index + 1], "/proc") != 0
+                || !set_once(&contract.proc_mount)) {
+                return -1;
+            }
+            index += 2;
+            continue;
+        }
+        if (strcmp(option, "--tmpfs") == 0 || strcmp(option, "--dir") == 0) {
+            if (index + 1 >= argc || !safe_absolute_path(argv[index + 1])) {
+                return -1;
+            }
+            index += 2;
+            continue;
+        }
+        if (strcmp(option, "--chdir") == 0) {
+            if (index + 1 >= argc || !safe_absolute_path(argv[index + 1])
+                || !set_once(&contract.chdir)) {
+                return -1;
+            }
+            index += 2;
+            continue;
+        }
+        return -1;
+    }
+    bool fixed_isolation = contract.unshare_user
+        && contract.unshare_ipc
+        && contract.unshare_pid
+        && contract.unshare_net
+        && contract.unshare_uts
+        && contract.unshare_cgroup
+        && contract.die_with_parent
+        && contract.new_session
+        && contract.cap_drop
+        && contract.proc_mount
+        && contract.chdir;
+    bool full_access_mounts = contract.writable_binds == 1U
+        && !contract.usr_runtime
+        && !contract.dev_mount
+        && !contract.symlink_bin
+        && !contract.symlink_lib
+        && !contract.symlink_lib64;
+    bool sandbox_mounts = contract.writable_binds == 1U
+        && contract.usr_runtime
+        && contract.dev_mount
+        && contract.symlink_bin
+        && contract.symlink_lib;
+    bool mount_profile = contract.full_access
+        ? full_access_mounts
+        : sandbox_mounts;
+    bool separated_runtime_mounts = contract.writable_root != NULL
+        && (contract.native_venv_source == NULL
+            || (!path_at_or_below(
+                    contract.native_venv_source,
+                    contract.writable_root
+                )
+                && !path_at_or_below(
+                    contract.writable_root,
+                    contract.native_venv_source
+                )))
+        && (contract.broker_runtime_source == NULL
+            || (!path_at_or_below(
+                    contract.broker_runtime_source,
+                    contract.writable_root
+                )
+                && !path_at_or_below(
+                    contract.writable_root,
+                    contract.broker_runtime_source
+                )));
+    return fixed_isolation && mount_profile && separated_runtime_mounts
+        && index + 1 < argc ? index : -1;
 }
 
 static bool seal_filter_fd(int filter_fd)
@@ -417,7 +911,7 @@ int main(int argc, char **argv)
         fail_message("invalid trusted Bubblewrap path");
         return EXIT_INVALID_BWRAP;
     }
-    int separator = find_command_separator(argc, argv);
+    int separator = validate_bwrap_arguments(argc, argv);
     if (separator < 2 || separator + 1 >= argc) {
         fail_message("invalid Bubblewrap arguments");
         return EXIT_INVALID_ARGUMENTS;
@@ -488,17 +982,28 @@ int main(int argc, char **argv)
         fail_message("inner seccomp filter descriptor setup failed");
         return EXIT_SEAL;
     }
-    char **bwrap_argv = calloc((size_t)argc + 2U, sizeof(*bwrap_argv));
+    char **bwrap_argv = calloc((size_t)argc + 7U, sizeof(*bwrap_argv));
     if (bwrap_argv == NULL) {
         fail_message("inner seccomp filter creation failed");
         return EXIT_FILTER;
     }
     int output = 0;
-    for (int index = 1; index < separator; index++) {
+    bwrap_argv[output++] = argv[1];
+    bwrap_argv[output++] = "--clearenv";
+    for (int index = 2; index < separator; index++) {
+        if (strcmp(argv[index], "--clearenv") == 0) {
+            continue;
+        }
         bwrap_argv[output++] = argv[index];
     }
     bwrap_argv[output++] = "--seccomp";
     bwrap_argv[output++] = descriptor;
+    /* The outer OCI filter necessarily permits Bubblewrap's namespace and
+     * mount bootstrap. Hide the trusted executable before the payload starts;
+     * a copied implementation is still stopped by the loaded inner filter. */
+    bwrap_argv[output++] = "--ro-bind";
+    bwrap_argv[output++] = "/dev/null";
+    bwrap_argv[output++] = TRUSTED_BWRAP;
     for (int index = separator; index < argc; index++) {
         bwrap_argv[output++] = argv[index];
     }
@@ -507,7 +1012,8 @@ int main(int argc, char **argv)
     if (injected_failure("exec")) {
         errno = ENOENT;
     } else {
-        execv(TRUSTED_BWRAP, bwrap_argv);
+        char *const clean_environment[] = {NULL};
+        execve(TRUSTED_BWRAP, bwrap_argv, clean_environment);
     }
     free(bwrap_argv);
     fail_message("trusted Bubblewrap execution failed");

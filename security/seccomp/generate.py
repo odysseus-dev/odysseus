@@ -87,6 +87,16 @@ def _c_array(name: str, values: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _c_value_array(name: str, values: list[str | int]) -> str:
+    lines = [f"static const uint64_t {name}[] = {{"]
+    lines.extend(f"    {value}," for value in values)
+    lines.append("};")
+    lines.append(
+        f"static const size_t {name}_COUNT = sizeof({name}) / sizeof({name}[0]);"
+    )
+    return "\n".join(lines)
+
+
 def _render_header(source: dict[str, Any], policy: dict[str, Any]) -> str:
     provenance = policy["moby"]
     x86 = _allowlist_for_arch(source, policy, policy["target_arches"]["x86_64"])
@@ -99,12 +109,28 @@ def _render_header(source: dict[str, Any], policy: dict[str, Any]) -> str:
             "#define ODYSSEUS_GENERATED_INNER_POLICY_H",
             "",
             "#include <stddef.h>",
+            "#include <stdint.h>",
             "",
             _c_array("ODYSSEUS_ALLOWED_X86_64", x86),
             "",
             _c_array("ODYSSEUS_ALLOWED_AARCH64", arm),
             "",
+            f"#define ODYSSEUS_DEFAULT_ERRNO {policy['default_errno']}",
+            f"#define ODYSSEUS_CLONE3_ERRNO {policy['clone3_errno']}",
+            f"#define ODYSSEUS_TIOCSTI_ERRNO {policy['tiocsti_errno']}",
             f"#define ODYSSEUS_CLONE_NAMESPACE_MASK {policy['clone_namespace_mask']}ULL",
+            "",
+            _c_value_array(
+                "ODYSSEUS_SOCKET_FAMILIES", policy["socket_families"]
+            ),
+            "",
+            _c_value_array(
+                "ODYSSEUS_SOCKETPAIR_FAMILIES", policy["socketpair_families"]
+            ),
+            "",
+            _c_value_array(
+                "ODYSSEUS_PERSONALITY_VALUES", policy["personality_values"]
+            ),
             "",
             "#endif",
             "",
