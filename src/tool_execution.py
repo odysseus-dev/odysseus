@@ -763,8 +763,7 @@ async def _execute_tool_block_impl(
     events while the command is in flight. Ignored by other tools.
     """
     from src.tool_implementations import (
-        do_search_chats, do_manage_tasks,
-        do_manage_skills, do_api_call, do_manage_notes,
+        do_search_chats, do_manage_notes,
         do_manage_calendar,
         do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
         do_tail_serve_output,
@@ -952,16 +951,6 @@ async def _execute_tool_block_impl(
     elif tool in ("pipeline", "manage_memory", "ui_control"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
-    elif tool == "manage_tasks":
-        desc = "manage_tasks"
-        result = await do_manage_tasks(content, owner=owner)
-    elif tool == "manage_skills":
-        desc = "manage_skills"
-        result = await do_manage_skills(content, owner=owner)
-    elif tool == "api_call":
-        first_line = content.split("\n")[0].strip()[:60]
-        desc = f"api_call: {first_line}"
-        result = await do_api_call(content)
     elif tool in ("manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "manage_settings"):
         # Registry-dispatched (agent_tools.admin_tools); owner threaded for ownership/admin checks.
         desc = tool
