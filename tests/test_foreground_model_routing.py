@@ -2235,9 +2235,17 @@ def test_multi_round_agent_uses_only_selected_model(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
     monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+    monkeypatch.setattr(
+        agent_loop,
+        "_agent_route_tool_mode",
+        lambda *args, **kwargs: (True, False, False),
+    )
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal round_number
         round_number += 1
+        factory = kwargs["candidate_request_factory"]
+        for index, candidate in enumerate(candidates):
+            await factory(index, *candidate)
         seen_candidates.append([(url, model) for url, model, _headers in candidates])
         if round_number == 1:
             call = {"name": "bash", "arguments": json.dumps({"command": "printf ok"})}
@@ -2283,15 +2291,19 @@ def test_multi_round_agent_pins_answering_fallback_for_the_run(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
-        lambda url, model, owner=None, headers=None: route_modes.append((url, model, owner, headers)) or (model == "selected-model", False, False),
+        lambda url, model, owner=None, headers=None: route_modes.append((url, model, owner, headers)) or (True, False, False),
     )
 
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal round_number
         round_number += 1
+        factory = kwargs["candidate_request_factory"]
+        for index, candidate in enumerate(candidates):
+            await factory(index, *candidate)
         seen_candidates.append(candidates)
         assert kwargs["fallback_statuses"] == FOREGROUND_AVAILABILITY_STATUSES
         assert kwargs["fallback_on_empty"] is False
@@ -2350,11 +2362,15 @@ def test_late_agent_fallback_records_each_round_and_stays_pinned(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(agent_loop, "_agent_route_tool_mode", lambda url, model, owner=None, headers=None: (True, False, False))
 
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal round_number
         round_number += 1
+        factory = kwargs["candidate_request_factory"]
+        for index, candidate in enumerate(candidates):
+            await factory(index, *candidate)
         seen_candidates.append(candidates)
         if round_number == 1:
             yield 'data: {"delta": "primary round"}\n\n'
@@ -2878,6 +2894,7 @@ def test_agent_metrics_attribute_usage_to_each_answering_route(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
@@ -2887,6 +2904,9 @@ def test_agent_metrics_attribute_usage_to_each_answering_route(monkeypatch):
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal calls
         calls += 1
+        factory = kwargs["candidate_request_factory"]
+        for index, candidate in enumerate(candidates):
+            await factory(index, *candidate)
         if calls == 1:
             yield 'data: {"type": "model_actual", "model": "selected-alias"}\n\n'
             yield 'data: {"type": "usage", "data": {"model": "selected-alias", "input_tokens": 100, "output_tokens": 10}}\n\n'
@@ -3152,6 +3172,7 @@ def test_agent_terminal_retains_completed_paid_fallback_usage(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
@@ -3161,6 +3182,9 @@ def test_agent_terminal_retains_completed_paid_fallback_usage(monkeypatch):
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal calls
         calls += 1
+        factory = kwargs["candidate_request_factory"]
+        for index, candidate in enumerate(candidates):
+            await factory(index, *candidate)
         if calls == 1:
             yield 'data: {"type": "fallback", "selected_model": "selected-model", "answered_by": "backup-model", "candidate_index": 1, "selected_endpoint_id": "local", "selected_endpoint_label": "Local", "selected_endpoint_cost_tracked": false, "answered_by_endpoint_id": "paid", "answered_by_endpoint_label": "Paid", "answered_by_endpoint_cost_tracked": true}\n\n'
             yield 'data: {"type": "usage", "data": {"model": "backup-model", "input_tokens": 125, "output_tokens": 25}}\n\n'
@@ -3595,11 +3619,8 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
             yield f'data: {json.dumps({"type": "tool_calls", "calls": [call]})}\n\n'
         elif round_number == 2:
             yield f'data: {json.dumps({"type": "fallback", "selected_model": primary[1], "answered_by": backup[1], "candidate_index": 1})}\n\n'
-            call = {
-                "name": "grep",
-                "arguments": json.dumps({"pattern": "needle", "path": "."}),
-            }
-            yield f'data: {json.dumps({"type": "tool_calls", "calls": [call]})}\n\n'
+            fenced_call = '```grep\n{"pattern": "needle", "path": "."}\n```'
+            yield f'data: {json.dumps({"delta": fenced_call})}\n\n'
         else:
             yield 'data: {"delta": "pinned backup answer"}\n\n'
         yield "data: [DONE]\n\n"
