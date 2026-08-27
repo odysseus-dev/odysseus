@@ -155,7 +155,6 @@ def setup_api_token_routes() -> APIRouter:
         }
 
     @router.patch("/tokens/{token_id}")
-    @content_type(["application/json"])
     @usage_monitor(30, 3600, "log")
     @content_type(["application/json"])
     async def update_token(request: Request, token_id: str):
