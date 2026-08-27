@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Any
 from core.platform_compat import IS_APPLE_SILICON, which_tool
 from core.middleware import INTERNAL_TOOL_USER
+from core.guard_deco import content_type, usage_monitor
 from src.host_docker_access import (
     HOST_DOCKER_ACCESS_HINT,
     host_docker_access_enabled as _host_docker_access_enabled,
@@ -958,6 +959,8 @@ def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
     @router.post("/api/shell/exec")
+    @usage_monitor(60, 3600, "log")
+    @content_type(["application/json"])
     async def shell_exec(request: Request, req: ShellExecRequest) -> Dict[str, Any]:
         """Execute a shell command and return output. Admin only."""
         _require_admin(request)
@@ -976,6 +979,7 @@ def setup_shell_routes() -> APIRouter:
         return result
 
     @router.post("/api/shell/stream")
+    @usage_monitor(60, 3600, "log")
     async def shell_stream(request: Request, req: ShellExecRequest):
         """Execute a shell command and stream output line-by-line via SSE. Admin only."""
         _require_admin(request)

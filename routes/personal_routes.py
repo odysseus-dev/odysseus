@@ -15,6 +15,7 @@ from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.upload_handler import secure_filename
 from src.upload_limits import PERSONAL_UPLOAD_MAX_BYTES
+from core.guard_deco import content_type, no_waf, usage_monitor
 
 UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 
@@ -198,6 +199,8 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         return {"ok": True, "count": len(personal_docs_manager.index)}
     
     @router.post("/add_directory")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def add_directory_to_rag(
         request: Request,
         directory_request: DirectoryRequest,
@@ -319,6 +322,8 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             raise HTTPException(500, f"Failed to remove directory: {str(e)}")
     
     @router.post("/upload")
+    @no_waf()
+    @usage_monitor(20, 3600, "log")
     async def upload_files_to_rag(request: Request, files: List[UploadFile] = File(...)):
         """Upload files directly into RAG. Supports text and PDF."""
         user = require_privilege(request, "can_use_documents")

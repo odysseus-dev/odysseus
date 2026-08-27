@@ -13,6 +13,7 @@ import httpx
 
 from core.database import McpServer, SessionLocal
 from core.middleware import require_admin
+from core.guard_deco import content_type, usage_monitor
 from src.constants import DATA_DIR, MCP_OAUTH_DIR
 from src.mcp_manager import McpManager
 
@@ -156,6 +157,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             db.close()
 
     @router.post("/servers")
+    @usage_monitor(30, 3600, "log")
+    @content_type(["application/json"])
     async def add_server(
         request: Request,
         name: str = Form(...),
@@ -285,6 +288,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         }
 
     @router.post("/servers/{server_id}/reconnect")
+    @usage_monitor(30, 3600, "log")
     async def reconnect_server(server_id: str, request: Request):
         """Reconnect to an MCP server."""
         require_admin(request)

@@ -15,6 +15,7 @@ from src.auth_helpers import effective_user, _auth_disabled, owner_filter
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
 from src.upload_handler import reserve_message_upload_references
+from core.guard_deco import usage_monitor
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -328,6 +329,7 @@ def setup_session_routes(
         return sessions
     
     @router.post("/session", response_model=SessionResponse)
+    @usage_monitor(20, 3600, "log")
     def create_session(
         request: Request,
         name: str = Form(""),
@@ -962,6 +964,7 @@ def setup_session_routes(
             raise HTTPException(404, f"Session {session_id} not found")
 
     @router.post("/session/{session_id}/compact")
+    @usage_monitor(10, 3600, "log")
     async def compact_session(request: Request, session_id: str):
         """Summarize older messages into one compacted history entry."""
         _verify_session_owner(request, session_id)
@@ -1042,6 +1045,7 @@ def setup_session_routes(
         }
 
     @router.post("/sessions/auto-sort")
+    @usage_monitor(10, 3600, "log")
     def auto_sort_sessions(request: Request, skip_llm: bool = False):
         """Use AI to categorize all sessions into folders.
 

@@ -44,3 +44,14 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Optional security perimeter (opt-in via ODYSSEUS_GUARD_ENABLED). fastapi-guard
+# is a thin FastAPI adapter over guard-core: rate-limit ceilings, WAF/recon
+# detection, honeypot auto-ban, per-route size/content-type caps, and log-only
+# credential-into-corpus / prompt-injection signals. Wired in core/guard.py and
+# only imported when the flag is set, so the default install stays unchanged.
+fastapi-guard>=7.8.1
+# GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
+# GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
+# used when country blocking is enabled.
+maxminddb

@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
+from core.guard_deco import content_type, honeypot
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.rate_limiter import RateLimiter
@@ -125,6 +126,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         return auth_manager.get_username_for_token(token)
 
     @router.post("/setup")
+    @honeypot(["website", "company", "address"])
+    @content_type(["application/json"])
     async def first_run_setup(body: SetupRequest, request: Request):
         """Create initial admin account. Only works if no accounts exist."""
         if not _setup_limiter.check(request.client.host):
@@ -143,6 +146,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         return {"ok": True, "message": "Admin account created"}
 
     @router.post("/signup")
+    @honeypot(["website", "company", "address"])
+    @content_type(["application/json"])
     async def signup(body: SignupRequest, request: Request):
         """Create a new user account. Only works if signup is enabled by admin."""
         if not _signup_limiter.check(request.client.host):
@@ -163,6 +168,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         return {"ok": True, "message": "Account created"}
 
     @router.post("/login")
+    @honeypot(["website", "company", "address"])
+    @content_type(["application/json"])
     async def login(body: LoginRequest, request: Request, response: Response):
         if not _login_limiter.check(request.client.host):
             raise HTTPException(429, "Too many requests — try again later")
