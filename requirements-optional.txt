@@ -50,7 +50,7 @@ markitdown[docx,pptx,xlsx,xls]==0.1.6
 # detection, honeypot auto-ban, per-route size/content-type caps, and log-only
 # credential-into-corpus / prompt-injection signals. Wired in core/guard.py and
 # only imported when the flag is set, so the default install stays unchanged.
-fastapi-guard>=7.8.1
+fastapi-guard>=7.8.2
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
