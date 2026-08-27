@@ -23,6 +23,7 @@ import {
   _tryFoldHintSig, _foldSignature, _SIG_ICON, _QUOTE_ICON,
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
+import { getSettings } from './appConfig.js';
 import { collapseSidebarToRail } from './modalSnap.js';
 import { emailApiUrl } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -993,8 +994,7 @@ function _syncEmailReminderBellVisibility(enabled) {
 
 async function _loadEmailReminderBellVisibility() {
   try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await res.json();
+    const settings = await getSettings();
     _syncEmailReminderBellVisibility(settings.reminder_channel === 'email');
   } catch (_) {
     _syncEmailReminderBellVisibility(false);

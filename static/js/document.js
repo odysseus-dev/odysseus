@@ -9738,6 +9738,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const container = document.createElement('div');
     container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
     container.innerHTML = html;
+    // This container is detached, so the document-scoped flush mdToHtml
+    // schedules never sees it. Typeset the deferred math before html2pdf
+    // rasterises, or the PDF gets raw formula source. renderMath() returns
+    // immediately, without loading KaTeX, when there is nothing pending.
+    await markdownModule.renderMath(container);
     const baseName = _getExportBaseName();
     window.html2pdf().set({
       margin: 10,

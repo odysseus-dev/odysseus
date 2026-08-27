@@ -231,23 +231,11 @@
       }
     }
   </style>
-  <!-- KaTeX CSS is loaded with media="print" so it doesn't block render,
-       then flipped to "all" via JS after load. Mermaid init runs once the
-       library finishes loading. Both hooks are wired via addEventListener
-       below (inline onload= attrs are blocked by CSP script-src-attr). -->
-  <link id="katex-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" media="print">
-  <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
-  <script id="mermaid-script" async src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script nonce="{{CSP_NONCE}}">
-    (function(){
-      var k = document.getElementById('katex-css');
-      if (k) k.addEventListener('load', function(){ k.media = 'all'; }, { once: true });
-      var m = document.getElementById('mermaid-script');
-      if (m) m.addEventListener('load', function(){
-        if (window.odysseusInitMermaid) window.odysseusInitMermaid();
-      }, { once: true });
-    })();
-  </script>
+  <!-- KaTeX and Mermaid are vendored in /static/lib and pulled in by
+       static/js/markdown.js the first time a page actually renders math or a
+       ```mermaid fence. They used to load here from cdn.jsdelivr.net on every
+       page load, which cost ~985 KB on the wire, broke offline installs, and
+       announced every session to a third party. -->
   <!-- Preload the two faces first paint actually uses: Fira Code 400 and 600,
        the app font and the weight the sidebar and header text render at. They
        are declared in style.css, so without a hint they are only discovered
@@ -2584,10 +2572,10 @@
 <script type="module" src="/static/js/tts-ai.js"></script>
 <script type="module" src="/static/js/document.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/gallery.js?v=20260708match1"></script>
-<script type="module" src="/static/js/chatRenderer.js?v=20260815toolapproval4"></script>
+<script type="module" src="/static/js/chatRenderer.js?v=20260819approvalcontrol1"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
-<script type="module" src="/static/js/chatStream.js?v=20260815approvalsave1"></script>
-  <script type="module" src="/static/js/chat.js?v=20260815toolapproval4"></script>
+<script type="module" src="/static/js/chatStream.js?v=20260819approvalcontrol1"></script>
+  <script type="module" src="/static/js/chat.js?v=20260819approvalcontrol1"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>

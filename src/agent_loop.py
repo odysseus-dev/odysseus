@@ -3081,10 +3081,17 @@ def _append_tool_results(
             messages.append(result_message)
     else:
         tool_output_text = "\n\n".join(tool_results)
-        msg = {"role": "assistant", "content": round_response}
-        if round_reasoning:
-            msg["reasoning_content"] = round_reasoning
-        messages.append(msg)
+        # An approved-action replay injects the sealed tool result with no
+        # assistant prose for that round, which used to append an assistant turn
+        # whose content was "". Anthropic's Messages API rejects a non-final
+        # assistant message with empty content (HTTP 400), so the resumed turn
+        # died before the model saw the result. A turn carrying neither prose nor
+        # reasoning has nothing to say to any provider, so skip it entirely.
+        if round_response.strip() or round_reasoning:
+            msg = {"role": "assistant", "content": round_response}
+            if round_reasoning:
+                msg["reasoning_content"] = round_reasoning
+            messages.append(msg)
         # Tool output (shell/python stdout, file reads, fetched pages, email
         # bodies, MCP results) is sourced from outside the server. Wrap it as
         # untrusted data so prompt-injection inside a tool result is treated as
@@ -3460,7 +3467,10 @@ async def stream_agent_loop(
                 and exact_approval.pending.external_untrusted_context_seen
             )
             or messages_contain_external_untrusted_context(messages)
-        )
+        ),
+        approval_gate_bypassed=bool(
+            exact_approval and exact_approval.allow_remaining_actions
+        ),
     )
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
@@ -5698,6 +5708,16 @@ async def stream_agent_loop(
                         "policy": "exact_tool_approval_target",
                     }
                 else:
+                    # The approval click becomes a synthetic user turn. Seal the
+                    # actual server-selected candidates now so that continuation
+                    # does not lose memory, skills, MCP, documents, or other
+                    # ToolIndex/RAG-selected tools by classifying that synthetic text.
+                    approval_selected_tools = set(_relevant_tools or ())
+                    approval_selected_tools.update(
+                        name for name in _tool_names_sent if name
+                    )
+                    approval_selected_tools.add(block.tool_type)
+                    approval_selected_tools.difference_update(disabled_tools)
                     pending_approval = tool_approval_store.create(
                         owner=owner,
                         session_id=session_id,
@@ -5725,6 +5745,8 @@ async def stream_agent_loop(
                         external_untrusted_context_seen=(
                             run_security.external_untrusted_context_seen
                         ),
+                        selected_tools=approval_selected_tools,
+                        continuation_query=_retrieval_query or _last_user,
                         capabilities=capabilities_for_action(
                             block.tool_type,
                             block.content,

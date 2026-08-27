@@ -818,6 +818,12 @@ const STUBS = new Map([
     },
   ],
   [
+    path.join(JS, 'appConfig.js'),
+    {
+      invalidateSettings() {},
+    },
+  ],
+  [
     path.join(JS, 'windowDrag.js'),
     {
       makeWindowDraggable() {},
