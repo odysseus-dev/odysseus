@@ -188,21 +188,8 @@ guard_deco = None
 
 
 if GUARD_ENABLED:
-    from guard import SecurityConfig, SecurityDecorator, SecurityMiddleware
+    from guard import SecurityConfig, SecurityDecorator
     from guard_core.models import ThreatBanConfig
-
-    class GuardMiddleware(SecurityMiddleware):
-        """SecurityMiddleware that logs through Odysseus's handlers only.
-
-        guard-core attaches its own console handler to the ``guard_core`` logger
-        and still propagates to the root logger, so every event would otherwise
-        print twice, and only the propagated copy reaches Odysseus's log file.
-        """
-
-        def __init__(self, app, *, config) -> None:
-            super().__init__(app, config=config)
-            for handler in self.logger.handlers[:]:
-                self.logger.removeHandler(handler)
 
     _passive = _passive_mode()
     _proxies = _env_list("ODYSSEUS_GUARD_TRUSTED_PROXIES")

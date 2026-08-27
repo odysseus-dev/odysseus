@@ -1,7 +1,7 @@
 """Behavioural tests for the optional guard-core perimeter (core/guard.py).
 
 The broad perimeter is delivered through global config: an outermost
-GuardMiddleware, a global path-aware log-only content scanner
+SecurityMiddleware, a global path-aware log-only content scanner
 (``custom_request_check``), path-keyed ``endpoint_rate_limits``, the WAF, and
 honeypots. Per-route decorators (core/guard_deco.py) add tighter controls on top.
 
@@ -178,6 +178,7 @@ def test_endpoint_rate_limit_blocks_include_router_route_in_active_mode():
         """
         from fastapi import FastAPI, APIRouter, Request
         from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
         import core.guard as g
 
         router = APIRouter()
@@ -187,7 +188,7 @@ def test_endpoint_rate_limit_blocks_include_router_route_in_active_mode():
             return {"ok": True}
 
         app = FastAPI()
-        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
         app.state.guard_decorator = g.guard_deco
         app.include_router(router)
 
@@ -210,6 +211,7 @@ def test_passive_mode_never_blocks_even_over_endpoint_ceiling():
         """
         from fastapi import FastAPI, APIRouter, Request
         from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
         import core.guard as g
 
         router = APIRouter()
@@ -219,7 +221,7 @@ def test_passive_mode_never_blocks_even_over_endpoint_ceiling():
             return {"ok": True}
 
         app = FastAPI()
-        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
         app.state.guard_decorator = g.guard_deco
         app.include_router(router)
 
@@ -241,6 +243,7 @@ def test_waf_blocks_sqli_globally_when_active():
         """
         from fastapi import FastAPI, APIRouter, Request
         from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
         import core.guard as g
 
         router = APIRouter()
@@ -250,7 +253,7 @@ def test_waf_blocks_sqli_globally_when_active():
             return {"ok": True}
 
         app = FastAPI()
-        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
         app.state.guard_decorator = g.guard_deco
         app.include_router(router)
 
@@ -277,6 +280,7 @@ def test_active_mode_never_scans_credentials_or_search_terms():
         """
         from fastapi import FastAPI, APIRouter, Request
         from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
         import core.guard as g
 
         router = APIRouter()
@@ -290,7 +294,7 @@ def test_active_mode_never_scans_credentials_or_search_terms():
             return {"q": q}
 
         app = FastAPI()
-        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
         app.state.guard_decorator = g.guard_deco
         app.include_router(router)
 
@@ -319,6 +323,7 @@ def test_active_mode_blocks_scanner_user_agents_and_accepts_form_routes():
         """
         from fastapi import FastAPI, APIRouter, Form, Request
         from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
         import core.guard as g
         from core.guard_deco import content_type
 
@@ -330,7 +335,7 @@ def test_active_mode_blocks_scanner_user_agents_and_accepts_form_routes():
             return {"name": name}
 
         app = FastAPI()
-        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
         app.state.guard_decorator = g.guard_deco
         app.include_router(router)
 
