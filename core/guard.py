@@ -260,9 +260,14 @@ if GUARD_ENABLED:
         # commands in this AI workspace and would otherwise trip the WAF on
         # normal use. One central allowlist: guard-core matches these names in
         # JSON bodies at any depth, in x-www-form-urlencoded fields, and in
-        # multipart text parts, so it covers every route. Multipart file parts
-        # are skipped by the engine; the upload routes also carry @no_waf.
+        # multipart text parts, so it covers every route. Since guard-core 3.13
+        # multipart file parts are scanned too (filename and decodable payload),
+        # which is why the upload routes carry @no_waf.
+        # Credentials are excluded outright: a strong password is random bytes
+        # and must never be pattern-matched (";rm" inside one blocked login).
         excluded_detection_body_fields={
+            "password", "new_password", "current_password", "master_password",
+            "bw_password", "api_key", "secret", "totp_code",
             "message", "content", "text", "prompt", "personality", "procedure",
             "pitfalls", "solution", "when_to_use", "description", "query",
             "payload", "thumbnail", "items", "instruction", "original_text",
@@ -283,11 +288,23 @@ if GUARD_ENABLED:
             "authorization", "x-api-key", "x-auth-token",
             "x-odysseus-internal-token", "x-odysseus-owner", "x-tz-offset",
         },
+        # Free-text search and mailbox-folder query parameters. A user searching
+        # their own history for "DROP TABLE" is not an attack. Path-like params
+        # (path, filepath) stay scanned so traversal detection still applies.
+        excluded_detection_params={"q", "search", "filter", "folder", "dest", "sort"},
         detection_max_body_inspect_bytes=65536,
         detection_max_content_length=10000,
         detection_threat_score_threshold=1.2,
         detection_semantic_threshold=0.75,
         enable_ip_banning=True,
+        # Rate-limit violators feed the same ban engine as WAF hits (guard-core
+        # 3.13+); a client that keeps hammering a ceiling is banned, not just 429'd.
+        enable_rate_limit_auto_ban=True,
+        # Regexes against the User-Agent header. Only tools that never carry
+        # legitimate traffic; browsers, curl, and SDK clients are untouched.
+        blocked_user_agents=[
+            r"(?i)\b(?:sqlmap|nikto|nmap|masscan|zgrab|nuclei|wpscan|dirbuster|gobuster|acunetix|nessus)\b",
+        ],
         auto_ban_threshold=20,
         auto_ban_duration=3600,
         threat_ban_config={

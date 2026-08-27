@@ -4427,6 +4427,7 @@ def setup_email_routes():
             return {"pending": [], "error": "Mail operation failed"}
 
     @router.post("/pending/{sid}/approve")
+    @usage_monitor(30, 3600, "log")
     async def approve_agent_draft(sid: str, owner: str = Depends(require_owner)):
         """Approve a draft staged by the agent: flip status → pending and
         backdate send_at so the scheduled-send poller picks it up

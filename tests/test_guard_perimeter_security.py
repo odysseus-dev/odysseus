@@ -269,3 +269,86 @@ def test_waf_blocks_sqli_globally_when_active():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("OK")
+
+
+@requires_guard
+def test_active_mode_never_scans_credentials_or_search_terms():
+    result = _run(
+        """
+        from fastapi import FastAPI, APIRouter, Request
+        from starlette.testclient import TestClient
+        import core.guard as g
+
+        router = APIRouter()
+
+        @router.post("/api/auth/login")
+        async def login(request: Request):
+            return {"ok": True}
+
+        @router.get("/api/search")
+        async def search(q: str = ""):
+            return {"q": q}
+
+        app = FastAPI()
+        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.state.guard_decorator = g.guard_deco
+        app.include_router(router)
+
+        client = TestClient(app, client=("127.0.0.1", 12345))
+        strong = "Tr0ub4dor&3;rm*"
+        login = client.post("/api/auth/login", json={"username": "u", "password": strong}).status_code
+        change = client.post("/api/auth/login", json={"current_password": strong, "new_password": strong}).status_code
+        search = client.get("/api/search", params={"q": "DROP TABLE users; -- where did I see this"}).status_code
+        scanned_param = client.get("/api/search", params={"path": "../../../../etc/passwd"}).status_code
+        assert login == 200, login
+        assert change == 200, change
+        assert search == 200, search
+        assert scanned_param == 400, scanned_param
+        print("OK")
+        """,
+        ODYSSEUS_GUARD_ENABLED="true",
+        ODYSSEUS_GUARD_PASSIVE="false",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("OK")
+
+
+@requires_guard
+def test_active_mode_blocks_scanner_user_agents_and_accepts_form_routes():
+    result = _run(
+        """
+        from fastapi import FastAPI, APIRouter, Form, Request
+        from starlette.testclient import TestClient
+        import core.guard as g
+        from core.guard_deco import content_type
+
+        router = APIRouter()
+
+        @router.post("/api/mcp/servers")
+        @content_type(["multipart/form-data", "application/x-www-form-urlencoded"])
+        async def add_server(request: Request, name: str = Form(...)):
+            return {"name": name}
+
+        app = FastAPI()
+        app.add_middleware(g.GuardMiddleware, config=g.security_config)
+        app.state.guard_decorator = g.guard_deco
+        app.include_router(router)
+
+        client = TestClient(app, client=("127.0.0.1", 12345))
+        form = client.post("/api/mcp/servers", data={"name": "fs"}).status_code
+        multipart = client.post("/api/mcp/servers", files={"name": (None, "fs")}).status_code
+        wrong_type = client.post("/api/mcp/servers", json={"name": "fs"}).status_code
+        scanner = client.post("/api/mcp/servers", data={"name": "fs"}, headers={"user-agent": "sqlmap/1.8"}).status_code
+        browser = client.post("/api/mcp/servers", data={"name": "fs"}, headers={"user-agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0"}).status_code
+        assert form == 200, form
+        assert multipart == 200, multipart
+        assert wrong_type == 415, wrong_type
+        assert scanner == 403, scanner
+        assert browser == 200, browser
+        print("OK")
+        """,
+        ODYSSEUS_GUARD_ENABLED="true",
+        ODYSSEUS_GUARD_PASSIVE="false",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("OK")

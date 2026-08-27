@@ -815,6 +815,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/restore/{num} ----
     @router.post("/api/document/{doc_id}/restore/{num}")
+    @usage_monitor(30, 3600, "log")
     async def restore_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()

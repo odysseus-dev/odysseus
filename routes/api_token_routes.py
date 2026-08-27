@@ -156,6 +156,8 @@ def setup_api_token_routes() -> APIRouter:
 
     @router.patch("/tokens/{token_id}")
     @content_type(["application/json"])
+    @usage_monitor(30, 3600, "log")
+    @content_type(["application/json"])
     async def update_token(request: Request, token_id: str):
         require_admin(request)
         current_user = get_current_user(request)
@@ -196,6 +198,7 @@ def setup_api_token_routes() -> APIRouter:
         return response
 
     @router.delete("/tokens/{token_id}")
+    @usage_monitor(30, 3600, "log")
     def delete_token(request: Request, token_id: str):
         require_admin(request)
         current_user = get_current_user(request)

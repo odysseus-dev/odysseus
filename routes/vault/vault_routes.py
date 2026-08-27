@@ -141,6 +141,8 @@ def setup_vault_routes():
         }
 
     @router.post("/config")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def save_config(req: VaultConfig, request: Request):
         """Save vault URL + email. Runs 'bw config server' to point at Vaultwarden."""
         require_admin(request)

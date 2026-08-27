@@ -20,7 +20,7 @@ from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
 from core.middleware import require_admin
-from core.guard_deco import content_type, usage_monitor
+from core.guard_deco import content_type, suspicious_frequency, usage_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -1417,6 +1417,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True, "deduped": bool(entry.get("_deduped")), "skill": entry}
 
     @router.post("/{skill_id}/invoke")
+    @content_type(["application/json"])
+    @usage_monitor(60, 3600, "log")
+    @suspicious_frequency(1.0, 60, "log")
     async def invoke_skill(request: Request, skill_id: str):
         """Build a skill-pinned prompt for slash-command invocation.
 
@@ -1566,6 +1569,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True, "status": "running", "skill": name, "model": model}
 
     @router.post("/{skill_id}/test-approval")
+    @content_type(["application/json"])
     async def approve_skill_test_action(request: Request, skill_id: str):
         """Resume a manual skill test with one exact server-sealed action."""
         import asyncio as _asyncio

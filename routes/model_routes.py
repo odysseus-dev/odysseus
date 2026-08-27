@@ -2672,6 +2672,7 @@ def setup_model_routes(model_discovery):
         return {"dependents": _settings_using_endpoint(ep_id)}
 
     @router.delete("/model-endpoints/{ep_id}")
+    @usage_monitor(30, 3600, "log")
     def delete_model_endpoint(ep_id: str, request: Request):
         require_admin(request)
         db = SessionLocal()

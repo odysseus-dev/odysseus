@@ -1764,6 +1764,8 @@ def setup_shell_routes() -> APIRouter:
         return {"packages": packages}
 
     @router.post("/api/cookbook/packages/install")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def install_package(request: Request):
         """Install a package via pip. Admin only — pip install is effectively code exec."""
         _require_admin(request)
@@ -1811,6 +1813,8 @@ def setup_shell_routes() -> APIRouter:
         return {"ok": False, "error": stderr.decode()[-300:]}
 
     @router.post("/api/cookbook/install-system-deps")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def install_system_deps(request: Request):
         """Install OS-level system packages (cmake/build-essential/git/tmux)
         on a remote target or in the local container. Admin only.
@@ -1932,6 +1936,8 @@ def setup_shell_routes() -> APIRouter:
         }
 
     @router.post("/api/cookbook/rebuild-engine")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def rebuild_engine(request: Request):
         """Clear the cached llama.cpp build so the next serve recompiles.
 
