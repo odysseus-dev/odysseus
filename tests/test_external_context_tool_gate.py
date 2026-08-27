@@ -1007,8 +1007,8 @@ def test_native_argument_deltas_do_not_mutate_editor_before_gate(monkeypatch):
 
     events = _collect_agent_events(
         agent_loop.stream_agent_loop(
-            "https://api.example.test/v1",
-            "gpt-test",
+            "https://api.openai.com/v1",
+            "gpt-5-test",
             messages,
             max_rounds=1,
             relevant_tools={"create_document"},

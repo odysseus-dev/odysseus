@@ -98,6 +98,28 @@ def test_provision_refreshes_existing_auth_session_and_endpoint(monkeypatch):
         db.close()
 
 
+def test_provision_preserves_existing_tool_capability_opt_out(monkeypatch):
+    TestSessionLocal = _mem_db(monkeypatch)
+    monkeypatch.setattr(csr.chatgpt_subscription, "fetch_available_models", lambda token: ["gpt-5.5"])
+
+    first = csr._provision_endpoint({"access_token": "OLD", "refresh_token": "OLD-RT"}, "bob")
+    db = TestSessionLocal()
+    try:
+        endpoint = db.query(ModelEndpoint).filter(ModelEndpoint.id == first["id"]).one()
+        endpoint.supports_tools = False
+        db.commit()
+    finally:
+        db.close()
+
+    csr._provision_endpoint({"access_token": "NEW", "refresh_token": "NEW-RT"}, "bob")
+    db = TestSessionLocal()
+    try:
+        endpoint = db.query(ModelEndpoint).filter(ModelEndpoint.id == first["id"]).one()
+        assert endpoint.supports_tools is False
+    finally:
+        db.close()
+
+
 def test_provision_rejects_missing_tokens(monkeypatch):
     _mem_db(monkeypatch)
     with pytest.raises(ValueError, match="missing access_token or refresh_token"):

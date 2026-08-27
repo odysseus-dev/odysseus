@@ -276,6 +276,11 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
     'python -c "print(1 > 0)"',
     "git log --oneline | head -20",
     "diff <(sort a.txt) <(sort b.txt)",
+    "sh -c 'git status --short'",
+    "bash -lc 'git log --oneline -5'",
+    "env grep -n needle file.txt",
+    "command cat file.txt",
+    "command -v cp",
 ])
 def test_workspace_shell_guard_allows_read_only_redirect_syntax(ws, command):
     token = _active_workspace.set(ws)
@@ -310,6 +315,13 @@ def test_workspace_shell_guard_allows_quoted_mutation_words(ws, command):
     "sed -i 's/a/b/' file",
     "perl -pi -e 's/a/b/' file",
     "awk -i inplace '{print}' file",
+    "sh -c 'cp secret.txt out.txt'",
+    "bash -lc 'touch note.txt'",
+    "env cp secret.txt out.txt",
+    "command mv a.txt b.txt",
+    "nohup tee out.txt",
+    "env sh -c 'cp secret.txt out.txt'",
+    "env -S 'cp secret.txt out.txt'",
 ])
 def test_workspace_shell_guard_blocks_tokenized_mutation_commands(ws, command):
     token = _active_workspace.set(ws)
@@ -325,6 +337,9 @@ def test_workspace_shell_guard_blocks_tokenized_mutation_commands(ws, command):
     "printf 'x' 1> note.txt",
     "printf 'x' 2> error.log",
     "printf 'x' &> out.log",
+    "sh -c \"printf 'x' > note.txt\"",
+    "bash -lc \"printf 'x' >> note.txt\"",
+    "env sh -c \"printf 'x' > note.txt\"",
 ])
 def test_workspace_shell_guard_blocks_workspace_redirect_targets(ws, command):
     token = _active_workspace.set(ws)
