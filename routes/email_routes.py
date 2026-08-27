@@ -469,14 +469,65 @@ def _email_label_row_to_dict(row) -> dict:
     }
 
 
+_EMAIL_PROTOCOL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_EMAIL_UID_MAX = (1 << 32) - 1
+
+
+def _reject_email_protocol_controls(value: str, field: str) -> str:
+    text = str(value or "")
+    if _EMAIL_PROTOCOL_CONTROL_RE.search(text):
+        raise HTTPException(400, f"Invalid {field}")
+    return text
+
+
+def _canonical_email_label_folder(folder: str | None) -> str:
+    value = _reject_email_protocol_controls(folder or "INBOX", "email folder").strip() or "INBOX"
+    if len(value) > 1024:
+        raise HTTPException(400, "Invalid email folder")
+    return value
+
+
+def _canonical_email_label_uid(uid: str | None) -> str:
+    value = _reject_email_protocol_controls(uid or "", "email uid").strip()
+    if not value:
+        return ""
+    if not re.fullmatch(r"[0-9]+", value):
+        raise HTTPException(400, "Invalid email uid")
+    number = int(value)
+    if number < 1 or number > _EMAIL_UID_MAX:
+        raise HTTPException(400, "Invalid email uid")
+    return str(number)
+
+
+def _canonical_email_message_id(message_id: str | None) -> str:
+    value = _reject_email_protocol_controls(message_id or "", "email message_id").strip()
+    if not value:
+        return ""
+    # A Message-ID is a single angle-bracketed token. Keeping the complete
+    # token (rather than accepting an arbitrary HEADER search fragment) also
+    # gives assignments one stable canonical database key.
+    if len(value) > 998 or not re.fullmatch(r"<[^<>]+>", value) or "@" not in value[1:-1]:
+        raise HTTPException(400, "Invalid email message_id")
+    return value
+
+
+def _canonical_email_label_identity(
+    folder: str | None,
+    uid: str | None,
+    message_id: str | None,
+) -> tuple[str, str, str]:
+    folder_s = _canonical_email_label_folder(folder)
+    uid_s = _canonical_email_label_uid(uid)
+    mid = _canonical_email_message_id(message_id)
+    if not mid and not uid_s:
+        raise HTTPException(400, "Email uid or message_id is required")
+    return folder_s, uid_s, mid
+
+
 def _email_label_message_key(folder: str | None, uid: str | None, message_id: str | None) -> str:
-    mid = str(message_id or "").strip()
+    folder_s, uid_s, mid = _canonical_email_label_identity(folder, uid, message_id)
     if mid:
         return f"mid:{mid}"
-    uid_s = str(uid or "").strip()
-    if not uid_s:
-        raise HTTPException(400, "Email uid or message_id is required")
-    folder_s = str(folder or "INBOX").strip() or "INBOX"
     return f"uid:{folder_s}:{uid_s}"
 
 
@@ -519,12 +570,17 @@ def _email_label_filter_matches(owner: str, account_id: str | None, folder: str,
         conn.close()
     message_ids: list[str] = []
     uids: list[str] = []
+    requested_folder = _canonical_email_label_folder(folder)
     for mid, uid, row_folder in rows:
-        mid_s = str(mid or "").strip()
-        uid_s = str(uid or "").strip()
+        try:
+            row_folder_s, uid_s, mid_s = _canonical_email_label_identity(row_folder, uid, mid)
+        except HTTPException:
+            # Defense in depth for assignments written before identity
+            # validation existed: never reuse unsafe stored input in IMAP.
+            continue
         if mid_s and mid_s not in message_ids:
             message_ids.append(mid_s)
-        elif uid_s and str(row_folder or "") == str(folder or "") and uid_s not in uids:
+        elif uid_s and row_folder_s == requested_folder and uid_s not in uids:
             uids.append(uid_s)
     return message_ids, uids
 
@@ -740,7 +796,8 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
 
 
 def _imap_search_quote(value: str) -> str:
-    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+    value = _reject_email_protocol_controls(value, "IMAP search value")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _message_id_chain(*values: str) -> list[str]:
@@ -1108,6 +1165,7 @@ def _email_index_list(owner: str, account_id: str | None, folder: str, filter_: 
             "has_attachments": bool(has_attachments_raw),
             "folder": folder,
         })
+    _attach_custom_email_labels(owner, account_id, folder, emails)
     return emails, total, (total_row or [None, None])[1]
 
 
@@ -1199,6 +1257,7 @@ def _email_index_search(owner: str, account_id: str | None, folder: str, query: 
             "has_attachments": bool(has_attachments),
             "folder": row_folder or folder,
         })
+    _attach_custom_email_labels(owner, account_id, folder, emails)
     return emails, total, (total_row or [None, None])[1]
 
 
@@ -2071,12 +2130,14 @@ def setup_email_routes():
         owner: str = Depends(require_owner),
     ):
         data = _model_dict(payload)
-        folder = str(data.get("folder") or "INBOX").strip() or "INBOX"
+        folder, uid, message_id = _canonical_email_label_identity(
+            data.get("folder"), data.get("uid"), data.get("message_id"),
+        )
         account = _normalize_email_label_account(data.get("account_id"), owner)
         row = _email_label_definition(owner, account, data.get("label") or "")
         if not row or not bool(row[4]):
             raise HTTPException(404, "Label not found")
-        key = _email_label_message_key(folder, data.get("uid"), data.get("message_id"))
+        key = _email_label_message_key(folder, uid, message_id)
         now = datetime.utcnow().isoformat() + "Z"
         _init_scheduled_db()
         conn = _sql3.connect(SCHEDULED_DB)
@@ -2098,8 +2159,8 @@ def setup_email_routes():
                     account,
                     folder,
                     key,
-                    str(data.get("message_id") or "").strip(),
-                    str(data.get("uid") or "").strip(),
+                    message_id,
+                    uid,
                     row[0],
                     str(data.get("subject") or "").strip()[:300],
                     str(data.get("sender") or "").strip()[:300],
@@ -2351,9 +2412,6 @@ def setup_email_routes():
                 if not _label_message_ids and not _label_uid_fallback:
                     return {"emails": [], "total": 0, "folder": folder}
 
-                def _imap_search_quote(value: str) -> str:
-                    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
-
                 _uids = set()
                 for _mid in dict.fromkeys(_label_message_ids):
                     if not _mid:
@@ -2452,8 +2510,6 @@ def setup_email_routes():
                 # Prefer stable Message-ID rows. Older tag rows may have only
                 # numeric ids; those were sequence numbers historically, but
                 # may be real UIDs for newer rows. Treat them as UIDs only.
-                def _imap_search_quote(value: str) -> str:
-                    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
                 _uids = set()
                 for _mid in dict.fromkeys(_tag_message_ids):
                     if not _mid:
@@ -3379,6 +3435,7 @@ def setup_email_routes():
                         logger.warning(f"Error parsing search result {uid}: {e}")
                         continue
                 _email_index_upsert(owner, account_id, effective_folder, fetched_emails)
+                _attach_custom_email_labels(owner, account_id, effective_folder, emails)
 
                 return {
                     "emails": emails,

@@ -125,6 +125,217 @@ def test_email_label_message_key_prefers_message_id():
 
     assert email_routes._email_label_message_key("INBOX", "9", "<m@example.com>") == "mid:<m@example.com>"
     assert email_routes._email_label_message_key("Archive", "9", "") == "uid:Archive:9"
+    assert email_routes._email_label_message_key(" Archive ", "0009", "") == "uid:Archive:9"
+
+
+@pytest.mark.parametrize(
+    ("folder", "uid", "message_id"),
+    [
+        ("INBOX\rInjected", "9", "<m@example.com>"),
+        ("INBOX", "9\n10", "<m@example.com>"),
+        ("INBOX", "9", "<m@example.com>\x00extra"),
+        ("INBOX", "9", "not-a-message-id"),
+        ("INBOX", "0", ""),
+        ("INBOX", "4294967296", ""),
+    ],
+)
+def test_email_label_identity_rejects_unsafe_or_noncanonical_inputs(folder, uid, message_id):
+    import routes.email_routes as email_routes
+
+    with pytest.raises(HTTPException):
+        email_routes._email_label_message_key(folder, uid, message_id)
+
+
+def test_imap_search_quote_rejects_protocol_controls():
+    import routes.email_routes as email_routes
+
+    assert email_routes._imap_search_quote('<m@example.com>') == '"<m@example.com>"'
+    for value in ("safe\rBAD", "safe\nBAD", "safe\x00BAD", "safe\x7fBAD"):
+        with pytest.raises(HTTPException):
+            email_routes._imap_search_quote(value)
+
+
+def test_label_filter_skips_legacy_unsafe_message_identity(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+    import routes.email_routes as email_routes
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "_assert_owns_account", lambda account_id, owner: None)
+    email_helpers._init_scheduled_db()
+    conn = sqlite3.connect(db_path)
+    try:
+        now = "2026-08-27T10:00:00Z"
+        conn.execute(
+            """
+            INSERT INTO email_label_definitions
+              (owner, account_id, slug, name, color, description, active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("alice", "acct-a", "client-work", "Client Work", "", "", 1, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO email_label_assignments
+              (owner, account_id, folder, message_key, message_id, uid, label_slug, subject, sender, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "alice", "acct-a", "INBOX", "mid:legacy-unsafe",
+                "<safe@example.com>\rBAD", "9", "client-work", "", "", now,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert email_routes._email_label_filter_matches(
+        "alice", "acct-a", "INBOX", "client-work",
+    ) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_label_assignment_canonicalizes_persisted_identity(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+    import routes.email_routes as email_routes
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "_assert_owns_account", lambda account_id, owner: None)
+    email_helpers._init_scheduled_db()
+
+    router = email_routes.setup_email_routes()
+    create_label = _route_endpoint(router, "/api/email/labels", "POST")
+    add_message_label = _route_endpoint(router, "/api/email/labels/message", "POST")
+    await create_label(
+        email_routes.EmailLabelCreateRequest(name="Client Work", account_id="acct-a"),
+        owner="alice",
+    )
+    result = await add_message_label(
+        email_routes.EmailLabelMessageRequest(
+            label="client-work",
+            uid="0009",
+            folder=" Archive ",
+            account_id="acct-a",
+        ),
+        owner="alice",
+    )
+
+    assert result["message_key"] == "uid:Archive:9"
+    conn = sqlite3.connect(db_path)
+    try:
+        persisted = conn.execute(
+            "SELECT folder, uid, message_id FROM email_label_assignments",
+        ).fetchone()
+    finally:
+        conn.close()
+    assert persisted == ("Archive", "9", "")
+
+
+@pytest.mark.asyncio
+async def test_custom_labels_enrich_index_cached_and_live_responses(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+    import routes.email_routes as email_routes
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "_assert_owns_account", lambda account_id, owner: None)
+    email_helpers._init_scheduled_db()
+
+    router = email_routes.setup_email_routes()
+    create_label = _route_endpoint(router, "/api/email/labels", "POST")
+    add_message_label = _route_endpoint(router, "/api/email/labels/message", "POST")
+    list_emails = _route_endpoint(router, "/api/email/list", "GET")
+    search_emails = _route_endpoint(router, "/api/email/search", "GET")
+    await create_label(
+        email_routes.EmailLabelCreateRequest(name="Client Work", account_id="acct-a"),
+        owner="alice",
+    )
+    await add_message_label(
+        email_routes.EmailLabelMessageRequest(
+            label="client-work",
+            uid="9",
+            folder="INBOX",
+            account_id="acct-a",
+            message_id="<needle@example.com>",
+        ),
+        owner="alice",
+    )
+    email_routes._email_index_upsert(
+        "alice",
+        "acct-a",
+        "INBOX",
+        [{
+            "uid": "9",
+            "message_id": "<needle@example.com>",
+            "subject": "Needle project update",
+            "from_name": "Sender",
+            "from_address": "sender@example.com",
+            "to": "alice@example.com",
+            "cc": "",
+            "date": "2026-08-27T10:00:00Z",
+            "date_display": "Aug 27",
+            "date_epoch": 1_777_000_000,
+            "size": 100,
+            "flags": "",
+            "has_attachments": False,
+        }],
+    )
+
+    indexed, _, _ = email_routes._email_index_list("alice", "acct-a", "INBOX", "all", 50, 0)
+    searched, _, _ = email_routes._email_index_search("alice", "acct-a", "INBOX", "Needle", 50)
+    assert [label["slug"] for label in indexed[0]["labels"]] == ["client-work"]
+    assert [label["slug"] for label in searched[0]["labels"]] == ["client-work"]
+
+    cached_result = await list_emails(
+        folder="INBOX", limit=50, offset=0, filter="all", from_addr=None,
+        account_id="acct-a", has_attachments=0, cached_only=1,
+        cache_bust=None, owner="alice",
+    )
+    local_search = search_emails(
+        q="Needle", folder="INBOX", limit=50, account_id="acct-a",
+        local_only=True, scope="all", owner="alice",
+    )
+    assert cached_result["emails"][0]["labels"][0]["slug"] == "client-work"
+    assert local_search["emails"][0]["labels"][0]["slug"] == "client-work"
+
+    class FakeImap:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def list(self):
+            return "OK", []
+
+        def select(self, *_args, **_kwargs):
+            return "OK", [b"1"]
+
+        def uid(self, command, *_args):
+            if command == "SEARCH":
+                return "OK", [b"9"]
+            raise AssertionError(f"unexpected IMAP command: {command}")
+
+        def logout(self):
+            return "BYE", []
+
+    monkeypatch.setattr(email_routes, "_imap_connect", lambda *_args, **_kwargs: FakeImap())
+    normal_list = await list_emails(
+        folder="INBOX", limit=50, offset=0, filter="all",
+        from_addr="sender@example.com", account_id="acct-a",
+        has_attachments=0, cached_only=0, cache_bust="test", owner="alice",
+    )
+    monkeypatch.setattr(email_routes, "_imap", lambda *_args, **_kwargs: FakeImap())
+    normal_search = search_emails(
+        q="Needle", folder="INBOX", limit=50, account_id="acct-a",
+        local_only=False, scope="all", owner="alice",
+    )
+    assert normal_list["emails"][0]["labels"][0]["slug"] == "client-work"
+    assert normal_search["emails"][0]["labels"][0]["slug"] == "client-work"
 
 
 def test_email_library_exposes_local_label_controls():
