@@ -10,6 +10,7 @@ import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { isActiveDepTask } from './cookbookDepTasks.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -952,6 +953,7 @@ export function _addTask(sessionId, name, type, payload) {
 function _updateTask(sessionId, updates) {
   const tasks = _loadTasks();
   const task = tasks.find(t => t.sessionId === sessionId);
+  const wasActiveDependency = isActiveDepTask(task);
   if (task) {
     Object.assign(task, updates);
     _saveTasks(tasks);
@@ -969,7 +971,7 @@ function _updateTask(sessionId, updates) {
       if (uptime) uptime.style.display = 'none';
     }
   }
-  if (task?.type === 'download' && task.payload?._dep && updates.status && !['queued', 'running'].includes(task.status || '')) {
+  if (wasActiveDependency && updates.status && !isActiveDepTask(task)) {
     _refreshDepsAfterInstall(task);
   }
 }
@@ -977,7 +979,11 @@ function _updateTask(sessionId, updates) {
 function _refreshDepsAfterInstall(task) {
   if (!task || task.type !== 'download' || !task.payload?._dep) return;
   try {
-    _refreshDependencies?.({ host: task.remoteHost || '', port: task.sshPort || '', venv: task.payload?.env_path || '' });
+    _refreshDependencies?.({
+      host: task.remoteHost || task.payload?.remote_host || '',
+      port: task.sshPort || task.payload?.ssh_port || '',
+      venv: task.payload?.env_path || task.payload?._envPath || '',
+    });
   } catch {}
 }
 
@@ -985,8 +991,9 @@ export function _removeTask(sessionId) {
   _tombstoneTask(sessionId);  // so sync/poll can't resurrect it
   const tasks = _loadTasks();
   const task = tasks.find(t => t.sessionId === sessionId);
+  const shouldRefreshDependencies = isActiveDepTask(task);
   _saveTasks(tasks.filter(t => t.sessionId !== sessionId));
-  _refreshDepsAfterInstall(task);
+  if (shouldRefreshDependencies) _refreshDepsAfterInstall(task);
   _renderRunningTab();
 }
 
@@ -3546,7 +3553,6 @@ async function _reconnectTask(el, task) {
               _updateTask(task.sessionId, { status: 'done' });
               const _sb2 = el.querySelector('.cookbook-task-serve-btn'); if (_sb2) _sb2.style.display = '';
               _showCookbookNotif();
-              _refreshDepsAfterInstall(task);
               fetch('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
