@@ -151,11 +151,34 @@ class Session:
         the model. Display/history-load paths use the raw ``history`` and are
         unaffected.
         """
-        messages = [
-            msg.to_dict()
-            for msg in self.history
-            if (msg.metadata or {}).get("source") != "slash"
-        ]
+        messages = []
+        for msg in self.history:
+            raw_metadata = getattr(msg, "metadata", None)
+            if isinstance(raw_metadata, dict) and raw_metadata.get("source") == "slash":
+                continue
+            projected = msg.to_dict()
+            metadata = projected.get("metadata")
+            if not isinstance(metadata, dict):
+                # Old or malformed durable rows must not make context
+                # projection fail, and non-mapping metadata has no trusted
+                # fields that belong in the model context.
+                projected.pop("metadata", None)
+                messages.append(projected)
+                continue
+            if isinstance(metadata, dict) and CHAT_SESSION_APPROVAL_CONTEXT_MARKER in metadata:
+                # The marker is derived below from a verified persisted
+                # approval event. Never pass a raw durable/client marker
+                # through to the model context.
+                metadata = {
+                    key: value
+                    for key, value in metadata.items()
+                    if key != CHAT_SESSION_APPROVAL_CONTEXT_MARKER
+                }
+                if metadata:
+                    projected["metadata"] = metadata
+                else:
+                    projected.pop("metadata", None)
+            messages.append(projected)
         if not _history_grants_chat_session_approval(self.history, self.id):
             return messages
 

@@ -7,12 +7,12 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
 from core.constants import internal_api_base
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_interactive_request
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_action_policy import (
     ADMIN_ONLY_TASK_ACTIONS,
@@ -296,9 +296,17 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
 
 
 def setup_task_routes(task_scheduler) -> APIRouter:
-    router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+    router = APIRouter(
+        prefix="/api/tasks",
+        tags=["tasks"],
+        dependencies=[Depends(require_interactive_request)],
+    )
 
     def _owner(request: Request):
+        # Keep the route-local user lookup injectable for direct handler tests
+        # and legacy callers, but always run the centralized bearer-principal
+        # rejection first.
+        require_interactive_request(request)
         return get_current_user(request)
 
     async def _generate_task_name(prompt: str, owner: Optional[str] = None) -> str:

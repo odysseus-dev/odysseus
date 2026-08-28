@@ -29,7 +29,7 @@ from src.endpoint_resolver import (
     build_models_url,
     build_headers,
 )
-from src.auth_helpers import _auth_disabled, effective_user, owner_filter
+from src.auth_helpers import _auth_disabled, owner_filter, require_chat_scope
 
 logger = logging.getLogger(__name__)
 
@@ -1622,13 +1622,7 @@ def setup_model_routes(model_discovery):
         # Require auth; "" is the unconfigured single-user mode, treated as
         # "see everything" by _fetch_models.
         try:
-            if getattr(request.state, "api_token", False):
-                scopes = set(getattr(request.state, "api_token_scopes", []) or [])
-                if "chat" not in scopes:
-                    raise HTTPException(403, "API token is not scoped for chat")
-                if not getattr(request.state, "api_token_owner", None):
-                    raise HTTPException(403, "API token has no owner")
-            owner = effective_user(request) or ""
+            owner = require_chat_scope(request) or ""
 
             # Reject anonymous in configured deployments — no leaking the model
             # list to unauthenticated callers.

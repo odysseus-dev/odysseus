@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List, Optional
 
-from fastapi import APIRouter, Request, HTTPException, Form, Query
+from fastapi import APIRouter, Depends, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -45,6 +45,7 @@ from src.auth_helpers import (
     enforce_api_token_chat_controls,
     get_current_user,
     require_chat_scope,
+    require_interactive_request,
 )
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
@@ -736,7 +737,7 @@ def setup_chat_routes(
     webhook_manager=None,
     skills_manager=None,
 ) -> APIRouter:
-    router = APIRouter(tags=["chat"])
+    router = APIRouter(tags=["chat"], dependencies=[Depends(require_chat_scope)])
 
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
@@ -753,6 +754,9 @@ def setup_chat_routes(
         use_research = chat_request.use_research
         time_filter = chat_request.time_filter
         preset_id = chat_request.preset_id
+
+        if getattr(request.state, "api_token", False) is True and use_research:
+            raise HTTPException(403, "API tokens cannot use research or agent execution")
 
         # Verify the caller owns this session before loading it.
         # Without this, any authenticated user can post into another user's chat.
@@ -782,15 +786,16 @@ def setup_chat_routes(
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
 
+        api_token_request = getattr(request.state, "api_token", False) is True
         tool_policy = build_effective_tool_policy(last_user_message=message)
         allow_tool_preprocessing = (
-            not getattr(request.state, "api_token", False)
+            not api_token_request
             and not tool_policy.block_all_tool_calls
         )
 
         # Inline memory command
         memory_response = None
-        if not tool_policy.blocks("manage_memory"):
+        if allow_tool_preprocessing and not tool_policy.blocks("manage_memory"):
             memory_response = await chat_handler.handle_memory_command(sess, message)
         if memory_response:
             return {"response": memory_response}
@@ -819,7 +824,7 @@ def setup_chat_routes(
             tool_policy.blocks("trigger_research")
             or tool_policy.blocks("manage_research")
         )
-        if use_research and not research_blocked_by_policy:
+        if use_research and not api_token_request and not research_blocked_by_policy:
             try:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 research_ctx = await research_handler.call_research_service(
@@ -919,7 +924,7 @@ def setup_chat_routes(
             ctx.uprefs, memory_manager, memory_vector, webhook_manager,
             character_name=ctx.preset.character_name,
             owner=ctx.user,
-            allow_background_extraction=not tool_policy.block_all_tool_calls,
+            allow_background_extraction=allow_tool_preprocessing,
         )
 
         return {
@@ -958,6 +963,8 @@ def setup_chat_routes(
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
+        if use_research is None:
+            use_research = (body or {}).get("use_research")
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
         selected_endpoint_id = str(
@@ -996,10 +1003,35 @@ def setup_chat_routes(
             approval_id=tool_approval_id,
             allow_bash=allow_bash,
         )
+
+        # A bearer token is a chat-only integration credential. Reject every
+        # remaining control-plane input before approval lookup, intent
+        # detection, context shaping, or active-email/workspace resolution can
+        # turn the request into an interactive agent turn.
+        approved_plan = ""
+        if not plan_mode:
+            approved_plan = str(
+                form_data.get("approved_plan")
+                or (body or {}).get("approved_plan")
+                or ""
+            ).strip()[:8192]
+        if api_token_request and (
+            str(use_research).lower() == "true"
+            or bool(tool_approval_decision)
+            or bool(approved_plan)
+        ):
+            raise HTTPException(
+                403,
+                "API tokens cannot use research, agent, plan, or tool approvals",
+            )
+
         # Workspace: confine the agent's file/shell tools to this folder.
-        workspace, workspace_rejected = _resolve_request_workspace(
-            request, form_data.get("workspace")
-        )
+        if api_token_request:
+            workspace, workspace_rejected = "", ""
+        else:
+            workspace, workspace_rejected = _resolve_request_workspace(
+                request, form_data.get("workspace")
+            )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -1008,9 +1040,6 @@ def setup_chat_routes(
         # weak model survives history truncation — the agent can always re-read
         # the plan. Ignored while still proposing (plan_mode on). Capped so a
         # huge plan can't blow the prompt.
-        approved_plan = ""
-        if not plan_mode:
-            approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -1045,7 +1074,7 @@ def setup_chat_routes(
         auto_escalated = False
         _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
         _workspace_agent_intent = False
-        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
+        if not api_token_request and chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
             _workspace_agent_intent = _tool_intent.category in {"shell", "workspace"}
@@ -1056,24 +1085,28 @@ def setup_chat_routes(
                 _tool_intent.category,
                 _tool_intent.reason,
             )
-        elif chat_mode == "chat" and _search_enabled:
+        elif not api_token_request and chat_mode == "chat" and _search_enabled:
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: search enabled")
-        elif chat_mode == "chat" and _explicit_web_intent:
+        elif not api_token_request and chat_mode == "chat" and _explicit_web_intent:
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: explicit web intent")
-        active_doc_id = form_data.get("active_doc_id", "").strip()
+        active_doc_id = "" if api_token_request else str(form_data.get("active_doc_id") or "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
         # Active email reader — when the user has an email open in the UI, the
         # frontend passes its uid/folder/account so "reply", "summarize this",
         # etc. resolve to the real email instead of the agent inventing a
         # fake markdown draft.
-        active_email_uid = form_data.get("active_email_uid", "").strip()
-        active_email_folder = form_data.get("active_email_folder", "INBOX").strip() or "INBOX"
-        active_email_account = form_data.get("active_email_account", "").strip()
+        active_email_uid = "" if api_token_request else str(form_data.get("active_email_uid") or "").strip()
+        active_email_folder = (
+            "INBOX"
+            if api_token_request
+            else str(form_data.get("active_email_folder") or "INBOX").strip() or "INBOX"
+        )
+        active_email_account = "" if api_token_request else str(form_data.get("active_email_account") or "").strip()
         active_email_ctx: Optional[Dict[str, str]] = None
         # Always reset between requests so a stale active-email pointer from
         # a previous turn (different reader closed, different account, etc.)
@@ -1246,7 +1279,8 @@ def setup_chat_routes(
             if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
             if (
-                chat_mode == "chat"
+                not api_token_request
+                and chat_mode == "chat"
                 and isinstance(message, str)
                 and (not _tool_intent or not _tool_intent.needs_tools)
                 and _is_contextual_web_followup(message, sess)
@@ -1260,14 +1294,14 @@ def setup_chat_routes(
                     _tool_intent.category,
                     _tool_intent.reason,
                 )
-            if isinstance(message, str) and _is_contextual_browser_followup(message, sess):
+            if not api_token_request and isinstance(message, str) and _is_contextual_browser_followup(message, sess):
                 _explicit_browser_intent = True
                 if chat_mode == "chat":
                     chat_mode = "agent"
                     auto_escalated = True
                     _workspace_agent_intent = False
                     logger.info("chat→agent auto-escalation: contextual browser/form follow-up")
-            if not workspace and isinstance(message, str):
+            if not api_token_request and not workspace and isinstance(message, str):
                 _auto_workspace, _ = _resolve_workspace_from_message_path(request, message)
                 if _auto_workspace:
                     workspace = _auto_workspace
@@ -1309,6 +1343,8 @@ def setup_chat_routes(
         # mutable form fields, or a stale research_pending session marker,
         # consume the one-use grant on the unrelated research path.
         do_research = (
+            not api_token_request
+            and
             not tool_approval_continuation
             and str(use_research).lower() == "true"
         )
@@ -1330,7 +1366,11 @@ def setup_chat_routes(
             except Exception as e:
                 logger.warning("Failed to parse attachments JSON, ignoring attachments", exc_info=e)
 
-        image_generation_session = _is_image_generation_session(sess, owner=effective_user(request))
+        image_generation_session = _is_image_generation_session(
+            sess, owner=effective_user(request)
+        )
+        if api_token_request and image_generation_session:
+            raise HTTPException(403, "API tokens cannot use image generation")
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         if image_generation_session:
             no_memory = True
@@ -1845,7 +1885,7 @@ def setup_chat_routes(
             yield f'data: {json.dumps(_model_info)}\n\n'
 
             _terminal_saved = False
-            if _is_image_generation_session(sess, owner=_user):
+            if image_generation_session:
                 from src.settings import get_setting
                 if tool_policy.blocks("generate_image"):
                     _blocked_msg = tool_policy.reason_for("generate_image")
@@ -2256,7 +2296,7 @@ def setup_chat_routes(
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
                                     allow_background_extraction=(
-                                        not tool_policy.block_all_tool_calls
+                                        allow_tool_preprocessing
                                         and not tool_approval_continuation
                                     ),
                                 )
@@ -2530,7 +2570,7 @@ def setup_chat_routes(
                                         and not tool_approval_continuation
                                     ),
                                     allow_background_extraction=(
-                                        not tool_policy.block_all_tool_calls
+                                        allow_tool_preprocessing
                                         and not tool_approval_continuation
                                     ),
                                 )
@@ -2621,8 +2661,12 @@ def setup_chat_routes(
     # GET /api/chat/resume — reconnect to a detached run that's still going
     # (e.g. after reopening a session whose agent kept running in the background)
     # ------------------------------------------------------------------ #
-    @router.get("/api/chat/resume/{session_id}")
+    @router.get(
+        "/api/chat/resume/{session_id}",
+        dependencies=[Depends(require_interactive_request)],
+    )
     async def chat_resume(request: Request, session_id: str) -> StreamingResponse:
+        require_interactive_request(request)
         _verify_session_owner(request, session_id)
         _active_run = agent_runs.get_active_run(session_id)
         if _active_run is None:
@@ -2637,8 +2681,12 @@ def setup_chat_routes(
     # POST /api/chat/stop — cancel a detached run (Stop button). Closing the SSE
     # no longer stops it (it's detached), so the Stop button must call this.
     # ------------------------------------------------------------------ #
-    @router.post("/api/chat/stop/{session_id}")
+    @router.post(
+        "/api/chat/stop/{session_id}",
+        dependencies=[Depends(require_interactive_request)],
+    )
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
+        require_interactive_request(request)
         _verify_session_owner(request, session_id)
         _expected_run_id = request.headers.get("X-Odysseus-Run-Id")
         stopped = agent_runs.stop(session_id, _expected_run_id)
@@ -2647,8 +2695,12 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     # GET /api/chat/stream_status — check if a stream is active for a session
     # ------------------------------------------------------------------ #
-    @router.get("/api/chat/stream_status/{session_id}")
+    @router.get(
+        "/api/chat/stream_status/{session_id}",
+        dependencies=[Depends(require_interactive_request)],
+    )
     async def chat_stream_status(request: Request, session_id: str) -> Dict[str, Any]:
+        require_interactive_request(request)
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
@@ -2667,6 +2719,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/inject_context/{session_id}")
     async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> Dict[str, str]:
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
@@ -2686,6 +2739,7 @@ def setup_chat_routes(
         q: str = Query("", min_length=0),
         limit: int = Query(20, ge=1, le=100),
     ) -> List[Dict[str, Any]]:
+        require_chat_scope(request)
         if not q or not q.strip():
             return []
 
@@ -2711,6 +2765,7 @@ def setup_chat_routes(
         Unlike the full chat pipeline, this does NOT run the agent loop or tools.
         It just asks the LLM to rewrite the given text.
         """
+        require_chat_scope(request)
         try:
             body = await request.json()
         except Exception:

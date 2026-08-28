@@ -11,11 +11,11 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, CrewMember, ScheduledTask
-from src.auth_helpers import get_current_user
+from src.auth_helpers import require_interactive_request
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.task_scheduler import compute_next_run
 
@@ -78,10 +78,14 @@ def _task_to_checkin_dict(t: ScheduledTask) -> dict:
 
 
 def setup_assistant_routes(task_scheduler) -> APIRouter:
-    router = APIRouter(prefix="/api/assistant", tags=["assistant"])
+    router = APIRouter(
+        prefix="/api/assistant",
+        tags=["assistant"],
+        dependencies=[Depends(require_interactive_request)],
+    )
 
     def _owner(request: Request) -> str:
-        owner = get_current_user(request)
+        owner = require_interactive_request(request)
         if not owner:
             raise HTTPException(status_code=401, detail="Not authenticated")
         return owner

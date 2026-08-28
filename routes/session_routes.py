@@ -225,6 +225,7 @@ def setup_session_routes(
     
     @router.get("/sessions")
     def list_sessions(request: Request):
+        require_chat_scope(request)
         user = effective_user(request)
         active_incognito_id = str(request.query_params.get("active_incognito_id") or "").strip()
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
@@ -343,6 +344,7 @@ def setup_session_routes(
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
     ):
+        require_chat_scope(request)
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
         endpoint_api_key = ""
@@ -470,6 +472,7 @@ def setup_session_routes(
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
     ):
+        require_chat_scope(request)
         _verify_session_owner(request, sid)
         try:
             session = session_manager.get_session(sid)
@@ -544,6 +547,7 @@ def setup_session_routes(
     @router.post("/session/{sid}/inject_messages")
     async def inject_messages(request: Request, sid: str):
         """Bulk-inject messages into a session's history (for group chat sync)."""
+        require_chat_scope(request)
         _verify_session_owner(request, sid)
         try:
             sess = session_manager.get_session(sid)
@@ -580,11 +584,13 @@ def setup_session_routes(
     @router.post("/session/{sid}/delete")
     def delete_session_beacon(request: Request, sid: str):
         """Delete session via POST (for navigator.sendBeacon on page close)."""
+        require_chat_scope(request)
         return delete_session(request, sid)
 
     @router.post("/sessions/bulk-delete")
     async def bulk_delete_sessions(request: Request):
         """Delete multiple sessions (for compare cleanup via sendBeacon)."""
+        require_chat_scope(request)
         from core.database import ChatMessage as _CM
         try:
             body = await request.json()
@@ -614,6 +620,7 @@ def setup_session_routes(
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
         """Permanently delete a session and all its messages."""
+        require_chat_scope(request)
         _verify_session_owner(request, sid, session_manager)
         try:
             # Block deletion of starred/favorited sessions
@@ -648,6 +655,7 @@ def setup_session_routes(
     @router.delete("/sessions/all")
     def delete_all_sessions(request: Request):
         """Admin only: permanently delete ALL sessions and their messages."""
+        require_chat_scope(request)
         from core.middleware import require_admin
         require_admin(request)
 
@@ -701,6 +709,7 @@ def setup_session_routes(
     @router.post("/session/{sid}/archive")
     def archive_session(request: Request, sid: str):
         """Archive a session, keeping its data but removing it from active sessions."""
+        require_chat_scope(request)
         _verify_session_owner(request, sid)
         try:
             # First check if session exists
@@ -739,6 +748,7 @@ def setup_session_routes(
     @router.post("/session/{sid}/unarchive")
     def unarchive_session(request: Request, sid: str):
         """Restore an archived session back to the active session list."""
+        require_chat_scope(request)
         _verify_session_owner(request, sid)
         db = SessionLocal()
         try:
@@ -769,6 +779,7 @@ def setup_session_routes(
     @router.get("/sessions/archived")
     def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
         """List archived sessions for the archive browser."""
+        require_chat_scope(request)
         user = effective_user(request)
         db = SessionLocal()
         try:
@@ -816,6 +827,7 @@ def setup_session_routes(
 
         Supported formats: md (markdown), txt (plain text), json, html
         """
+        require_chat_scope(request)
         _verify_session_owner(request, sid)
         try:
             session = session_manager.get_session(sid)
@@ -902,6 +914,7 @@ def setup_session_routes(
     
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
+        require_chat_scope(request)
         user = effective_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
@@ -915,6 +928,7 @@ def setup_session_routes(
         model: str = Form("gpt-4o"),
         rag: str = Form(None)
     ):
+        require_chat_scope(request)
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
         sid = str(uuid.uuid4())
@@ -936,6 +950,7 @@ def setup_session_routes(
     @router.post("/session/{session_id}/important")
     async def mark_session_important(request: Request, session_id: str, important: bool = Form(True)):
         """Mark a session as important to protect it from automatic cleanup."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             # Validate session exists
@@ -973,6 +988,7 @@ def setup_session_routes(
     @router.post("/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):
         """Summarize older messages into one compacted history entry."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             session = session_manager.get_session(session_id)
@@ -1059,6 +1075,7 @@ def setup_session_routes(
         after Phase 1 — used by the "Tidy (no AI)" UI affordance so
         users can clean junk without spending tokens.
         """
+        require_chat_scope(request)
         from src.llm_core import llm_call
         user = effective_user(request)
         single_user_mode = not user and _auth_disabled()
@@ -1339,6 +1356,7 @@ def setup_session_routes(
     @router.get("/session/{session_id}/context_info")
     async def get_context_info(request: Request, session_id: str):
         """Get the real context length for a session's model from the endpoint."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         session = session_manager.get_session(session_id)
         if not session:

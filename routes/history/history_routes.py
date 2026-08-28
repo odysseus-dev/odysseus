@@ -145,6 +145,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
     ) -> Dict[str, Any]:
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         if limit is not None:
             page_limit = max(1, min(int(limit), 100))
@@ -247,6 +248,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
     @router.post("/api/session/{session_id}/truncate")
     async def truncate_session(request: Request, session_id: str):
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
@@ -262,6 +264,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/message")
     async def add_message(request: Request, session_id: str):
         """Add a message to a session (for slash command persistence)."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
@@ -280,6 +283,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/delete-messages")
     async def delete_messages(request: Request, session_id: str):
         """Delete specific messages by DB ID (or legacy index)."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
@@ -343,6 +347,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/edit-message")
     async def edit_message(request: Request, session_id: str):
         """Edit the content of a message by its database ID."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
@@ -398,6 +403,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/mark-stopped")
     async def mark_stopped(request: Request, session_id: str):
         """Mark the last assistant message as stopped by user."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             session = session_manager.get_session(session_id)
@@ -453,10 +459,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/update-last-meta")
     async def update_last_meta(request: Request, session_id: str):
         """Merge metadata into the last assistant message (e.g. save variants)."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
-            meta_update = sanitize_client_message_metadata(body.get("metadata", {}))
+            meta_update = sanitize_client_message_metadata(body.get("metadata", {})) or {}
             session = session_manager.get_session(session_id)
 
             # Update in-memory
@@ -504,6 +511,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/merge-last-assistant")
     async def merge_last_assistant(request: Request, session_id: str):
         """Merge the last two assistant messages into one (for continue)."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
@@ -593,6 +601,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/fork")
     async def fork_session(request: Request, session_id: str):
         """Create a new session with messages copied up to keep_count."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
@@ -651,6 +660,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
+        require_chat_scope(request)
         from src.auth_helpers import require_user
         user = require_user(request)
         try:
@@ -666,6 +676,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         endpoint estimates the persisted session context so the header can show
         when the whole chat is approaching compaction.
         """
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         try:
             session = session_manager.get_session(session_id)
@@ -710,6 +721,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):
         """Manually trigger context compaction for a session."""
+        require_chat_scope(request)
         _verify_session_owner(request, session_id)
         from src.auth_helpers import effective_user
         owner = effective_user(request)

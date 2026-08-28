@@ -327,6 +327,53 @@ async def test_api_chat_direct_base_url_allows_mocked_public_endpoint(monkeypatc
     assert session_manager.created[0]["endpoint_url"] == "https://api.example.com/v1/chat/completions"
 
 
+@pytest.mark.asyncio
+async def test_api_chat_ownerless_token_cannot_use_direct_api_key(monkeypatch):
+    webhook_routes = _load_webhook_routes_for_test(monkeypatch)
+    _install_sync_chat_stubs(monkeypatch)
+    session_manager = _SessionManager()
+    sync_chat = _sync_chat_endpoint(webhook_routes, session_manager)
+    body = types.SimpleNamespace(
+        message="hello",
+        api_key="test-key",
+        base_url="https://api.example.com/v1",
+        model="test-model",
+        provider=None,
+        session=None,
+    )
+
+    with pytest.raises(webhook_routes.HTTPException) as exc:
+        await sync_chat(_Request(owner=None), body)
+
+    assert exc.value.status_code == 403
+    assert session_manager.created == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_ownerless_token_cannot_use_configured_fallback(monkeypatch):
+    webhook_routes = _load_webhook_routes_for_test(monkeypatch)
+    _install_sync_chat_stubs(monkeypatch)
+    db = _DB([_Endpoint(owner=None, base_url="http://localhost:11434/v1", api_key="shared-key")])
+    monkeypatch.setattr(webhook_routes, "ModelEndpoint", _ModelEndpoint)
+    monkeypatch.setattr(webhook_routes, "SessionLocal", lambda: db)
+    session_manager = _SessionManager()
+    sync_chat = _sync_chat_endpoint(webhook_routes, session_manager)
+    body = types.SimpleNamespace(
+        message="hello",
+        api_key=None,
+        base_url=None,
+        model="local-model",
+        provider=None,
+        session=None,
+    )
+
+    with pytest.raises(webhook_routes.HTTPException) as exc:
+        await sync_chat(_Request(owner=None), body)
+
+    assert exc.value.status_code == 403
+    assert session_manager.created == []
+
+
 def test_api_chat_fallback_endpoint_selection_for_owned_token(monkeypatch):
     webhook_routes = _load_webhook_routes_for_test(monkeypatch)
     rows = [
@@ -345,7 +392,7 @@ def test_api_chat_fallback_endpoint_selection_for_owned_token(monkeypatch):
     assert selected.created_at == 2
 
 
-def test_api_chat_fallback_without_owner_uses_shared_only(monkeypatch):
+def test_api_chat_fallback_without_owner_is_not_selectable(monkeypatch):
     webhook_routes = _load_webhook_routes_for_test(monkeypatch)
     rows = [
         _Endpoint(owner="alice", created_at=0),
@@ -357,9 +404,7 @@ def test_api_chat_fallback_without_owner_uses_shared_only(monkeypatch):
 
     selected = webhook_routes._select_api_chat_fallback_endpoint(_DB(rows), None)
 
-    assert selected.owner is None
-    assert selected.is_enabled is True
-    assert selected.created_at == 2
+    assert selected is None
 
 
 @pytest.mark.asyncio
@@ -367,7 +412,7 @@ async def test_api_chat_fallback_trusts_configured_local_endpoint(monkeypatch):
     webhook_routes = _load_webhook_routes_for_test(monkeypatch)
     _install_sync_chat_stubs(monkeypatch)
     local_endpoint = _Endpoint(
-        owner=None,
+        owner="alice",
         base_url="http://localhost:11434/v1",
         api_key="configured-key",
     )
@@ -396,7 +441,7 @@ async def test_api_chat_fallback_trusts_configured_local_endpoint(monkeypatch):
         session=None,
     )
 
-    response = await sync_chat(_Request(owner=None), body)
+    response = await sync_chat(_Request(owner="alice"), body)
 
     assert response["response"] == "mocked response"
     assert response["model"] == "local-model"

@@ -3,13 +3,14 @@
 import logging
 from typing import Dict, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 import time
 
 from services.search import get_search_config, comprehensive_web_search, PROVIDER_INFO
 from services.search.core import _call_provider
 from services.search.providers import _get_provider_key, _get_search_instance
+from src.auth_helpers import require_chat_scope
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ async def _request_values(request: Request) -> Dict[str, Any]:
 
 
 def setup_search_routes(config) -> APIRouter:
-    router = APIRouter(tags=["search"])
+    router = APIRouter(
+        tags=["search"],
+        dependencies=[Depends(require_chat_scope)],
+    )
 
     @router.get("/api/search/config")
     async def get_search_settings() -> Dict[str, Any]:
@@ -49,6 +53,7 @@ def setup_search_routes(config) -> APIRouter:
 
         Used by Compare mode to pre-search once and share results across panes.
         """
+        require_chat_scope(request)
         values = await _request_values(request)
         query = str(values.get("query") or values.get("q") or "").strip()
         if not query:
@@ -87,6 +92,7 @@ def setup_search_routes(config) -> APIRouter:
     @router.post("/api/search/query")
     async def search_with_provider(request: Request) -> Dict[str, Any]:
         """Search using a specific provider. Used by compare search mode."""
+        require_chat_scope(request)
         values = await _request_values(request)
         query = str(values.get("query") or values.get("q") or "").strip()
         provider = str(values.get("provider") or "").strip()

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Webhook, ModelEndpoint
-from src.auth_helpers import owner_filter
+from src.auth_helpers import owner_filter, require_chat_scope
 from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
@@ -32,14 +32,15 @@ def _select_api_chat_fallback_endpoint(db, token_owner: Optional[str]):
     legacy null-owner ("shared") rows. Owner-scoped: an unscoped .first() would
     let a chat-scoped token fall back onto another user's private endpoint and
     silently spend that owner's API key/quota. Prefer owner rows before shared
-    rows. Fails closed to null-owner rows only when token_owner is absent.
+    rows. Fails closed when token_owner is absent; the sync endpoint requires
+    an owner-scoped bearer before this helper is reached.
     Does not validate base_url — admin-configured local/LAN endpoints remain allowed.
     """
     query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
-    if token_owner:
-        query = owner_filter(query, ModelEndpoint, token_owner)
-        return query.order_by(ModelEndpoint.owner.desc(), ModelEndpoint.created_at).first()
-    return query.filter(ModelEndpoint.owner == None).order_by(ModelEndpoint.created_at).first()  # noqa: E711
+    if not token_owner:
+        return None
+    query = owner_filter(query, ModelEndpoint, token_owner)
+    return query.order_by(ModelEndpoint.owner.desc(), ModelEndpoint.created_at).first()
 
 
 def _caller_owns_session(sess_owner, caller) -> bool:
@@ -236,12 +237,11 @@ def setup_webhook_routes(
 
     @router.post("/v1/chat")
     async def sync_chat(request: Request, body: SyncChatRequest):
-        if not getattr(request.state, "api_token", False):
+        if getattr(request.state, "api_token", False) is not True:
             raise HTTPException(403, "This endpoint requires an API token")
-        scopes = set(getattr(request.state, "api_token_scopes", []) or [])
-        if "chat" not in scopes:
-            raise HTTPException(403, "API token is not scoped for chat")
-        token_owner = getattr(request.state, "api_token_owner", None)
+        token_owner = require_chat_scope(request)
+        if not token_owner:
+            raise HTTPException(403, "API token has no owner")
 
         from core.models import ChatMessage
         from src.llm_core import llm_call_async

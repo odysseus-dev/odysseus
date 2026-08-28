@@ -9,12 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from core.middleware import INTERNAL_TOOL_USER
 from src.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import _auth_disabled, get_current_user
+from src.auth_helpers import _auth_disabled, require_interactive_request
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.constants import DEEP_RESEARCH_DIR
 
@@ -207,14 +207,17 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
 
 
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
-    router = APIRouter(tags=["research"])
+    router = APIRouter(
+        tags=["research"],
+        dependencies=[Depends(require_interactive_request)],
+    )
 
     def _require_user(request: Request) -> str:
         """All research endpoints require an authenticated user. Research
         data isn't owner-scoped in the on-disk JSON yet, so we at least
         block anonymous access. Multi-tenant deploys should additionally
         verify the session belongs to this user."""
-        user = get_current_user(request)
+        user = require_interactive_request(request)
         if not user:
             if _auth_disabled():
                 return ""

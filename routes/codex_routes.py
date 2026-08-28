@@ -16,7 +16,11 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core.middleware import require_admin
-from src.auth_helpers import require_authenticated_request, require_user
+from src.auth_helpers import (
+    require_api_token_owner,
+    require_authenticated_request,
+    require_user,
+)
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
@@ -84,29 +88,23 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
     """Return the data owner if the caller is allowed for this Codex action."""
-    if getattr(request.state, "api_token", False):
+    if getattr(request.state, "api_token", False) is True:
         scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         if not scopes.intersection(allowed):
             required = " or ".join(sorted(allowed))
             raise HTTPException(403, f"API token missing required scope: {required}")
-        owner = getattr(request.state, "api_token_owner", None)
-        if not owner:
-            raise HTTPException(403, "API token has no owner")
-        return owner
+        return require_api_token_owner(request)
     return require_user(request)
 
 
 def _scope_owner_all(request: Request, required: set[str]) -> str:
     """Return owner only when an API token has every required scope."""
-    if getattr(request.state, "api_token", False):
+    if getattr(request.state, "api_token", False) is True:
         scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         missing = required - scopes
         if missing:
             raise HTTPException(403, f"API token missing required scope: {' and '.join(sorted(missing))}")
-        owner = getattr(request.state, "api_token_owner", None)
-        if not owner:
-            raise HTTPException(403, "API token has no owner")
-        return owner
+        return require_api_token_owner(request)
     return require_user(request)
 
 
@@ -119,7 +117,7 @@ def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
     commands, and model-serving controls.
     """
     owner = _scope_owner(request, allowed)
-    if not getattr(request.state, "api_token", False):
+    if getattr(request.state, "api_token", False) is not True:
         require_admin(request)
     return owner
 
@@ -167,7 +165,7 @@ def setup_codex_routes(
     @router.get("/capabilities")
     def capabilities(request: Request):
         token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
-        has_token = bool(getattr(request.state, "api_token", False))
+        has_token = getattr(request.state, "api_token", False) is True
         def scoped(allowed):
             return bool(token_scopes.intersection(allowed)) if has_token else True
         return {

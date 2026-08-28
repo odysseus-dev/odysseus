@@ -265,6 +265,7 @@ def setup_upload_routes(upload_handler):
         session_id: Optional[str] = Form(None),
     ):
         """Upload files with enhanced security and organization."""
+        require_chat_scope(request)
         if not isinstance(session_id, str):
             session_id = None
         if not files:
@@ -324,6 +325,7 @@ def setup_upload_routes(upload_handler):
     @router.post("/cleanup")
     async def manual_cleanup(request: Request):
         """Manually trigger cleanup of old uploads."""
+        require_chat_scope(request)
         require_admin(request)
         try:
             cleaned_count = await asyncio.to_thread(
@@ -347,6 +349,7 @@ def setup_upload_routes(upload_handler):
     @router.get("/stats")
     async def upload_stats(request: Request):
         """Get statistics about uploaded files."""
+        require_chat_scope(request)
         require_admin(request)
         try:
             return upload_handler.get_upload_stats()
@@ -359,6 +362,7 @@ def setup_upload_routes(upload_handler):
         """Serve an uploaded file by its ID. `?thumb=1` returns a small cached
         JPEG thumbnail for images (used by chat attachment previews) so the
         client isn't downloading the full-resolution photo just to show it tiny."""
+        require_chat_scope(request)
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         import mimetypes as _mt
@@ -457,6 +461,7 @@ def setup_upload_routes(upload_handler):
         """Return the vision-model OCR/description for an uploaded image.
         Cached under UPLOAD_DIR/.vision/{file_id}.txt — first call computes,
         subsequent loads are instant. Pass force=1 to recompute."""
+        require_chat_scope(request)
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         info = _load_upload_info(file_id)
@@ -501,6 +506,7 @@ def setup_upload_routes(upload_handler):
     async def put_vision_text(request: Request, file_id: str):
         """Persist a user-edited vision/OCR text for an attachment. Stored in
         the same cache file so the chat send picks it up as the override."""
+        require_chat_scope(request)
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         info = _load_upload_info(file_id)

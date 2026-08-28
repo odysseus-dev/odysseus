@@ -318,12 +318,13 @@ def test_sync_chat_fallback_skips_disabled_owned_endpoint():
     assert ep is not None and ep.name == "shared"
 
 
-def test_sync_chat_fallback_null_owner_uses_shared_rows_only():
-    # When no token owner is known, only null-owner (shared) endpoints are
-    # visible — private endpoints of any user must not be returned.
+def test_sync_chat_fallback_rejects_missing_token_owner():
+    # The sync-chat route requires a resolved token owner before endpoint
+    # selection, so even a legacy/shared endpoint is not executable for an
+    # ownerless bearer.
     rows = [_ep("bob-private", "bob"), _ep("shared", None)]
     ep = _select(rows, None)
-    assert ep is not None and ep.name == "shared"
+    assert ep is None
 
 
 def test_sync_chat_fallback_null_owner_returns_none_with_no_shared():

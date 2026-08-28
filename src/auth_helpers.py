@@ -4,12 +4,17 @@ import os
 from typing import Optional
 from fastapi import Request, HTTPException
 
-from src.owner_identity import auth_disabled, effective_storage_owner
+from src.owner_identity import (
+    auth_disabled,
+    effective_storage_owner,
+    is_request_sentinel_owner,
+)
 
 
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
-    return getattr(request.state, 'current_user', None)
+    state = getattr(request, "state", None)
+    return getattr(state, "current_user", None)
 
 
 def effective_user(request: Request) -> Optional[str]:
@@ -29,34 +34,79 @@ def effective_user(request: Request) -> Optional[str]:
     owner falls back to :func:`get_current_user` (the "api" pseudo-user), so it
     never escalates.
     """
-    if getattr(request.state, "api_token", False):
-        owner = getattr(request.state, "api_token_owner", None)
-        if owner:
-            return owner
+    if _is_api_token_request(request):
+        state = getattr(request, "state", None)
+        owner = getattr(state, "api_token_owner", None)
+        if isinstance(owner, str) and owner.strip():
+            return owner.strip()
     return get_current_user(request)
 
 
 def _is_api_token_request(request: Request) -> bool:
     """Return True when middleware authenticated a bearer API token."""
-    return bool(getattr(request.state, "api_token", False))
+    state = getattr(request, "state", None)
+    return getattr(state, "api_token", False) is True
+
+
+def require_api_token_owner(request: Request) -> str:
+    """Return a real owner for a bearer request, failing closed otherwise.
+
+    The middleware normally resolves token owners against configured human
+    accounts. Keep that invariant at route boundaries too: direct endpoint
+    tests, alternate ASGI entry points, and future middleware changes must not
+    turn a request sentinel or an ownerless token into a durable/executable
+    owner.
+    """
+    state = getattr(request, "state", None)
+    owner = getattr(state, "api_token_owner", None)
+    if (
+        not isinstance(owner, str)
+        or not owner.strip()
+        or is_request_sentinel_owner(owner)
+    ):
+        raise HTTPException(403, "API token has no owner")
+    return owner.strip()
 
 
 def require_api_token_scope(request: Request, required_scope: str) -> Optional[str]:
     """Require one declared scope for bearer callers; leave browser callers unchanged."""
     if not _is_api_token_request(request):
         return effective_user(request)
-    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
-    if required_scope not in scopes:
+    state = getattr(request, "state", None)
+    raw_scopes = getattr(state, "api_token_scopes", None)
+    if isinstance(raw_scopes, (list, tuple, set, frozenset)):
+        scopes = {
+            value.strip().casefold()
+            for value in raw_scopes
+            if isinstance(value, str) and value.strip()
+        }
+    else:
+        scopes = set()
+    normalized_scope = str(required_scope or "").strip().casefold()
+    if not normalized_scope or normalized_scope not in scopes:
         raise HTTPException(403, f"API token missing required scope: {required_scope}")
-    owner = getattr(request.state, "api_token_owner", None)
-    if not owner:
-        raise HTTPException(403, "API token has no owner")
-    return owner
+    return require_api_token_owner(request)
 
 
 def require_chat_scope(request: Request) -> Optional[str]:
     """FastAPI dependency for owner-scoped chat/session routes."""
     return require_api_token_scope(request, "chat")
+
+
+def require_interactive_request(request: Request) -> Optional[str]:
+    """Reject bearer integrations from browser-only agent/control surfaces.
+
+    This is deliberately a bearer-principal gate rather than an authentication
+    requirement. Cookie sessions and AUTH_ENABLED=false keep their existing
+    route behavior, while API tokens cannot enter routes that start, resume,
+    approve, or otherwise control interactive agent work.
+    """
+    current_user = get_current_user(request)
+    if _is_api_token_request(request) or (
+        isinstance(current_user, str) and current_user.strip().casefold() == "api"
+    ):
+        raise HTTPException(403, "API tokens cannot use this interactive surface")
+    return current_user
 
 
 def enforce_api_token_chat_controls(
@@ -88,7 +138,7 @@ def require_authenticated_request(request: Request) -> str:
     sessions or their own API-token scope/owner gate.
     """
     if _is_api_token_request(request):
-        return effective_user(request) or ""
+        return require_api_token_owner(request)
     return require_user(request)
 
 
