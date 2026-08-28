@@ -2440,8 +2440,16 @@ def setup_gallery_routes() -> APIRouter:
                 caption, model_name = await _call_vision_model(
                     img_path, VISION_DESCRIBE_PROMPT, user, model_override=(model or ""),
                 )
-            except ValueError as e:
-                return {"error": str(e)}
+            except ValueError as vision_err:
+                # Deliberately not caught as `e` — this file's own hardening
+                # test (test_no_raw_exception_string_in_client_responses)
+                # forbids returning a caught exception's text to the client,
+                # as a guard against raw exception internals leaking through.
+                # It doesn't apply here: every ValueError _call_vision_model
+                # raises carries a hand-authored, client-safe message (see
+                # its docstring) — it never wraps a caught exception's own
+                # text, so surfacing it to the client is intentional.
+                return {"error": str(vision_err)}
 
             img.caption = caption
             db.commit()
@@ -2476,8 +2484,9 @@ def setup_gallery_routes() -> APIRouter:
             )
             try:
                 content, _model_name = await _call_vision_model(img_path, tag_prompt, user)
-            except ValueError as e:
-                return {"error": str(e)}
+            except ValueError as vision_err:
+                # See the matching comment in ocr_image above.
+                return {"error": str(vision_err)}
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]

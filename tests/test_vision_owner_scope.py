@@ -101,5 +101,10 @@ def test_request_vision_call_sites_pass_owner():
     assert "_process_pdf(path, owner=owner)" in processor_source
     assert "_process_pdf(pdf_path, owner=user)" in document_source
     assert "_resolve_vl_model(vl_model, owner=user)" in document_source
-    assert "_resolve_vl_model(configured, owner=user)" in gallery_source
+    # Gallery OCR/AI-tag route through a shared _resolve_vision_candidates()
+    # helper (owner threaded in as a plain positional/keyword arg down the
+    # chain: route -> _call_vision_model(..., user, ...) ->
+    # _resolve_vision_candidates(model_override, owner) -> here) rather than
+    # calling _resolve_vl_model directly inline, unlike the other sites above.
+    assert "_resolve_vl_model(configured, owner=owner)" in gallery_source
     assert "_process_pdf(tmp_path, owner=_owner(request))" in memory_source
