@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any
 
 from src.constants import (
-    DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
+    DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR, AGENT_WORKSPACE_DIR,
     SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
 )
 from src.memory import MemoryManager
@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 def create_directories():
     """Create necessary directories if they don't exist."""
-    for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
+    for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
+                      AGENT_WORKSPACE_DIR):
         os.makedirs(directory, exist_ok=True)
         
 def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
