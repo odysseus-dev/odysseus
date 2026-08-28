@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 # Backup & Restore
 
 Odysseus keeps all of your state in the `data/` directory — the SQLite database

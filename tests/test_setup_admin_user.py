@@ -29,7 +29,7 @@ def test_create_default_admin_normalizes_env_username(tmp_path, monkeypatch):
 def test_main_loads_admin_password_from_env_file(tmp_path, monkeypatch):
     """Regression: setup.py must honor an admin password pre-seeded in .env on
     native installs, even when the var is not exported into the shell
-    (docs/setup.md documents this). Previously setup.py never called
+    (website/setup.md documents this). Previously setup.py never called
     load_dotenv(), so os.getenv() saw nothing and a random password was
     generated instead."""
     import bcrypt
