@@ -1405,14 +1405,14 @@ function _openDetail(img) {
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="${img.favorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></span>
             ${img.favorite ? 'Favorited' : 'Favorite'}
           </button>
-          <button class="dropdown-item-compact" id="gallery-ai-tag-btn" data-mode="${aiTags ? 'clear' : 'tag'}">
+          ${_isVideoUrl(img.url) ? '' : `<button class="dropdown-item-compact" id="gallery-ai-tag-btn" data-mode="${aiTags ? 'clear' : 'tag'}">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span>
             ${aiTags ? 'Clear AI tags' : 'AI Tag'}
           </button>
           <button class="dropdown-item-compact" id="gallery-ocr-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
             ${(img.caption || '').trim() ? 'Redo AI description' : 'AI description'}
-          </button>
+          </button>`}
           <button class="dropdown-item-compact" id="gallery-download-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
             Download
@@ -1614,7 +1614,7 @@ function _openDetail(img) {
   document.getElementById('gallery-fav-detail').addEventListener('click', _toggleDetailFavorite);
   document.getElementById('gallery-detail-fav-header')?.addEventListener('click', _toggleDetailFavorite);
 
-  document.getElementById('gallery-ai-tag-btn').addEventListener('click', async (e) => {
+  document.getElementById('gallery-ai-tag-btn')?.addEventListener('click', async (e) => {
     // When the photo already has AI tags this button is "Clear AI tags".
     const clearMode = e.currentTarget.dataset.mode === 'clear';
     // The button lives in the ⋮ menu which closes on click, so its text never
@@ -1690,6 +1690,15 @@ function _openDetail(img) {
       const data = await res.json();
       cleanup();
       if (data.ok) {
+        // The "X/Y described" badge in the AI-descriptions settings panel is
+        // only refreshed by a library reload (batch OCR triggers one when it
+        // finishes) — without this, describing one photo here left it stale
+        // until the next unrelated refresh. Only a genuinely new description
+        // (not a skip, not a redo of an already-counted photo) moves the count.
+        if (!data.skipped && !redo) {
+          _totalDescribed++;
+          _updateOcrCount();
+        }
         img.caption = data.caption || '';
         uiModule.showToast(data.skipped ? 'Already described' : 'Description added');
         _openDetail(img); // re-render detail
@@ -2151,7 +2160,7 @@ export function openGallery() {
               <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:8px;">
                 <label class="settings-label">Model</label>
                 <span class="adm-model-logo" id="gallery-ocr-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
-                <select id="gallery-ocr-model" class="settings-select"><option value="">Use Settings → Vision</option></select>
+                <select id="gallery-ocr-model" class="settings-select"><option value="">Use Settings → AI Defaults → Vision</option></select>
               </div>
               <div id="gallery-ocr-bar" style="display:none;padding:8px 0 0;">
                 <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px;">
@@ -2182,9 +2191,21 @@ export function openGallery() {
     try {
       const r = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
       const data = await r.json();
+      // Best-effort filter so the picker doesn't offer models that plainly
+      // aren't vision-capable (audio/tts/embedding/etc.) — mirrors the
+      // heuristic Settings → AI Defaults → Vision uses for its own model
+      // list. The backend still validates an explicit choice on submit
+      // (Settings → AI Defaults → Vision is trusted as the default without
+      // this check, same as there).
+      const _vlExclude = ['audio', 'realtime', 'tts', 'dall-e', 'embedding', 'search', 'whisper'];
+      const _looksVision = (mid) => {
+        const lower = String(mid || '').toLowerCase();
+        return !_vlExclude.some(kw => lower.includes(kw));
+      };
       const ids = [];
       (data.items || []).forEach(item => {
-        (item.models || []).forEach(mid => { if (mid && !ids.includes(mid)) ids.push(mid); });
+        if (item.offline) return;
+        (item.models || []).forEach(mid => { if (mid && _looksVision(mid) && !ids.includes(mid)) ids.push(mid); });
       });
       ids.sort((a, b) => String(a).localeCompare(String(b)));
       ids.forEach(mid => {

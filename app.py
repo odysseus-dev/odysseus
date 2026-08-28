@@ -185,9 +185,11 @@ _TIMEOUT_EXEMPT_PREFIXES = (
 )
 # Prefix matching can't express these — the image id sits mid-path. Own
 # 300s httpx timeout in the handler; without this the vision call always
-# loses the race against the 45s hard timeout and the route 504s.
+# loses the race against the 45s hard timeout and the route 504s. ai-tag
+# makes the same vision call with the same 300s timeout, so it needs the
+# same exemption.
 _TIMEOUT_EXEMPT_PATTERNS = (
-    _re.compile(r"^/api/gallery/[^/]+/ocr$"),
+    _re.compile(r"^/api/gallery/[^/]+/(ocr|ai-tag)$"),
 )
 
 
