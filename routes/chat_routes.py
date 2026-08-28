@@ -40,7 +40,12 @@ from src.foreground_model_routing import (
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import effective_user, get_current_user
+from src.auth_helpers import (
+    effective_user,
+    enforce_api_token_chat_controls,
+    get_current_user,
+    require_chat_scope,
+)
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -113,6 +118,7 @@ def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
             if str(ask_user.get("approval_id") or "") != approval_key:
                 continue
             ask_user["resolved"] = normalized_decision
+            ask_user["approved_by_interactive_session"] = True
             message_id = metadata.get("_db_id")
             resolved_metadata = {
                 key: value for key, value in metadata.items() if key != "_db_id"
@@ -737,6 +743,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, Any])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, Any]:
+        require_chat_scope(request)
         _set_user_time_from_request(request)
 
         message = chat_request.message
@@ -776,7 +783,10 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         tool_policy = build_effective_tool_policy(last_user_message=message)
-        allow_tool_preprocessing = not tool_policy.block_all_tool_calls
+        allow_tool_preprocessing = (
+            not getattr(request.state, "api_token", False)
+            and not tool_policy.block_all_tool_calls
+        )
 
         # Inline memory command
         memory_response = None
@@ -927,6 +937,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat_stream")
     async def chat_stream(request: Request) -> StreamingResponse:
+        require_chat_scope(request)
         body = None
         try:
             if request.headers.get("content-type", "").startswith("application/json"):
@@ -964,7 +975,7 @@ def setup_chat_routes(
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
-        chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        chat_mode = str(form_data.get("mode") or (body or {}).get("mode") or "chat").lower()
         tool_approval_id = (
             form_data.get("tool_approval_id")
             or (body or {}).get("tool_approval_id")
@@ -978,6 +989,13 @@ def setup_chat_routes(
         retired_tool_approval_taint = False
         external_untrusted_context_seen = False
         tool_approval_continuation = False
+        api_token_request = enforce_api_token_chat_controls(
+            request,
+            mode=chat_mode,
+            plan_mode=plan_mode,
+            approval_id=tool_approval_id,
+            allow_bash=allow_bash,
+        )
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
@@ -1263,6 +1281,16 @@ def setup_chat_routes(
         except (ValueError, ValidationError):
             raise HTTPException(400, "Invalid request parameters")
 
+        # API tokens are integration credentials, not interactive humans. They
+        # may stream ordinary chat responses, but intent detection, contextual
+        # follow-ups, and workspace parsing must never promote them into the
+        # agent/research execution branch.
+        if api_token_request:
+            chat_mode = "chat"
+            auto_escalated = False
+            workspace = None
+            use_research = "false"
+
         # ------------------------------------------------------------------ #
         # Privilege gates that must fire BEFORE any LLM work / token spend.
         #   1. allowed_models — reject if session.model isn't in the user's
@@ -1284,7 +1312,7 @@ def setup_chat_routes(
             not tool_approval_continuation
             and str(use_research).lower() == "true"
         )
-        if not do_research and not tool_approval_continuation:
+        if not api_token_request and not do_research and not tool_approval_continuation:
             if get_session_mode(session) == 'research_pending':
                 do_research = True
                 logger.info(f"Session {session} in research_pending — auto-triggering research")
@@ -1311,7 +1339,10 @@ def setup_chat_routes(
         pre_context_tool_policy = build_effective_tool_policy(
             last_user_message=message,
         )
-        allow_tool_preprocessing = not pre_context_tool_policy.block_all_tool_calls
+        allow_tool_preprocessing = (
+            not api_token_request
+            and not pre_context_tool_policy.block_all_tool_calls
+        )
         foreground_policy = resolve_foreground_model_policy(
             owner=owner,
             allowed_models=_allowed_models_for_request(request),

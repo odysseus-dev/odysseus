@@ -6,11 +6,12 @@ import logging
 import re
 from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
 
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.auth_helpers import effective_user
+from src.auth_helpers import effective_user, require_chat_scope
+from src.message_metadata import sanitize_client_message_metadata
 from src.topic_analyzer import analyze_topics
 from src.upload_handler import reserve_message_upload_references
 from routes.session_routes import (
@@ -101,7 +102,7 @@ def _merge_continue_rows_to_delete(db_messages, db1, db2):
 
 
 def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
-    router = APIRouter(tags=["history"])
+    router = APIRouter(tags=["history"], dependencies=[Depends(require_chat_scope)])
 
     def _reserve_message_uploads(
         request: Request,
@@ -268,7 +269,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             content = body.get("content", "")
             if not content:
                 raise HTTPException(400, "content is required")
-            metadata = body.get("metadata")
+            metadata = sanitize_client_message_metadata(body.get("metadata"))
             _reserve_message_uploads(request, content, metadata)
             msg = ChatMessage(role=role, content=content, metadata=metadata)
             session_manager.add_message(session_id, msg)
@@ -455,7 +456,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
-            meta_update = body.get("metadata", {})
+            meta_update = sanitize_client_message_metadata(body.get("metadata", {}))
             session = session_manager.get_session(session_id)
 
             # Update in-memory

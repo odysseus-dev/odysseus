@@ -111,6 +111,7 @@ def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat():
 
     resolved_card = pending.public_payload()
     resolved_card["resolved"] = "approve"
+    resolved_card["approved_by_interactive_session"] = True
     history = [
         ChatMessage(
             "assistant",
@@ -280,8 +281,10 @@ def test_consumed_card_resolution_updates_memory_and_persisted_metadata(monkeypa
         "approve",
     ) is True
     assert ask_user["resolved"] == "approve"
+    assert ask_user["approved_by_interactive_session"] is True
     persisted = json.loads(db_message.meta_data)
     assert persisted["tool_events"][0]["ask_user"]["resolved"] == "approve"
+    assert persisted["tool_events"][0]["ask_user"]["approved_by_interactive_session"] is True
     assert "_db_id" not in persisted
     assert db.committed is True
     assert db.rolled_back is False

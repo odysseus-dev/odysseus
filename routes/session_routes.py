@@ -4,14 +4,15 @@ import html
 import json
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Form, HTTPException, Response, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Response, Request
 import logging
 
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import effective_user, _auth_disabled, owner_filter
+from src.auth_helpers import effective_user, _auth_disabled, owner_filter, require_chat_scope
+from src.message_metadata import sanitize_client_message_metadata
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
 from src.upload_handler import reserve_message_upload_references
@@ -124,7 +125,11 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["sessions"])
+router = APIRouter(
+    prefix="/api",
+    tags=["sessions"],
+    dependencies=[Depends(require_chat_scope)],
+)
 
 def _current_user_is_admin(request: Request, user: str | None) -> bool:
     if not user:
@@ -554,7 +559,7 @@ def setup_session_routes(
                     upload_handler,
                     owner,
                     message.get("content"),
-                    message.get("metadata"),
+                    sanitize_client_message_metadata(message.get("metadata")),
                 )
                 if missing_id:
                     raise HTTPException(
@@ -564,7 +569,11 @@ def setup_session_routes(
         except (AttributeError, TypeError, ValueError) as exc:
             raise HTTPException(400, "Invalid message attachment metadata") from exc
         for m in messages:
-            sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
+            sess.add_message(ChatMessage(
+                m["role"],
+                m["content"],
+                metadata=sanitize_client_message_metadata(m.get("metadata")),
+            ))
         session_manager.save_sessions()
         return {"ok": True, "count": len(messages)}
 

@@ -6,7 +6,7 @@ import asyncio
 import shutil
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Request, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, Depends, Request, File, UploadFile, HTTPException, Form
 from typing import List, Optional
 import logging
 from core.middleware import require_admin
@@ -21,7 +21,7 @@ from core.database import (
     Note,
     Session as DbSession,
 )
-from src.auth_helpers import effective_user
+from src.auth_helpers import effective_user, require_chat_scope
 from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
 from src.upload_handler import (
@@ -32,7 +32,11 @@ from src.upload_handler import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/upload", tags=["upload"])
+router = APIRouter(
+    prefix="/api/upload",
+    tags=["upload"],
+    dependencies=[Depends(require_chat_scope)],
+)
 UPLOAD_RESPONSE_HEADERS = {"X-Content-Type-Options": "nosniff"}
 
 def _upload_ids_from_persisted_text(value: object) -> set[str]:

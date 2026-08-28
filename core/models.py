@@ -59,6 +59,7 @@ def _history_grants_chat_session_approval(
             if (
                 ask_user.get("kind") == "tool_approval"
                 and ask_user.get("resolved") == CHAT_SESSION_APPROVAL_DECISION
+                and ask_user.get("approved_by_interactive_session") is True
                 and str(ask_user.get("session_id") or "") == expected_session
             ):
                 return True

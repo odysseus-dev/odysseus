@@ -41,6 +41,44 @@ def _is_api_token_request(request: Request) -> bool:
     return bool(getattr(request.state, "api_token", False))
 
 
+def require_api_token_scope(request: Request, required_scope: str) -> Optional[str]:
+    """Require one declared scope for bearer callers; leave browser callers unchanged."""
+    if not _is_api_token_request(request):
+        return effective_user(request)
+    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+    if required_scope not in scopes:
+        raise HTTPException(403, f"API token missing required scope: {required_scope}")
+    owner = getattr(request.state, "api_token_owner", None)
+    if not owner:
+        raise HTTPException(403, "API token has no owner")
+    return owner
+
+
+def require_chat_scope(request: Request) -> Optional[str]:
+    """FastAPI dependency for owner-scoped chat/session routes."""
+    return require_api_token_scope(request, "chat")
+
+
+def enforce_api_token_chat_controls(
+    request: Request,
+    *,
+    mode: str,
+    plan_mode: bool,
+    approval_id: object,
+    allow_bash: object,
+) -> bool:
+    """Reject bearer-token controls that can enter or authorize agent execution."""
+    is_api_token = _is_api_token_request(request)
+    if is_api_token and (
+        approval_id
+        or plan_mode
+        or mode != "chat"
+        or str(allow_bash or "").lower() == "true"
+    ):
+        raise HTTPException(403, "API tokens cannot use agent tools or approve tool calls")
+    return is_api_token
+
+
 def require_authenticated_request(request: Request) -> str:
     """Allow either a browser session or a valid bearer API token.
 
