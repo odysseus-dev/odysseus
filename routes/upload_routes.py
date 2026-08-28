@@ -521,6 +521,14 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(400, "text must be a string")
         with open(_vision_cache_path(file_id), "w", encoding="utf-8") as f:
             f.write(text)
+        # A human just explicitly reviewed and saved this text — clear any
+        # .autogen marker so it's no longer treated as unreviewed model
+        # output the next time chat_handler.py reads this cache (see the
+        # provenance-label branch there).
+        try:
+            os.remove(_vision_cache_path(file_id) + ".autogen")
+        except FileNotFoundError:
+            pass
         _sync_gallery_caption_for_upload(info, file_owner or current_user, text)
         return {"ok": True}
 

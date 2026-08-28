@@ -164,6 +164,11 @@ export function __pr6020StreamStateSmoke() {
       globalThis.MutationObserver = class {{ observe() {{}} }};
       globalThis.CustomEvent = class {{}};
       globalThis.Storage = class {{}};
+      // sessions.js reads navigator.platform at module load (issue caught
+      // running the full suite on PR #6148 — a sibling test in this same
+      // file already stubs a local navigator for an unrelated purpose, this
+      // harness just never got the same global shim).
+      globalThis.navigator = {{ platform: "" }};
       const chat = await import({json.dumps(module_uri)});
       console.log(JSON.stringify(chat.__pr6020StreamStateSmoke()));
       process.exit(0);

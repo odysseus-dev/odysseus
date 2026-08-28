@@ -904,13 +904,24 @@ def setup_chat_routes(
         session_manager.save_sessions()
 
         # Background tasks (memory, webhook, auto-name)
+        # actual_candidate is the confirmed (endpoint_url, model, headers)
+        # that answered this turn — not necessarily requested_route/sess.model
+        # if explicit-fallback routing switched candidates. The same request
+        # content (image included, when main_is_vision was true) is sent to
+        # every fallback candidate in turn, so whichever one actually
+        # answered is the one that actually saw the image.
+        _caption_url, _caption_model, _caption_headers = actual_candidate
         run_post_response_tasks(
             sess, session_manager, session, message, reply, None,
             ctx.uprefs, memory_manager, memory_vector, webhook_manager,
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=not tool_policy.block_all_tool_calls,
-            uploaded_files=ctx.uploaded_files,
+            attachment_meta=ctx.preprocessed.attachment_meta,
+            caption_endpoint_url=_caption_url,
+            caption_model=_caption_model,
+            caption_headers=_caption_headers,
+            upload_handler=upload_handler,
         )
 
         return {
@@ -2219,6 +2230,15 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                # See the non-stream endpoint for why this uses
+                                # the confirmed answering candidate rather than
+                                # sess.model — explicit-fallback routing can
+                                # switch which candidate actually answered.
+                                _cand = (
+                                    _foreground_candidates[_actual_candidate_index]
+                                    if 0 <= _actual_candidate_index < len(_foreground_candidates)
+                                    else None
+                                )
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -2229,7 +2249,11 @@ def setup_chat_routes(
                                         not tool_policy.block_all_tool_calls
                                         and not tool_approval_continuation
                                     ),
-                                    uploaded_files=ctx.uploaded_files,
+                                    attachment_meta=ctx.preprocessed.attachment_meta,
+                                    caption_endpoint_url=_cand[0] if _cand else None,
+                                    caption_model=_cand[1] if _cand else None,
+                                    caption_headers=_cand[2] if _cand else None,
+                                    upload_handler=upload_handler,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -2504,7 +2528,16 @@ def setup_chat_routes(
                                         not tool_policy.block_all_tool_calls
                                         and not tool_approval_continuation
                                     ),
-                                    uploaded_files=ctx.uploaded_files,
+                                    # Agent mode: deliberately not passing
+                                    # attachment_meta/caption_* here. Multiple
+                                    # rounds can each pick a different model
+                                    # via mid-loop fallback, and there is no
+                                    # single "the model that answered and saw
+                                    # the image" the way there is for a plain
+                                    # chat turn — captioning would have to
+                                    # guess. Skipping is the safe default;
+                                    # see PR review discussion for the
+                                    # single-turn chat-mode fix this mirrors.
                                 )
                             _stream_set(session, status="done")
                             yield chunk

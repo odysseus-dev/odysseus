@@ -403,7 +403,7 @@ _MAIN_MODEL_CAPTION_PROMPT = (
 
 
 async def describe_image_for_caption(
-    image_path: str, url: str, model_id: str, headers: dict | None = None,
+    image_path: str, url: str, model_id: str, headers: dict | None = None, mime: str | None = None,
 ) -> str:
     """Ask an already-resolved model/endpoint for a caption-style image description.
 
@@ -413,6 +413,11 @@ async def describe_image_for_caption(
     to the SAME model/endpoint the turn used (not the separate VL model —
     see analyze_image_with_vl_result for that path) so a gallery caption
     still gets produced.
+
+    ``mime`` is the caller's already-resolved upload MIME (e.g. from the
+    attachment manifest), used only as a fallback for an extensionless path
+    — same precedence as build_user_content's image-payload builder, so an
+    extensionless upload recorded as image/png doesn't get mislabeled jpeg.
     """
     def _read_and_encode() -> str:
         with open(image_path, "rb") as f:
@@ -420,7 +425,7 @@ async def describe_image_for_caption(
     img_data = await asyncio.to_thread(_read_and_encode)
     ext = os.path.splitext(image_path)[1].lower()
     mime_map = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
-    img_format = mime_map.get(ext, "jpeg")
+    img_format = mime_map.get(ext) or ((mime or "").split("/", 1)[1] if (mime or "").startswith("image/") else "jpeg")
     messages = [
         {
             "role": "user",
