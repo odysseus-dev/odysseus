@@ -25,6 +25,7 @@ from src.embedding_lanes import (
     collection_name,
     dedupe_results,
     lane_count,
+    lanes_unreachable,
     migrate_legacy_collection,
     query_lanes,
 )
@@ -380,10 +381,12 @@ class VectorRAG:
     def search(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
         if not query or not isinstance(query, str):
             return []
-        if not self.healthy or lane_count(self._lanes) == 0:
+        if not self.healthy or lanes_unreachable(self._lanes):
             # A store that lost its backend stayed unusable for the rest of the
             # process: nothing re-initialized it, and rag_singleton keeps
-            # handing out this same cached instance once it has one.
+            # handing out this same cached instance once it has one. An index
+            # that is simply empty still counts, so it falls through to the
+            # search below and returns [] without touching the client.
             if not self._reconnect_backend():
                 return []
 

@@ -40,9 +40,23 @@ class _FakeCollection:
 
 
 class _FakeLane:
-    def __init__(self, collection):
+    """Lane whose handle can go stale the way a recreated container leaves it."""
+
+    def __init__(self, collection, state):
         self.name = "fastembed"
         self.collection = collection
+        self._state = state
+
+    def probe_count(self):
+        # A recreated container leaves the handle pointing at a collection id
+        # that no longer exists, so counting raises rather than returning 0.
+        if self._state["count_fails"]:
+            return None
+        return self.collection.count()
+
+    def count(self):
+        counted = self.probe_count()
+        return counted if counted is not None else 0
 
 
 _HIT = {
@@ -53,11 +67,13 @@ _HIT = {
 }
 
 
-def _store(collection=None):
+def _store(state, collection=None):
     store = VectorRAG.__new__(VectorRAG)
     store._healthy = True
-    store._collection = collection if collection is not None else _FakeCollection()
-    store._lanes = [_FakeLane(store._collection)]
+    if collection is None:
+        collection = _FakeCollection([("doc_1", "the indexed answer", {"owner": "alice"})])
+    store._collection = collection
+    store._lanes = [_FakeLane(store._collection, state)]
     store._last_reconnect = 0.0
     return store
 
@@ -67,22 +83,21 @@ def backend(monkeypatch):
     """Drive lane queries, the client cache, and re-initialization from one place."""
 
     state = {
-        "service_up": True,      # is the ChromaDB service answering at all?
-        "init_ok": True,         # can the lanes be rebuilt once it is?
-        "handles_stale": True,   # do the cached collection handles still resolve?
+        "service_up": True,    # is the ChromaDB service answering at all?
+        "init_ok": True,       # can the lanes be rebuilt once it is?
+        "count_fails": True,   # do the cached handles still answer count()?
+        "query_fails": True,   # do the cached handles still serve a query?
         "resets": 0,
         "inits": 0,
     }
 
-    def fake_lane_count(lanes):
-        return 1
-
     def fake_query_lanes(lanes, query, **kwargs):
-        if state["handles_stale"]:
+        if state["query_fails"]:
             # What a recreated container actually produces: the collection id
             # the cached handle was built around no longer exists.
             raise RuntimeError("fastembed: Collection not found")
-        return [(lanes[0], _HIT)]
+        # Mirrors the real helper: a lane holding nothing is skipped entirely.
+        return [(lane, _HIT) for lane in lanes if lane.count()]
 
     def fake_get_chroma_client():
         if not state["service_up"]:
@@ -99,11 +114,11 @@ def backend(monkeypatch):
             self._healthy = False
             return False
         # A successful re-init rebinds the lanes to the new container.
-        state["handles_stale"] = False
+        state["count_fails"] = False
+        state["query_fails"] = False
         self._healthy = True
         return True
 
-    monkeypatch.setattr(rag_vector, "lane_count", fake_lane_count)
     monkeypatch.setattr(rag_vector, "query_lanes", fake_query_lanes)
     monkeypatch.setattr(VectorRAG, "_initialize_system", fake_initialize_system)
 
@@ -117,9 +132,10 @@ def backend(monkeypatch):
 def test_recreated_container_does_not_silently_kill_search(backend):
     """The bug: stale handles against a live service returned [] forever."""
     backend["service_up"] = True
-    backend["handles_stale"] = True
+    backend["count_fails"] = True
+    backend["query_fails"] = True
 
-    results = _store().search("the indexed answer", k=3, owner="alice")
+    results = _store(backend).search("the indexed answer", k=3, owner="alice")
 
     assert [r["id"] for r in results] == ["doc_1"], (
         "search must rebuild the stale handles and return real hits, not an "
@@ -139,7 +155,8 @@ def test_keyword_fallback_still_serves_a_persistently_failing_query(backend, mon
     monkeypatch.setattr(rag_vector, "query_lanes", always_fails)
 
     store = _store(
-        _FakeCollection([("kw_1", "the indexed answer", {"owner": "alice"})])
+        backend,
+        _FakeCollection([("kw_1", "the indexed answer", {"owner": "alice"})]),
     )
     results = store.search("indexed answer", k=3, owner="alice")
 
@@ -153,9 +170,9 @@ def test_keyword_fallback_still_serves_a_persistently_failing_query(backend, mon
 def test_reconnect_is_throttled_while_the_backend_stays_down(backend):
     """A backend that stays down must not turn every query into a reconnect."""
     backend["service_up"] = False
-    backend["handles_stale"] = True
+    backend["count_fails"] = True
 
-    store = _store()
+    store = _store(backend)
     assert store.search("first", k=3) == []
     assert store.search("second", k=3) == []
 
@@ -177,7 +194,7 @@ def test_store_left_unhealthy_recovers_without_an_app_restart(backend):
     backend["service_up"] = True
     backend["init_ok"] = False
 
-    store = _store()
+    store = _store(backend)
     assert store.search("while degraded", k=3) == []
     assert backend["resets"] == 1
     assert store.healthy is False, "a failed re-init leaves the store unhealthy"
@@ -190,3 +207,45 @@ def test_store_left_unhealthy_recovers_without_an_app_restart(backend):
     results = store.search("the indexed answer", k=3, owner="alice")
     assert [r["id"] for r in results] == ["doc_1"]
     assert backend["resets"] == 2
+
+
+def test_healthy_but_empty_index_answers_without_reconnecting(backend):
+    """An index with nothing in it is a healthy state, not a backend failure.
+
+    ``EmbeddingLane.count`` reports both an empty collection and a handle whose
+    collection is gone as 0, so a guard written against the count alone sent
+    every query on a freshly created or freshly rebuilt index through a full
+    client reset and lane rebuild — paid synchronously while the chat context
+    is being assembled, and repeated each time the throttle window expired.
+    """
+    backend["count_fails"] = False
+    backend["query_fails"] = False
+
+    # Lanes are live and answering; the collection simply holds nothing.
+    store = _store(backend, _FakeCollection())
+
+    assert store.search("nothing is indexed yet", k=3) == []
+    store._last_reconnect -= rag_vector.RECONNECT_THROTTLE_SECONDS + 1
+    assert store.search("still nothing", k=3) == []
+
+    assert backend["resets"] == 0, (
+        "an empty index must not reset the shared ChromaDB client"
+    )
+    assert backend["inits"] == 0, "an empty index must not rebuild the lanes"
+
+
+def test_handles_that_count_but_cannot_query_still_recover(backend):
+    """The other half of a stale handle: count succeeds, the query does not."""
+    backend["count_fails"] = False
+    backend["query_fails"] = True
+
+    store = _store(
+        backend,
+        _FakeCollection([("doc_1", "the indexed answer", {"owner": "alice"})]),
+    )
+    results = store.search("the indexed answer", k=3, owner="alice")
+
+    assert [r["id"] for r in results] == ["doc_1"]
+    assert backend["resets"] == 1, (
+        "a lane that counts but cannot serve a query must still reconnect"
+    )
