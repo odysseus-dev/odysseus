@@ -5,10 +5,11 @@ import shlex
 import subprocess
 from copy import deepcopy
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.platform_compat import run_ssh_command
 from routes._validators import validate_remote_host, validate_ssh_port
+from src.auth_helpers import require_non_bearer_request
 
 
 # Backends the manual hardware simulator accepts. Must stay a subset of what
@@ -180,24 +181,32 @@ def _inspect_model_path(model_path: str, host: str = "", ssh_port: str = "") -> 
 
 
 def setup_hwfit_routes():
-    router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
+    router = APIRouter(
+        prefix="/api/hwfit",
+        tags=["hwfit"],
+        dependencies=[Depends(require_non_bearer_request)],
+    )
 
     @router.get("/system")
-    def get_system(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False):
+    def get_system(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, request: Request = None):
         """Detect and return current system hardware info. Pass host=user@server for remote.
         fresh=true bypasses the per-host cache (the Rescan button)."""
+        if request is not None:
+            require_non_bearer_request(request)
         from services.hwfit.hardware import detect_system
         host, ssh_port = _validate_detection_target(host, ssh_port)
         return detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
 
     @router.get("/models")
-    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, refresh_catalog: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
+    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, refresh_catalog: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False, request: Request = None):
         """Rank LLM models against detected hardware and return scored results.
         gpu_count: override GPU count (0 = CPU only, 1-N = simulate N GPUs of the
             active group). gpu_group: index into system.gpu_groups (the homogeneous
             pools) to target — empty/auto = the largest pool. vLLM can only
             tensor-parallel across identical GPUs, so we never mix pools.
         fresh=true bypasses the hardware-detection cache."""
+        if request is not None:
+            require_non_bearer_request(request)
         from services.hwfit.hardware import detect_system
         from services.hwfit.fit import rank_models
         from services.hwfit.models import get_models, model_catalog_path, refresh_dynamic_catalogs
@@ -316,7 +325,7 @@ def setup_hwfit_routes():
         return payload
 
     @router.get("/profiles")
-    def get_serve_profiles(model: str = "", model_path: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
+    def get_serve_profiles(model: str = "", model_path: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = "", request: Request = None):
         """Compute llama.cpp serve profiles (Quality/Balanced/Speed) for `model`
         against the detected hardware on `host` (or local). Returns concrete
         flags (n_gpu_layers, n_cpu_moe, cache_type, ctx) the serve UI can apply.
@@ -325,6 +334,8 @@ def setup_hwfit_routes():
         catalog (e.g. an ad-hoc HF repo), pass enough hints via a minimal synthetic
         entry isn't possible here, so we return [] and the UI keeps manual flags.
         """
+        if request is not None:
+            require_non_bearer_request(request)
         from services.hwfit.hardware import detect_system
         from services.hwfit.models import get_models
         from services.hwfit.profiles import compute_serve_profiles
@@ -410,8 +421,10 @@ def setup_hwfit_routes():
         }
 
     @router.get("/image-models")
-    def get_image_models(sort: str = "fit", search: str = "", host: str = "", gpu_count: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False):
+    def get_image_models(sort: str = "fit", search: str = "", host: str = "", gpu_count: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, request: Request = None):
         """Rank image generation models against detected hardware."""
+        if request is not None:
+            require_non_bearer_request(request)
         from services.hwfit.hardware import detect_system
         from services.hwfit.image_models import rank_image_models
         host, ssh_port = _validate_detection_target(host, ssh_port)

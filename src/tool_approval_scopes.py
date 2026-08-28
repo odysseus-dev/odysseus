@@ -12,8 +12,9 @@ TASK_APPROVAL_DECISION = "approve_task"
 CHAT_SESSION_APPROVAL_DECISION = "approve"
 DENY_APPROVAL_DECISION = "deny"
 
-# Session.get_context_messages() adds this server-owned marker only when the
-# session history contains a matching, resolved chat-session approval.
+# Session.get_context_messages() adds this server-owned marker only when a
+# separate, immutable, owner/session-bound approval grant exists. Transcript
+# metadata is display-only and never establishes the marker.
 CHAT_SESSION_APPROVAL_CONTEXT_MARKER = "_tool_approval_chat_session_granted"
 
 

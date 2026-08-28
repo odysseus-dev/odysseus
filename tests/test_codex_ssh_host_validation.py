@@ -8,6 +8,7 @@ These pin validation on the host/port before they reach the ssh string, matching
 the validators the rest of the cookbook routes already apply.
 """
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import APIRouter, HTTPException
@@ -53,6 +54,30 @@ def _codex_request(scopes) -> Request:
     request.state.api_token = True
     request.state.api_token_owner = "alice"
     request.state.api_token_scopes = list(scopes)
+    return request
+
+
+def _interactive_request(path="/api/codex/documents") -> Request:
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            auth_manager=SimpleNamespace(
+                is_configured=True,
+                is_admin=lambda username: username == "alice",
+            )
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "state": {},
+            "app": app,
+        }
+    )
+    request.state.current_user = "alice"
+    request.state.api_token = False
     return request
 
 
@@ -135,7 +160,7 @@ def _documents_endpoint(total: int):
 async def test_documents_pagination_clamps_offset_and_limit():
     endpoint, calls = _documents_endpoint(total=99)
 
-    result = await endpoint(_codex_request(["documents:read"]), offset=-10, limit=500)
+    result = await endpoint(_interactive_request(), offset=-10, limit=500)
 
     assert calls[-1]["owner"] == "alice"
     assert calls[-1]["offset"] == 0
@@ -148,7 +173,7 @@ async def test_documents_pagination_clamps_offset_and_limit():
 async def test_documents_pagination_clamps_zero_limit_to_one():
     endpoint, calls = _documents_endpoint(total=3)
 
-    result = await endpoint(_codex_request(["documents:read"]), offset=0, limit=0)
+    result = await endpoint(_interactive_request(), offset=0, limit=0)
 
     assert calls[-1]["limit"] == 1
     assert len(result["documents"]) == 1
@@ -159,7 +184,7 @@ async def test_documents_pagination_clamps_zero_limit_to_one():
 async def test_documents_pagination_returns_next_offset_when_truncated():
     endpoint, _calls = _documents_endpoint(total=7)
 
-    result = await endpoint(_codex_request(["documents:read"]), offset=2, limit=3)
+    result = await endpoint(_interactive_request(), offset=2, limit=3)
 
     assert [doc["id"] for doc in result["documents"]] == ["doc-2", "doc-3", "doc-4"]
     assert result["next_offset"] == 5
@@ -170,7 +195,7 @@ async def test_documents_pagination_rejects_invalid_offset():
     endpoint, _calls = _documents_endpoint(total=7)
 
     with pytest.raises(HTTPException) as exc:
-        await endpoint(_codex_request(["documents:read"]), offset="soon", limit=3)
+        await endpoint(_interactive_request(), offset="soon", limit=3)
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid offset"
@@ -181,7 +206,7 @@ async def test_documents_pagination_rejects_invalid_limit():
     endpoint, _calls = _documents_endpoint(total=7)
 
     with pytest.raises(HTTPException) as exc:
-        await endpoint(_codex_request(["documents:read"]), offset=0, limit="many")
+        await endpoint(_interactive_request(), offset=0, limit="many")
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid limit"
@@ -191,7 +216,7 @@ async def test_documents_pagination_rejects_invalid_limit():
 async def test_documents_pagination_out_of_range_offset_returns_empty_page():
     endpoint, calls = _documents_endpoint(total=3)
 
-    result = await endpoint(_codex_request(["documents:read"]), offset=10, limit=2)
+    result = await endpoint(_interactive_request(), offset=10, limit=2)
 
     assert calls[-1]["offset"] == 10
     assert calls[-1]["limit"] == 2
@@ -217,7 +242,7 @@ def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch, host_field):
     }
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(endpoint(_launch_request(), body))
+        asyncio.run(endpoint(_interactive_request("/api/codex/cookbook/adopt"), body))
 
     assert exc.value.status_code == 400
     assert calls == []
@@ -237,7 +262,7 @@ async def test_email_draft_document_accepts_send_scope_with_document_write():
     endpoint = _route_endpoint("/api/codex/emails/draft-document", "POST", router=router)
 
     result = await endpoint(
-        _codex_request(["email:send", "documents:write"]),
+        _interactive_request("/api/codex/emails/draft-document"),
         {"to": "recipient@example.com", "subject": "Subject", "body": "Body"},
     )
 

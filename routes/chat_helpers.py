@@ -16,7 +16,12 @@ from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
 from src.model_context import estimate_tokens, get_context_length
-from src.auth_helpers import effective_user
+from src.auth_helpers import (
+    RequestCapability,
+    effective_user,
+    request_capability as build_request_capability,
+)
+from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
 from src.prompt_security import untrusted_context_message
 from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
@@ -102,6 +107,33 @@ def _append_incognito_message(session_id: str, role: str, content: Any, metadata
     if len(messages) > _INCOGNITO_CONTEXT_MAX_MESSAGES:
         del messages[:-_INCOGNITO_CONTEXT_MAX_MESSAGES]
     bundle["updated_at"] = time.time()
+
+
+def _history_for_request_capability(sess, capability: RequestCapability) -> list[dict[str, Any]]:
+    """Project persisted history without interactive approval authority for bearers."""
+    history = sess.get_context_messages()
+    if not capability.is_bearer:
+        return history
+
+    # Session.get_context_messages() derives the marker only from the separate
+    # server-owned grant table. A pure bearer chat may still read its owner's
+    # ordinary transcript, but it must not receive even that interactive
+    # approval signal as model context or future tool authority.
+    projected = []
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        message = dict(item)
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict) and CHAT_SESSION_APPROVAL_CONTEXT_MARKER in metadata:
+            metadata = dict(metadata)
+            metadata.pop(CHAT_SESSION_APPROVAL_CONTEXT_MARKER, None)
+            if metadata:
+                message["metadata"] = metadata
+            else:
+                message.pop("metadata", None)
+        projected.append(message)
+    return projected
 
 
 # ── Data containers ────────────────────────────────────────────────────── #
@@ -406,7 +438,13 @@ def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[
     return manifest
 
 
-def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, incognito: bool = False):
+def add_user_message(
+    sess,
+    chat_handler,
+    preprocessed: PreprocessedMessage,
+    incognito: bool = False,
+    capability: RequestCapability | None = None,
+):
     """Add user message to session history and update session name.
     Incognito messages must not mutate persistent session history, even in
     memory, because a later normal turn can persist the same session object."""
@@ -414,11 +452,23 @@ def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, inco
         return
     user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
     sess.add_message(ChatMessage("user", preprocessed.user_content, metadata=user_meta))
-    chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
+    if capability is None or capability.allow_auto_naming:
+        chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
 
 
-def fire_message_event(request, webhook_manager, session_id: str, sess, message: str, compare_mode: bool = False):
+def fire_message_event(
+    request,
+    webhook_manager,
+    session_id: str,
+    sess,
+    message: str,
+    compare_mode: bool = False,
+    capability: RequestCapability | None = None,
+):
     """Fire webhook and event_bus events for a new user message."""
+    capability = capability or build_request_capability(request)
+    if not capability.allow_message_events:
+        return
     if webhook_manager and not compare_mode:
         webhook_manager.fire_and_forget("chat.message", {
             "session_id": session_id, "model": sess.model, "message": message[:2000],
@@ -626,12 +676,15 @@ async def build_chat_context(
     defer_context_shaping: bool = False,
     continuation_context_message: str | None = None,
     persist_user_message: bool = True,
+    capability: RequestCapability | None = None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
     This is the shared logic between /chat and /chat_stream — preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
     """
+    capability = capability or build_request_capability(request)
+
     # Preset
     preset = extract_preset(chat_handler, preset_id)
 
@@ -653,11 +706,25 @@ async def build_chat_context(
         user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
     elif persist_user_message:
-        add_user_message(sess, chat_handler, preprocessed, incognito=False)
+        add_user_message(
+            sess,
+            chat_handler,
+            preprocessed,
+            incognito=False,
+            capability=capability,
+        )
 
     # Fire events
     if persist_user_message and not incognito:
-        fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
+        fire_message_event(
+            request,
+            webhook_manager,
+            session_id,
+            sess,
+            message,
+            compare_mode,
+            capability=capability,
+        )
 
     # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
     # bearer-token chat requests use the token owner instead of the "api" sentinel.
@@ -761,7 +828,11 @@ async def build_chat_context(
     # Build messages. In Nobody/incognito mode, never read saved session
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
-    messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+    messages = preface + (
+        _incognito_messages(session_id)
+        if incognito
+        else _history_for_request_capability(sess, capability)
+    )
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
@@ -1173,6 +1244,7 @@ def run_post_response_tasks(
     owner: str = None,
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
+    capability: RequestCapability | None = None,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
@@ -1188,6 +1260,12 @@ def run_post_response_tasks(
     ``_queue_background_extraction`` keeps them from overlapping the *next*
     turn's request too.
     """
+    if capability is not None and not capability.allow_deferred_work:
+        # Pure bearer chat is intentionally synchronous and request-bound.
+        # Do not schedule extraction, teacher/model work, callbacks, or
+        # auto-naming after the authorized request has returned/disconnected.
+        return
+
     _extraction_jobs: list = []
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls

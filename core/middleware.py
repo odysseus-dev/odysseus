@@ -11,6 +11,7 @@ from starlette.responses import Response
 from starlette.routing import get_route_path
 
 from src.owner_identity import INTERNAL_TOOL_USER, auth_disabled
+from src.auth_helpers import is_bearer_principal
 
 
 # Per-process token that lets the in-app tool layer hit admin-gated
@@ -59,6 +60,13 @@ def require_admin(request: Request):
     Allows access when auth is explicitly disabled, or when the request carries
     the in-process internal-tool token used by loopback agent tools.
     """
+    # A bearer principal never inherits admin authority, even when the token
+    # carries a legacy cookbook scope or auth is disabled in a direct-entry
+    # test. Host-control routes use this centralized gate, so rejecting here
+    # covers shell, model-serving, MCP, runtime, and other admin surfaces.
+    if is_bearer_principal(request):
+        raise HTTPException(403, "API tokens cannot use admin host-control surfaces")
+
     # In-process bypass for tool-layer loopback calls. Two paths:
     # (a) header-direct (caller set X-Odysseus-Internal-Token), or
     # (b) the auth middleware already validated the token and stamped

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Any
 from core.platform_compat import IS_APPLE_SILICON, which_tool
 from core.middleware import INTERNAL_TOOL_USER
+from src.auth_helpers import is_bearer_principal
 from src.host_docker_access import (
     HOST_DOCKER_ACCESS_HINT,
     host_docker_access_enabled as _host_docker_access_enabled,
@@ -53,6 +54,11 @@ from core.platform_compat import (
 def _require_admin(request: Request):
     """Reject non-admin callers. Shell exec is admin-only — never expose to
     regular users; that's RCE-after-signup."""
+    # This route predates the shared middleware helper and is also called
+    # directly by a few integration paths.  Reject the credential class before
+    # trusting a caller-supplied current_user that might look administrative.
+    if is_bearer_principal(request):
+        raise HTTPException(403, "API tokens cannot use admin host-control surfaces")
     auth_manager = getattr(request.app.state, "auth_manager", None)
     if not auth_manager:
         # No auth at all — only safe in fully-trusted localhost dev mode

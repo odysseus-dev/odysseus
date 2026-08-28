@@ -62,6 +62,22 @@ def _parse_msg_content(raw):
     return raw
 
 
+def _parse_message_metadata(raw) -> dict:
+    """Decode only JSON objects from durable message metadata.
+
+    Legacy rows may contain a JSON list (including list-of-pairs) or another
+    scalar.  Such values have no trusted message fields and must not reach the
+    ``_db_id``/timestamp merge below or any approval projection.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
 class SessionManager:
     """
     Manages chat sessions with database persistence.
@@ -161,8 +177,7 @@ class SessionManager:
         # Try relationship first, then direct query
         if db_session.messages:
             for db_msg in db_session.messages:
-                meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
-                if meta is None: meta = {}
+                meta = _parse_message_metadata(db_msg.meta_data)
                 meta['_db_id'] = db_msg.id
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
@@ -176,8 +191,7 @@ class SessionManager:
             ).order_by(DbChatMessage.timestamp).all()
 
             for db_msg in db_messages:
-                meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
-                if meta is None: meta = {}
+                meta = _parse_message_metadata(db_msg.meta_data)
                 meta['_db_id'] = db_msg.id
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
@@ -254,6 +268,8 @@ class SessionManager:
                 logger.warning("Dropping message for deleted session %s", session_id)
                 return
 
+            if not isinstance(message.metadata, dict):
+                message.metadata = None
             missing_upload_id = reserve_message_upload_references(
                 getattr(self, "upload_handler", None),
                 getattr(db_session, "owner", None),
@@ -366,6 +382,8 @@ class SessionManager:
             # ownership check/access touch and the replacement transaction.
             # A failed reservation must leave the existing transcript intact.
             for message in messages:
+                if not isinstance(message.metadata, dict):
+                    message.metadata = None
                 missing_upload_id = reserve_message_upload_references(
                     getattr(self, "upload_handler", None),
                     getattr(db_session, "owner", None),

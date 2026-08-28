@@ -29,7 +29,12 @@ from src.endpoint_resolver import (
     build_models_url,
     build_headers,
 )
-from src.auth_helpers import _auth_disabled, owner_filter, require_chat_scope
+from src.auth_helpers import (
+    _auth_disabled,
+    is_bearer_principal,
+    owner_filter,
+    require_chat_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1536,7 +1541,12 @@ def setup_model_routes(model_discovery):
                 _refresh_inflight["v"] = False
         threading.Thread(target=_do, daemon=True).start()
 
-    def _fetch_models(owner: str = "", is_admin: bool = False):
+    def _fetch_models(
+        owner: str = "",
+        is_admin: bool = False,
+        *,
+        read_only: bool = False,
+    ):
         """Return model list from cached data (instant). Background refresh keeps caches fresh.
 
         SECURITY: filters endpoints by `owner` — without this the picker
@@ -1551,7 +1561,7 @@ def setup_model_routes(model_discovery):
 
         db = SessionLocal()
         try:
-            if _disable_stale_cookbook_local_endpoints(db):
+            if not read_only and _disable_stale_cookbook_local_endpoints(db):
                 _invalidate_models_cache()
             q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
             if owner and not is_admin:
@@ -1634,6 +1644,17 @@ def setup_model_routes(model_discovery):
         except Exception as e:
             logger.error("Auth gate error in GET /api/models, failing closed: %s", e)
             raise HTTPException(status_code=500, detail="Internal error")
+        bearer = is_bearer_principal(request)
+        if bearer and (refresh or background):
+            raise HTTPException(
+                403,
+                "API tokens may only read the owner-scoped cached model list",
+            )
+        if bearer:
+            # The bearer-compatible path is deliberately read-only: no global
+            # admin view, stale-row cleanup, process cache writes, background
+            # probes, stored endpoint credentials, or refresh state changes.
+            return _fetch_models(owner=owner, is_admin=False, read_only=True)
         # Admins see every endpoint (they manage the global pool); regular
         # users get the owner-scoped view.
         _is_admin = False
@@ -2413,11 +2434,11 @@ def setup_model_routes(model_discovery):
         # no per-user default yet, we resolve via the owner-scoped endpoint
         # lookup below (last-resort: first enabled endpoint THIS user owns).
         # Unauthenticated single-user mode keeps the old behavior.
-        from src.auth_helpers import get_current_user as _gcu
-        try:
-            _user = _gcu(request) or ""
-        except Exception:
-            _user = ""
+        # Resolve through the same owner/scope gate as the model picker. In an
+        # auth-disabled process there is no middleware to stamp token state, so
+        # raw bearer detection must still prevent a token from resolving
+        # global/admin defaults.
+        _user = require_chat_scope(request) or ""
         # Admins resolve via the global defaults (they own them, and the
         # scoped resolution was making the picker disappear for them).
         # Regular users get per-user prefs with NO global fallback for the
@@ -2427,7 +2448,12 @@ def setup_model_routes(model_discovery):
         _is_admin = False
         try:
             auth_mgr = getattr(request.app.state, "auth_manager", None)
-            if _user and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+            if (
+                _user
+                and not is_bearer_principal(request)
+                and auth_mgr is not None
+                and getattr(auth_mgr, "is_admin", None)
+            ):
                 _is_admin = bool(auth_mgr.is_admin(_user))
         except Exception:
             _is_admin = False
@@ -2686,8 +2712,13 @@ def setup_model_routes(model_discovery):
     # ── Tool management ──
 
     @router.get("/tools")
-    def list_tools():
+    def list_tools(request: Request):
         """List all available tools with their enabled/disabled status."""
+        # Tool inventory is an interactive/agent capability description, not
+        # part of the narrow bearer chat contract. Cookie/local callers retain
+        # the historical response.
+        from src.auth_helpers import require_non_bearer_request
+        require_non_bearer_request(request)
         from src.agent_tools import TOOL_TAGS
         settings = _load_settings()
         disabled = set(settings.get("disabled_tools", []))

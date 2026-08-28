@@ -5,8 +5,8 @@ routes (tasks, servers, output, stop, adopt, presets, etc.) through
 normal cookie sessions because _scope_owner only checked login status,
 not admin privileges.
 
-After the fix, cookie-session callers must be admin; API-token callers
-are still governed by scope checks only.
+After the fix, cookie-session callers must be admin and bearer callers are
+rejected from the Codex host-control plane regardless of legacy scopes.
 """
 import pytest
 from types import SimpleNamespace
@@ -80,13 +80,14 @@ class TestCookieSessionAdminGate:
 
 
 class TestApiTokenScopeGate:
-    """API-token callers are governed by scope, not admin status."""
+    """Bearer callers cannot enter Codex host-control routes."""
 
-    def test_token_with_scope_allowed(self, monkeypatch):
+    def test_token_with_legacy_scope_rejected(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _api_token_request(scopes=["cookbook:read"])
-        owner = _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
-        assert owner == "alice"
+        with pytest.raises(HTTPException) as exc:
+            _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
+        assert exc.value.status_code == 403
 
     def test_token_missing_scope_rejected(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")

@@ -1744,6 +1744,11 @@ def test_api_models_scopes_api_token_to_token_owner(monkeypatch):
     monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
     monkeypatch.setattr(threading, "Thread", _NoopThread)
+    monkeypatch.setattr(
+        model_routes,
+        "_disable_stale_cookbook_local_endpoints",
+        lambda _db: (_ for _ in ()).throw(AssertionError("bearer read touched stale-row state")),
+    )
 
     request = SimpleNamespace(
         state=SimpleNamespace(
@@ -1765,7 +1770,58 @@ def test_api_models_scopes_api_token_to_token_owner(monkeypatch):
     result = _route_endpoint(router, "/api/models")(request)
 
     assert [item["endpoint_name"] for item in result["items"]] == ["alice", "shared"]
-    assert admin_checks == ["alice"]
+    assert admin_checks == []
+
+
+def test_bearer_model_refresh_and_background_flags_fail_before_management_work(monkeypatch):
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    def fail_session():
+        raise AssertionError("bearer refresh reached the model database")
+
+    monkeypatch.setattr(model_routes, "SessionLocal", fail_session)
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="alice",
+            api_token_scopes=["chat"],
+        ),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(is_configured=True),
+            ),
+        ),
+    )
+    endpoint = _route_endpoint(router, "/api/models")
+    for flags in ({"refresh": True}, {"background": True}, {"refresh": True, "background": True}):
+        with pytest.raises(HTTPException) as exc:
+            endpoint(request, **flags)
+        assert exc.value.status_code == 403
+
+
+def test_bearer_is_rejected_from_model_management_and_tool_inventory_routes():
+    from fastapi import Response
+
+    router = model_routes.setup_model_routes(model_discovery=None)
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="alice",
+            api_token_scopes=["chat"],
+        ),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
+    )
+    with pytest.raises(HTTPException) as tools_exc:
+        _route_endpoint(router, "/api/tools")(request)
+    assert tools_exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as endpoint_exc:
+        _route_endpoint(router, "/api/model-endpoints/{ep_id}/models")(
+            "endpoint-1", request, Response()
+        )
+    assert endpoint_exc.value.status_code == 403
 
 
 def test_api_models_returns_only_pinned_proxy_models_without_refresh_probe(monkeypatch):

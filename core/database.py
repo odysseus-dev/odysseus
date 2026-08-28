@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
-from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, inspect, text
+from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, UniqueConstraint, func, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -279,6 +279,47 @@ class ChatMessage(Base):
     __table_args__ = (
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
     )
+
+
+class ChatSessionApprovalGrant(Base):
+    """Server-owned, durable approval provenance for one chat session.
+
+    A resolved tool-approval card is display/history data, not authority. This
+    separate row is inserted only by the interactive approval continuation and
+    is keyed by the real session owner plus session id. It deliberately has no
+    update path; deleting the owning session cascades the grant so an old id
+    cannot carry approval authority into a newly-created conversation.
+    """
+
+    __tablename__ = "chat_session_approval_grants"
+
+    id = Column(String, primary_key=True, index=True)
+    session_id = Column(
+        String,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    owner = Column(String, nullable=False, index=True)
+    approval_id = Column(String, nullable=False, index=True)
+    provenance_version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "owner",
+            "approval_id",
+            name="uq_chat_session_approval_grant",
+        ),
+        Index(
+            "ix_chat_session_approval_grant_lookup",
+            "session_id",
+            "owner",
+            "provenance_version",
+        ),
+    )
+
 
 class Document(TimestampMixin, Base):
     """Living document that the AI can create and edit in-place."""

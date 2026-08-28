@@ -44,6 +44,7 @@ from src.auth_helpers import (
     effective_user,
     enforce_api_token_chat_controls,
     get_current_user,
+    request_capability as build_request_capability,
     require_chat_scope,
     require_interactive_request,
 )
@@ -74,6 +75,7 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
+from src.tool_approval_provenance import create_chat_session_approval_grant
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,11 @@ def _stream_failure_status(chunk: str) -> Optional[int]:
 
 
 def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
-    """Persist a consumed approval decision on its existing tool event."""
+    """Persist display-only resolution state on the existing tool event.
+
+    This metadata is intentionally never consulted for authorization; the
+    separate provenance row is written by the interactive approval path.
+    """
 
     approval_key = str(approval_id or "")
     normalized_decision = str(decision or "").strip().lower()
@@ -786,7 +792,8 @@ def setup_chat_routes(
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
 
-        api_token_request = getattr(request.state, "api_token", False) is True
+        request_capability = build_request_capability(request)
+        api_token_request = request_capability.is_bearer
         tool_policy = build_effective_tool_policy(last_user_message=message)
         allow_tool_preprocessing = (
             not api_token_request
@@ -817,6 +824,7 @@ def setup_chat_routes(
             webhook_manager=webhook_manager,
             allow_tool_preprocessing=allow_tool_preprocessing,
             defer_context_shaping=foreground_policy.enabled,
+            capability=request_capability,
         )
 
         # Research injection
@@ -925,6 +933,7 @@ def setup_chat_routes(
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=allow_tool_preprocessing,
+            capability=request_capability,
         )
 
         return {
@@ -1003,6 +1012,11 @@ def setup_chat_routes(
             approval_id=tool_approval_id,
             allow_bash=allow_bash,
         )
+        request_capability = build_request_capability(request)
+        # Keep the route decision and the downstream capability derived from
+        # the same verified principal. The explicit control gate above remains
+        # the source of the chat-mode rejection message.
+        api_token_request = request_capability.is_bearer
 
         # A bearer token is a chat-only integration credential. Reject every
         # remaining control-plane input before approval lookup, intent
@@ -1216,6 +1230,21 @@ def setup_chat_routes(
                         409,
                         "This tool approval could not be consumed.",
                     )
+                if decision == "approve":
+                    # The transcript card is display data. Only the exact
+                    # interactive, one-use store result may create durable
+                    # session-scope provenance for later tool gates.
+                    if not create_chat_session_approval_grant(
+                        request,
+                        approval=exact_tool_approval,
+                        approval_id=tool_approval_id,
+                        session_id=session,
+                        owner=owner,
+                    ):
+                        logger.warning(
+                            "Tool approval %s ran without a durable chat-session grant",
+                            tool_approval_id,
+                        )
                 if not _mark_tool_approval_resolved(
                     sess,
                     tool_approval_id,
@@ -1418,6 +1447,7 @@ def setup_chat_routes(
                 else None
             ),
             persist_user_message=not tool_approval_continuation,
+            capability=request_capability,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
@@ -1652,7 +1682,7 @@ def setup_chat_routes(
         # Persist session mode after policy/privilege gates so blocked research
         # turns remain ordinary chat/agent streams and saved messages.
         _effective_mode = 'research' if effective_do_research else (chat_mode or 'chat')
-        if _effective_mode in ('agent', 'research', 'chat'):
+        if _effective_mode in ('agent', 'research', 'chat') and not request_capability.is_bearer:
             set_session_mode(session, _effective_mode)
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
@@ -2299,6 +2329,7 @@ def setup_chat_routes(
                                         allow_tool_preprocessing
                                         and not tool_approval_continuation
                                     ),
+                                    capability=request_capability,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -2573,6 +2604,7 @@ def setup_chat_routes(
                                         allow_tool_preprocessing
                                         and not tool_approval_continuation
                                     ),
+                                    capability=request_capability,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -2647,7 +2679,7 @@ def setup_chat_routes(
         # buffered output + live); dropping the SSE only removes a subscriber —
         # the run keeps going and saves the assistant message on completion
         # regardless. Reconnect via /api/chat/resume.
-        if compare_mode:
+        if compare_mode or not request_capability.allow_detached_execution:
             return StreamingResponse(_safe_stream(), media_type="text/event-stream")
 
         _detached_run = agent_runs.start(session, _safe_stream())

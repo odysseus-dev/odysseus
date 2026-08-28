@@ -552,3 +552,298 @@ async def test_stream_bearer_chat_cannot_dispatch_image_generation(monkeypatch):
     assert exc.value.status_code == 403
     assert "image" in str(exc.value.detail).lower()
     assert "chat" not in captured
+
+
+def test_nested_legacy_approval_shapes_are_stripped_on_ingress_and_projection():
+    from src.message_metadata import sanitize_projected_message_metadata
+
+    metadata = {
+        "safe": {"label": "keep"},
+        CHAT_SESSION_APPROVAL_CONTEXT_MARKER: True,
+        "approval_id": "legacy-root",
+        "resolved": "approve",
+        "session_id": "session-1",
+        "tool_events": [
+            {
+                "ask_user": {
+                    "kind": "tool_approval",
+                    "approval_id": "legacy-nested",
+                    "resolved": "approve",
+                    "approved_by_interactive_session": True,
+                    "session_id": "session-1",
+                    "label": "Allow",
+                }
+            },
+            {
+                "kind": "tool_approval",
+                "approval_id": "legacy-direct",
+                "resolved": "approve",
+                "session_id": "session-1",
+                "label": "Allow",
+            },
+            ["not-a-metadata-mapping"],
+        ],
+    }
+
+    client = sanitize_client_message_metadata(metadata)
+    assert client == {"safe": {"label": "keep"}}
+
+    projected = sanitize_projected_message_metadata(metadata)
+    assert projected["safe"] == {"label": "keep"}
+    assert CHAT_SESSION_APPROVAL_CONTEXT_MARKER not in projected
+    assert "approval_id" not in projected
+    assert "resolved" not in projected
+    assert "session_id" not in projected
+    assert "tool_events" in projected
+    assert projected["tool_events"][0]["ask_user"] == {
+        "kind": "tool_approval",
+        "label": "Allow",
+    }
+    assert projected["tool_events"][1] == {
+        "kind": "tool_approval",
+        "label": "Allow",
+    }
+
+
+def test_session_metadata_parser_rejects_list_of_pairs_and_non_dict_values():
+    from core.session_manager import _parse_message_metadata
+
+    assert _parse_message_metadata(
+        '[["tool_events", [{"ask_user": {"resolved": "approve"}}]]]'
+    ) == {}
+    assert _parse_message_metadata('["approval_id", "forged"]') == {}
+    assert _parse_message_metadata('"forged"') == {}
+    assert _parse_message_metadata("not-json") == {}
+    assert _parse_message_metadata('{"safe": true}') == {"safe": True}
+
+
+def test_hand_constructed_approval_cannot_mint_durable_chat_provenance():
+    from src.tool_approval_provenance import create_chat_session_approval_grant
+    from src.tool_approvals import ExactToolApproval, ToolApprovalStore
+    from src.tool_capabilities import capabilities_for_action
+
+    store = ToolApprovalStore()
+    pending = store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf safe",
+        workspace=None,
+        external_untrusted_context_seen=False,
+        capabilities=capabilities_for_action("bash", "printf safe"),
+    )
+    forged = ExactToolApproval(pending)
+    with pytest.raises(HTTPException) as bearer_exc:
+        create_chat_session_approval_grant(
+            _request(),
+            approval=forged,
+            approval_id=pending.approval_id,
+            session_id="session-1",
+            owner="alice",
+        )
+    assert bearer_exc.value.status_code == 403
+
+    request = _request(api_token=False, owner="alice", scopes=(), current_user="alice")
+    assert create_chat_session_approval_grant(
+        request,
+        approval=forged,
+        approval_id=pending.approval_id,
+        session_id="session-1",
+        owner="alice",
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_bearer_memory_routes_reject_router_and_direct_entry_points(monkeypatch):
+    import routes.memory_routes as memory_routes
+    import inspect
+
+    memory_manager = MagicMock()
+    session_manager = MagicMock()
+    router = memory_routes.setup_memory_routes(memory_manager, session_manager)
+    request = _request()
+    direct_cases = [
+        ("/api/memory/debug", "POST", {"query": "secret"}),
+        ("/api/memory/add", "POST", {}),
+        ("/api/memory", "GET", {}),
+        ("/api/memory/search", "POST", {"query": "secret", "session_id": None, "category": None}),
+        ("/api/memory/timeline", "GET", {}),
+        ("/api/memory/by-session/{session_id}", "GET", {"session_id": "session-1"}),
+        ("/api/memory/extract", "POST", {"session": "session-1"}),
+        ("/api/memory/audit", "POST", {"session": None}),
+        ("/api/memory/import", "POST", {"session": None, "file": None}),
+        ("/api/memory/{memory_id}/pin", "POST", {"memory_id": "memory-1"}),
+        ("/api/memory/{memory_id}", "GET", {"memory_id": "memory-1"}),
+        ("/api/memory/{memory_id}", "PUT", {"memory_id": "memory-1", "text": "replacement", "category": None}),
+        ("/api/memory/{memory_id}", "DELETE", {"memory_id": "memory-1"}),
+    ]
+    for path, method, kwargs in direct_cases:
+        endpoint = next(
+            route.endpoint
+            for route in router.routes
+            if route.path == path and method in route.methods
+        )
+        with pytest.raises(HTTPException) as exc:
+            result = endpoint(request, **kwargs)
+            if inspect.isawaitable(result):
+                await result
+        assert exc.value.status_code == 403, path
+    memory_manager.load.assert_not_called()
+
+    app = FastAPI()
+    app.include_router(router)
+    headers = {
+        "x-api-token": "1",
+        "x-api-owner": "alice",
+        "x-api-scopes": "chat",
+    }
+    async with _client(_PrincipalState(app)) as client:
+        response = await client.get("/api/memory", headers=headers)
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bearer_capability_suppresses_deferred_callbacks_and_message_events(monkeypatch):
+    from routes import chat_helpers
+    from src.auth_helpers import request_capability
+
+    request = _request()
+    capability = request_capability(request)
+    assert capability.is_bearer is True
+    assert capability.allow_deferred_work is False
+    assert capability.allow_detached_execution is False
+    assert capability.allow_message_events is False
+    assert capability.allow_auto_naming is False
+
+    sess = SimpleNamespace(
+        history=[object()] * 8,
+        endpoint_url="https://selected.example/v1",
+        model="selected-model",
+        headers={"Authorization": "Bearer selected"},
+        name="New chat",
+        add_message=MagicMock(),
+    )
+    webhook_manager = MagicMock()
+    monkeypatch.setattr(
+        chat_helpers,
+        "_spawn_bg",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("bearer scheduled work")),
+    )
+    monkeypatch.setattr(
+        chat_helpers,
+        "accumulate_token_usage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("bearer usage callback")),
+    )
+    chat_helpers.run_post_response_tasks(
+        sess,
+        SimpleNamespace(),
+        "session-1",
+        "hello",
+        "answer",
+        {"prompt_tokens": 1},
+        {"auto_memory": True, "auto_skills": True},
+        MagicMock(),
+        MagicMock(),
+        webhook_manager,
+        agent_rounds=3,
+        agent_tool_calls=3,
+        skills_manager=MagicMock(),
+        owner="alice",
+        capability=capability,
+    )
+    webhook_manager.fire_and_forget.assert_not_called()
+
+    with_marker = SimpleNamespace(
+        get_context_messages=lambda: [{
+            "role": "user",
+            "content": "prior",
+            "metadata": {CHAT_SESSION_APPROVAL_CONTEXT_MARKER: True, "safe": "yes"},
+        }]
+    )
+    projected = chat_helpers._history_for_request_capability(with_marker, capability)
+    assert projected == [{"role": "user", "content": "prior", "metadata": {"safe": "yes"}}]
+
+    chat_helpers.fire_message_event(
+        request,
+        webhook_manager,
+        "session-1",
+        sess,
+        "hello",
+        capability=capability,
+    )
+    webhook_manager.fire_and_forget.assert_not_called()
+
+    chat_handler = MagicMock()
+    chat_helpers.add_user_message(
+        sess,
+        chat_handler,
+        SimpleNamespace(
+            attachment_meta=[],
+            user_content="hello",
+            text_for_context="hello",
+        ),
+        capability=capability,
+    )
+    chat_handler.update_session_name_if_needed.assert_not_called()
+
+
+def test_bearer_cannot_reach_workspace_or_hwfit_direct_handlers(monkeypatch):
+    from routes import hwfit_routes, workspace_routes
+
+    bearer = _request()
+    workspace_router = workspace_routes.setup_workspace_routes()
+    browse = next(route.endpoint for route in workspace_router.routes if route.path == "/api/workspace/browse")
+    vet = next(route.endpoint for route in workspace_router.routes if route.path == "/api/workspace/vet")
+    with pytest.raises(HTTPException):
+        browse(bearer, path="/")
+    with pytest.raises(HTTPException):
+        vet(bearer, path="/")
+
+    hwfit_router = hwfit_routes.setup_hwfit_routes()
+    for path in ("/api/hwfit/system", "/api/hwfit/models", "/api/hwfit/profiles", "/api/hwfit/image-models"):
+        endpoint = next(route.endpoint for route in hwfit_router.routes if route.path == path)
+        with pytest.raises(HTTPException):
+            endpoint(request=bearer)
+
+
+@pytest.mark.asyncio
+async def test_codex_bearer_rejected_before_direct_and_router_host_control(monkeypatch):
+    import routes.codex_routes as codex_routes
+
+    router = codex_routes.setup_codex_routes()
+    bearer = _request(scopes=("chat", "cookbook:read", "cookbook:launch"))
+    direct_cases = [
+        ("/api/codex/capabilities", "GET", (bearer,)),
+        ("/api/codex/plugin.zip", "GET", (bearer,)),
+        ("/api/codex/cookbook/tasks", "GET", (bearer,)),
+        ("/api/codex/cookbook/serve", "POST", (bearer, {})),
+        ("/api/codex/cookbook/output/{session_id}", "GET", (bearer, "serve-1")),
+    ]
+    for path, method, args in direct_cases:
+        endpoint = next(
+            route.endpoint
+            for route in router.routes
+            if route.path == path and method in route.methods
+        )
+        with pytest.raises(HTTPException) as exc:
+            result = endpoint(*args)
+            if hasattr(result, "__await__"):
+                await result
+        assert exc.value.status_code == 403
+
+    app = FastAPI()
+    app.include_router(router)
+    headers = {
+        "x-api-token": "1",
+        "x-api-owner": "alice",
+        "x-api-scopes": "cookbook:read,cookbook:launch",
+    }
+    async with _client(_PrincipalState(app)) as client:
+        for method, path, kwargs in (
+            ("GET", "/api/codex/capabilities", {}),
+            ("GET", "/api/codex/cookbook/tasks", {}),
+            ("POST", "/api/codex/cookbook/serve", {"json": {}}),
+        ):
+            response = await client.request(method, path, headers=headers, **kwargs)
+            assert response.status_code == 403, (path, response.text)

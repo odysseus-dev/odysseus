@@ -228,6 +228,10 @@ class ExactToolApproval:
     # sealed action.
     allow_remaining_actions: bool = True
     _claimed: bool = field(default=False, init=False, repr=False)
+    # Only ToolApprovalStore.consume() may set this proof.  A caller cannot
+    # manufacture chat-session provenance by constructing an ExactToolApproval
+    # around a browser-shaped PendingToolApproval.
+    _consumed_from_store: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @property
@@ -462,16 +466,19 @@ class ToolApprovalStore:
         if scope is None:
             return None
         if not allow_continuation:
-            return ExactToolApproval(
+            grant = ExactToolApproval(
                 pending,
                 scope=ToolApprovalScope.SINGLE_ACTION,
                 allow_remaining_actions=False,
             )
-        return ExactToolApproval(
-            pending,
-            scope=scope,
-            allow_remaining_actions=True,
-        )
+        else:
+            grant = ExactToolApproval(
+                pending,
+                scope=scope,
+                allow_remaining_actions=True,
+            )
+        grant._consumed_from_store = True
+        return grant
 
     def peek(self, approval_id: Any) -> PendingToolApproval | None:
         now = time.time()

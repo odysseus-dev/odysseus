@@ -10,8 +10,9 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
-    CHAT_SESSION_APPROVAL_DECISION,
 )
+from src.message_metadata import sanitize_projected_message_metadata
+from src.tool_approval_provenance import has_chat_session_approval_grant
 
 if TYPE_CHECKING:
     from .session_manager import SessionManager
@@ -40,29 +41,11 @@ def _history_grants_chat_session_approval(
     history: List["ChatMessage"],
     session_id: str,
 ) -> bool:
-    """Return whether this exact chat has a resolved session-scope grant."""
+    """Compatibility shim: durable history is never an authority source.
 
-    expected_session = str(session_id or "")
-    if not expected_session:
-        return False
-    for message in reversed(history or []):
-        metadata = getattr(message, "metadata", None)
-        if not isinstance(metadata, dict):
-            continue
-        tool_events = metadata.get("tool_events")
-        if not isinstance(tool_events, list):
-            continue
-        for event in reversed(tool_events):
-            ask_user = event.get("ask_user") if isinstance(event, dict) else None
-            if not isinstance(ask_user, dict):
-                continue
-            if (
-                ask_user.get("kind") == "tool_approval"
-                and ask_user.get("resolved") == CHAT_SESSION_APPROVAL_DECISION
-                and ask_user.get("approved_by_interactive_session") is True
-                and str(ask_user.get("session_id") or "") == expected_session
-            ):
-                return True
+    Keep the old private symbol for downstream imports, but deliberately return
+    false.  The live projection checks the separate server-owned grant table.
+    """
     return False
 
 
@@ -165,21 +148,13 @@ class Session:
                 projected.pop("metadata", None)
                 messages.append(projected)
                 continue
-            if isinstance(metadata, dict) and CHAT_SESSION_APPROVAL_CONTEXT_MARKER in metadata:
-                # The marker is derived below from a verified persisted
-                # approval event. Never pass a raw durable/client marker
-                # through to the model context.
-                metadata = {
-                    key: value
-                    for key, value in metadata.items()
-                    if key != CHAT_SESSION_APPROVAL_CONTEXT_MARKER
-                }
-                if metadata:
-                    projected["metadata"] = metadata
-                else:
-                    projected.pop("metadata", None)
+            metadata = sanitize_projected_message_metadata(metadata)
+            if metadata:
+                projected["metadata"] = metadata
+            else:
+                projected.pop("metadata", None)
             messages.append(projected)
-        if not _history_grants_chat_session_approval(self.history, self.id):
+        if not has_chat_session_approval_grant(self.id, self.owner):
             return messages
 
         # Keep the grant close to the latest user request so route-neutral

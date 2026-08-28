@@ -2,7 +2,7 @@
 import os
 from fastapi import APIRouter, Request, HTTPException, Query
 
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_non_bearer_request
 from src.tool_security import owner_is_admin_or_single_user
 
 # Cap entries returned per directory (mirrors filesystem_tools._CODENAV_MAX_HITS).
@@ -24,6 +24,7 @@ def setup_workspace_routes():
         NON_ADMIN_BLOCKED_TOOLS). A non-admin who can't use those tools must not
         be able to map the host's directory tree either.
         """
+        require_non_bearer_request(request)
         owner = get_current_user(request)
         if not owner_is_admin_or_single_user(owner):
             raise HTTPException(status_code=403, detail="Workspace browsing is admin-only")
@@ -75,6 +76,7 @@ def setup_workspace_routes():
         instead of being stored client-side and silently dropped at chat time.
         Admin-gated like /browse: it confirms path existence on the host.
         """
+        require_non_bearer_request(request)
         owner = get_current_user(request)
         if not owner_is_admin_or_single_user(owner):
             raise HTTPException(status_code=403, detail="Workspace selection is admin-only")

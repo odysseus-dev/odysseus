@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.models import ChatMessage, Session
+from core.database import Session as DbSession
+from tests.helpers.sqlite_db import make_temp_sqlite
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
     ToolApprovalScope,
@@ -92,7 +94,7 @@ def test_allow_for_task_bypasses_only_the_resumed_run_gate():
     assert fresh.decision_for("bash").allowed is False
 
 
-def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat():
+def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat(monkeypatch):
     store = ToolApprovalStore()
     pending = _pending(store, selected_tools=["bash", "manage_skills"])
     grant = store.consume(
@@ -108,6 +110,45 @@ def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat():
     assert grant.grants_chat_session is True
     assert grant.pending.selected_tools == ("bash", "manage_skills")
     assert grant.pending.continuation_query.startswith("inspect the project")
+
+    # The browser-shaped resolution card is not enough to create authority.
+    # Persist the separate grant through the same helper used by the route,
+    # backed by a fresh database so reload behavior is real rather than a
+    # monkeypatched history predicate.
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    import core.database as database
+    from src.tool_approval_provenance import create_chat_session_approval_grant
+
+    db_factory, _engine, _tmpfile = make_temp_sqlite(database.Base.metadata)
+    monkeypatch.setattr(database, "SessionLocal", db_factory)
+    db = db_factory()
+    try:
+        db.add(
+            DbSession(
+                id="session-1",
+                name="Chat",
+                endpoint_url="http://example.invalid",
+                model="test",
+                owner="Alice",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    interactive_request = SimpleNamespace(
+        state=SimpleNamespace(
+            api_token=False,
+            current_user="alice",
+        ),
+        headers={},
+    )
+    assert create_chat_session_approval_grant(
+        interactive_request,
+        approval=grant,
+        approval_id=pending.approval_id,
+        session_id="session-1",
+        owner="alice",
+    ) is True
 
     resolved_card = pending.public_payload()
     resolved_card["resolved"] = "approve"
@@ -125,6 +166,7 @@ def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat():
         name="Chat",
         endpoint_url="http://example.invalid",
         model="test",
+        owner="Alice",
         history=history,
     )
 
@@ -136,6 +178,31 @@ def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat():
     future_turn.observe_messages(messages)
     assert future_turn.approval_gate_bypassed is True
     assert future_turn.decision_for("bash").allowed is True
+
+    # A fresh in-memory Session object with the same durable id/owner sees the
+    # grant after a simulated reload; the transcript card itself is still only
+    # display metadata.
+    reloaded = Session(
+        id="session-1",
+        name="Reloaded",
+        endpoint_url="http://example.invalid",
+        model="test",
+        owner="alice",
+        history=[ChatMessage("user", "after reload")],
+    )
+    assert reloaded.get_context_messages()[-1]["metadata"][CHAT_SESSION_APPROVAL_CONTEXT_MARKER] is True
+
+    wrong_owner = Session(
+        id="session-1",
+        name="Wrong owner",
+        endpoint_url="http://example.invalid",
+        model="test",
+        owner="bob",
+        history=[ChatMessage("user", "cross-owner")],
+    )
+    assert CHAT_SESSION_APPROVAL_CONTEXT_MARKER not in (
+        wrong_owner.get_context_messages()[-1].get("metadata") or {}
+    )
 
     # The persisted card is bound to its original chat id, so a fork/copy does
     # not inherit the grant merely by copying transcript metadata.

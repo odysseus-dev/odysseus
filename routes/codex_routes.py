@@ -1,8 +1,9 @@
 """Codex integration routes.
 
 These are small HTTP surfaces intended for the Codex plugin/MCP bridge. They
-reuse existing Odysseus helpers and enforce API-token scopes before touching
-user data.
+reuse existing Odysseus helpers. The bridge is an interactive host-control
+plane and is unavailable to bearer principals; cookie/admin callers retain the
+documented operation path.
 """
 
 import asyncio
@@ -12,13 +13,14 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core.middleware import require_admin
 from src.auth_helpers import (
     require_api_token_owner,
     require_authenticated_request,
+    require_non_bearer_request,
     require_user,
 )
 from src.tool_implementations import do_manage_notes
@@ -88,6 +90,7 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
     """Return the data owner if the caller is allowed for this Codex action."""
+    require_non_bearer_request(request)
     if getattr(request.state, "api_token", False) is True:
         scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         if not scopes.intersection(allowed):
@@ -99,6 +102,7 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
 
 def _scope_owner_all(request: Request, required: set[str]) -> str:
     """Return owner only when an API token has every required scope."""
+    require_non_bearer_request(request)
     if getattr(request.state, "api_token", False) is True:
         scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         missing = required - scopes
@@ -111,9 +115,9 @@ def _scope_owner_all(request: Request, required: set[str]) -> str:
 def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
     """Authorize a Codex cookbook route.
 
-    For API-token callers, enforce the given scope set.
-    For cookie-session callers, additionally require admin privileges
-    because cookbook surfaces expose host topology, task logs, tmux
+    Bearer callers are rejected by the host-control boundary regardless of
+    legacy scope labels. Cookie-session callers additionally require admin
+    privileges because cookbook surfaces expose host topology, task logs, tmux
     commands, and model-serving controls.
     """
     owner = _scope_owner(request, allowed)
@@ -149,7 +153,11 @@ def setup_codex_routes(
     calendar_router: APIRouter | None = None,
     document_router: APIRouter | None = None,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/codex", tags=["codex"])
+    router = APIRouter(
+        prefix="/api/codex",
+        tags=["codex"],
+        dependencies=[Depends(require_non_bearer_request)],
+    )
     email_list_endpoint = _find_endpoint(email_router, "GET", "/api/email/list")
     email_read_endpoint = _find_endpoint(email_router, "GET", "/api/email/read/{uid}")
     email_send_endpoint = _find_endpoint(email_router, "POST", "/api/email/send")
@@ -164,6 +172,7 @@ def setup_codex_routes(
 
     @router.get("/capabilities")
     def capabilities(request: Request):
+        require_non_bearer_request(request)
         token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         has_token = getattr(request.state, "api_token", False) is True
         def scoped(allowed):
@@ -215,6 +224,7 @@ def setup_codex_routes(
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
+        require_non_bearer_request(request)
         require_authenticated_request(request)
         root = Path(__file__).resolve().parent.parent / "integrations" / "codex"
         if not root.exists():
@@ -511,15 +521,10 @@ def setup_codex_routes(
         return await _as_owner(request, owner, documents_create_endpoint, request, req)
 
     # ── Cookbook surface ──
-    # Lets the agent run the same launch / monitor / kill loop the user
-    # would do by hand in the Cookbook UI: read the current task list +
-    # tmux output, launch a serve task, stop one.  Two scopes:
-    #   cookbook:read   — list tasks + tail output + list servers
-    #   cookbook:launch — also start/stop serves (host shell exec)
-    # `cookbook:launch` is genuinely powerful: /api/model/serve runs SSH'd
-    # commands on the user's hosts. The existing _validate_serve_cmd
-    # allowlist (vllm/python3/sglang/llama-server/etc., no shell metachars)
-    # keeps the agent inside the same sandbox the UI uses.
+    # These handlers retain their legacy scope constants for compatibility
+    # with callers and tests, but the bridge is now an interactive-only
+    # host-control plane. Bearer principals are rejected before any task-list,
+    # tmux-output, launch, stop, or model-serving operation.
 
     async def _run_shell(cmd: str, timeout: float = 15.0) -> dict:
         """Run a shell command, return {exit_code, stdout, stderr}."""
@@ -884,10 +889,15 @@ def setup_claude_routes() -> APIRouter:
     this router only exists to deliver the skill zip via `/api/claude/plugin.zip`
     so the user-facing setup commands stay in the Claude namespace.
     """
-    router = APIRouter(prefix="/api/claude", tags=["claude"])
+    router = APIRouter(
+        prefix="/api/claude",
+        tags=["claude"],
+        dependencies=[Depends(require_non_bearer_request)],
+    )
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
+        require_non_bearer_request(request)
         require_authenticated_request(request)
         # Only ship the skills/ subtree so extracting at ~/.claude/ doesn't dump
         # README.md or other bundle metadata into the user's claude config dir.

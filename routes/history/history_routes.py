@@ -27,6 +27,24 @@ _HISTORY_INLINE_MEDIA_THRESHOLD = 200_000
 _DATA_IMAGE_RE = re.compile(r"data:image/[^;,\"]+;base64,[A-Za-z0-9+/=\s]+")
 
 
+def _metadata_dict(value: Any) -> dict:
+    """Return only mapping-shaped message metadata.
+
+    Legacy rows and client payloads can contain JSON lists/scalars. They are
+    display noise, not trusted fields, and must not reach ``dict.update`` or
+    approval projection code.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _history_display_content(content: Any) -> Any:
     """Return a lightweight browser-display copy of stored message content.
 
@@ -126,12 +144,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
     def _db_history_entry(m: DbChatMessage) -> Dict[str, Any]:
         entry = {"role": m.role, "content": _history_display_content(m.content)}
-        meta = {}
-        if m.meta_data:
-            try:
-                meta = json.loads(m.meta_data) or {}
-            except (json.JSONDecodeError, ValueError):
-                meta = {}
+        meta = _metadata_dict(m.meta_data)
+        if meta:
+            meta = dict(meta)
         if m.timestamp and "timestamp" not in meta:
             meta["timestamp"] = m.timestamp.isoformat() + "Z"
         if meta:
@@ -199,21 +214,23 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         for msg in session.history:
             if isinstance(msg, ChatMessage):
                 # Skip hidden messages (e.g. compaction summaries for AI context)
-                if msg.metadata and msg.metadata.get("hidden"):
+                msg_meta = _metadata_dict(msg.metadata)
+                if msg_meta.get("hidden"):
                     continue
                 entry = {"role": msg.role, "content": _history_display_content(msg.content)}
-                if msg.metadata:
-                    entry["metadata"] = msg.metadata
+                if msg_meta:
+                    entry["metadata"] = msg_meta
                 history_dict.append(entry)
             elif isinstance(msg, dict):
-                if msg.get("metadata", {}).get("hidden"):
+                msg_meta = _metadata_dict(msg.get("metadata"))
+                if msg_meta.get("hidden"):
                     continue
                 entry = {
                     "role": msg.get("role", ""),
                     "content": _history_display_content(msg.get("content", "")),
                 }
-                if msg.get("metadata"):
-                    entry["metadata"] = msg["metadata"]
+                if msg_meta:
+                    entry["metadata"] = msg_meta
                 history_dict.append(entry)
 
         # Fallback: load from DB if in-memory renders empty. Display only —
@@ -370,9 +387,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
                 db_msg.content = content
                 meta = {}
-                if db_msg.meta_data:
-                    try: meta = json.loads(db_msg.meta_data)
-                    except (json.JSONDecodeError, ValueError): pass
+                meta = _metadata_dict(db_msg.meta_data)
+                meta = dict(meta)
                 meta['edited'] = True
                 db_msg.meta_data = json.dumps(meta)
 
@@ -412,13 +428,13 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
                    (isinstance(msg, dict) and msg.get('role') == 'assistant'):
                     if isinstance(msg, ChatMessage):
-                        if not msg.metadata:
+                        if not isinstance(msg.metadata, dict):
                             msg.metadata = {}
                         msg.metadata['stopped'] = True
                         if not msg.metadata.get('model'):
                             msg.metadata['model'] = session.model
                     else:
-                        if 'metadata' not in msg:
+                        if not isinstance(msg.get('metadata'), dict):
                             msg['metadata'] = {}
                         msg['metadata']['stopped'] = True
                         if not msg['metadata'].get('model'):
@@ -436,11 +452,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 )
                 if db_messages:
                     meta = {}
-                    if db_messages.meta_data:
-                        try:
-                            meta = _json.loads(db_messages.meta_data)
-                        except (json.JSONDecodeError, ValueError):
-                            pass
+                    meta = _metadata_dict(db_messages.meta_data)
+                    meta = dict(meta)
                     meta['stopped'] = True
                     if not meta.get('model'):
                         meta['model'] = session.model
@@ -471,11 +484,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
                    (isinstance(msg, dict) and msg.get('role') == 'assistant'):
                     if isinstance(msg, ChatMessage):
-                        if not msg.metadata:
+                        if not isinstance(msg.metadata, dict):
                             msg.metadata = {}
                         msg.metadata.update(meta_update)
                     else:
-                        if 'metadata' not in msg:
+                        if not isinstance(msg.get('metadata'), dict):
                             msg['metadata'] = {}
                         msg['metadata'].update(meta_update)
                     break
@@ -491,10 +504,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     .first()
                 )
                 if db_msg:
-                    meta = {}
-                    if db_msg.meta_data:
-                        try: meta = _json.loads(db_msg.meta_data)
-                        except (json.JSONDecodeError, ValueError): pass
+                    meta = dict(_metadata_dict(db_msg.meta_data))
                     meta.update(meta_update)
                     db_msg.meta_data = _json.dumps(meta)
                     db.commit()
@@ -536,8 +546,12 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             merged_content = content1 + separator + content2
 
             # Merge metadata
-            meta1 = (msg1.metadata if isinstance(msg1, ChatMessage) else msg1.get('metadata')) or {}
-            meta2 = (msg2.metadata if isinstance(msg2, ChatMessage) else msg2.get('metadata')) or {}
+            meta1 = dict(_metadata_dict(
+                msg1.metadata if isinstance(msg1, ChatMessage) else msg1.get('metadata')
+            ))
+            meta2 = dict(_metadata_dict(
+                msg2.metadata if isinstance(msg2, ChatMessage) else msg2.get('metadata')
+            ))
             merged_meta = {**meta1, **meta2}
             merged_meta.pop('stopped', None)  # no longer stopped after continue
 
@@ -693,11 +707,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             pct = max(0.0, min(100.0, pct))
             visible_messages = sum(
                 1 for m in session.history
-                if not (getattr(m, "metadata", None) or {}).get("hidden")
+                if not _metadata_dict(getattr(m, "metadata", None)).get("hidden")
             )
             compacted_messages = sum(
                 1 for m in session.history
-                if (getattr(m, "metadata", None) or {}).get("compacted")
+                if _metadata_dict(getattr(m, "metadata", None)).get("compacted")
             )
             can_compact = used > 0
             return {

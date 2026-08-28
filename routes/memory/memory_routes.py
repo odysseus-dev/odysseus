@@ -1,5 +1,5 @@
 # routes/memory_routes.py
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
 from typing import Dict, Any, Optional, List
 import json
 import os
@@ -53,9 +53,19 @@ def _load_for_update(memory_manager) -> List[Dict[str, Any]]:
 
 def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
     """Set up memory-related routes."""
-    router = APIRouter(prefix="/api/memory", tags=["memory"])
+    router = APIRouter(
+        prefix="/api/memory",
+        tags=["memory"],
+        dependencies=[Depends(require_user)],
+    )
 
     def _owner(request: Request) -> Optional[str]:
+        # Router dependencies do not run when a handler is called directly
+        # (including through an integration router), so keep the same bearer
+        # rejection at the owner-resolution seam. ``None`` is retained only
+        # for legacy unit callers; real ASGI requests always carry Request.
+        if request is not None:
+            require_user(request)
         return get_current_user(request)
 
     def _assert_session_owner(session_obj, user):

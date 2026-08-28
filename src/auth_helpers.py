@@ -1,6 +1,7 @@
 """Shared auth helpers used by all route files."""
 
 import os
+from dataclasses import dataclass
 from typing import Optional
 from fastapi import Request, HTTPException
 
@@ -9,6 +10,48 @@ from src.owner_identity import (
     effective_storage_owner,
     is_request_sentinel_owner,
 )
+
+
+@dataclass(frozen=True)
+class RequestCapability:
+    """Immutable request authority passed through chat execution helpers.
+
+    A bearer token that has the narrow ``chat`` scope is still a pure chat
+    capability.  It may complete the synchronous model call, but it cannot
+    create detached execution, emit interactive events, or schedule follow-up
+    work that would run after the request's authorization context is gone.
+    Cookie and AUTH_ENABLED=false requests retain the existing interactive
+    behavior.
+    """
+
+    principal: str
+    owner: Optional[str]
+    is_bearer: bool
+    allow_deferred_work: bool
+    allow_detached_execution: bool
+    allow_message_events: bool
+    allow_auto_naming: bool
+
+
+def is_bearer_principal(request: Request) -> bool:
+    """Return whether the request is attributable to an API-token principal.
+
+    The auth middleware stamps ``state.api_token`` for a verified token.  The
+    header/sentinel checks keep direct endpoint calls and auth-disabled
+    alternate entry points fail-closed instead of treating the ``api``
+    sentinel as a normal cookie user.
+    """
+    state = getattr(request, "state", None)
+    if getattr(state, "api_token", False) is True:
+        return True
+    current_user = getattr(state, "current_user", None)
+    if isinstance(current_user, str) and current_user.strip().casefold() == "api":
+        return True
+    try:
+        auth_header = request.headers.get("authorization", "")
+    except Exception:
+        auth_header = ""
+    return isinstance(auth_header, str) and auth_header.strip().casefold().startswith("bearer ody_")
 
 
 def get_current_user(request: Request) -> Optional[str]:
@@ -43,9 +86,22 @@ def effective_user(request: Request) -> Optional[str]:
 
 
 def _is_api_token_request(request: Request) -> bool:
-    """Return True when middleware authenticated a bearer API token."""
-    state = getattr(request, "state", None)
-    return getattr(state, "api_token", False) is True
+    """Return True when the request has a bearer API-token principal."""
+    return is_bearer_principal(request)
+
+
+def request_capability(request: Request) -> RequestCapability:
+    """Build the one request capability shared by chat downstream helpers."""
+    bearer = is_bearer_principal(request)
+    return RequestCapability(
+        principal="bearer" if bearer else "interactive",
+        owner=effective_user(request),
+        is_bearer=bearer,
+        allow_deferred_work=not bearer,
+        allow_detached_execution=not bearer,
+        allow_message_events=not bearer,
+        allow_auto_naming=not bearer,
+    )
 
 
 def require_api_token_owner(request: Request) -> str:
@@ -65,7 +121,22 @@ def require_api_token_owner(request: Request) -> str:
         or is_request_sentinel_owner(owner)
     ):
         raise HTTPException(403, "API token has no owner")
-    return owner.strip()
+    normalized_owner = owner.strip()
+    # The normal auth middleware has already resolved this identity from the
+    # token row. Keep the same invariant for direct endpoint calls and
+    # alternate ASGI entry points when a configured auth manager is available.
+    auth_state = getattr(getattr(request, "app", None), "state", None)
+    auth_manager = getattr(auth_state, "auth_manager", None)
+    users = getattr(auth_manager, "users", None)
+    if (
+        getattr(auth_manager, "is_configured", False)
+        and isinstance(users, dict)
+        and normalized_owner.casefold() not in {
+            str(username).strip().casefold() for username in users
+        }
+    ):
+        raise HTTPException(403, "API token owner is not a configured user")
+    return normalized_owner
 
 
 def require_api_token_scope(request: Request, required_scope: str) -> Optional[str]:
@@ -102,11 +173,16 @@ def require_interactive_request(request: Request) -> Optional[str]:
     approve, or otherwise control interactive agent work.
     """
     current_user = get_current_user(request)
-    if _is_api_token_request(request) or (
-        isinstance(current_user, str) and current_user.strip().casefold() == "api"
-    ):
+    if is_bearer_principal(request):
         raise HTTPException(403, "API tokens cannot use this interactive surface")
     return current_user
+
+
+def require_non_bearer_request(request: Request) -> Optional[str]:
+    """Reject bearer principals while preserving cookie/local route behavior."""
+    if is_bearer_principal(request):
+        raise HTTPException(403, "API tokens cannot use this host-control surface")
+    return get_current_user(request)
 
 
 def enforce_api_token_chat_controls(
@@ -137,7 +213,7 @@ def require_authenticated_request(request: Request) -> str:
     user data. Owner-scoped routes should use ``require_user`` for browser
     sessions or their own API-token scope/owner gate.
     """
-    if _is_api_token_request(request):
+    if is_bearer_principal(request):
         return require_api_token_owner(request)
     return require_user(request)
 
@@ -178,7 +254,7 @@ def require_user(request: Request) -> str:
     Use this on routes that touch user data so middleware misconfig can't
     open them up.
     """
-    if _is_api_token_request(request):
+    if is_bearer_principal(request):
         raise HTTPException(403, "API tokens must use a scope-aware API route")
 
     u = get_current_user(request)
