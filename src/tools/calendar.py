@@ -196,6 +196,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     try:
         if action == "list_calendars":
             _ensure_default_calendar(db, owner)
+            # This read path intentionally persists the lazily-created default;
+            # event creation commits it in the event's transaction instead.
+            db.commit()
             cals = _calendar_query().all()
             result = [{"name": c.name, "href": c.id} for c in cals]
             if result:

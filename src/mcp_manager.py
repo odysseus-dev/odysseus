@@ -530,6 +530,8 @@ class McpManager:
             "stderr": output if is_error else "",
             "exit_code": 1 if is_error else 0,
         }
+        if is_error and output:
+            result_dict["untrusted_content"] = True
         if images:
             result_dict["images"] = images
         return result_dict

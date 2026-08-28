@@ -10,9 +10,9 @@ import modelsModule from './js/models.js?v=20260715startupcalm2';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260801fix1';
-import compareModule from './js/compare/index.js?v=20260723compareicon2';
-import documentModule from './js/document.js?v=20260722emailfastindex1';
+import chatModule from './js/chat.js?v=20260819approvalcontrol1';
+import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
+import documentModule from './js/document.js?v=20260815approvalsave1';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
@@ -22,17 +22,18 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260722emailfastindex1';
+import chatRenderer from './js/chatRenderer.js?v=20260819approvalcontrol1';
 import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
+import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js';
 import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js?v=20260716openrouter3';
-import settingsModule from './js/settings.js?v=20260722emailfastindex1';
+import settingsModule from './js/settings.js?v=20260815approvalsave1';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js?v=20260723compareicon2';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -49,6 +50,7 @@ import * as researchPanelModule from './js/research/panel.js?v=20260630researcht
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import { getSettings } from './js/appConfig.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
@@ -1517,13 +1519,11 @@ function initializeEventListeners() {
     })
     .catch(() => {});
 
-  // Hide Gallery when image generation is disabled in settings
-  const _prefetchedSettings = sessionStorage.getItem('ody-prefetch-settings');
-  sessionStorage.removeItem('ody-prefetch-settings');
-  window._initSettingsReady = (_prefetchedSettings
-    ? Promise.resolve(JSON.parse(_prefetchedSettings))
-    : fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' }).then(r => r.json())
-  ).then(settings => {
+  // Hide Gallery when image generation is disabled in settings.
+  // getSettings() consumes the login prefetch itself, so every other module
+  // that asks for settings this load gets the same snapshot without a request.
+  window._initSettingsReady = getSettings()
+    .then(settings => {
       // NOTE: image_gen_enabled only governs *generating* images in chat — the
       // tool is blocked server-side (chat_routes / agent_loop). The Gallery
       // holds uploads and past images too, so it stays visible regardless;
@@ -2725,46 +2725,6 @@ function initializeEventListeners() {
   // ── UI Visibility (Customize UI modal) ──
   const UI_VIS_KEY = 'odysseus-ui-visibility';
 
-  // Selector map: key → CSS selector(s) for targets
-  const UI_VIS_MAP = {
-    'sidebar-brand':       '.sidebar-brand-title',
-    'sidebar-new-chat':    '#sidebar-new-chat-btn',
-    'sidebar-search':      '#sidebar-search-btn',
-	    'sessions-section':    '#sessions-section',
-	    'email-section':       '#email-section',
-	    'tools-section':       '#tools-section',
-    // Per-tool visibility — fine-grained control over which entries show
-    // inside the Tools section in the sidebar.
-    'tool-calendar':       '#tool-calendar-btn',
-    'tool-compare':        '#tool-compare-btn',
-    'tool-cookbook':       '#tool-cookbook-btn',
-    'tool-research':       '#tool-research-btn',
-    'tool-gallery':        '#tool-gallery-btn',
-    'tool-library':        '#tool-library-btn',
-    'tool-memory':         '#tool-memory-btn',
-    'tool-notes':          '#tool-notes-btn',
-    'tool-tasks':          '#tool-tasks-btn',
-    'tool-theme':          '#tool-theme-btn',
-    'user-bar':            '#user-bar-profile',
-    'sidebar-settings-btn':'#user-bar-settings',
-    'chat-meta':           '.chat-meta-overlay',
-    'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
-    'incognito-btn':       '.incognito-btn',
-    'web-toggle-btn':      '#web-toggle-btn',
-    'doc-toggle-btn':      '#overflow-doc-btn',
-    'rag-toggle-btn':      '#overflow-rag-btn',
-    'bash-toggle-btn':     '#bash-toggle-btn',
-    'overflow-plus-btn':   '.overflow-wrapper',
-    'mode-toggle':         '.mode-toggle',
-    'preset-mini-btn':     '#overflow-preset-btn',
-    'attach-btn':          '#overflow-attach-btn',
-    'research-btn':        '#overflow-research-btn',
-    'rail-new-chat':       '#rail-new-session',
-  };
-
-  // Keys hidden by default on first run (no localStorage yet)
-	  const UI_VIS_DEFAULT_OFF = new Set(['rag-toggle-btn', 'text-emojis', 'chat-fullwidth']);
-
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
 
@@ -2777,14 +2737,14 @@ function initializeEventListeners() {
   }
 
   function applyUIVis(state) {
-    Object.entries(UI_VIS_MAP).forEach(([key, selector]) => {
-      // section-drag-reorder uses a body class instead of inline styles
-      if (key === 'section-drag-reorder') return;
-      const visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
+    // resolveVisibility computes selector→visible (pure; ui_visibility.js),
+    // including the tools-section parent rule that hides every tool rail
+    // launcher when Tools is off. Apply the result to the DOM here.
+    for (const [selector, visible] of Object.entries(resolveVisibility(state))) {
       document.querySelectorAll(selector).forEach(el => {
         el.style.display = visible ? '' : 'none';
       });
-    });
+    }
     // Drag reorder: use body class so dynamically created handles are covered
     const dragEnabled = state['section-drag-reorder'] === true;
     document.body.classList.toggle('rearrange-mode', dragEnabled);
@@ -3744,7 +3704,7 @@ function startOdysseusApp() {
   modelsModule.init(API_BASE);
   ragModule.init(API_BASE);
   presetsModule.init(API_BASE);
-  searchModule.init(API_BASE);
+  searchModule.init();
   chatModule.init(API_BASE);
   chatModule.initListeners();
   groupModule.init(API_BASE);

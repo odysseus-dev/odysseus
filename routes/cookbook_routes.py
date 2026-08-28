@@ -50,7 +50,7 @@ from routes.cookbook_helpers import (
     _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
     _validate_local_dir, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase, OLLAMA_MISSING_HINT,
-    _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
+    _safe_env_prefix, _local_windows_bash_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     load_stored_hf_token,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
@@ -71,6 +71,30 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'Add one in Odysseus Cookbook -> Settings -> HuggingFace Token."; '
     'fi'
 )
+
+
+def _windows_local_pid_record_line(pid_path: Path, ready_path: Path) -> str:
+    """Build the Git Bash prelude that records a Win32-stoppable PID.
+
+    Python publishes the detached outer process's Win32 PID first, then touches
+    ``ready_path``. The inner Git Bash runner waits for that publication before
+    replacing the fallback with its own Win32 PID from /proc/<msys-pid>/winpid.
+
+    Missing, malformed, or late mappings leave the valid outer PID untouched.
+    """
+    pp = shlex.quote(pid_path.as_posix())
+    rp = shlex.quote(ready_path.as_posix())
+    return (
+        "i=0; "
+        f"while [ ! -e {rp} ] && [ \"$i\" -lt 500 ]; do "
+        "i=$((i+1)); sleep 0.01; done; "
+        f"if [ -e {rp} ]; then "
+        "winpid=\"$(cat /proc/$$/winpid 2>/dev/null || true)\"; "
+        "case \"$winpid\" in ''|*[!0-9]*) ;; "
+        f"*) printf '%s\\n' \"$winpid\" > {pp} ;; esac; "
+        "fi; "
+        f"rm -f {rp}"
+    )
 
 
 def _append_mlx_image_server_script(runner_lines: list[str]) -> None:
@@ -978,15 +1002,18 @@ def setup_cookbook_routes() -> APIRouter:
         directly (simple commands only). Returns the launched job record."""
         log_path = TMUX_LOG_DIR / f"{session_id}.log"
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
+        pid_ready_path: Path | None = None
         bash = find_bash()
         if bash:
             # Run the existing bash wrapper verbatim through Git Bash, redirecting
             # all output to the log the poller reads. Paths handed to bash use
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            pp = shlex.quote(pid_path.as_posix())
+            pid_ready_path = TMUX_LOG_DIR / f"{session_id}.pid.ready"
+            pid_ready_path.unlink(missing_ok=True)
             inner.write_text(
-                f"printf '%s\\n' \"$$\" > {pp}\n" + "\n".join(bash_lines) + "\n",
+                _windows_local_pid_record_line(pid_path, pid_ready_path) + "\n"
+                + "\n".join(bash_lines) + "\n",
                 encoding="utf-8",
             )
             lp = shlex.quote(log_path.as_posix())
@@ -1020,7 +1047,18 @@ def setup_cookbook_routes() -> APIRouter:
             env=env,
             **detached_popen_kwargs(),
         )
+        # Publish a valid Win32 ancestor first. The Git Bash runner may then
+        # replace it with its own Win32 pid, but never before this fallback exists.
         pid_path.write_text(str(proc.pid), encoding="utf-8")
+        if pid_ready_path is not None:
+            try:
+                pid_ready_path.touch()
+            except OSError as e:
+                logger.warning(
+                    "Could not publish Windows local PID handoff for %s: %s",
+                    session_id,
+                    e,
+                )
         return {"pid": proc.pid, "log_path": str(log_path)}
 
     @router.post("/api/model/download")
@@ -1298,7 +1336,7 @@ def setup_cookbook_routes() -> APIRouter:
             # Local: run hf download in the background (tmux on POSIX, a detached
             # process + logfile on Windows where tmux doesn't exist).
             if req.env_prefix:
-                lines.append(_safe_env_prefix(req.env_prefix))
+                lines.append(_safe_env_prefix(_local_windows_bash_env_prefix(req.env_prefix) if local_windows else req.env_prefix))
             else:
                 lines.append("deactivate 2>/dev/null; hash -r")
             # Show whether the HF token reached this run (masked) — tells a gated
@@ -2128,7 +2166,7 @@ def setup_cookbook_routes() -> APIRouter:
             if req.gpus:
                 runner_lines.append(f"export CUDA_VISIBLE_DEVICES='{req.gpus}'")
             if req.env_prefix:
-                runner_lines.append(_safe_env_prefix(req.env_prefix))
+                runner_lines.append(_safe_env_prefix(_local_windows_bash_env_prefix(req.env_prefix) if local_windows else req.env_prefix))
             else:
                 runner_lines.append("deactivate 2>/dev/null; hash -r")
             _append_venv_nvidia_library_path_lines(runner_lines, cmd=req.cmd)

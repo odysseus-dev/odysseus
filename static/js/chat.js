@@ -8,18 +8,18 @@
 import Storage from './storage.js';
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
-import chatRenderer from './chatRenderer.js?v=20260722emailfastindex1';
-import chatStream from './chatStream.js';
+import chatRenderer from './chatRenderer.js?v=20260819approvalcontrol1';
+import chatStream from './chatStream.js?v=20260819approvalcontrol1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
 import searchModule from './search.js';
-import documentModule from './document.js?v=20260722emailfastindex1';
-import * as emailInbox from './emailInbox.js?v=20260722emailfastindex1';
+import documentModule from './document.js?v=20260815approvalsave1';
+import * as emailInbox from './emailInbox.js?v=20260815approvalsave1';
 import codeRunnerModule from './codeRunner.js';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260722emailfastindex1';
+import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260815approvalsave1';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
@@ -29,9 +29,17 @@ import {
   createThinkingAnalysisGate,
   stripLiveThinkingTags,
 } from './liveThinkingThrottle.js';
+import {
+  applyModelMetricsState,
+  applyModelRouteEventState,
+  inheritModelRouteState,
+} from './chatModelProvenance.js';
+import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
+import { loadPanel } from './panels.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
+  const RUN_ID_ABORT_GRACE_MS = 2000; // timeout waits this long for a run-id header before hard-aborting
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
@@ -52,6 +60,36 @@ import {
   let _contextHeaderSeq = 0;
   let _contextHeaderData = null;
   let _contextHeaderBound = false;
+  let _pendingToolApproval = null;
+
+  function _submitToolApprovalWhenIdle(approvalId) {
+    if (
+      !_pendingToolApproval
+      || _pendingToolApproval.approval_id !== approvalId
+    ) return;
+    if (isStreaming || _sendInFlight) {
+      setTimeout(() => _submitToolApprovalWhenIdle(approvalId), 120);
+      return;
+    }
+    const input = document.getElementById('message');
+    if (input) {
+      _pendingToolApproval.draft = input.value || '';
+    }
+    const sendButton = document.querySelector('.send-btn');
+    if (sendButton) sendButton.click();
+  }
+
+  document.addEventListener('odysseus:tool-approval', (event) => {
+    const detail = event && event.detail ? event.detail : {};
+    const decision = String(detail.decision || '').toLowerCase();
+    if (!detail.approval_id || !['approve', 'approve_task', 'deny'].includes(decision)) return;
+    _pendingToolApproval = {
+      approval_id: String(detail.approval_id),
+      decision,
+      document_id: String(detail.document_id || ''),
+    };
+    _submitToolApprovalWhenIdle(_pendingToolApproval.approval_id);
+  });
 
   function _fmtContextNumber(n) {
     const v = Number(n || 0);
@@ -394,13 +432,27 @@ import {
     const tsSpan = roleEl.querySelector('.role-timestamp');
     const req = requestedModel || actualModel || '';
     const actual = actualModel || requestedModel || '';
-    let label = _modelRouteLabel(req, actual);
+    let label = _modelRouteLabel(
+      req,
+      actual,
+      opts.requestedEndpointLabel,
+      opts.actualEndpointLabel,
+      opts.requestedEndpointId,
+      opts.actualEndpointId,
+    );
     if (opts.suffix) label += ' (' + opts.suffix + ')';
     if (opts.characterName) label = opts.characterName;
     roleEl.textContent = label + ' ';
     _applyModelColor(roleEl, actual || req);
-    if (req && actual && !_sameModelName(req, actual)) {
-      roleEl.title = req + ' -> ' + actual + (opts.reason ? ': ' + opts.reason : '');
+    const endpointChanged = Boolean(
+      opts.requestedEndpointId
+      && opts.actualEndpointId
+      && opts.requestedEndpointId !== opts.actualEndpointId
+    );
+    if (req && actual && (!_sameModelName(req, actual) || endpointChanged)) {
+      roleEl.title = req + ' -> ' + actual
+        + (endpointChanged ? ' (' + opts.requestedEndpointLabel + ' -> ' + opts.actualEndpointLabel + ')' : '')
+        + (opts.reason ? ': ' + opts.reason : '');
     } else if (!opts.reason) {
       roleEl.removeAttribute('title');
     }
@@ -570,6 +622,11 @@ import {
   const _backgroundStreams = new Map(); // sessionId -> { status, accumulated, sourcesHtml, abortCtrl, query, metrics }
   const _activeStreams = new Map();     // sessionId -> { abortCtrl, holder, query, startedAt, cancelViewWork, finalizeView }
   const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
+  const _terminalSavedStreams = new Set(); // sessionId -> canonical terminal event seen by active reader
+  const _streamRunIds = new Map();      // sessionId -> opaque identity of the current send's detached run
+  const _streamGenerations = new Map(); // sessionId -> generation of the current (latest) send
+  const _sendStates = new Map();        // sessionId -> { generation, abortCtrl } of the current send, installed synchronously at send commit so Stop never has to borrow an older send's controller
+  const _pendingRunStops = new Map();   // 'sessionId:generation' -> abortCtrl|null; Stop queued for that send while it awaits headers. Keyed per send so concurrent sends' cancellation intents never displace each other.
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
@@ -606,6 +663,60 @@ import {
     const active = sessionId ? _activeStreams.get(sessionId) : null;
     if (active) active.lastActivity = now;
     return now;
+  }
+
+  /** Stable cost identity for one logical metrics segment within a run. */
+  function _metricsCostRecordId(runId, event) {
+    if (!runId) return '';
+    return `${runId}:${event && event.teacher ? 'teacher' : 'primary'}`;
+  }
+
+  /** POST the exact Stop for one observed run identity. */
+  function _postExactStop(sessionId, runId) {
+    fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Odysseus-Run-Id': runId },
+    }).catch(() => {});
+  }
+
+  /** Stop only the exact detached run whose identity this browser observed. */
+  function _stopExactRun(sessionId, abortCtrl = null) {
+    if (!sessionId) return false;
+    const runId = _streamRunIds.get(sessionId);
+    if (!runId) {
+      // Queue against the CURRENT send's generation: its POST is the only
+      // identity channel that can name the run, so the Stop fires from that
+      // send's own header arrival even if a replacement starts meanwhile.
+      const generation = _streamGenerations.get(sessionId) || 0;
+      const pendingKey = sessionId + ':' + generation;
+      if (abortCtrl || !_pendingRunStops.has(pendingKey)) {
+        _pendingRunStops.set(pendingKey, abortCtrl);
+      }
+      return false;
+    }
+    _postExactStop(sessionId, runId);
+    return true;
+  }
+
+  function _rememberStreamRunId(sessionId, runId, generation) {
+    if (!sessionId || !runId) return;
+    // A superseded send must not record its run id as the session's current
+    // identity, but it must still flush its own queued Stop: this is the only
+    // channel that can cancel that run when the replacement dies before its
+    // own POST reaches the server.
+    if (_streamGenerations.get(sessionId) === generation) {
+      _streamRunIds.set(sessionId, runId);
+    }
+    const pendingKey = sessionId + ':' + generation;
+    if (!_pendingRunStops.has(pendingKey)) return;
+    const pendingAbort = _pendingRunStops.get(pendingKey);
+    _pendingRunStops.delete(pendingKey);
+    _postExactStop(sessionId, runId);
+    if (pendingAbort && !pendingAbort.signal.aborted) {
+      pendingAbort._reason = 'user-stop';
+      pendingAbort.abort();
+    }
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -1154,6 +1265,7 @@ import {
     if (_sendInFlight) return;
     const _sendPerf = _createChatSendPerf();
     _sendInFlight = true;
+    const approvalForSend = _pendingToolApproval;
     _setForegroundChatBusy(true);
     // Instant visual feedback so the user sees their click was accepted
     // even before the streaming button state kicks in below.
@@ -1168,7 +1280,7 @@ import {
     };
 
     // --- Setup mode: intercept next message (but let slash commands through) ---
-    {
+    if (!approvalForSend) {
       const el = uiModule.el;
       const rawMsg = (el('message').value || '').trim();
       const currentSetupMode = slashCommands.getSetupMode();
@@ -1192,13 +1304,13 @@ import {
     }
 
     const el = uiModule.el;
-    const msg = el('message').value;
+    const msg = approvalForSend ? '' : el('message').value;
     // Allow empty text when a regen carries over the original message's
     // attachment ids — a photo-only message still has something to send.
-    if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
+    if (!msg.trim() && !approvalForSend && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
 
     // --- Slash commands: execute directly without AI (no session needed) ---
-    if (isCommand(msg.trim())) {
+    if (!approvalForSend && isCommand(msg.trim())) {
       const handled = await handleSlashCommand(msg.trim());
       if (handled) {
         el('message').value = '';
@@ -1325,7 +1437,7 @@ import {
     }
 
     // --- API key guard: warn if message looks like an API key ---
-    if (API_KEY_RE.test(msg.trim())) {
+    if (!approvalForSend && API_KEY_RE.test(msg.trim())) {
       if (!await window.styledConfirm('This looks like an API key. Sending it to the AI could expose it.\n\nDid you mean to use /setup instead?', { confirmText: 'Send anyway', danger: true })) {
         _releaseSendFlag();
         return;
@@ -1342,6 +1454,26 @@ import {
     if (messageInput) messageInput.disabled = false;
     updateSubmitButton('streaming', submitBtn);
     if (submitBtn) submitBtn.classList.remove('send-pending');
+    // Per-send generation, reserved SYNCHRONOUSLY before the send gate clears
+    // and before the first await: from this instant the superseded send may
+    // not clean session state, register, or POST (each checked at its own
+    // await boundaries). Session-keyed state (run id, queued Stop, cleanup
+    // rights) belongs to the latest generation only. A queued Stop from the
+    // superseded send is deliberately left in place, tagged with ITS
+    // generation: that send's still-alive POST is the only identity channel
+    // able to name its run, so the Stop fires from its own header arrival
+    // (see _rememberStreamRunId) even if this replacement dies before fetch.
+    const streamSessionId = sessionModule.getCurrentSessionId();
+    const streamGeneration = (_streamGenerations.get(streamSessionId) || 0) + 1;
+    _streamGenerations.set(streamSessionId, streamGeneration);
+    const _sendState = { generation: streamGeneration, abortCtrl: null };
+    _sendStates.set(streamSessionId, _sendState);
+    // The previous send's run identity dies with its ownership: a Stop after
+    // this instant must queue for THIS send, not fire against the old run.
+    // (The old send's own queued Stop still works — its flush carries the run
+    // id from its header, and its stale generation cannot repopulate this map.)
+    _streamRunIds.delete(streamSessionId);
+    _streamSessionId = streamSessionId;
     _sendInFlight = false;
 
     try {
@@ -1350,10 +1482,12 @@ import {
         await pendingSwitch;
       }
     } catch (_) {}
+    // Superseded while awaiting the model switch: the replacement owns the
+    // session now, and everything below (state resets, registration, POST)
+    // is its business alone.
+    if (_streamGenerations.get(streamSessionId) !== streamGeneration) return;
 
-    // Capture session ID for background stream detection
-    const streamSessionId = sessionModule.getCurrentSessionId();
-    _streamSessionId = streamSessionId;
+    _terminalSavedStreams.delete(streamSessionId);
     const streamQuery = msg;
     _touchStreamActivity(streamSessionId);
 
@@ -1373,6 +1507,7 @@ import {
     let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
+    let _canonicalTerminalSaved = false;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
@@ -1437,7 +1572,9 @@ import {
       if (sessionModule.clearStreamComplete) sessionModule.clearStreamComplete(sessionModule.getCurrentSessionId());
 
       // Check for document selection context before consuming display override
-      const docSel = documentModule && documentModule.getSelectionContext();
+      const docSel = !approvalForSend && documentModule
+        ? documentModule.getSelectionContext()
+        : null;
       if (docSel) {
         const sels = Array.isArray(docSel) ? docSel : [docSel];
         const lineRefs = sels.map(s =>
@@ -1448,7 +1585,7 @@ import {
 
       const userDisplay = _displayOverride || msg;
       _displayOverride = null;
-      const skipBubble = _hideUserBubble;
+      const skipBubble = _hideUserBubble || !!approvalForSend;
       _hideUserBubble = false;
       // Auto-recovery counter: carries across a turn's auto-continues, but resets
       // when the user genuinely sends a new message (so each task gets a fresh cap).
@@ -1457,7 +1594,9 @@ import {
       // stuck flag can't silently eat the next turn's recovery budget.
       if (!skipBubble) { _autoNudges = 0; _autoContinuePending = false; }
       else if (_autoContinuePending) { _autoContinuePending = false; }
-      const _pendingAttachInfo = fileHandlerModule.getPendingCount() ? fileHandlerModule.getPendingInfo() : null;
+      const _pendingAttachInfo = !approvalForSend && fileHandlerModule.getPendingCount()
+        ? fileHandlerModule.getPendingInfo()
+        : null;
       // Pre-read importable file contents before upload clears pending files
       const IMPORTABLE_EXT = /\.(txt|py|js|ts|html|htm|css|md|json|csv|yml|yaml|sh|sql|rs|go|java|c|cpp|h|rb|php|xml|jsx|tsx|log|toml|ini|conf|env|vue|svelte|scss|sass|less)$/i;
       const _importableFiles = [];
@@ -1475,7 +1614,7 @@ import {
         _userMsgEl = addMessage('user', userDisplay, null, _pendingAttachInfo ? { attachments: _pendingAttachInfo } : null);
       }
       _sendPerf.mark('user_bubble_visible');
-      messageInput.value = '';
+      messageInput.value = approvalForSend ? (approvalForSend.draft || '') : '';
       messageInput.style.height = '';
       messageInput.dispatchEvent(new Event('input'));
       // Mobile: dismiss the on-screen keyboard after sending. iOS in
@@ -1509,13 +1648,15 @@ import {
       }
 
       let ids = [];
-      try {
-        _sendPerf.mark('upload_begin');
-        ids = await fileHandlerModule.uploadPending({ sessionId: sessionModule.getCurrentSessionId() });
-        _sendPerf.mark('upload_done');
-      } catch(e) {
-        console.error('upload failed', e);
-        _sendPerf.mark('upload_failed');
+      if (!approvalForSend) {
+        try {
+          _sendPerf.mark('upload_begin');
+          ids = await fileHandlerModule.uploadPending({ sessionId: sessionModule.getCurrentSessionId() });
+          _sendPerf.mark('upload_done');
+        } catch(e) {
+          console.error('upload failed', e);
+          _sendPerf.mark('upload_failed');
+        }
       }
       if (_pendingAttachInfo && !ids.length && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) {
         if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
@@ -1532,10 +1673,10 @@ import {
       // edited OCR text via the server-side .vision cache). Always CONSUME the
       // slot — even when empty / errored — so the regen ids can't bleed into
       // an unrelated next message if uploadPending() above had thrown.
-      if (_pendingRegenAttachments && _pendingRegenAttachments.length) {
+      if (!approvalForSend && _pendingRegenAttachments && _pendingRegenAttachments.length) {
         ids = ids.concat(_pendingRegenAttachments);
       }
-      _pendingRegenAttachments = null;
+      if (!approvalForSend) _pendingRegenAttachments = null;
 
       // The optimistic user bubble was rendered before the upload assigned ids,
       // so image previews couldn't show (the renderer needs att.id). Now that
@@ -1616,14 +1757,50 @@ import {
       if (activeEmailComposerCtx?.docId) {
         activeDocIdForSend = activeEmailComposerCtx.docId;
       }
-      if (documentModule && activeDocIdForSend) {
+      const shouldSaveActiveDoc = !approvalForSend || (
+        approvalForSend.document_id
+        && approvalForSend.document_id === activeDocIdForSend
+      );
+      if (documentModule && activeDocIdForSend && shouldSaveActiveDoc) {
         try {
           _sendPerf.mark('doc_save_begin');
-          await documentModule.saveDocument();
+          const documentSaved = await documentModule.saveDocument({
+            silent: !!approvalForSend,
+          });
           _sendPerf.mark('doc_save_done');
+          if (approvalForSend && documentSaved === false) {
+            if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
+            if (
+              _pendingToolApproval
+              && _pendingToolApproval.approval_id === approvalForSend.approval_id
+            ) {
+              _pendingToolApproval = null;
+            }
+            uiModule.showError && uiModule.showError(
+              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
+            );
+            updateSubmitButton('idle', submitBtn);
+            _releaseSendFlag();
+            return;
+          }
         } catch(e) {
           console.warn('doc auto-save failed', e);
           _sendPerf.mark('doc_save_failed');
+          if (approvalForSend) {
+            if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
+            if (
+              _pendingToolApproval
+              && _pendingToolApproval.approval_id === approvalForSend.approval_id
+            ) {
+              _pendingToolApproval = null;
+            }
+            uiModule.showError && uiModule.showError(
+              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
+            );
+            updateSubmitButton('idle', submitBtn);
+            _releaseSendFlag();
+            return;
+          }
         }
       }
 
@@ -1651,20 +1828,32 @@ import {
       if (_inject.suffix) _finalMsgWithInject = _finalMsgWithInject + ' ' + _inject.suffix;
 
       const fd = new FormData();
-      fd.append('message', _finalMsgWithInject);
+      fd.append('message', approvalForSend ? '' : _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      if (approvalForSend) {
+        fd.append('tool_approval_id', approvalForSend.approval_id);
+        fd.append('tool_approval_decision', approvalForSend.decision);
+        if (
+          _pendingToolApproval
+          && _pendingToolApproval.approval_id === approvalForSend.approval_id
+        ) {
+          _pendingToolApproval = null;
+        }
+      }
       if (selectedRouteForSend.model) fd.append('selected_model', selectedRouteForSend.model);
       if (selectedRouteForSend.endpoint_url) fd.append('selected_endpoint_url', selectedRouteForSend.endpoint_url);
       if (selectedRouteForSend.endpoint_id) fd.append('selected_endpoint_id', selectedRouteForSend.endpoint_id);
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
-      if (documentModule && activeDocIdForSend) {
-        try {
-          _sendPerf.mark('doc_silent_save_begin');
-          await documentModule.saveDocument({ silent: true });
-          _sendPerf.mark('doc_silent_save_done');
-        } catch (_e) {
-          _sendPerf.mark('doc_silent_save_failed');
+      if (documentModule && activeDocIdForSend && shouldSaveActiveDoc) {
+        if (!approvalForSend) {
+          try {
+            _sendPerf.mark('doc_silent_save_begin');
+            await documentModule.saveDocument({ silent: true });
+            _sendPerf.mark('doc_silent_save_done');
+          } catch (_e) {
+            _sendPerf.mark('doc_silent_save_failed');
+          }
         }
         fd.append('active_doc_id', activeDocIdForSend);
       }
@@ -1718,7 +1907,7 @@ import {
       if (isAgentMode) {
         fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false');
       }
-	      if (el('research-toggle').checked) {
+	      if (!approvalForSend && el('research-toggle').checked) {
 	        fd.append('use_research', 'true');
 	        // Research always runs in chat mode — override agent if set
 	        fd.set('mode', 'chat');
@@ -1742,8 +1931,26 @@ import {
       }
 
 
+      // Superseded during preflight (uploads, document saves): a newer send
+      // owns the session. Bailing here — before registration and before the
+      // POST — keeps this stale send from overwriting the replacement's
+      // stream entry or reaching the server last, where agent_runs.start
+      // would cancel the newer run in favor of this old one.
+      if (_streamGenerations.get(streamSessionId) !== streamGeneration) {
+        // The optimistic user bubble is already in the DOM looking sent, but
+        // this message never reaches the server. Say so instead of leaving a
+        // ghost that vanishes on refresh.
+        if (_userMsgEl && _userMsgEl.parentNode) {
+          const _notSentNote = document.createElement('div');
+          _notSentNote.style.cssText = 'color: var(--color-error); font-style: italic; font-size: 0.85em; padding: 2px 0;';
+          _notSentNote.textContent = '[Not sent — superseded by a newer message]';
+          _userMsgEl.appendChild(_notSentNote);
+        }
+        return;
+      }
       abortCtrl = new AbortController();
       abortCtrl._reason = '';
+      _sendState.abortCtrl = abortCtrl;
       currentAbort = abortCtrl;
 
 	      const _tState = Storage.loadToggleState();
@@ -1755,15 +1962,28 @@ import {
         if (!abortCtrl.signal.aborted) {
           timedOut = true;
           abortCtrl._reason = 'timeout';
+          if (_streamGenerations.get(streamSessionId) !== streamGeneration) {
+            // Superseded send: the session's run id and Stop queue belong to
+            // the replacement now. Just kill this hung POST.
+            abortCtrl.abort();
+            return;
+          }
+          let abortNow = true;
           try {
-            if (streamSessionId) {
-              fetch(`/api/chat/stop/${encodeURIComponent(streamSessionId)}`, {
-                method: 'POST',
-                credentials: 'same-origin',
-              }).catch(() => {});
-            }
+            abortNow = _streamRunIds.has(streamSessionId)
+              ? _stopExactRun(streamSessionId)
+              : _stopExactRun(streamSessionId, abortCtrl);
           } catch (_) {}
-          abortCtrl.abort();
+          if (abortNow) {
+            abortCtrl.abort();
+          } else {
+            // The Stop is queued on the run-id header, but a request this
+            // stalled may never send one. Hard-abort after a short grace so
+            // the timeout still guarantees cancellation.
+            setTimeout(() => {
+              if (!abortCtrl.signal.aborted) abortCtrl.abort();
+            }, RUN_ID_ABORT_GRACE_MS);
+          }
         }
       }, timeoutMs);
       clearResponseTimeout = () => {
@@ -1912,6 +2132,8 @@ import {
         enableResearchBtn();
         return;
       }
+      const streamRunId = res.headers.get('X-Odysseus-Run-Id') || '';
+      if (streamRunId) _rememberStreamRunId(streamSessionId, streamRunId, streamGeneration);
 
       // Mark the chat log busy while streaming so screen readers wait for the
       // settled response instead of announcing every token. Cleared in finally.
@@ -1986,9 +2208,17 @@ import {
         const newRole = document.createElement('div');
         newRole.className = 'role';
         const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-        const requested = holder?._requestedModel || metaS?.model || modelName;
-        const actual = holder?._actualModel || requested;
-        newRole.textContent = _modelRouteLabel(requested, actual) || '';
+        inheritModelRouteState(holder, roundHolder, newWrap, metaS?.model || modelName);
+        const requested = newWrap._requestedModel;
+        const actual = newWrap._actualModel;
+        newRole.textContent = _modelRouteLabel(
+          requested,
+          actual,
+          newWrap._requestedEndpointLabel,
+          newWrap._actualEndpointLabel,
+          newWrap._requestedEndpointId,
+          newWrap._actualEndpointId,
+        ) || '';
         _applyModelColor(newRole, actual);
         newWrap.appendChild(newRole);
         const newBody = document.createElement('div');
@@ -2008,9 +2238,6 @@ import {
         _roundDisplayProjector.reset();
         _replyDisplayProjector.reset();
         _docFenceOpened = false;
-        _docFenceContentStart = -1;
-        _docFenceCandidateStart = -1;
-        _docFenceCandidateMarker = '';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
@@ -2100,9 +2327,6 @@ import {
 
       // Document streaming state (text-fence detection)
       let _docFenceOpened = false;
-      let _docFenceContentStart = -1;
-      let _docFenceCandidateStart = -1;
-      let _docFenceCandidateMarker = '';
       const _thinkingAnalysisGate = createThinkingAnalysisGate({
         startsWithReasoningPrefix: markdownModule.startsWithReasoningPrefix,
       });
@@ -2514,6 +2738,7 @@ import {
 
       let _nextIsError = false;
       let _streamSawDone = false;
+      let _streamTerminalError = null;
       let _firstVisibleOutputSeen = false;
       const markFirstVisibleOutput = () => {
         if (_firstVisibleOutputSeen) return;
@@ -2638,13 +2863,12 @@ import {
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
-                const errMsg = json.text || json.error?.message || `Error ${json.status || 'unknown'}`;
-                console.error('Stream error:', errMsg);
+                _streamTerminalError = createTerminalStreamError(json);
+                console.error('Stream error:', _streamTerminalError.message);
                 if (spinner && spinner.element) spinner.destroy();
-                typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
@@ -2659,6 +2883,14 @@ import {
                   _cancelThinkingTimer();
                   _replaceThinkingSpinner('Preparing agent');
                 }
+                continue;
+              }
+              if (json.type === 'tool_approval_resolved') {
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                if (spinner && spinner.element) spinner.destroy();
+                if (!_isBg && roundHolder && roundHolder !== holder) roundHolder.remove();
+                if (!_isBg && holder) holder.remove();
                 continue;
               }
               if (json.delta) {
@@ -2697,42 +2929,11 @@ import {
 	                roundText += _delta;
 	                _roundDisplayProjector.append(_delta, roundText);
 
-	                // --- Text-fence doc streaming (for models that don't use native tool calls) ---
-                if (!_docFenceOpened && documentModule) {
-                  // Only inspect the newly appended boundary. Re-scanning the
-                  // full round for every reasoning delta is quadratic even
-                  // before thinking normalization runs.
-                  const fenceMarkers = ['```document\n', '```documen\n', '```create_document\n'];
-                  const fenceScanStart = Math.max(0, roundText.length - _delta.length - 24);
-                  if (_docFenceCandidateStart < 0) {
-                    for (const candidate of fenceMarkers) {
-                      const candidateIdx = roundText.indexOf(candidate, fenceScanStart);
-                      if (candidateIdx >= 0 && (_docFenceCandidateStart < 0 || candidateIdx < _docFenceCandidateStart)) {
-                        _docFenceCandidateMarker = candidate;
-                        _docFenceCandidateStart = candidateIdx;
-                      }
-                    }
-                  }
-                  if (_docFenceCandidateStart >= 0) {
-                    const afterFence = roundText.slice(_docFenceCandidateStart + _docFenceCandidateMarker.length);
-                    const fenceLines = afterFence.split('\n');
-                    if (fenceLines.length >= 1 && fenceLines[0].trim()) {
-                      _docFenceOpened = true;
-                      const title = fenceLines[0].trim();
-                      // Keep in sync with backend _KNOWN_LANGS in src/tool_implementations.py
-                      const knownLangs = ['python','py','javascript','js','typescript','ts','html','css','json','yaml','bash','sql','rust','go','java','c','cpp','markdown','text','plain','ruby','swift','kotlin','php','email','csv','xml','toml','ini'];
-                      const isLang = fenceLines.length >= 2 && knownLangs.includes(fenceLines[1].trim().toLowerCase());
-                      const lang = isLang ? fenceLines[1].trim() : '';
-                      _docFenceContentStart = _docFenceCandidateStart + _docFenceCandidateMarker.length + title.length + 1 + (isLang ? fenceLines[1].length + 1 : 0);
-                      documentModule.streamDocOpen(title, lang);
-                    }
-                  }
-                }
-                if (_docFenceOpened && _docFenceContentStart > 0 && documentModule) {
-                  let raw = roundText.slice(_docFenceContentStart);
-                  const closeIdx = raw.indexOf('\n```');
-                  if (closeIdx >= 0) raw = raw.slice(0, closeIdx);
-                  documentModule.streamDocDelta(raw);
+                // Raw model text is not authorization to mutate the editor.
+                // Detect document fences only for chat projection/status; the
+                // server emits doc_stream_* after successful dispatch.
+                if (!_docFenceOpened) {
+                  _docFenceOpened = /```(?:create_document|documen(?:t)?)\s*\n/i.test(roundText);
                 }
 
                 // Detect thinking-in-progress:
@@ -3040,18 +3241,6 @@ import {
                   6000
                 );
                 continue;
-              } else if (json.type === 'model_fallback') {
-                // Model went offline — switched to fallback
-                var _fbData = json.data || {};
-                uiModule.showToast(
-                  `Model ${_fbData.old_model || '?'} offline — switched to ${_fbData.new_model || '?'}`,
-                  5000
-                );
-                // Update the model picker to reflect the new model
-                if (sessionModule && sessionModule.updateModelPicker) {
-                  sessionModule.updateModelPicker();
-                }
-                continue;
               } else if (json.type === 'model_info') {
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
@@ -3059,6 +3248,10 @@ import {
                   if (roleEl) {
                     holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
                     holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                    holder._requestedEndpointId = json.requested_endpoint_id || json.endpoint_id || holder._requestedEndpointId || null;
+                    holder._requestedEndpointLabel = json.requested_endpoint_label || json.endpoint_label || holder._requestedEndpointLabel || 'Selected route';
+                    holder._actualEndpointId = json.endpoint_id || holder._actualEndpointId || holder._requestedEndpointId;
+                    holder._actualEndpointLabel = json.endpoint_label || holder._actualEndpointLabel || holder._requestedEndpointLabel;
                     if (json.suffix) holder._roleSuffix = json.suffix;
                     // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
@@ -3066,6 +3259,10 @@ import {
                     _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
                       suffix: holder._roleSuffix,
                       characterName: holder._characterName,
+                      requestedEndpointId: holder._requestedEndpointId,
+                      requestedEndpointLabel: holder._requestedEndpointLabel,
+                      actualEndpointId: holder._actualEndpointId,
+                      actualEndpointLabel: holder._actualEndpointLabel,
                     });
                   }
                 }
@@ -3076,9 +3273,10 @@ import {
                 if (!_isBg) {
                   var _selM = _shortModel(json.selected_model || '');
                   var _ansM = _shortModel(json.answered_by || '');
-                  uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
-                  if (holder) {
-                    var _rEl = holder.querySelector('.role');
+                  uiModule.showToast('Fallback: ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  var _fallbackHolder = applyModelRouteEventState(json, holder, roundHolder, modelName);
+                  if (_fallbackHolder) {
+                    var _rEl = _fallbackHolder.querySelector('.role');
                     if (_rEl) {
                       var _tsS = _rEl.querySelector('.role-timestamp');
                       _rEl.textContent = _ansM + ' (fallback) ';
@@ -3086,13 +3284,14 @@ import {
                         (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
                       _applyModelColor(_rEl, json.answered_by);
                       if (_tsS) _rEl.appendChild(_tsS);
-                      holder._requestedModel = json.selected_model || holder._requestedModel || modelName;
-                      const _hasResolvedActual = holder._actualModel && !_sameModelName(holder._actualModel, holder._requestedModel);
-                      holder._actualModel = _hasResolvedActual ? holder._actualModel : (json.answered_by || holder._actualModel || holder._requestedModel);
-                      _setRoleModelLabel(_rEl, holder._requestedModel, holder._actualModel, {
-                        suffix: holder._roleSuffix,
-                        characterName: holder._characterName,
+                      _setRoleModelLabel(_rEl, _fallbackHolder._requestedModel, _fallbackHolder._actualModel, {
+                        suffix: _fallbackHolder._roleSuffix,
+                        characterName: _fallbackHolder._characterName,
                         reason: json.reason,
+                        requestedEndpointId: _fallbackHolder._requestedEndpointId,
+                        requestedEndpointLabel: _fallbackHolder._requestedEndpointLabel,
+                        actualEndpointId: _fallbackHolder._actualEndpointId,
+                        actualEndpointLabel: _fallbackHolder._actualEndpointLabel,
                       });
                     }
                   }
@@ -3136,12 +3335,15 @@ import {
                   try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
                 }
               } else if (json.type === 'model_actual') {
-                if (!_isBg && holder) {
-                  holder._requestedModel = json.requested_model || holder._requestedModel || modelName;
-                  holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
-                  _setRoleModelLabel(holder.querySelector('.role'), holder._requestedModel, holder._actualModel, {
-                    suffix: holder._roleSuffix,
-                    characterName: holder._characterName,
+                if (!_isBg) {
+                  var _modelHolder = applyModelRouteEventState(json, holder, roundHolder, modelName);
+                  if (_modelHolder) _setRoleModelLabel(_modelHolder.querySelector('.role'), _modelHolder._requestedModel, _modelHolder._actualModel, {
+                    suffix: _modelHolder._roleSuffix,
+                    characterName: _modelHolder._characterName,
+                    requestedEndpointId: _modelHolder._requestedEndpointId,
+                    requestedEndpointLabel: _modelHolder._requestedEndpointLabel,
+                    actualEndpointId: _modelHolder._actualEndpointId,
+                    actualEndpointLabel: _modelHolder._actualEndpointLabel,
                   });
                 }
               } else if (json.type === 'attachments') {
@@ -3227,15 +3429,60 @@ import {
                   const detail = before && after && before > after ? ` (${after}/${before} messages sent)` : '';
                   uiModule.showToast(`Context trimmed for this model${detail}`);
                 }
+              } else if (json.type === 'agent_terminal' || json.type === 'chat_terminal') {
+                // The backend persisted canonical partial output, sanitized
+                // failure metadata, and actual-route provenance before this
+                // event. The terminal catch below reloads that exact record.
+                _canonicalTerminalSaved = true;
+                _terminalSavedStreams.add(streamSessionId);
+                const priorMetrics = metrics;
+                metrics = json.data || metrics;
+                if (metrics && streamRunId) {
+                  metrics._costRecordId = _metricsCostRecordId(streamRunId, json);
+                }
+                // Direct Chat may have emitted provider usage before its
+                // terminal event. Carry that already-recorded state onto the
+                // canonical terminal metadata instead of billing it twice.
+                if (priorMetrics && priorMetrics._costRecorded && metrics) {
+                  metrics._costRecorded = true;
+                }
+                if (_isBg) {
+                  var bgTerminal = _backgroundStreams.get(streamSessionId);
+                  if (bgTerminal) {
+                    if (
+                      bgTerminal.metrics
+                      && bgTerminal.metrics._costRecorded
+                      && metrics
+                    ) {
+                      metrics._costRecorded = true;
+                    }
+                    bgTerminal.metrics = metrics;
+                    bgTerminal.status = 'completed';
+                    if (metrics) {
+                      chatRenderer.recordSessionMetricsCost(metrics, streamSessionId);
+                    }
+                  }
+                  continue;
+                }
+                if (holder && metrics) {
+                  applyModelMetricsState(metrics, holder, roundHolder, modelName);
+                  const terminalMetricsTarget = _metricsTargetForTurn();
+                  if (terminalMetricsTarget) displayMetrics(terminalMetricsTarget, metrics);
+                }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
+                if (metrics && streamRunId) {
+                  metrics._costRecordId = _metricsCostRecordId(streamRunId, json);
+                }
                 if (!_isBg && holder && metrics) {
-                  holder._requestedModel = metrics.requested_model || holder._requestedModel || modelName;
-                  holder._actualModel = metrics.model || holder._actualModel || holder._requestedModel;
+                  applyModelMetricsState(metrics, holder, roundHolder, modelName);
                 }
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
-                  if (bgM) bgM.metrics = json.data;
+                  if (bgM) {
+                    bgM.metrics = json.data;
+                    chatRenderer.recordSessionMetricsCost(bgM.metrics, streamSessionId);
+                  }
                   continue;
                 }
                 if (metrics) {
@@ -3606,9 +3853,6 @@ import {
                 _roundDisplayProjector.reset();
                 _replyDisplayProjector.reset();
                 _docFenceOpened = false;
-                _docFenceContentStart = -1;
-                _docFenceCandidateStart = -1;
-                _docFenceCandidateMarker = '';
                 const box = document.getElementById('chat-history');
                 const newWrap = document.createElement('div');
                 newWrap.className = 'msg msg-ai msg-continuation streaming';
@@ -3616,9 +3860,17 @@ import {
                 const newRole = document.createElement('div');
                 newRole.className = 'role';
                 const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-                const _roundRequested = holder?._requestedModel || metaS?.model;
-                const _roundActual = holder?._actualModel || _roundRequested;
-                newRole.textContent = _modelRouteLabel(_roundRequested, _roundActual) || '';
+                inheritModelRouteState(holder, roundHolder, newWrap, metaS?.model || modelName);
+                const _roundRequested = newWrap._requestedModel;
+                const _roundActual = newWrap._actualModel;
+                newRole.textContent = _modelRouteLabel(
+                  _roundRequested,
+                  _roundActual,
+                  newWrap._requestedEndpointLabel,
+                  newWrap._actualEndpointLabel,
+                  newWrap._requestedEndpointId,
+                  newWrap._actualEndpointId,
+                ) || '';
                 _applyModelColor(newRole, _roundActual);
                 newWrap.appendChild(newRole);
                 const newBody = document.createElement('div');
@@ -3725,8 +3977,21 @@ import {
         }
       }
 
+      if (_streamTerminalError) {
+        throw _streamTerminalError;
+      }
       if (!_streamSawDone) {
-        throw new Error('Stream closed before completion');
+        if (!_canonicalTerminalSaved) {
+          throw new Error('Stream closed before completion');
+        }
+        // The backend persisted a canonical terminal record (partial output +
+        // failure metadata) before the connection died. Route through the
+        // terminal-error path so that record is reloaded; falling through to
+        // the success renderer would present the partial output as a clean
+        // completion.
+        throw createTerminalStreamError({
+          text: 'Stream closed after canonical terminal event',
+        });
       }
 
       // The final foreground render below is authoritative. Cancel any delayed
@@ -3746,15 +4011,25 @@ import {
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-        const _finalActualModel = metrics?.model || holder._actualModel || finalMeta?.model;
-        const _finalRequestedModel = metrics?.requested_model || holder._requestedModel || finalMeta?.model || _finalActualModel;
+        const _finalModelHolder = applyModelMetricsState(
+          metrics,
+          holder,
+          roundHolder,
+          finalMeta?.model || modelName,
+        ) || holder;
+        const _finalActualModel = _finalModelHolder._actualModel || finalMeta?.model;
+        const _finalRequestedModel = _finalModelHolder._requestedModel || finalMeta?.model || _finalActualModel;
         // Prepend character name if set
         var _charNameFinal = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
-        const roleEl = holder.querySelector('.role');
+        const roleEl = _finalModelHolder.querySelector('.role');
         if (roleEl) {
           _setRoleModelLabel(roleEl, _finalRequestedModel, _finalActualModel, {
-            suffix: holder._roleSuffix,
-            characterName: _charNameFinal || holder._characterName,
+            suffix: _finalModelHolder._roleSuffix,
+            characterName: _charNameFinal || _finalModelHolder._characterName,
+            requestedEndpointId: _finalModelHolder._requestedEndpointId,
+            requestedEndpointLabel: _finalModelHolder._requestedEndpointLabel,
+            actualEndpointId: _finalModelHolder._actualEndpointId,
+            actualEndpointLabel: _finalModelHolder._actualEndpointLabel,
           });
         }
         holder.dataset.raw = accumulated;
@@ -4013,6 +4288,21 @@ import {
       } // end if (!_isBgFinal)
 
     } catch (err) {
+      // If a Stop or timeout was waiting for an identity header and the POST
+      // failed before producing one, keep this on the cancellation path. There
+      // is no safe headerless server cancel to send, but it must not be turned
+      // into an automatic recovery attempt either. Only this send's own
+      // queued Stop counts; a replacement's queued Stop is not ours to spend.
+      const _pendingCatchKey = streamSessionId + ':' + streamGeneration;
+      if (
+        _pendingRunStops.has(_pendingCatchKey)
+        && abortCtrl
+        && !abortCtrl.signal.aborted
+      ) {
+        _pendingRunStops.delete(_pendingCatchKey);
+        abortCtrl._reason = 'user-stop';
+        abortCtrl.abort();
+      }
       // Check if this stream was running in background — needed before any
       // stop-state write, so an errored background stream can't clobber the
       // foreground session's text.
@@ -4021,6 +4311,18 @@ import {
       _closeOpenThinkingMarkup(_isBgCatch);
       if (_isBgCatch) {
         _cancelLiveThinkingWork();
+
+        // A canonical terminal event may have been persisted immediately
+        // before the stream moved into the background. Preserve that terminal
+        // state instead of allowing the catch path to turn it back into a
+        // running/error stream.
+        const bgTerminal = _backgroundStreams.get(streamSessionId);
+        if (bgTerminal && _terminalSavedStreams.has(streamSessionId)) {
+          bgTerminal.status = 'completed';
+          if (sessionModule && sessionModule.clearStreaming) {
+            sessionModule.clearStreaming(streamSessionId);
+          }
+        }
       } else if (accumulated) {
         _catchTerminalView = _finalizeInterruptedView();
       } else {
@@ -4039,7 +4341,10 @@ import {
         // Error happened while backgrounded — update map, don't touch DOM
         console.error('Background stream error:', err);
         var bgErr = _backgroundStreams.get(streamSessionId);
-        if (bgErr && bgErr.status === 'completed') {
+        if (bgErr && (
+          bgErr.status === 'completed' || _terminalSavedStreams.has(streamSessionId)
+        )) {
+          bgErr.status = 'completed';
           // [DONE] was already processed — this error is benign (e.g. reader.read() after close)
           // Don't override the completed status; just ensure the completed dot stays
           if (sessionModule && sessionModule.clearStreaming) {
@@ -4191,8 +4496,36 @@ import {
           // cap. Only auto-recover from connection-class failures; deterministic
           // errors (unsupported tools, 4xx/5xx, parse failures) surface right away
           // instead of burning the nudge budget on a guaranteed-to-fail retry.
-          if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(_catchViewHolder, accumulated, streamSessionId))) {
-            const errorHolder = _catchViewHolder?.querySelector('.body') || document.querySelector('.msg-ai:last-of-type .body');
+          if (!(isRecoverableStreamError(err) && _tryAutoRecover(_catchViewHolder, accumulated, streamSessionId))) {
+            if (err.terminalStreamError) {
+              if (_canonicalTerminalSaved || accumulated.trim()) {
+                // Let this stream's finally block clear foreground state before
+                // reselecting; otherwise selectSession would detach the already
+                // terminal reader and leave a stale background-stream marker.
+                setTimeout(async () => {
+                  if (sessionModule.getCurrentSessionId() === streamSessionId) {
+                    await sessionModule.selectSession(streamSessionId, { showLoading: false });
+                  } else {
+                    await sessionModule.loadSessions();
+                  }
+                }, 0);
+              } else {
+                const terminalBody =
+                  _catchViewHolder?.querySelector('.body')
+                  || roundHolder?.querySelector('.body')
+                  || document.querySelector('.msg-ai:last-of-type .body');
+                if (terminalBody) {
+                  const terminalNote = document.createElement('div');
+                  terminalNote.style.cssText = 'color: var(--color-error); font-style: italic; padding: 4px 0;';
+                  terminalNote.textContent = `[Error: ${err.message}]`;
+                  terminalBody.appendChild(terminalNote);
+                }
+              }
+              return;
+            }
+            const errorHolder =
+              _catchViewHolder?.querySelector('.body')
+              || document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
               let errMsg = `Error: ${err.message}`;
               // Add hint for tool-call errors
@@ -4209,23 +4542,52 @@ import {
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
-      _activeStreams.delete(streamSessionId);
-      if (_streamSessionId === streamSessionId) _streamSessionId = null;
-      _syncForegroundStreamGlobals();
+      // A replacement send bumps the session's generation the moment it
+      // starts, before it registers or reaches the server, so cleanup rights
+      // are decided by generation: a superseded send may remove only what it
+      // itself owns (its stream registration by controller identity, its own
+      // generation's queued Stop) and must leave session-level state — the
+      // reader session id, research marker, UI — to the replacement.
+      const _ownsStreamState =
+        _streamGenerations.get(streamSessionId) === streamGeneration;
+      const _finallyRegistered = _activeStreams.get(streamSessionId);
+      if (!_finallyRegistered || _finallyRegistered.abortCtrl === abortCtrl) {
+        _activeStreams.delete(streamSessionId);
+      }
+      _pendingRunStops.delete(streamSessionId + ':' + streamGeneration);
+      if (_ownsStreamState) {
+        if (_streamSessionId === streamSessionId) _streamSessionId = null;
+        if (_sendStates.get(streamSessionId) === _sendState) {
+          _sendStates.delete(streamSessionId);
+        }
+        // Superseded sends must not resync: with the replacement not yet
+        // registered, a stale sync would set isStreaming false and drop
+        // currentAbort while _sendInFlight is already false, reopening the
+        // send gate mid-preflight. The replacement syncs when it registers
+        // or finishes.
+        _syncForegroundStreamGlobals();
+      }
       // Streaming done — let screen readers announce the settled response.
-      const _chatLogDone = document.getElementById('chat-history');
-      if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
-      // Always clean up research tracking regardless of background state
-      _researchingStreamIds.delete(streamSessionId);
+      if (_ownsStreamState) {
+        const _chatLogDone = document.getElementById('chat-history');
+        if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
+      }
+      // Research markers gate /api/research/cancel in the Stop handler, so a
+      // superseded send must not strip a replacement research run's marker.
+      if (_ownsStreamState) _researchingStreamIds.delete(streamSessionId);
       if (_researchingStreamIds.size === 0) {
         var _rToggleCleanup = document.getElementById('research-toggle-btn');
         if (_rToggleCleanup) _rToggleCleanup.classList.remove('research-running');
       }
 
-      // Only reset UI state if still on the stream's session and was never backgrounded
+      // Only reset UI state if still on the stream's session, never
+      // backgrounded, and no replacement stream owns the session now — the
+      // replacement disabled the composer for its own send, so re-enabling
+      // it here would hand input back mid-stream.
       const _isBgFinally = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
+      if (_ownsStreamState) _terminalSavedStreams.delete(streamSessionId);
 
-      if (!_isBgFinally) {
+      if (!_isBgFinally && _ownsStreamState) {
         // Reset button to idle state
         updateSubmitButton('idle', submitBtn);
 
@@ -4320,69 +4682,64 @@ import {
   // the server run — otherwise closing the tab would kill the background task,
   // defeating the whole point. Only the Stop button cancels the server run.
   export function abortCurrentRequest(stopServer = false) {
+    const _sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
+      || _streamSessionId
+      || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
+    // The CURRENT send's controller comes from its send state, installed at
+    // send commit — never borrowed from the stream registry, which during the
+    // replacement's preflight still holds the superseded send's entry.
+    // Aborting that older controller here would sever the only identity
+    // channel able to name the old run. A send committed but pre-POST has a
+    // null controller: the Stop queues and there is nothing to abort yet.
+    const _sendStateNow = _sid ? _sendStates.get(_sid) : null;
     const active = _getForegroundStreamState();
-    const abortCtrl = active ? active.abortCtrl : currentAbort;
-    if (abortCtrl) {
-      abortCtrl.abort();
-      // Don't set to null here - let catch block handle it
-    }
+    const abortCtrl = _sendStateNow
+      ? _sendStateNow.abortCtrl
+      : (active ? active.abortCtrl : currentAbort);
+    let abortNow = true;
     if (stopServer) {
       try {
-        const _sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
-          || _streamSessionId
-          || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
-          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+          // Before response headers arrive there is no safe server-side stop
+          // identity yet. Keep the POST alive just long enough to receive that
+          // opaque id, then _rememberStreamRunId sends the exact Stop and aborts
+          // this reader. Never fall back to a headerless session-wide cancel.
+          abortNow = _stopExactRun(_sid, abortCtrl);
         }
       } catch (_) {}
+    }
+    if (abortCtrl && abortNow) {
+      abortCtrl.abort();
+      // Don't set to null here - let catch block handle it
     }
   }
 
   // ── Stall watchdog ──────────────────────────────────────────────
-  // Auto-recover a turn whose stream died (connection drop) or went silent:
-  // preserve the partial, then re-submit a completion handshake by reusing the
-  // existing continue/resume path. Returns false at the cap so the caller can
-  // surface the failure instead of nudging forever.
+  // Auto-recover a turn whose browser stream died by reconnecting to the exact
+  // detached server run. Returns false at the cap so the caller can surface
+  // the failure instead of retrying forever.
   // Only auto-recover from connection-class failures (the genuine "silently
   // died" case). Deterministic errors — unsupported tools, HTTP 4xx/5xx, JSON
   // parse failures — will fail identically on retry, so surfacing them
   // immediately is both more honest and avoids wasting the nudge budget.
-  function _isRecoverableStreamErr(err) {
-    if (!err) return false;
-    if (err.name === 'TypeError') return true;   // fetch/reader network failure
-    const m = (err.message || '').toLowerCase();
-    if (/\btool\b|unsupported|json|parse|\b4\d\d\b|\b5\d\d\b/.test(m)) return false;
-    return /network|fetch|connection|reset|closed|aborted|stream|tim(?:e|ed)\s?out|econn|eof/.test(m);
-  }
-
   function _tryAutoRecover(holder, accumulated, sessionId) {
     if (_autoNudges >= _AUTO_NUDGE_CAP) return false;
     _autoNudges++;
     if (holder && accumulated) {
       holder.dataset.raw = accumulated;
     }
-    _pendingContinue = holder || null;   // merge the continuation into the same bubble
-    _hideUserBubble = true;              // no user bubble for the handshake
-    _autoContinuePending = true;         // don't reset the counter on this submit
-    const _abandon = () => {             // clear the pending flags so they can't
-      _pendingContinue = null;           // leak into whatever chat is now open
-      _hideUserBubble = false;
-      _autoContinuePending = false;
-    };
-    // Defer so the stream's finally resets state first — otherwise the send
-    // button is still in "stop" mode and clicking it would toggle, not send.
-    setTimeout(() => {
+    // The server run is detached and keeps its exact pinned model/tool state.
+    // Reconnect to that run instead of submitting a new user turn, which would
+    // cancel it, retry the selected model, and risk duplicating side effects.
+    setTimeout(async () => {
       // The stream that died may not be the chat the user is now looking at —
-      // never inject the recovery handshake into the wrong conversation.
-      if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) { _abandon(); return; }
-      const msgInput = uiModule.el('message');
-      const sb = document.querySelector('.send-btn');
-      if (!msgInput || !sb) { _abandon(); return; }
-      const tail = (accumulated || '').slice(-400);
-      msgInput.value = tail
-        ? `The stream dropped before you finished. It ended with:\n\n${tail}\n\nIf the task is fully complete, reply with just: DONE. Otherwise continue exactly where you left off and finish it — do not repeat what you already wrote.`
-        : `The stream dropped before you produced anything. If the task is already done, reply with just: DONE. Otherwise complete it now.`;
-      sb.click();
+      // never attach the recovery reader to the wrong conversation.
+      if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) return;
+      const resumed = await resumeStream(sessionId, holder || null);
+      if (!resumed && holder && holder.isConnected) {
+        const body = holder.querySelector('.body');
+        if (body) typewriterInto(body, 'Connection lost. The existing run could not be resumed.');
+      }
     }, 200);
     return true;
   }
@@ -4545,9 +4902,13 @@ import {
     // view must stop all delayed rendering immediately. The reader loop may not
     // receive another SSE line for an arbitrary amount of time.
     if (active.cancelViewWork) active.cancelViewWork();
-    // Store background stream state
+
+    const terminalSaved = _terminalSavedStreams.has(sessionId);
+    // Store background stream state. A canonical terminal event can precede
+    // its SSE error event; preserve completion if the user switches sessions
+    // during that gap instead of creating a fresh running/error marker.
     _backgroundStreams.set(sessionId, {
-      status: 'running',
+      status: terminalSaved ? 'completed' : 'running',
       accumulated: currentAccumulated,
       sourcesHtml: '',
       findingsData: null,
@@ -4556,8 +4917,10 @@ import {
       metrics: null,
     });
     // Mark session with pulsing dot in sidebar
-    if (sessionModule && sessionModule.markStreaming) {
+    if (!terminalSaved && sessionModule && sessionModule.markStreaming) {
       sessionModule.markStreaming(sessionId);
+    } else if (terminalSaved && sessionModule && sessionModule.clearStreaming) {
+      sessionModule.clearStreaming(sessionId);
     }
     // Clear local state WITHOUT aborting the fetch
     if (currentAbort === active.abortCtrl) currentAbort = null;
@@ -4584,7 +4947,7 @@ import {
    * reloaded from the DB so its full render stays faithful. Returns true if it
    * attached, false to let the caller fall back to spinner+poll.
    */
-  export async function resumeStream(sessionId) {
+  export async function resumeStream(sessionId, replaceHolder = null) {
     if (!sessionId) return false;
     if (hasActiveStream(sessionId)) return false;
 
@@ -4595,9 +4958,12 @@ import {
       return false;
     }
     if (!res.ok || !res.body) return false;
+    const resumeRunId = res.headers.get('X-Odysseus-Run-Id') || '';
+    if (resumeRunId) _streamRunIds.set(sessionId, resumeRunId);
 
     const box = document.getElementById('chat-history');
     if (!box) return false;
+    if (replaceHolder && replaceHolder.parentNode) replaceHolder.remove();
 
     // Block duplicate re-attach attempts while this reader is live. A dedicated
     // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
@@ -4612,6 +4978,8 @@ import {
     holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) +
       ' <span class="role-timestamp">' + roleTs + '</span></div>' +
       '<div class="body"><div class="stream-content"></div></div>';
+    holder._requestedModel = meta && meta.model;
+    holder._actualModel = holder._requestedModel;
     _applyModelColor(holder.querySelector('.role'), meta && meta.model);
     const contentDiv = holder.querySelector('.stream-content');
     box.appendChild(holder);
@@ -4629,6 +4997,8 @@ import {
     let gotDelta = false;
     let leftSession = false;
     let metricsData = null;
+    let replayError = null;
+    let canonicalTerminalSeen = false;
     // "Rich" responses (tool calls, sources, doc streaming, multi-round) need the
     // full canonical render, which is rebuilt from the saved DB record on reload.
     // Plain text replies can be finalized in place without a reload.
@@ -4665,6 +5035,8 @@ import {
         const parts = buffer.split('\n\n');
         buffer = parts.pop();
         for (const part of parts) {
+          const eventIsError = part.split('\n').some(l => l.trim() === 'event: error');
+          if (eventIsError) rich = true;
           const line = part.split('\n').find(l => l.startsWith('data: '));
           if (!line) continue;
           const payload = line.slice(6);
@@ -4674,7 +5046,9 @@ import {
           }
           let json;
           try { json = JSON.parse(payload); } catch (_) { continue; }
-          if (json.delta) {
+          if (eventIsError) {
+            replayError = createTerminalStreamError(json);
+          } else if (json.delta) {
             roundText += json.delta;
             if (!docFenceOpened && (roundText.includes('```create_document\n') || roundText.includes('```document\n') || roundText.includes('```documen\n'))) {
               docFenceOpened = true;
@@ -4690,6 +5064,64 @@ import {
             if (documentModule) documentModule.streamDocDelta(json.content || json.delta || '');
           } else if (json.type === 'metrics') {
             metricsData = json.data || metricsData;
+            if (metricsData && resumeRunId) {
+              metricsData._costRecordId = _metricsCostRecordId(resumeRunId, json);
+            }
+            if (metricsData) {
+              chatRenderer.recordSessionMetricsCost(metricsData, sessionId);
+            }
+          } else if (json.type === 'fallback') {
+            // Replay can attach after the selected route has already failed.
+            // Reflect the fallback immediately, then reload the canonical
+            // multi-round record when the detached run completes.
+            rich = true;
+            const fallbackHolder = applyModelRouteEventState(json, holder, null, meta && meta.model);
+            if (fallbackHolder) {
+              _setRoleModelLabel(
+                fallbackHolder.querySelector('.role'),
+                fallbackHolder._requestedModel,
+                fallbackHolder._actualModel,
+                {
+                  reason: json.reason,
+                  requestedEndpointId: fallbackHolder._requestedEndpointId,
+                  requestedEndpointLabel: fallbackHolder._requestedEndpointLabel,
+                  actualEndpointId: fallbackHolder._actualEndpointId,
+                  actualEndpointLabel: fallbackHolder._actualEndpointLabel,
+                },
+              );
+            }
+            uiModule.showToast(
+              'Fallback: ' + _shortModel(json.selected_model || '') + ' failed — answered by ' +
+              _shortModel(json.answered_by || ''),
+              6000,
+            );
+          } else if (json.type === 'model_actual') {
+            rich = true;
+            const modelHolder = applyModelRouteEventState(json, holder, null, meta && meta.model);
+            if (modelHolder) {
+              _setRoleModelLabel(
+                modelHolder.querySelector('.role'),
+                modelHolder._requestedModel,
+                modelHolder._actualModel,
+                {
+                  requestedEndpointId: modelHolder._requestedEndpointId,
+                  requestedEndpointLabel: modelHolder._requestedEndpointLabel,
+                  actualEndpointId: modelHolder._actualEndpointId,
+                  actualEndpointLabel: modelHolder._actualEndpointLabel,
+                },
+              );
+            }
+          } else if (json.type === 'agent_terminal' || json.type === 'chat_terminal') {
+            // The server has already persisted canonical partial content plus
+            // a sanitized failure note and actual route provenance.  Do not
+            // finalize replayed deltas as a successful local-only answer.
+            rich = true;
+            canonicalTerminalSeen = true;
+            metricsData = json.data || metricsData;
+            if (metricsData && resumeRunId) {
+              metricsData._costRecordId = _metricsCostRecordId(resumeRunId, json);
+            }
+            if (metricsData) displayMetrics(holder, metricsData);
           } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
                      json.type === 'tool_progress' || json.type === 'agent_step' ||
                      json.type === 'web_sources' || json.type === 'rag_sources' ||
@@ -4700,7 +5132,8 @@ import {
         }
       }
     } catch (e) {
-      // Network drop or parse failure: fall through to the reload below.
+      // Network drop or parse failure: fall through to the canonical reload.
+      rich = true;
     }
 
     cleanup();
@@ -4709,6 +5142,18 @@ import {
 
     const onThisSession = sessionModule.getCurrentSessionId &&
                           sessionModule.getCurrentSessionId() === sessionId;
+
+    // A failure before substantive output has no persisted assistant record to
+    // recover through a canonical reload. Keep its sanitized provider/request
+    // error visible in the replay holder instead of deleting the only evidence.
+    if (onThisSession && replayError && !canonicalTerminalSeen) {
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = 'color: var(--color-error); font-style: italic; padding: 4px 0;';
+      errorDiv.textContent = `[Error: ${replayError.message}]`;
+      contentDiv.appendChild(errorDiv);
+      uiModule.scrollHistory();
+      return true;
+    }
 
     // Plain text reply: finalize in place. Replace the live bubble with a
     // canonical single message (markdown + footer actions + metrics) using the
@@ -4726,6 +5171,9 @@ import {
     // reload from the DB for the full canonical render.
     if (holder._docWritingThread && holder._docWritingThread.parentNode) holder._docWritingThread.remove();
     if (holder.parentNode) holder.remove();
+    if (metricsData) {
+      chatRenderer.recordSessionMetricsCost(metricsData, sessionId);
+    }
     if (onThisSession) sessionModule.selectSession(sessionId);
     else sessionModule.loadSessions();
     return true;
@@ -6162,7 +6610,7 @@ import {
     // Images → Gallery editor.
     if (isImage) {
       try {
-        const gx = await import('./galleryEditor.js');
+        const gx = await loadPanel('editor');
         if (gx.openEditor) { gx.openEditor(url, id, null, name); return; }
       } catch (e) { console.warn('gallery open failed', e); }
       window.open(url, '_blank');

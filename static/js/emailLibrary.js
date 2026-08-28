@@ -5,7 +5,7 @@
 
 import spinnerModule from './spinner.js';
 import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
-import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260722emailfastindex1';
+import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260815approvalsave1';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -23,6 +23,7 @@ import {
   _tryFoldHintSig, _foldSignature, _SIG_ICON, _QUOTE_ICON,
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
+import { getSettings } from './appConfig.js';
 import { collapseSidebarToRail } from './modalSnap.js';
 import { emailApiUrl } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -993,8 +994,7 @@ function _syncEmailReminderBellVisibility(enabled) {
 
 async function _loadEmailReminderBellVisibility() {
   try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await res.json();
+    const settings = await getSettings();
     _syncEmailReminderBellVisibility(settings.reminder_channel === 'email');
   } catch (_) {
     _syncEmailReminderBellVisibility(false);
@@ -6680,7 +6680,7 @@ function _wireAttachmentHandlers(reader, folder) {
               ownerModal.classList.add('hidden');
             }
           }
-          const docMod = await import('./document.js?v=20260722emailfastindex1');
+          const docMod = await import('./document.js?v=20260815approvalsave1');
           const load = (docMod && docMod.loadDocument) || (docMod && docMod.default && docMod.default.loadDocument);
           if (typeof load === 'function') {
             await load(json.doc_id);

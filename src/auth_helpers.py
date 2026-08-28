@@ -4,6 +4,8 @@ import os
 from typing import Optional
 from fastapi import Request, HTTPException
 
+from src.owner_identity import auth_disabled, effective_storage_owner
+
 
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
@@ -56,7 +58,17 @@ def _auth_disabled() -> bool:
     """True when the operator has explicitly turned off auth via .env.
     Mirrors the AUTH_ENABLED parse in app.py / core/middleware.py so the
     three call sites agree on what "off" means."""
-    return os.getenv("AUTH_ENABLED", "true").lower() == "false"
+    return auth_disabled()
+
+
+def storage_owner_for_request(request: Request) -> Optional[str]:
+    """Resolve the storage owner for code paths that need an owner bucket.
+
+    This does not replace route authentication. It only gives auth-disabled
+    no-login mode a stable storage identity instead of writing new data as
+    legacy NULL/ownerless state.
+    """
+    return effective_storage_owner(effective_user(request))
 
 
 def require_user(request: Request) -> str:

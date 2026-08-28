@@ -34,6 +34,7 @@ KEPT = [
     ("append end", "append end"),
     ("END", "END"),
     ("\nEnd\n", "End"),
+    ("x assistant y", "x assistant y"),          # mid-sentence must survive (#5971)
 ]
 
 # Real markers — at least one pipe, plus the role word — with the exact output
@@ -44,7 +45,9 @@ STRIPPED = [
     ("a /|end| b", "a  b"),
     ("a |end b", "a  b"),
     ("a end| b", "a  b"),
-    ("x assistant y", "x  y"),
+    ("Before\nassistant\nAfter", "Before \nAfter"),   # bare-marker on its own line still stripped
+    ("Before\n  assistant\t \nAfter", "Before \nAfter"),     # whitespace-padded marker still stripped
+    ("Before\n\tassistan  \nAfter", "Before \nAfter"),       # truncated marker variant still stripped
 ]
 
 
