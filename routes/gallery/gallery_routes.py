@@ -345,6 +345,34 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
     return None
 
 
+def _extract_ai_tag_response_text(data: dict, provider: str) -> str:
+    """Pull the visible tag text out of a vision-model chat-completion response.
+
+    Anthropic returns content[0].text. OpenAI-compatible providers return
+    choices[0].message.content — but a thinking-capable model can come back
+    with an empty content and the real answer only in reasoning_content, or
+    as Mistral's structured content list. Mirrors the canonical extraction
+    in llm_call/llm_call_async (src/llm_core.py) rather than a bare
+    content-only read: a bare read is exactly what let a thinking model
+    silently commit ai_tags="" as a reported success (caught in review on
+    PR #5965). Thinking markup is stripped before the caller splits on
+    commas, since Gemma/Qwen wrapper tokens otherwise land in the tag list.
+    """
+    if provider == "anthropic":
+        content = (data.get("content") or [{}])[0].get("text", "")
+    else:
+        msg = data.get("choices", [{}])[0].get("message", {}) or {}
+        raw_content = msg.get("content")
+        if isinstance(raw_content, list):
+            from src.llm_core import _normalize_mistral_content
+            text_part, thinking_part = _normalize_mistral_content(raw_content)
+            content = (thinking_part + "\n\n" + (text_part or "")) if thinking_part else (text_part or msg.get("reasoning_content") or "")
+        else:
+            content = raw_content or msg.get("reasoning_content") or ""
+    from src.text_helpers import strip_think
+    return strip_think(content, prose=True, prompt_echo=True)
+
+
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
 
@@ -2315,28 +2343,8 @@ def setup_gallery_routes() -> APIRouter:
                     logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])
                     return {"error": "Vision model request failed"}
                 data = resp.json()
-                # Anthropic returns content[0].text, OpenAI-compatible returns
-                # choices[0].message.content — but a thinking-capable model can
-                # come back with an empty content and the real answer only in
-                # reasoning_content, or as Mistral's structured content list.
-                # Mirrors the canonical extraction in llm_call/llm_call_async
-                # (src/llm_core.py) rather than a bare content-only read, since
-                # that bare read is exactly what let a thinking model silently
-                # commit ai_tags="" as a reported success.
-                if provider == "anthropic":
-                    content = (data.get("content") or [{}])[0].get("text", "")
-                else:
-                    msg = data.get("choices", [{}])[0].get("message", {}) or {}
-                    raw_content = msg.get("content")
-                    if isinstance(raw_content, list):
-                        from src.llm_core import _normalize_mistral_content
-                        text_part, thinking_part = _normalize_mistral_content(raw_content)
-                        content = (thinking_part + "\n\n" + (text_part or "")) if thinking_part else (text_part or msg.get("reasoning_content") or "")
-                    else:
-                        content = raw_content or msg.get("reasoning_content") or ""
+                content = _extract_ai_tag_response_text(data, provider)
 
-            from src.text_helpers import strip_think
-            content = strip_think(content, prose=True, prompt_echo=True)
             if not content.strip():
                 logger.warning("ai_tag: %s returned no visible content after stripping thinking markup", model_name)
                 return {"error": "Vision model returned no visible content — it may have spent its whole budget thinking. Try again, or switch to a different vision model in Settings → AI Defaults → Vision."}
