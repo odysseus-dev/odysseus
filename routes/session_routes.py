@@ -337,8 +337,12 @@ def setup_session_routes(
         skip_validation: str = Form(None),
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
+        tool_profile: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
+        tool_profile_value = str(tool_profile or "").strip() or None
+        if tool_profile_value not in (None, "overnight-research"):
+            raise HTTPException(400, "Unknown session tool profile.")
         user = effective_user(request)
         endpoint_api_key = ""
         endpoint_base_url = ""
@@ -432,6 +436,7 @@ def setup_session_routes(
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
+            tool_profile=tool_profile_value,
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key

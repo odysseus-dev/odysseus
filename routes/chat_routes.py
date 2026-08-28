@@ -335,8 +335,35 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     if not requested:
         return "", ""
     from src.tool_security import owner_is_admin_or_single_user
-    if not owner_is_admin_or_single_user(get_current_user(request)):
+
+    # Cookie-admin and explicit auth-disabled single-user requests retain
+    # their existing workspace behavior.
+    #
+    # Bearer API tokens must additionally carry the explicit workspace:use
+    # capability. The token's real owner must still be an admin, so merely
+    # owning a workspace-scoped token does not create privilege.
+    if getattr(request.state, "api_token", False):
+        scopes = getattr(request.state, "api_token_scopes", None) or []
+
+        if isinstance(scopes, str):
+            scopes = [
+                scope.strip()
+                for scope in scopes.split(",")
+                if scope.strip()
+            ]
+
+        scope_set = {
+            str(scope).strip()
+            for scope in scopes
+            if str(scope).strip()
+        }
+
+        if "workspace:use" not in scope_set:
+            return "", ""
+
+    if not owner_is_admin_or_single_user(effective_user(request)):
         return "", ""
+
     from src.tool_execution import vet_workspace
     workspace = vet_workspace(requested) or ""
     return workspace, (requested if not workspace else "")
@@ -1123,6 +1150,22 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
+
+            # Fixed session-level capability profile. This is intentionally
+            # a positive allowlist: new tools remain unavailable until they
+            # are explicitly added to the profile.
+            session_tool_allowlist = None
+            if getattr(sess, "tool_profile", None) == "overnight-research":
+                session_tool_allowlist = frozenset({
+                    "web_search",
+                    "web_fetch",
+                    "mcp__5fc31d2c__Read",
+                    "mcp__5fc31d2c__Write",
+                    "mcp__5fc31d2c__Edit",
+                    "mcp__5fc31d2c__Glob",
+                    "mcp__5fc31d2c__Grep",
+                })
+
             owner = effective_user(request)
             if tool_approval_id:
                 pending_tool_approval = tool_approval_store.peek(tool_approval_id)
@@ -2307,6 +2350,7 @@ def setup_chat_routes(
                         session_id=session,
                         history_session=sess,
                         disabled_tools=disabled_tools if disabled_tools else None,
+                    allowed_tools=session_tool_allowlist,
                         tool_policy=tool_policy,
                         owner=_user,
                         fallbacks=_foreground_candidates[1:],

@@ -3429,6 +3429,7 @@ async def stream_agent_loop(
     active_email: Optional[Dict[str, str]] = None,
     session_id: Optional[str] = None,
     disabled_tools: Optional[Set[str]] = None,
+    allowed_tools: Optional[Set[str]] = None,
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
@@ -3475,6 +3476,7 @@ async def stream_agent_loop(
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
+    allowed_tools = set(allowed_tools) if allowed_tools is not None else None
     route_descriptors = list(route_descriptors or [])
     while len(route_descriptors) < 1 + len(fallbacks or []):
         route_descriptors.append({})
@@ -3967,6 +3969,24 @@ async def stream_agent_loop(
                 )
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
+
+        # Deterministically preserve explicitly named MCP tools.
+        # This bypasses semantic tool-RAG only when the user supplies an
+        # exact mcp__<server>__<tool> function name.
+        import re as _mcp_re
+        _explicit_mcp_tools = set(
+            _mcp_re.findall(
+                r"\bmcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+\b",
+                _retrieval_query or _last_user or "",
+            )
+        )
+        if _explicit_mcp_tools:
+            _relevant_tools.update(_explicit_mcp_tools)
+            logger.info(
+                "[tool-rag] Explicit MCP tools requested: %s",
+                sorted(_explicit_mcp_tools),
+            )
+
         if (
             (
                 (
@@ -3978,7 +3998,14 @@ async def stream_agent_loop(
             and not _active_document_relevant
             and not active_email
         ):
+            # Preserve MCP tools already retrieved as relevant before the workspace
+            # Terminus heuristic replaces the normal tool selection.
+            _retrieved_mcp_tools = {
+                tool for tool in (_relevant_tools or set())
+                if str(tool).startswith("mcp__")
+            }
             _relevant_tools = set(_WORKSPACE_TERMINUS_TOOLS)
+            _relevant_tools.update(_retrieved_mcp_tools)
             logger.info("[tool-rag] Workspace file/terminal request; using Odysseus Terminus toolset")
 
     # If this turn targets the open document, keep editing tools available
@@ -4507,10 +4534,41 @@ async def stream_agent_loop(
                     if schema.get("function", {}).get("name") not in disabled_tools
                     and schema.get("name") not in disabled_tools
                 ]
+            if allowed_tools is not None:
+                schemas = [
+                    schema for schema in schemas
+                    if (
+                        schema.get("function", {}).get("name")
+                        or schema.get("name")
+                    ) in allowed_tools
+                ]
             return _filter_route_tool_schemas(schemas)
 
         wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)
         schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []
+        if allowed_tools is not None:
+            # Textual routes normally expose only MCP schemas so local models
+            # keep their established fenced-tool behavior. A fixed session
+            # profile is narrower: its selected built-in functions must use
+            # the same schema transport already carrying its MCP tools.
+            schemas = [
+                schema for schema in FUNCTION_TOOL_SCHEMAS
+                if (
+                    schema.get("function", {}).get("name")
+                    or schema.get("name")
+                ) in allowed_tools
+                and (
+                    schema.get("function", {}).get("name")
+                    or schema.get("name")
+                ) not in disabled_tools
+            ] + schemas
+            schemas = [
+                schema for schema in schemas
+                if (
+                    schema.get("function", {}).get("name")
+                    or schema.get("name")
+                ) in allowed_tools
+            ]
         return _filter_route_tool_schemas(schemas)
 
     _approved_result_injected = False
@@ -4551,6 +4609,7 @@ async def stream_agent_loop(
                     approved_block,
                     session_id=session_id,
                     disabled_tools=disabled_tools,
+                    allowed_tools=allowed_tools,
                     tool_policy=tool_policy,
                     owner=owner,
                     progress_cb=_push_approved_progress,
@@ -5785,6 +5844,7 @@ async def stream_agent_loop(
                             block,
                             session_id=session_id,
                             disabled_tools=disabled_tools,
+                            allowed_tools=allowed_tools,
                             tool_policy=tool_policy,
                             owner=owner,
                             progress_cb=_push_progress,
@@ -6431,6 +6491,7 @@ async def stream_agent_loop(
                 session_id=session_id,
                 workspace=workspace,
                 disabled_tools=disabled_tools,
+                allowed_tools=allowed_tools,
                 tool_policy=tool_policy,
                 active_document=active_document,
                 active_email=active_email,
