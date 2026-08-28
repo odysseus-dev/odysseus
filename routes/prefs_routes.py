@@ -1,12 +1,16 @@
 """User preferences API — per-user key/value store backed by a JSON file."""
 import json
-import os
 from typing import Optional
 from fastapi import APIRouter, Request
+from core.atomic_io import atomic_write_json
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
 
 PREFS_FILE = USER_PREFS_FILE
+_FOREGROUND_POLICY_KEYS = (
+    "foreground_fallback_enabled",
+    "foreground_model_fallbacks",
+)
 
 
 def _load():
@@ -20,26 +24,33 @@ def _load():
 
 
 def _save(prefs):
-    os.makedirs(os.path.dirname(PREFS_FILE) or ".", exist_ok=True)
-    tmp = f"{PREFS_FILE}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(prefs, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, PREFS_FILE)
+    atomic_write_json(PREFS_FILE, prefs, indent=2)
 
 
 def _load_for_user(user: Optional[str] = None) -> dict:
     """Load preferences for a specific user."""
     all_prefs = _load()
-    if "_users" in all_prefs:
+    users = all_prefs.get("_users")
+    if isinstance(users, dict):
         if user is None:
             # Auth disabled — return first user's prefs for backward compat
-            users = all_prefs["_users"]
-            return dict(next(iter(users.values()), {}))
-        return dict(all_prefs["_users"].get(user, {}))
-    # Legacy flat format — return as-is
-    return dict(all_prefs)
+            prefs = dict(next(iter(users.values()), {}))
+            # Foreground fallback consent is never borrowed from a named
+            # owner. Auth-disabled operation has a separate flat/root opt-in
+            # that remains inert when authentication is enabled again.
+            for key in _FOREGROUND_POLICY_KEYS:
+                prefs.pop(key, None)
+                if key in all_prefs:
+                    prefs[key] = all_prefs[key]
+            return prefs
+        prefs = users.get(user, {})
+        return dict(prefs) if isinstance(prefs, dict) else {}
+    # A legacy flat store belongs only to auth-disabled single-user mode.
+    # Copying it into the first named user's new `_users` record during an
+    # auth transition would silently transfer another user's preferences and,
+    # critically, foreground fallback consent. Named owners therefore start
+    # with an empty record and must write their own preferences explicitly.
+    return dict(all_prefs) if user is None else {}
 
 
 def _save_for_user(user: Optional[str], prefs: dict):
@@ -51,17 +62,40 @@ def _save_for_user(user: Optional[str], prefs: dict):
         # `prefs` flat would overwrite the whole `_users` map and destroy every
         # other user's preferences. Instead write back into the same (first)
         # slot _load_for_user(None) reads from, preserving the others.
-        if "_users" in all_prefs:
-            users = all_prefs["_users"]
+        users = all_prefs.get("_users")
+        if isinstance(users, dict):
             first_key = next(iter(users), None)
             if first_key is not None:
-                users[first_key] = prefs
+                existing_named = users.get(first_key)
+                existing_named = (
+                    dict(existing_named)
+                    if isinstance(existing_named, dict)
+                    else {}
+                )
+                named_foreground = {
+                    key: existing_named[key]
+                    for key in _FOREGROUND_POLICY_KEYS
+                    if key in existing_named
+                }
+                users[first_key] = {
+                    key: value
+                    for key, value in prefs.items()
+                    if key not in _FOREGROUND_POLICY_KEYS
+                }
+                users[first_key].update(named_foreground)
+                for key in _FOREGROUND_POLICY_KEYS:
+                    if key in prefs:
+                        all_prefs[key] = prefs[key]
                 _save(all_prefs)
                 return
         _save(prefs)
         return
-    if "_users" not in all_prefs:
-        all_prefs = {"_users": {}}
+    if not isinstance(all_prefs.get("_users"), dict):
+        # Preserve the flat single-user object as inert legacy data while
+        # creating the first named-owner namespace. In particular, historical
+        # fallback values must not be deleted or copied into the new owner.
+        all_prefs = dict(all_prefs)
+        all_prefs["_users"] = {}
     all_prefs["_users"][user] = prefs
     _save(all_prefs)
 

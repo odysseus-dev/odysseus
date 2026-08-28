@@ -30,6 +30,8 @@ secrets.env~
 .idea/
 dev-docs/
 docs/
+website/
+assets/branding/
 *.md
 *.db
 *.sqlite

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Encode a source screen-recording (.mkv) into web-optimized preview clips for
-# the landing page: docs/<name>.webm (VP9) + docs/<name>.mp4 (H.264).
+# the landing page: website/<name>.webm (VP9) + website/<name>.mp4 (H.264).
 #
 #   ./encode_previews.sh <input> <name> [max_secs]
 #
@@ -13,7 +13,7 @@ set -euo pipefail
 IN="${1:?input file}"
 NAME="${2:?output basename}"
 MAX="${3:-30}"
-OUT_DIR="$(cd "$(dirname "$0")/../docs" && pwd)"
+OUT_DIR="$(cd "$(dirname "$0")/../website" && pwd)"
 
 dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$IN" | cut -d. -f1)
 dur=${dur:-0}

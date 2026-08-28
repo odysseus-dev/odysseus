@@ -8,6 +8,11 @@ These are simple datacontainers. All persistence is handled by SessionManager.
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
+from src.tool_approval_scopes import (
+    CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
+    CHAT_SESSION_APPROVAL_DECISION,
+)
+
 if TYPE_CHECKING:
     from .session_manager import SessionManager
 
@@ -29,6 +34,35 @@ def get_session_manager_instance() -> Optional["SessionManager"]:
 # Keep legacy name for backward compatibility
 set_session_manager = set_session_manager_instance
 get_session_manager = get_session_manager_instance
+
+
+def _history_grants_chat_session_approval(
+    history: List["ChatMessage"],
+    session_id: str,
+) -> bool:
+    """Return whether this exact chat has a resolved session-scope grant."""
+
+    expected_session = str(session_id or "")
+    if not expected_session:
+        return False
+    for message in reversed(history or []):
+        metadata = getattr(message, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        tool_events = metadata.get("tool_events")
+        if not isinstance(tool_events, list):
+            continue
+        for event in reversed(tool_events):
+            ask_user = event.get("ask_user") if isinstance(event, dict) else None
+            if not isinstance(ask_user, dict):
+                continue
+            if (
+                ask_user.get("kind") == "tool_approval"
+                and ask_user.get("resolved") == CHAT_SESSION_APPROVAL_DECISION
+                and str(ask_user.get("session_id") or "") == expected_session
+            ):
+                return True
+    return False
 
 
 @dataclass
@@ -116,11 +150,27 @@ class Session:
         the model. Display/history-load paths use the raw ``history`` and are
         unaffected.
         """
-        return [
+        messages = [
             msg.to_dict()
             for msg in self.history
             if (msg.metadata or {}).get("source") != "slash"
         ]
+        if not _history_grants_chat_session_approval(self.history, self.id):
+            return messages
+
+        # Keep the grant close to the latest user request so route-neutral
+        # compaction/trimming preserves it. Copy the metadata instead of
+        # mutating the durable transcript object.
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("role") != "user":
+                continue
+            message = dict(messages[index])
+            metadata = dict(message.get("metadata") or {})
+            metadata[CHAT_SESSION_APPROVAL_CONTEXT_MARKER] = True
+            message["metadata"] = metadata
+            messages[index] = message
+            break
+        return messages
 
     def get(self, key: str, default=None):
         """Dict-like access for compatibility."""

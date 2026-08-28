@@ -15,18 +15,32 @@ from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_redirect_base() -> str:
+    """Origin the browser is sent back to after authorizing.
+
+    Falls back to the port the app binds natively (APP_PORT, read the same way
+    by app.py and launcher.py) rather than a fixed 7000: the macOS launcher
+    defaults to 7860, and a callback on the wrong port reaches nothing. The
+    hostname stays `localhost` rather than internal_api_base()'s 127.0.0.1 —
+    this URI is registered with the authorization server (via DCR, or by hand
+    for Google clients), so changing the host invalidates registrations that
+    already exist.
+    """
+    return (
+        os.environ.get("OAUTH_REDIRECT_BASE_URL")
+        or os.environ.get("APP_PUBLIC_URL")
+        or f"http://localhost:{os.environ.get('APP_PORT', '7000')}"
+    ).rstrip("/")
+
+
 # OAuth redirect URI registered with every authorization server via DCR. Loopback
 # is allowed for native/desktop clients (RFC 8252); remote users finish via the
-# paste-back flow. Deployments not reachable at http://localhost:7000 (custom
-# port, reverse proxy, or public domain) must set OAUTH_REDIRECT_BASE_URL (or
-# APP_PUBLIC_URL) to their externally reachable origin so the redirect lands back
-# on Odysseus. APP_PORT is intentionally not used: it is only the Docker host
-# port-map; the app always listens on 7000 inside the container.
-_REDIRECT_BASE = (
-    os.environ.get("OAUTH_REDIRECT_BASE_URL")
-    or os.environ.get("APP_PUBLIC_URL")
-    or "http://localhost:7000"
-).rstrip("/")
+# paste-back flow. Deployments whose externally reachable origin differs from the
+# port Odysseus binds — reverse proxy, public domain, or Docker, whose host port
+# map is invisible inside the container — must set OAUTH_REDIRECT_BASE_URL (or
+# APP_PUBLIC_URL), otherwise the redirect never lands back on Odysseus.
+_REDIRECT_BASE = _resolve_redirect_base()
 REDIRECT_URI = f"{_REDIRECT_BASE}/api/mcp/oauth/callback"
 
 # How long the background connect waits for the user to authorize before giving up.
