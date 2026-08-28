@@ -2315,11 +2315,31 @@ def setup_gallery_routes() -> APIRouter:
                     logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])
                     return {"error": "Vision model request failed"}
                 data = resp.json()
-                # Anthropic returns content[0].text, OpenAI returns choices[0].message.content
+                # Anthropic returns content[0].text, OpenAI-compatible returns
+                # choices[0].message.content — but a thinking-capable model can
+                # come back with an empty content and the real answer only in
+                # reasoning_content, or as Mistral's structured content list.
+                # Mirrors the canonical extraction in llm_call/llm_call_async
+                # (src/llm_core.py) rather than a bare content-only read, since
+                # that bare read is exactly what let a thinking model silently
+                # commit ai_tags="" as a reported success.
                 if provider == "anthropic":
                     content = (data.get("content") or [{}])[0].get("text", "")
                 else:
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    msg = data.get("choices", [{}])[0].get("message", {}) or {}
+                    raw_content = msg.get("content")
+                    if isinstance(raw_content, list):
+                        from src.llm_core import _normalize_mistral_content
+                        text_part, thinking_part = _normalize_mistral_content(raw_content)
+                        content = (thinking_part + "\n\n" + (text_part or "")) if thinking_part else (text_part or msg.get("reasoning_content") or "")
+                    else:
+                        content = raw_content or msg.get("reasoning_content") or ""
+
+            from src.text_helpers import strip_think
+            content = strip_think(content, prose=True, prompt_echo=True)
+            if not content.strip():
+                logger.warning("ai_tag: %s returned no visible content after stripping thinking markup", model_name)
+                return {"error": "Vision model returned no visible content — it may have spent its whole budget thinking. Try again, or switch to a different vision model in Settings → AI Defaults → Vision."}
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]
