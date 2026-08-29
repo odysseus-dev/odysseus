@@ -23,6 +23,10 @@ const _PROVIDERS = [
   [/openrouter|open router/i,
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.5 12h4.5c2 0 2.5-6 4.5-6"/><path d="M12 12c2 0 2.5 6 4.5 6"/></svg>'],
 
+  // OrcaRouter
+  [/orcarouter|orca router/i,
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.66 15L12 22l8.66-5A10 10 0 0 0 12 2Zm0 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 9-5 2.89V18.5A8 8 0 0 1 12 6a8 8 0 0 1 5 2.5v.39L12 17Z"/></svg>'],
+
   // Ollama / Ollama Cloud
   [/ollama/i,
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 10.2a4.8 4.8 0 0 1 9.1-1.9 4.1 4.1 0 0 1 1 .1A4.8 4.8 0 0 1 17 18H7.4a3.9 3.9 0 0 1 0-7.8Zm0 2a1.9 1.9 0 0 0 0 3.8H17a2.8 2.8 0 0 0 .2-5.6 2.7 2.7 0 0 0-1.3.2l-.9.4-.4-.9a2.8 2.8 0 0 0-5.4 1.1v1H7.4Z"/></svg>'],
@@ -108,6 +112,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)githubcopilot\.com$/i, "GitHub Copilot"],
   [/(^|\.)chatgpt\.com$/i, "ChatGPT Subscription"],
   [/(^|\.)openrouter\.ai$/i, "OpenRouter"],
+  [/(^|\.)orcarouter\.ai$/i, "OrcaRouter"],
   [/(^|\.)anthropic\.com$/i, "Anthropic"],
   [/(^|\.)openai\.com$/i, "OpenAI"],
   [/(^|\.)(generativelanguage|aiplatform)\.googleapis\.com$/i, "Google"],
