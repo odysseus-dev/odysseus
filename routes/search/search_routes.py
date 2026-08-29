@@ -10,7 +10,7 @@ import time
 from services.search import get_search_config, comprehensive_web_search, PROVIDER_INFO
 from services.search.core import _call_provider
 from services.search.providers import _get_provider_key, _get_search_instance
-from src.auth_helpers import require_chat_scope
+from src.auth_helpers import require_interactive_request
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +40,12 @@ async def _request_values(request: Request) -> Dict[str, Any]:
 def setup_search_routes(config) -> APIRouter:
     router = APIRouter(
         tags=["search"],
-        dependencies=[Depends(require_chat_scope)],
+        dependencies=[Depends(require_interactive_request)],
     )
 
     @router.get("/api/search/config")
-    async def get_search_settings() -> Dict[str, Any]:
+    async def get_search_settings(request: Request) -> Dict[str, Any]:
+        require_interactive_request(request)
         return get_search_config()
 
     @router.post("/api/search")
@@ -53,7 +54,7 @@ def setup_search_routes(config) -> APIRouter:
 
         Used by Compare mode to pre-search once and share results across panes.
         """
-        require_chat_scope(request)
+        require_interactive_request(request)
         values = await _request_values(request)
         query = str(values.get("query") or values.get("q") or "").strip()
         if not query:
@@ -71,8 +72,9 @@ def setup_search_routes(config) -> APIRouter:
             return {"context": "", "sources": [], "error": str(e)}
 
     @router.get("/api/search/providers")
-    async def list_search_providers():
+    async def list_search_providers(request: Request):
         """Return available search providers with config status."""
+        require_interactive_request(request)
         providers = []
         for pid, (label, needs_key, needs_url) in PROVIDER_INFO.items():
             if pid == "disabled":
@@ -92,7 +94,7 @@ def setup_search_routes(config) -> APIRouter:
     @router.post("/api/search/query")
     async def search_with_provider(request: Request) -> Dict[str, Any]:
         """Search using a specific provider. Used by compare search mode."""
-        require_chat_scope(request)
+        require_interactive_request(request)
         values = await _request_values(request)
         query = str(values.get("query") or values.get("q") or "").strip()
         provider = str(values.get("provider") or "").strip()

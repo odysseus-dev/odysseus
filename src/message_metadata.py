@@ -17,6 +17,26 @@ _APPROVAL_PROVENANCE_FIELDS = frozenset({
     "session_id",
 })
 
+_CLIENT_MESSAGE_ROLES = frozenset({"user", "assistant"})
+
+
+def normalize_client_message_role(role: Any, *, default: str = "assistant") -> str:
+    """Return a non-privileged role for a client-supplied message.
+
+    Durable ``system`` and ``tool`` records are still valid when created by
+    trusted server paths. Client ingress has no such provenance, so only the
+    ordinary conversation roles are accepted; every other value is demoted to
+    ``user`` rather than becoming model-control metadata.
+    """
+    if not isinstance(role, str):
+        return "user"
+    normalized = role.strip().casefold()
+    if normalized in _CLIENT_MESSAGE_ROLES:
+        return normalized
+    if normalized == "" and default in _CLIENT_MESSAGE_ROLES:
+        return default
+    return "user"
+
 
 def _scrub_approval_metadata(value: Any, *, projection: bool, in_approval: bool = False):
     """Copy metadata while removing fields that can imply approval authority.

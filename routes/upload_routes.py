@@ -21,7 +21,12 @@ from core.database import (
     Note,
     Session as DbSession,
 )
-from src.auth_helpers import effective_user, require_chat_scope, require_non_bearer_request
+from src.auth_helpers import (
+    effective_user,
+    is_bearer_principal,
+    require_chat_scope,
+    require_non_bearer_request,
+)
 from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
 from src.upload_handler import (
@@ -379,7 +384,14 @@ def setup_upload_routes(upload_handler):
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
         current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
-        if auth_configured:
+        if is_bearer_principal(request):
+            # A token owner is an owner-bound data principal, even when that
+            # owner is an administrator. Do not reuse the browser admin
+            # fallback for bearer downloads or an admin token can read another
+            # user's upload by ID.
+            if not current_user or file_owner != current_user:
+                raise HTTPException(404, "File not found")
+        elif auth_configured:
             if not current_user:
                 raise HTTPException(403, "Access denied")
             if file_owner != current_user and not auth_mgr.is_admin(current_user):

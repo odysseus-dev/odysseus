@@ -2821,6 +2821,7 @@ def setup_chat_routes(
         It just asks the LLM to rewrite the given text.
         """
         require_chat_scope(request)
+        capability = build_request_capability(request)
         try:
             body = await request.json()
         except Exception:
@@ -2855,6 +2856,9 @@ def setup_chat_routes(
         async def stream_rewrite() -> AsyncGenerator[str, None]:
             full_response = ""
             try:
+                stream_kwargs = {}
+                if not capability.allow_live_probes:
+                    stream_kwargs["allow_live_probes"] = False
                 async for chunk in stream_llm(
                     sess.endpoint_url,
                     sess.model,
@@ -2867,6 +2871,7 @@ def setup_chat_routes(
                     # on "Rewriting...". Same fix as the chat max_tokens cap.
                     max_tokens=0,
                     tools=None,
+                    **stream_kwargs,
                 ):
                     if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                         try:

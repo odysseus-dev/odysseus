@@ -16,9 +16,14 @@ from src.auth_helpers import (
     _auth_disabled,
     is_bearer_principal,
     owner_filter,
+    request_capability,
     require_chat_scope,
+    require_interactive_request,
 )
-from src.message_metadata import sanitize_client_message_metadata
+from src.message_metadata import (
+    normalize_client_message_role,
+    sanitize_client_message_metadata,
+)
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
 from src.upload_handler import reserve_message_upload_references
@@ -246,32 +251,37 @@ def setup_session_routes(
         # session is current and won't delete the live one — this server-side
         # purge exists only to catch ghosts the frontend missed (tab close,
         # crash). Only clean up rows old enough to be definitely orphaned.
-        try:
-            from datetime import timedelta as _td
-            _cutoff = utcnow_naive() - _td(minutes=10)
-            _purge_db = SessionLocal()
+        # Listing is an owner-scoped read for bearer integrations. The legacy
+        # incognito cleanup query has no owner predicate and would otherwise
+        # let a chat token mutate another user's stale sessions before the
+        # owner-filtered result is assembled. Browser cleanup remains intact.
+        if not is_bearer_principal(request):
             try:
-                from core.database import ChatMessage as _DbMsg
-                _ghosts = _purge_db.query(DbSession).filter(
-                    DbSession.name.in_(("Nobody", "Incognito")),
-                    DbSession.created_at < _cutoff,
-                ).all()
-                for _g in _ghosts:
-                    if active_incognito_id and _g.id == active_incognito_id:
-                        continue
-                    _purge_db.query(_DbMsg).filter(_DbMsg.session_id == _g.id).delete()
-                    _purge_db.delete(_g)
-                    if hasattr(session_manager, "delete_session"):
-                        try:
-                            session_manager.delete_session(_g.id)
-                        except Exception:
-                            pass
-                if _ghosts:
-                    _purge_db.commit()
-            finally:
-                _purge_db.close()
-        except Exception:
-            pass
+                from datetime import timedelta as _td
+                _cutoff = utcnow_naive() - _td(minutes=10)
+                _purge_db = SessionLocal()
+                try:
+                    from core.database import ChatMessage as _DbMsg
+                    _ghosts = _purge_db.query(DbSession).filter(
+                        DbSession.name.in_(("Nobody", "Incognito")),
+                        DbSession.created_at < _cutoff,
+                    ).all()
+                    for _g in _ghosts:
+                        if active_incognito_id and _g.id == active_incognito_id:
+                            continue
+                        _purge_db.query(_DbMsg).filter(_DbMsg.session_id == _g.id).delete()
+                        _purge_db.delete(_g)
+                        if hasattr(session_manager, "delete_session"):
+                            try:
+                                session_manager.delete_session(_g.id)
+                            except Exception:
+                                pass
+                    if _ghosts:
+                        _purge_db.commit()
+                finally:
+                    _purge_db.close()
+            except Exception:
+                pass
         user_sessions = session_manager.get_sessions_for_user(user)
         # Fetch folder info from DB for each session
         db = SessionLocal()
@@ -354,6 +364,8 @@ def setup_session_routes(
         endpoint_id: str = Form(""),
     ):
         require_chat_scope(request)
+        capability = request_capability(request)
+        probe_kwargs = {} if capability.allow_live_probes else {"allow_live_probes": False}
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
         endpoint_api_key = ""
@@ -405,6 +417,7 @@ def setup_session_routes(
                 headers=validation_headers,
                 owner=user,
                 endpoint_id=endpoint_id.strip() if endpoint_id else None,
+                **probe_kwargs,
             )
             if not ids:
                 raise HTTPException(400, "Cannot reach /v1/models")
@@ -416,28 +429,35 @@ def setup_session_routes(
             chat_ids = [m for m in ids if not any(p in m.lower() for p in _NON_CHAT)]
             model_to_use = (chat_ids or ids)[0]
         else:
-            from src.llm_core import list_model_ids
-            import os as _os
-            req_base = _os.path.basename(model_to_use.rstrip("/"))
-            avail = list_model_ids(
-                endpoint_url,
-                timeout=SESSION_MODEL_VALIDATION_TIMEOUT,
-                headers=validation_headers,
-                owner=user,
-                endpoint_id=endpoint_id.strip() if endpoint_id else None,
-            )
-            if not avail:
-                raise HTTPException(400, "Cannot reach /v1/models")
-            if model_to_use not in avail:
-                found = None
-                for a in avail:
-                    if _os.path.basename(a.rstrip("/")) == req_base:
-                        found = a
-                        break
-                if not found:
-                    raise HTTPException(400,
-                                        f"Model not found at server. Available: {', '.join(avail)}")
-                model_to_use = found
+            # A bearer with an explicit model is already using an owner-scoped
+            # registered endpoint (raw URLs are rejected above). Do not turn
+            # that synchronous session-creation request into a live catalog
+            # probe merely to validate a value the caller supplied. Interactive
+            # requests retain the existing catalog-backed validation.
+            if capability.allow_live_probes:
+                from src.llm_core import list_model_ids
+                import os as _os
+                req_base = _os.path.basename(model_to_use.rstrip("/"))
+                avail = list_model_ids(
+                    endpoint_url,
+                    timeout=SESSION_MODEL_VALIDATION_TIMEOUT,
+                    headers=validation_headers,
+                    owner=user,
+                    endpoint_id=endpoint_id.strip() if endpoint_id else None,
+                    **probe_kwargs,
+                )
+                if not avail:
+                    raise HTTPException(400, "Cannot reach /v1/models")
+                if model_to_use not in avail:
+                    found = None
+                    for a in avail:
+                        if _os.path.basename(a.rstrip("/")) == req_base:
+                            found = a
+                            break
+                    if not found:
+                        raise HTTPException(400,
+                                            f"Model not found at server. Available: {', '.join(avail)}")
+                    model_to_use = found
         
         sid = str(uuid.uuid4())
         user = effective_user(request)
@@ -586,7 +606,7 @@ def setup_session_routes(
             raise HTTPException(400, "Invalid message attachment metadata") from exc
         for m in messages:
             sess.add_message(ChatMessage(
-                m["role"],
+                normalize_client_message_role(m.get("role", "user"), default="user"),
                 m["content"],
                 metadata=sanitize_client_message_metadata(m.get("metadata")),
             ))
@@ -1002,6 +1022,7 @@ def setup_session_routes(
     async def compact_session(request: Request, session_id: str):
         """Summarize older messages into one compacted history entry."""
         require_chat_scope(request)
+        capability = request_capability(request)
         _verify_session_owner(request, session_id)
         try:
             session = session_manager.get_session(session_id)
@@ -1046,6 +1067,9 @@ def setup_session_routes(
             for m in older
         )
         try:
+            compact_kwargs = {}
+            if not capability.allow_live_probes:
+                compact_kwargs["allow_live_probes"] = False
             summary = await llm_call_async(
                 url,
                 model,
@@ -1054,6 +1078,7 @@ def setup_session_routes(
                 max_tokens=1024,
                 headers=headers,
                 timeout=60,
+                **compact_kwargs,
             )
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)
@@ -1079,7 +1104,10 @@ def setup_session_routes(
             "message_count": len(new_history),
         }
 
-    @router.post("/sessions/auto-sort")
+    @router.post(
+        "/sessions/auto-sort",
+        dependencies=[Depends(require_interactive_request)],
+    )
     def auto_sort_sessions(request: Request, skip_llm: bool = False):
         """Use AI to categorize all sessions into folders.
 
@@ -1089,6 +1117,7 @@ def setup_session_routes(
         users can clean junk without spending tokens.
         """
         require_chat_scope(request)
+        require_interactive_request(request)
         from src.llm_core import llm_call
         user = effective_user(request)
         single_user_mode = not user and _auth_disabled()
@@ -1370,6 +1399,7 @@ def setup_session_routes(
     async def get_context_info(request: Request, session_id: str):
         """Get the real context length for a session's model from the endpoint."""
         require_chat_scope(request)
+        capability = request_capability(request)
         _verify_session_owner(request, session_id)
         session = session_manager.get_session(session_id)
         if not session:
@@ -1378,7 +1408,10 @@ def setup_session_routes(
             return {"context_length": None}
         try:
             from src.model_context import get_context_length
-            ctx = get_context_length(session.endpoint_url, session.model)
+            context_kwargs = {}
+            if not capability.allow_live_probes:
+                context_kwargs["allow_live_probes"] = False
+            ctx = get_context_length(session.endpoint_url, session.model, **context_kwargs)
             return {"context_length": ctx, "model": session.model}
         except Exception:
             return {"context_length": None}

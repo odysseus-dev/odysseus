@@ -10,10 +10,16 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.auth_helpers import effective_user, is_bearer_principal, require_chat_scope
+from src.auth_helpers import (
+    effective_user,
+    is_bearer_principal,
+    request_capability,
+    require_chat_scope,
+)
 from src.message_metadata import (
     sanitize_client_message_metadata,
     sanitize_projected_message_metadata,
+    normalize_client_message_role,
 )
 from src.topic_analyzer import analyze_topics
 from src.upload_handler import reserve_message_upload_references
@@ -311,7 +317,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
-            role = body.get("role", "assistant")
+            role = normalize_client_message_role(body.get("role", "assistant"))
             content = body.get("content", "")
             if not content:
                 raise HTTPException(400, "content is required")
@@ -720,6 +726,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         when the whole chat is approaching compaction.
         """
         require_chat_scope(request)
+        capability = request_capability(request)
         _verify_session_owner(request, session_id)
         try:
             session = session_manager.get_session(session_id)
@@ -731,7 +738,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
             messages = session.get_context_messages()
             used = int(estimate_tokens(messages))
-            ctx_len = int(get_context_length(session.endpoint_url, session.model) or 0)
+            context_kwargs = {}
+            if not capability.allow_live_probes:
+                context_kwargs["allow_live_probes"] = False
+            ctx_len = int(get_context_length(
+                session.endpoint_url,
+                session.model,
+                **context_kwargs,
+            ) or 0)
             pct = round((used / ctx_len) * 100, 1) if ctx_len else 0.0
             pct = max(0.0, min(100.0, pct))
             visible_messages = sum(
@@ -765,6 +779,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     async def compact_session(request: Request, session_id: str):
         """Manually trigger context compaction for a session."""
         require_chat_scope(request)
+        capability = request_capability(request)
         _verify_session_owner(request, session_id)
         from src.auth_helpers import effective_user
         owner = effective_user(request)
@@ -782,7 +797,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             if len(session.history) < 6:
                 return {"status": "ok", "message": "Not enough messages to compact"}
 
-            ctx_len = get_context_length(session.endpoint_url, session.model)
+            context_kwargs = {}
+            if not capability.allow_live_probes:
+                context_kwargs["allow_live_probes"] = False
+            ctx_len = get_context_length(
+                session.endpoint_url,
+                session.model,
+                **context_kwargs,
+            )
             messages_before = session.get_context_messages()
             used_before = estimate_tokens(messages_before)
             pct_before = round((used_before / ctx_len) * 100, 1) if ctx_len else 0
@@ -809,6 +831,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT, normalize_compaction_summary
             compaction_count = sum(1 for m in session.history if isinstance(m, ChatMessage) and "[Conversation summary" in (m.content or ""))
             sys_prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace("{count}", str(len(older))).replace("{n}", str(compaction_count + 1))
+            compact_kwargs = {}
+            if not capability.allow_live_probes:
+                compact_kwargs["allow_live_probes"] = False
             summary = await llm_call_async(
                 compact_url, compact_model,
                 [
@@ -817,6 +842,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 ],
                 temperature=0.2, max_tokens=1024,
                 headers=compact_headers, timeout=30,
+                **compact_kwargs,
             )
             summary = normalize_compaction_summary(summary)
 

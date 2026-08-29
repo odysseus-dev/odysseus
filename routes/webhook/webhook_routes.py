@@ -2,6 +2,7 @@
 
 import uuid
 import logging
+import json
 from typing import Optional
 
 import httpx
@@ -9,7 +10,12 @@ from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Webhook, ModelEndpoint
-from src.auth_helpers import is_bearer_principal, owner_filter, require_chat_scope
+from src.auth_helpers import (
+    is_bearer_principal,
+    owner_filter,
+    request_capability,
+    require_chat_scope,
+)
 from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
@@ -60,6 +66,35 @@ def _caller_owns_session(sess_owner, caller) -> bool:
     if not caller:
         return False
     return sess_owner == caller
+
+
+def _cached_endpoint_model_ids(endpoint) -> list[str]:
+    """Return model IDs already stored for a configured endpoint.
+
+    The synchronous bearer integration may use a cached model or the provider's
+    ``auto`` alias, but it must not turn an ordinary chat request into a remote
+    catalog probe. Malformed/legacy cache shapes are treated as empty.
+    """
+    raw = getattr(endpoint, "cached_models", None)
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    if isinstance(value, dict):
+        value = value.get("data") or value.get("models") or []
+    if not isinstance(value, list):
+        return []
+    ids = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            ids.append(item.strip())
+        elif isinstance(item, dict):
+            model_id = item.get("id") or item.get("name") or item.get("model")
+            if isinstance(model_id, str) and model_id.strip():
+                ids.append(model_id.strip())
+    return ids
 
 
 def setup_webhook_routes(
@@ -240,12 +275,13 @@ def setup_webhook_routes(
         if getattr(request.state, "api_token", False) is not True:
             raise HTTPException(403, "This endpoint requires an API token")
         token_owner = require_chat_scope(request)
+        capability = request_capability(request)
         if not token_owner:
             raise HTTPException(403, "API token has no owner")
 
         from core.models import ChatMessage
         from src.llm_core import llm_call_async
-        from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
+        from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
 
         message = body.message.strip()
         if not message:
@@ -337,28 +373,12 @@ def setup_webhook_routes(
                     raise HTTPException(500, "Could not resolve endpoint credentials")
 
             if model == "auto":
-                try:
-                    async with httpx.AsyncClient(timeout=5) as client:
-                        models_url = build_models_url(base_url)
-                        hdrs = build_headers(api_key, base_url)
-                        if models_url:
-                            resp = await client.get(models_url, headers=hdrs)
-                            resp.raise_for_status()
-                            data = resp.json()
-                            items = data if isinstance(data, list) else (data.get("data") or [])
-                            ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
-                            if not ids and isinstance(data, dict):
-                                ids = [
-                                    m.get("name") or m.get("model")
-                                    for m in (data.get("models") or [])
-                                    if m.get("name") or m.get("model")
-                                ]
-                        else:
-                            import json as _json
-                            ids = _json.loads(ep.cached_models or "[]")
-                        model = ids[0] if ids else "auto"
-                except Exception:
-                    raise HTTPException(500, "Could not discover models from endpoint")
+                # This route is bearer-only. Resolve auto from the endpoint's
+                # already persisted catalog and leave the provider alias in
+                # place when no cache exists; neither choice needs a new
+                # /models or /tags request during ordinary chat.
+                ids = _cached_endpoint_model_ids(ep)
+                model = ids[0] if ids else "auto"
 
             if not session_manager:
                 raise HTTPException(500, "Session manager not available")
@@ -378,9 +398,13 @@ def setup_webhook_routes(
 
         messages = [{"role": m.role, "content": m.content} for m in sess.history]
 
+        llm_kwargs = {}
+        if not capability.allow_live_probes:
+            llm_kwargs["allow_live_probes"] = False
         reply = await llm_call_async(
             sess.endpoint_url, sess.model, messages,
             headers=sess.headers, timeout=120,
+            **llm_kwargs,
         )
         sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()
