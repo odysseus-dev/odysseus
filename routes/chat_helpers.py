@@ -19,6 +19,7 @@ from src.model_context import estimate_tokens, get_context_length
 from src.auth_helpers import (
     RequestCapability,
     effective_user,
+    is_bearer_principal,
     request_capability as build_request_capability,
 )
 from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
@@ -204,6 +205,11 @@ def _allowed_models_from_privileges(privs: dict) -> Optional[frozenset[str]]:
 def _allowed_models_for_request(request) -> Optional[frozenset[str]]:
     """Return the caller's model allowlist, or ``None`` when unrestricted."""
 
+    # ``effective_user`` is an attribution/storage identity for bearers, not a
+    # browser privilege principal. In particular, an admin-owned token must
+    # not inherit the owner's ADMIN_PRIVILEGES map through this lookup.
+    if is_bearer_principal(request):
+        return None
     try:
         user = effective_user(request)
     except Exception:
@@ -226,6 +232,12 @@ def _enforce_chat_privileges(request, sess) -> None:
     (single-user mode). Admins receive ADMIN_PRIVILEGES from get_privileges,
     which means unrestricted allowed_models / zero cap -> no-op for them.
     """
+    # Bearer authority is defined by the token scope at the route boundary.
+    # Do not turn its owner attribution back into a browser privilege lookup;
+    # that would make an admin-owned token inherit the admin model/cap policy.
+    if is_bearer_principal(request):
+        return
+
     try:
         user = effective_user(request)
     except Exception:
@@ -817,11 +829,16 @@ async def build_chat_context(
 
     # Normalize model ID. Prefer cached endpoint models so group chat does not
     # re-hit slow local /models endpoints on every participant turn.
-    norm = _normalize_model_id_from_cache(sess) or normalize_model_id(
-        sess.endpoint_url,
-        sess.model,
-        owner=getattr(sess, "owner", None),
-    )
+    norm = _normalize_model_id_from_cache(sess)
+    # Model normalization falls back to a live /models or /tags request on a
+    # cache miss. A bearer chat request may use the stored model as-is, but it
+    # must not implicitly refresh an endpoint catalogue while building context.
+    if norm is None and capability.allow_live_probes:
+        norm = normalize_model_id(
+            sess.endpoint_url,
+            sess.model,
+            owner=getattr(sess, "owner", None),
+        )
     if norm:
         sess.model = norm
 
@@ -860,11 +877,22 @@ async def build_chat_context(
     # session history before we know which route can answer and would make a
     # later larger-context candidate unable to recover discarded history.
     if defer_context_shaping:
-        context_length = get_context_length(sess.endpoint_url, sess.model)
+        context_kwargs = {}
+        if not capability.allow_live_probes:
+            context_kwargs["allow_live_probes"] = False
+        context_length = get_context_length(sess.endpoint_url, sess.model, **context_kwargs)
         was_compacted = False
     else:
+        compact_kwargs = {"owner": user}
+        if not capability.allow_live_probes:
+            compact_kwargs["allow_live_probes"] = False
         messages, context_length, was_compacted = await maybe_compact(
-            sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
+            sess,
+            sess.endpoint_url,
+            sess.model,
+            messages,
+            sess.headers,
+            **compact_kwargs,
         )
     _before_trim_messages = len(messages)
     _before_trim_tokens = estimate_tokens(messages)

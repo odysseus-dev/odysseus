@@ -1903,6 +1903,7 @@ def list_model_ids(
     *,
     owner: Optional[str] = None,
     endpoint_id: Optional[str] = None,
+    allow_live_probes: bool = True,
 ) -> List[str]:
     """List available model IDs from an endpoint."""
     cached = _configured_cached_model_ids(base_chat_url, owner=owner, endpoint_id=endpoint_id)
@@ -1911,6 +1912,8 @@ def list_model_ids(
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
+    if not allow_live_probes:
+        return []
     try:
         h = {}
         if headers:
@@ -1952,9 +1955,16 @@ def normalize_model_id(
     *,
     owner: Optional[str] = None,
     endpoint_id: Optional[str] = None,
+    allow_live_probes: bool = True,
 ) -> Optional[str]:
     """Normalize a model ID to match available models."""
-    avail = list_model_ids(endpoint_url, timeout, owner=owner, endpoint_id=endpoint_id)
+    avail = list_model_ids(
+        endpoint_url,
+        timeout,
+        owner=owner,
+        endpoint_id=endpoint_id,
+        allow_live_probes=allow_live_probes,
+    )
     if not avail:
         return None
     if requested in avail:
@@ -1968,7 +1978,8 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             allow_live_probes: bool = True) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -2012,9 +2023,12 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
+        context_kwargs = {}
+        if not allow_live_probes:
+            context_kwargs["allow_live_probes"] = False
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=False, num_ctx=get_context_length(url, model),
+            stream=False, num_ctx=get_context_length(url, model, **context_kwargs),
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2273,6 +2287,7 @@ async def llm_call_async(
     workload: str = "foreground",
     availability_only_transport: bool = False,
     return_model_metadata: bool = False,
+    allow_live_probes: bool = True,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2307,6 +2322,9 @@ async def llm_call_async(
         # Reuse stream_llm's validated Codex SSE path and collect deltas.
         parts: List[str] = []
         actual_model = model
+        stream_kwargs = {"workload": workload}
+        if not allow_live_probes:
+            stream_kwargs["allow_live_probes"] = False
         async for chunk in stream_llm(
             url,
             model,
@@ -2315,7 +2333,7 @@ async def llm_call_async(
             max_tokens=max_tokens,
             headers=headers,
             timeout=timeout,
-            workload=workload,
+            **stream_kwargs,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2372,9 +2390,12 @@ async def llm_call_async(
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
+        context_kwargs = {}
+        if not allow_live_probes:
+            context_kwargs["allow_live_probes"] = False
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=False, num_ctx=get_context_length(url, model),
+            stream=False, num_ctx=get_context_length(url, model, **context_kwargs),
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2560,9 +2581,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     tool_choice_none: bool = False, workload: str = "foreground"):
+                     tool_choice_none: bool = False, workload: str = "foreground",
+                     allow_live_probes: bool = True):
     target_url = _stream_target_url(url)
     async with _local_model_slot(target_url, model, workload):
+        inner_kwargs = {}
+        if not allow_live_probes:
+            inner_kwargs["allow_live_probes"] = False
         async for chunk in _stream_llm_inner(
             url,
             model,
@@ -2575,6 +2600,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tools=tools,
             session_id=session_id,
             tool_choice_none=tool_choice_none,
+            **inner_kwargs,
         ):
             yield chunk
 
@@ -2583,7 +2609,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                            tool_choice_none: bool = False):
+                            tool_choice_none: bool = False, allow_live_probes: bool = True):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -2618,9 +2644,14 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
+        context_kwargs = {}
+        if not allow_live_probes:
+            context_kwargs["allow_live_probes"] = False
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=True, tools=tools, num_ctx=get_context_length(url, model),
+            stream=True,
+            tools=tools,
+            num_ctx=get_context_length(url, model, **context_kwargs),
         )
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)

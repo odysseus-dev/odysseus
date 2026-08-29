@@ -11,7 +11,13 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import effective_user, _auth_disabled, owner_filter, require_chat_scope
+from src.auth_helpers import (
+    effective_user,
+    _auth_disabled,
+    is_bearer_principal,
+    owner_filter,
+    require_chat_scope,
+)
 from src.message_metadata import sanitize_client_message_metadata
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
@@ -158,7 +164,10 @@ def _reject_raw_endpoint_url_for_non_admin(
     # Raw URLs make the server dial whatever host the request supplies. For
     # non-admin users, require a saved endpoint row so normal owner scoping and
     # endpoint validation have already happened.
-    if user and not _current_user_is_admin(request, user):
+    # A bearer may be attributed to an admin owner for storage and endpoint
+    # visibility, but it is still not an interactive admin principal. Raw
+    # endpoint URLs therefore remain unavailable to every bearer request.
+    if is_bearer_principal(request) or (user and not _current_user_is_admin(request, user)):
         raise HTTPException(403, "Choose a registered model endpoint")
 
 
@@ -450,14 +459,17 @@ def setup_session_routes(
             from src.endpoint_resolver import build_headers
             session.headers = build_headers(resolved_key, resolved_base)
             _persist_session_headers(sid, session.headers)
-        # Fire webhook (sync-safe)
-        if webhook_manager:
-            webhook_manager.fire_and_forget("session.created", {
-                "session_id": sid, "name": session.name, "model": model_to_use,
-            })
-        # Fire event for automation tasks
-        from src.event_bus import fire_event
-        fire_event("session_created", user)
+        # A bearer can create owner-attributed chat data, but must not cause
+        # owner lifecycle automation or webhook delivery as a side effect.
+        if not is_bearer_principal(request):
+            # Fire webhook (sync-safe)
+            if webhook_manager:
+                webhook_manager.fire_and_forget("session.created", {
+                    "session_id": sid, "name": session.name, "model": model_to_use,
+                })
+            # Fire event for automation tasks
+            from src.event_bus import fire_event
+            fire_event("session_created", user)
         return SessionResponse(
             id=sid,
             name=session.name,
@@ -943,8 +955,9 @@ def setup_session_routes(
         )
         session.headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
         session_manager.save_sessions()
-        from src.event_bus import fire_event
-        fire_event("session_created", user)
+        if not is_bearer_principal(request):
+            from src.event_bus import fire_event
+            fire_event("session_created", user)
         return {"id": sid, "name": "", "model": model}
     
     @router.post("/session/{session_id}/important")

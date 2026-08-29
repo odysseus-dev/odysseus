@@ -330,12 +330,16 @@ async def maybe_compact(
     *,
     persist: bool = True,
     compaction_state: Optional[Dict[str, Any]] = None,
+    allow_live_probes: bool = True,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
     Returns (messages, context_length, was_compacted).
     """
-    context_length = get_context_length(endpoint_url, model)
+    context_kwargs = {}
+    if not allow_live_probes:
+        context_kwargs["allow_live_probes"] = False
+    context_length = get_context_length(endpoint_url, model, **context_kwargs)
     used = estimate_tokens(messages)
     pct = (used / context_length) * 100 if context_length else 0
 
@@ -392,6 +396,9 @@ async def maybe_compact(
     ]
 
     try:
+        summary_kwargs = {}
+        if not allow_live_probes:
+            summary_kwargs["allow_live_probes"] = False
         summary = await llm_call_async(
             compact_url,
             compact_model,
@@ -400,6 +407,7 @@ async def maybe_compact(
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
             timeout=30,
+            **summary_kwargs,
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

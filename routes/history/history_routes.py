@@ -10,8 +10,11 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.auth_helpers import effective_user, require_chat_scope
-from src.message_metadata import sanitize_client_message_metadata
+from src.auth_helpers import effective_user, is_bearer_principal, require_chat_scope
+from src.message_metadata import (
+    sanitize_client_message_metadata,
+    sanitize_projected_message_metadata,
+)
 from src.topic_analyzer import analyze_topics
 from src.upload_handler import reserve_message_upload_references
 from routes.session_routes import (
@@ -142,11 +145,19 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 f"Referenced upload is no longer available: {missing_id}",
             )
 
-    def _db_history_entry(m: DbChatMessage) -> Dict[str, Any]:
+    def _display_metadata(value: Any, *, sanitize: bool) -> dict:
+        meta = _metadata_dict(value)
+        if sanitize:
+            return sanitize_projected_message_metadata(meta) or {}
+        return dict(meta)
+
+    def _db_history_entry(
+        m: DbChatMessage,
+        *,
+        sanitize: bool = False,
+    ) -> Dict[str, Any]:
         entry = {"role": m.role, "content": _history_display_content(m.content)}
-        meta = _metadata_dict(m.meta_data)
-        if meta:
-            meta = dict(meta)
+        meta = _display_metadata(m.meta_data, sanitize=sanitize)
         if m.timestamp and "timestamp" not in meta:
             meta["timestamp"] = m.timestamp.isoformat() + "Z"
         if meta:
@@ -161,6 +172,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         offset: Optional[int] = None,
     ) -> Dict[str, Any]:
         require_chat_scope(request)
+        sanitize_history = is_bearer_principal(request)
         _verify_session_owner(request, session_id)
         if limit is not None:
             page_limit = max(1, min(int(limit), 100))
@@ -188,7 +200,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     .all()
                 )
                 history_dict = [
-                    entry for entry in (_db_history_entry(m) for m in rows)
+                    entry
+                    for entry in (
+                        _db_history_entry(m, sanitize=sanitize_history)
+                        for m in rows
+                    )
                     if not (entry.get("metadata") or {}).get("hidden")
                 ]
                 return {
@@ -214,7 +230,10 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         for msg in session.history:
             if isinstance(msg, ChatMessage):
                 # Skip hidden messages (e.g. compaction summaries for AI context)
-                msg_meta = _metadata_dict(msg.metadata)
+                msg_meta = _display_metadata(
+                    msg.metadata,
+                    sanitize=sanitize_history,
+                )
                 if msg_meta.get("hidden"):
                     continue
                 entry = {"role": msg.role, "content": _history_display_content(msg.content)}
@@ -222,7 +241,10 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     entry["metadata"] = msg_meta
                 history_dict.append(entry)
             elif isinstance(msg, dict):
-                msg_meta = _metadata_dict(msg.get("metadata"))
+                msg_meta = _display_metadata(
+                    msg.get("metadata"),
+                    sanitize=sanitize_history,
+                )
                 if msg_meta.get("hidden"):
                     continue
                 entry = {
@@ -248,7 +270,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 )
                 # Response excludes hidden messages, matching the in-memory path.
                 history_dict = [
-                    entry for entry in (_db_history_entry(m) for m in db_messages)
+                    entry
+                    for entry in (
+                        _db_history_entry(m, sanitize=sanitize_history)
+                        for m in db_messages
+                    )
                     if not (entry.get("metadata") or {}).get("hidden")
                 ]
             except Exception as e:
@@ -653,12 +679,15 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 # in-memory messages, corrupting their _db_id and breaking
                 # edit/delete-by-id on the original conversation.
                 meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
+                if is_bearer_principal(request):
+                    meta = sanitize_projected_message_metadata(meta)
                 new_session.add_message(ChatMessage(msg.role, msg.content, meta))
-            try:
-                from src.event_bus import fire_event
-                fire_event("session_created", getattr(source, 'owner', None))
-            except Exception:
-                logger.debug("session_created event dispatch failed", exc_info=True)
+            if not is_bearer_principal(request):
+                try:
+                    from src.event_bus import fire_event
+                    fire_event("session_created", getattr(source, 'owner', None))
+                except Exception:
+                    logger.debug("session_created event dispatch failed", exc_info=True)
 
             return {
                 "status": "ok",

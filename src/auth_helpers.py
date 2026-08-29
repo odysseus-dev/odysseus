@@ -31,6 +31,7 @@ class RequestCapability:
     allow_detached_execution: bool
     allow_message_events: bool
     allow_auto_naming: bool
+    allow_live_probes: bool
 
 
 def is_bearer_principal(request: Request) -> bool:
@@ -101,6 +102,7 @@ def request_capability(request: Request) -> RequestCapability:
         allow_detached_execution=not bearer,
         allow_message_events=not bearer,
         allow_auto_naming=not bearer,
+        allow_live_probes=not bearer,
     )
 
 

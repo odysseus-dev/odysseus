@@ -34,7 +34,7 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from src.auth_helpers import _auth_disabled, get_current_user
+from src.auth_helpers import _auth_disabled, get_current_user, is_bearer_principal
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
@@ -420,6 +420,15 @@ def _require_auth(request: Request) -> str:
     unconfigured mode are only honoured if they're coming from
     localhost; everyone else gets 401.
     """
+    # The legacy email router uses one generic dependency for mailbox reads,
+    # drafts, AI helpers, and SMTP send. It has no per-route token-scope
+    # contract, so a bearer must not be allowed to enter it as the ``api``
+    # pseudo-user. Otherwise owner-scoped lookup can miss the token owner and
+    # fall through to process-wide legacy settings credentials below.
+    # Scope-aware integrations must use their dedicated route boundary.
+    if is_bearer_principal(request):
+        raise HTTPException(403, "API tokens must use a scope-aware email route")
+
     u = get_current_user(request)
     if u:
         return u

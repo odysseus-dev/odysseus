@@ -21,7 +21,7 @@ from core.database import (
     Note,
     Session as DbSession,
 )
-from src.auth_helpers import effective_user, require_chat_scope
+from src.auth_helpers import effective_user, require_chat_scope, require_non_bearer_request
 from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
 from src.upload_handler import (
@@ -462,6 +462,7 @@ def setup_upload_routes(upload_handler):
         Cached under UPLOAD_DIR/.vision/{file_id}.txt — first call computes,
         subsequent loads are instant. Pass force=1 to recompute."""
         require_chat_scope(request)
+        require_non_bearer_request(request)
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         info = _load_upload_info(file_id)
@@ -507,6 +508,7 @@ def setup_upload_routes(upload_handler):
         """Persist a user-edited vision/OCR text for an attachment. Stored in
         the same cache file so the chat send picks it up as the override."""
         require_chat_scope(request)
+        require_non_bearer_request(request)
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         info = _load_upload_info(file_id)

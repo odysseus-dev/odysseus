@@ -9,7 +9,9 @@ def test_chat_context_uses_cached_models_before_live_model_probe():
 
     assert "def _normalize_model_id_from_cache" in source
     assert "cached_models" in source
-    assert "norm = _normalize_model_id_from_cache(sess) or normalize_model_id" in source
+    assert "norm = _normalize_model_id_from_cache(sess)" in source
+    assert "capability.allow_live_probes" in source
+    assert "normalize_model_id(" in source
 
 
 def test_cached_model_match_keeps_basename_normalization():

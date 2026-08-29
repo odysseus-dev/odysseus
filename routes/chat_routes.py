@@ -167,6 +167,7 @@ def _chat_candidate_request_factory(
     *,
     session=None,
     owner: Optional[str] = None,
+    allow_live_probes: bool = True,
 ):
     """Shape one route-neutral Chat prompt for each candidate window."""
 
@@ -180,15 +181,20 @@ def _chat_candidate_request_factory(
 
     async def factory(index, candidate_url, candidate_model, candidate_headers):
         compaction_state = {}
+        compact_kwargs = {
+            "owner": owner,
+            "persist": False,
+            "compaction_state": compaction_state,
+        }
+        if not allow_live_probes:
+            compact_kwargs["allow_live_probes"] = False
         candidate_messages, context_length, was_compacted = await maybe_compact(
             session,
             candidate_url,
             candidate_model,
             list(messages),
             candidate_headers,
-            owner=owner,
-            persist=False,
-            compaction_state=compaction_state,
+            **compact_kwargs,
         )
         if not context_length:
             context_length = fallback_context_length
@@ -878,17 +884,23 @@ def setup_chat_routes(
                 selected_context_length,
                 session=sess,
                 owner=owner,
+                allow_live_probes=request_capability.allow_live_probes,
             )
         requested_model = sess.model
+        llm_kwargs = {
+            "fallback_statuses": foreground_policy.eligible_statuses,
+            "candidate_request_factory": candidate_request_factory,
+            "temperature": ctx.preset.temperature,
+            "max_tokens": ctx.preset.max_tokens,
+            "prompt_type": preset_id,
+            "session_id": session,
+        }
+        if not request_capability.allow_live_probes:
+            llm_kwargs["allow_live_probes"] = False
         reply, actual_candidate, actual_model = await llm_call_async_with_route_fallback(
             foreground_candidates,
             request_messages,
-            fallback_statuses=foreground_policy.eligible_statuses,
-            candidate_request_factory=candidate_request_factory,
-            temperature=ctx.preset.temperature,
-            max_tokens=ctx.preset.max_tokens,
-            prompt_type=preset_id,
-            session_id=session,
+            **llm_kwargs,
         )
         actual_index = _candidate_index(foreground_candidates, actual_candidate)
         apply_compaction_state(
@@ -1605,7 +1617,12 @@ def setup_chat_routes(
         # Enforce per-user privileges
         _privs = {}
         _user = ctx.user
-        if _user and hasattr(request.app.state, 'auth_manager') and request.app.state.auth_manager:
+        if (
+            not api_token_request
+            and _user
+            and hasattr(request.app.state, 'auth_manager')
+            and request.app.state.auth_manager
+        ):
             _privs = request.app.state.auth_manager.get_privileges(_user)
         if _privs:
             if not _privs.get("can_use_bash", True):
@@ -1897,6 +1914,7 @@ def setup_chat_routes(
                     _selected_context_length,
                     session=sess,
                     owner=_user,
+                    allow_live_probes=request_capability.allow_live_probes,
                 )
 
             # Send model name early so the frontend can show it during streaming
@@ -2030,23 +2048,28 @@ def setup_chat_routes(
 
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
-                    async for chunk in stream_llm_with_fallback(
-                        _foreground_candidates,
-                        messages,
-                        temperature=ctx.preset.temperature,
+                    stream_kwargs = {
+                        "temperature": ctx.preset.temperature,
                         # Respect the preset; 0/unset = let the server decide (no
                         # cap), matching agent mode. The old hard 4096 fallback
                         # truncated reasoning models mid-<think> — they'd burn the
                         # whole budget thinking and never emit the answer (seen in
                         # Compare on heavy generation prompts).
-                        max_tokens=ctx.preset.max_tokens,
-                        prompt_type=preset_id,
-                        tools=None,
-                        session_id=session,
-                        fallback_statuses=_foreground_policy.eligible_statuses,
-                        fallback_on_empty=_foreground_policy.fallback_on_empty,
-                        candidate_request_factory=_chat_request_factory,
-                        candidate_route_descriptors=_foreground_route_descriptors,
+                        "max_tokens": ctx.preset.max_tokens,
+                        "prompt_type": preset_id,
+                        "tools": None,
+                        "session_id": session,
+                        "fallback_statuses": _foreground_policy.eligible_statuses,
+                        "fallback_on_empty": _foreground_policy.fallback_on_empty,
+                        "candidate_request_factory": _chat_request_factory,
+                        "candidate_route_descriptors": _foreground_route_descriptors,
+                    }
+                    if not request_capability.allow_live_probes:
+                        stream_kwargs["allow_live_probes"] = False
+                    async for chunk in stream_llm_with_fallback(
+                        _foreground_candidates,
+                        messages,
+                        **stream_kwargs,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

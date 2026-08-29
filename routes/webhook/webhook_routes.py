@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Webhook, ModelEndpoint
-from src.auth_helpers import owner_filter, require_chat_scope
+from src.auth_helpers import is_bearer_principal, owner_filter, require_chat_scope
 from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
@@ -385,10 +385,14 @@ def setup_webhook_routes(
         sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()
 
-        webhook_manager.fire_and_forget("chat.completed", {
-            "session_id": session_id, "model": sess.model,
-            "user_message": message[:2000], "response": reply[:2000],
-        })
+        # /api/v1/chat remains a synchronous bearer integration: the response
+        # is returned normally, but the token must not fan that content out to
+        # an owner-configured asynchronous callback after authorization ends.
+        if not is_bearer_principal(request):
+            webhook_manager.fire_and_forget("chat.completed", {
+                "session_id": session_id, "model": sess.model,
+                "user_message": message[:2000], "response": reply[:2000],
+            })
 
         return {"response": reply, "session_id": session_id, "model": sess.model}
 

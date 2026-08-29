@@ -238,16 +238,31 @@ KNOWN_CONTEXT_WINDOWS = {
 _context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
 
 
-def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool]:
+def _get_context_length_cached(
+    endpoint_url: str,
+    model: str,
+    *,
+    allow_live_probes: bool = True,
+) -> Tuple[int, bool]:
     """Return (context_length, known). ``known`` is False only when the value is a
     bare DEFAULT_CONTEXT fallback (no endpoint report and not in the known table)."""
+    cache_key = (endpoint_url, model)
+    if not allow_live_probes:
+        # A bearer may consume metadata already learned by an interactive or
+        # explicitly privileged refresh, but a context build must not cause a
+        # new /slots, /models, or catalog request or populate those caches.
+        cached = _context_cache.get(cache_key)
+        if cached:
+            return cached
+        known = _lookup_known(model)
+        return (known, True) if known else (DEFAULT_CONTEXT, False)
+
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = is_local_endpoint(endpoint_url)
     # Key on (endpoint_url, model): the same model id can be served by two
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
-    cache_key = (endpoint_url, model)
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 
@@ -261,23 +276,41 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     return ctx, known
 
 
-def get_context_length(endpoint_url: str, model: str) -> int:
+def get_context_length(
+    endpoint_url: str,
+    model: str,
+    *,
+    allow_live_probes: bool = True,
+) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
     or context_window fields. Caches result per (endpoint, model).
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
-    return _get_context_length_cached(endpoint_url, model)[0]
+    return _get_context_length_cached(
+        endpoint_url,
+        model,
+        allow_live_probes=allow_live_probes,
+    )[0]
 
 
-def get_context_length_known(endpoint_url: str, model: str) -> Tuple[int, bool]:
+def get_context_length_known(
+    endpoint_url: str,
+    model: str,
+    *,
+    allow_live_probes: bool = True,
+) -> Tuple[int, bool]:
     """Like ``get_context_length`` but also returns whether the window was actually
     discovered (endpoint-reported or in the known-models table) rather than the bare
     DEFAULT_CONTEXT fallback. Callers that *scale* a budget off the window must not
     trust an unknown value — a fallback 128K isn't proof the model holds 128K
     (review on #4122)."""
-    return _get_context_length_cached(endpoint_url, model)
+    return _get_context_length_cached(
+        endpoint_url,
+        model,
+        allow_live_probes=allow_live_probes,
+    )
 
 
 def budget_context_for_model(endpoint_url: str, model: str, *, fallback: int = 0) -> int:

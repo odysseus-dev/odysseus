@@ -500,8 +500,9 @@ async def _build_context_owner_probe(monkeypatch, request_state):
         captured["preface_owner"] = kwargs["owner"]
         return [], [], []
 
-    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None, **kwargs):
         captured["compact_owner"] = owner
+        captured["allow_live_probes"] = kwargs.get("allow_live_probes", True)
         return messages, 8192, False
 
     monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
@@ -557,10 +558,12 @@ async def test_build_chat_context_uses_api_token_owner_for_compaction_scope(monk
     )
 
     assert ctx.user == "alice"
+    assert captured["allow_live_probes"] is False
     assert captured == {
         "prefs_owner": "alice",
         "preface_owner": "alice",
         "compact_owner": "alice",
+        "allow_live_probes": False,
     }
 
 
@@ -579,4 +582,5 @@ async def test_build_chat_context_keeps_cookie_user_owner_scope(monkeypatch):
         "prefs_owner": "bob",
         "preface_owner": "bob",
         "compact_owner": "bob",
+        "allow_live_probes": True,
     }
