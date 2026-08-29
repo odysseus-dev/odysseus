@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 # Security CI guide
 
 This project runs a set of automated security checks on pull requests and

@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 # Agent migration manifests
 
 Odysseus should be able to learn from another agent without blindly trusting

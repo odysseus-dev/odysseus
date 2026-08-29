@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 # Outlook / Office 365 email accounts
 
 Odysseus email accounts currently use IMAP and SMTP with username/password
