@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/odysseus-wordmark.png" alt="Odysseus" width="238">
+  <img src="assets/branding/odysseus-wordmark.png" alt="Odysseus" width="238">
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="#빠른-시작">빠른 시작</a> ·
-  <a href="docs/setup.md">설치 가이드</a> ·
+  <a href="website/setup.md">설치 가이드</a> ·
   <a href="CONTRIBUTING.md">기여하기</a> ·
   <a href="ROADMAP.md">로드맵</a>
 </p>
@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/odysseus-browser.jpg" alt="Odysseus 인터페이스">
+  <img src="assets/branding/odysseus-browser.jpg" alt="Odysseus 인터페이스">
 </p>
 
 ---
@@ -41,7 +41,7 @@ docker compose up -d --build
 
 컨테이너가 정상 상태가 되면 `http://localhost:7000`에 접속하세요. 최초 관리자 비밀번호는 `docker compose logs odysseus`에서 확인할 수 있습니다.
 
-네이티브 설치 방법, GPU 관련 참고 사항, Windows/macOS 안내, HTTPS 및 설정에 대한 내용은 [설치 가이드](docs/setup.md)에서 확인할 수 있습니다.
+네이티브 설치 방법, GPU 관련 참고 사항, Windows/macOS 안내, HTTPS 및 설정에 대한 내용은 [설치 가이드](website/setup.md)에서 확인할 수 있습니다.
 
 ## 주요 기능
 
@@ -56,7 +56,7 @@ docker compose up -d --build
 
 ## 데모
 
-랜딩 페이지에서 마우스를 올리면 재생되는 전체 기능 둘러보기를 확인할 수 있습니다: [`docs/index.html`](docs/index.html).
+마우스를 올리면 재생되는 전체 기능 둘러보기는 [Odysseus 랜딩 페이지](https://odysseus-dev.github.io/odysseus/)에서 확인할 수 있습니다. 소스는 [`website/`](website/) 디렉터리에 있습니다.
 
 ## 기여하기
 
@@ -64,15 +64,20 @@ docker compose up -d --build
 
 ## 보안
 
-Odysseus는 강력한 로컬 도구를 갖춘 자체 호스팅 워크스페이스입니다. 인증을 활성화한 상태로 유지하고, 비공개 데이터는 Git에 포함하지 마세요. 모델과 서비스의 포트를 인터넷에 직접 노출해서도 안 됩니다. 배포 관련 세부 사항은 [설치 가이드](docs/setup.md#security-notes)에서 확인할 수 있습니다.
+Odysseus는 강력한 로컬 도구를 갖춘 자체 호스팅 워크스페이스입니다. 인증을 활성화한 상태로 유지하고, 비공개 데이터는 Git에 포함하지 마세요. 모델과 서비스의 포트를 인터넷에 직접 노출해서도 안 됩니다.
+
+- 네트워크에서 접근할 수 있는 배포 환경에서는 `AUTH_ENABLED=true`를 유지하세요.
+- 로컬 개발 환경이 아니라면 `LOCALHOST_BYPASS=false`를 유지하세요.
+
+배포 관련 세부 사항은 [설치 가이드](website/setup.md#security-notes)에서 확인할 수 있습니다.
 
 ## 스타 기록
 
-<a href="https://www.star-history.com/?repos=odysseus-dev%2Fodysseus&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#odysseus-dev/odysseus&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
-   <img alt="스타 기록 차트" src="https://api.star-history.com/chart?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
+   <img alt="스타 기록 차트" src="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
  </picture>
 </a>
 
