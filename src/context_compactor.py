@@ -282,7 +282,9 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     if essential_system:
         sys_text = essential_system[0].get("content", "")
         if len(sys_text) > 2000:
-            essential_system[0] = {"role": "system", "content": sys_text[:2000] + "\n[System prompt truncated for context limits]"}
+            truncated_system = dict(essential_system[0])
+            truncated_system["content"] = sys_text[:2000] + "\n[System prompt truncated for context limits]"
+            essential_system[0] = truncated_system
             trimmed = essential_system + convo_msgs
             if estimate_tokens(trimmed) <= budget:
                 return _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
@@ -325,6 +327,9 @@ async def maybe_compact(
     messages: List[Dict],
     headers: Optional[Dict] = None,
     owner: Optional[str] = None,
+    *,
+    persist: bool = True,
+    compaction_state: Optional[Dict[str, Any]] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
@@ -416,7 +421,17 @@ async def maybe_compact(
     # offset — session.history INCLUDES the system messages, but
     # split_point is indexed against convo_msgs which does NOT. Without
     # this, the slice drops the leading system message(s).
-    _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
+    if compaction_state is not None:
+        compaction_state.update({
+            "split_point": split_point,
+            "summary": summary,
+            "system_msg_count": len(system_msgs),
+            "applied": False,
+        })
+    if persist:
+        _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
+        if compaction_state is not None:
+            compaction_state["applied"] = True
 
     new_used = estimate_tokens(compacted)
     logger.info(
@@ -425,6 +440,51 @@ async def maybe_compact(
     )
 
     return compacted, context_length, True
+
+
+def apply_compaction_state(session, compaction_state: Optional[Dict[str, Any]]) -> bool:
+    """Persist a route-specific compaction after that route commits output.
+
+    Candidate prompts may be compacted speculatively while an explicit
+    foreground fallback chain is being tried.  Persisting at construction time
+    would let an unavailable route rewrite history before another route answers,
+    so callers hold this small plan and apply only the winning route's plan.
+    """
+
+    state = compaction_state if isinstance(compaction_state, dict) else None
+    if not state or state.get("applied"):
+        return False
+    summary = state.get("summary")
+    split_point = state.get("split_point")
+    system_msg_count = state.get("system_msg_count", 0)
+    if not isinstance(summary, str) or not isinstance(split_point, int):
+        return False
+    _update_session_history(
+        session,
+        split_point,
+        summary,
+        system_msg_count=system_msg_count if isinstance(system_msg_count, int) else 0,
+    )
+    state["applied"] = True
+    return True
+
+
+def apply_compaction_state_for_session(
+    session_id: Optional[str],
+    compaction_state: Optional[Dict[str, Any]],
+) -> bool:
+    """Resolve an in-memory session and apply a deferred compaction plan."""
+
+    if not session_id:
+        return False
+    try:
+        from core.models import get_session_manager_instance
+
+        manager = get_session_manager_instance()
+        session = manager.get_session(session_id) if manager else None
+    except Exception:
+        session = None
+    return apply_compaction_state(session, compaction_state) if session else False
 
 
 def _update_session_history(session, split_point: int, summary: str,

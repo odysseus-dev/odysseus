@@ -9,7 +9,9 @@ import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { loadPanel } from './panels.js';
 import { matchModelKey } from './model/matchKey.js';
+import { getTools } from './appConfig.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -445,8 +447,12 @@ function stripExecutedFence(match, tag, inline, body) {
 
 async function loadExecFenceRegex() {
   try {
-    const res = await fetch('/api/tools', { credentials: 'same-origin' });
-    const data = await res.json();
+    // Shared with admin.js, and — more to the point — with the other copies of
+    // this module: chatRenderer.js is imported under three different ?v= query
+    // strings, so it is instantiated three times per load and used to issue
+    // three identical /api/tools requests. appConfig.js is imported by one
+    // specifier from all of them, so they now share a single fetch.
+    const data = await getTools();
     const tags = (data.tools || [])
       .map((t) => t.id)
       .filter((id) => id && !EXEC_FENCE_NON_TOOL.has(id));
@@ -478,7 +484,10 @@ const DSML_STRAY_RE = /<\s*\/?\s*[｜|]+\s*DSML\s*[｜|]+[^>]*>/gi;
 const DSML_INVOKE_RE = /<\s*[｜|]+\s*DSML\s*[｜|]+\s*invoke\b[^>]*>[\s\S]*?(?:<\s*\/\s*[｜|]+\s*DSML\s*[｜|]+\s*invoke\s*>|$)/gi;
 const RAW_OPENAI_TOOL_JSON_RE = /(?:\[\s*)?\{\s*"function"\s*:\s*\{[\s\S]*?\}\s*,\s*"id"\s*:\s*"[^"]*"\s*,\s*"type"\s*:\s*"function"\s*\}\s*\]?/gi;
 const QWEN_ROLE_MARKER_RE = /<\/?\|(?:assistant|assistan|user|system|tool)\|>?|<\/\|end\|>?/gi;
-const QWEN_BARE_MARKER_RE = /(?:^|[\t\r\n ])(?:\|?end\|?|\/?\|end\|)(?=[\t\r\n ]|$)|(?:^|[\t\r\n ])assistan(?:t)?(?=[\t\r\n ]|$)/gi;
+// Keep in sync with _QWEN_BARE_MARKER_RE in src/tool_parsing.py. At least one
+// pipe is required around `end`: with both optional (`\|?end\|?`) this also ate
+// a bare `end` on its own line, breaking Ruby/Lua/shell snippets (#5547).
+const QWEN_BARE_MARKER_RE = /(?:^|[\t\r\n ])(?:\/?\|end\||\|end|end\|)(?=[\t\r\n ]|$)|(?:^|[\r\n])[ \t]*assistan(?:t)?[ \t]*(?=[\r\n]|$)/gi;
 // Self-narration about tool results (model echoing stdout/exit_code)
 const TOOL_NARRATION_RE = /(?:The (?:result|output) shows?:?\s*)?-?\s*(?:stdout|stderr|exit_code):\s*.+/gi;
 
@@ -612,10 +621,36 @@ export function sameModelName(left, right) {
     || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
 }
 
-export function modelRouteLabel(requestedModel, actualModel) {
+function shortEndpointLabel(label) {
+  const value = modelValue(label);
+  if (!value) return '';
+  return value.length > 18 ? value.slice(0, 17) + '…' : value;
+}
+
+export function modelRouteLabel(
+  requestedModel,
+  actualModel,
+  requestedEndpointLabel = '',
+  actualEndpointLabel = '',
+  requestedEndpointId = '',
+  actualEndpointId = '',
+) {
   const requested = modelValue(requestedModel);
   const actual = modelValue(actualModel) || requested;
-  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
+  const requestedRoute = modelValue(requestedEndpointId || requestedEndpointLabel);
+  const actualRoute = modelValue(actualEndpointId || actualEndpointLabel);
+  const routeChanged = Boolean(
+    actualRoute
+    && requestedRoute
+    && actualRoute !== requestedRoute
+  );
+  if (!requested || sameModelName(requested, actual)) {
+    const model = shortModel(actual || requested);
+    if (!routeChanged) return model;
+    const from = shortEndpointLabel(requestedEndpointLabel || 'Selected route');
+    const to = shortEndpointLabel(actualEndpointLabel || actualEndpointId);
+    return model + ' (' + from + ' -> ' + to + ')';
+  }
   return shortModel(requested) + ' -> ' + shortModel(actual);
 }
 
@@ -626,10 +661,24 @@ export function replyModelPair(modelName, metadata) {
   if (actualFromMeta || requestedFromMeta) {
     const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
     const requested = requestedFromMeta || actual;
-    return { requestedModel: requested, actualModel: actual };
+    return {
+      requestedModel: requested,
+      actualModel: actual,
+      requestedEndpointId: meta.requested_endpoint_id || null,
+      requestedEndpointLabel: meta.requested_endpoint_label || 'Selected route',
+      actualEndpointId: meta.endpoint_id || null,
+      actualEndpointLabel: meta.endpoint_label || meta.requested_endpoint_label || 'Selected route',
+    };
   }
   const fallback = modelValue(modelName);
-  return { requestedModel: fallback, actualModel: fallback };
+  return {
+    requestedModel: fallback,
+    actualModel: fallback,
+    requestedEndpointId: null,
+    requestedEndpointLabel: 'Selected route',
+    actualEndpointId: null,
+    actualEndpointLabel: 'Selected route',
+  };
 }
 
 /**
@@ -821,10 +870,48 @@ export function isCostTrackedEndpoint(url) {
 }
 
 /** Cost for the current turn, returning null for non-billable endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = _currentEndpointUrl();
-  if (!isCostTrackedEndpoint(url)) return null;
+function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, selectedEndpointUrl) {
+  // Foreground fallback can answer on a different endpoint than the session's
+  // selected route. Prefer the backend's non-secret actual-route
+  // classification; retain the selected-endpoint check for older history.
+  if (endpointCostTracked === false) return null;
+  const selectedUrl = selectedEndpointUrl === undefined
+    ? _currentEndpointUrl()
+    : selectedEndpointUrl;
+  if (endpointCostTracked !== true && !isCostTrackedEndpoint(selectedUrl)) {
+    return null;
+  }
   return getModelCost(model, inputTokens, outputTokens);
+}
+
+/** Sum cost using the route/model that produced each Agent round. */
+function _metricsBillableCost(metrics, model, inputTokens, outputTokens, selectedEndpointUrl) {
+  const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
+  if (!buckets.length) {
+    return _billableCost(
+      model,
+      inputTokens,
+      outputTokens,
+      metrics.endpoint_cost_tracked,
+      selectedEndpointUrl,
+    );
+  }
+  let total = 0;
+  let hasPricedUsage = false;
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    const bucketCost = _billableCost(
+      bucket.model || model,
+      Number(bucket.input_tokens) || 0,
+      Number(bucket.output_tokens) || 0,
+      bucket.endpoint_cost_tracked,
+      selectedEndpointUrl,
+    );
+    if (bucketCost === null) continue;
+    total += bucketCost;
+    hasPricedUsage = true;
+  }
+  return hasPricedUsage ? total : null;
 }
 
 export function getImageCost(model, quality, size) {
@@ -841,6 +928,9 @@ export function getImageCost(model, quality, size) {
 
 /* ── Session cost helpers ─────────────────────────────────────────── */
 const _COST_KEY = 'ody-session-cost';
+const _COST_RUNS_KEY = 'ody-session-cost-runs';
+const _MAX_COST_RUNS_PER_SESSION = 256;
+const _COST_LEDGER_LOCK = 'odysseus-session-cost-ledger';
 
 /** Return the accumulated cost for the current (or given) session. */
 export function getSessionCost(sessionId) {
@@ -848,7 +938,14 @@ export function getSessionCost(sessionId) {
   if (!sid) return 0;
   try {
     const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-    return costs[sid] || 0;
+    const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+    const recordedRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
+      ? Object.values(runCosts[sid])
+      : [];
+    return (costs[sid] || 0) + recordedRuns.reduce(
+      (total, value) => total + (Number(value) || 0),
+      0,
+    );
   } catch (_e) { return 0; }
 }
 
@@ -860,6 +957,9 @@ export function resetSessionCost(sessionId) {
     const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
     delete costs[sid];
     localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+    const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+    delete runCosts[sid];
+    localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
   } catch (_e) { /* ignore */ }
   updateSessionCostUI();
 }
@@ -868,21 +968,8 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
-  // cloud-rate calculation may have left in localStorage for this session.
-  const _url = _currentEndpointUrl();
-  if (!isCostTrackedEndpoint(_url)) {
-    const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (sid && getSessionCost(sid) > 0) {
-      try {
-        const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        delete costs[sid];
-        localStorage.setItem(_COST_KEY, JSON.stringify(costs));
-      } catch (_e) { /* ignore */ }
-    }
-    el.style.display = 'none';
-    return;
-  }
+  // The ledger records billable work already performed in this session. A
+  // selected local endpoint does not erase cost from a paid fallback route.
   const cost = getSessionCost();
   if (cost > 0) {
     el.textContent = '$' + (cost < 0.01 ? cost.toFixed(4) : cost < 1 ? cost.toFixed(3) : cost.toFixed(2));
@@ -890,6 +977,94 @@ export function updateSessionCostUI() {
   } else {
     el.style.display = 'none';
   }
+}
+
+/** Record one metrics payload in a session ledger at most once. */
+export function recordSessionMetricsCost(metrics, sessionId, selectedEndpointUrl) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const cost = _metricsBillableCost(
+    metrics,
+    metrics.model || 'Unknown',
+    metrics.input_tokens || 0,
+    metrics.output_tokens || 0,
+    selectedEndpointUrl,
+  );
+  if (metrics._fromHistory) return cost;
+  const sid = sessionId || (
+    window.sessionModule && window.sessionModule.getCurrentSessionId()
+  );
+  if (!sid || cost === null) return cost;
+  const runId = typeof metrics._costRecordId === 'string'
+    ? metrics._costRecordId.trim()
+    : '';
+  if ((metrics._costRecorded || metrics._costRecordPending) && !runId) return cost;
+  // Recorded is only set once the write actually runs; pending covers the
+  // window while the write waits on the cross-tab lock, so a replay in that
+  // window cannot double-add and a tab closed mid-queue never claims recorded.
+  metrics._costRecordPending = true;
+  const writeCost = () => {
+    if (runId) {
+      try {
+        const runCosts = JSON.parse(localStorage.getItem(_COST_RUNS_KEY) || '{}');
+        const sessionRuns = runCosts[sid] && typeof runCosts[sid] === 'object'
+          ? runCosts[sid]
+          : {};
+        // Assigning by detached-run identity is replay-idempotent even when a
+        // refresh produces a fresh metrics object. The Web Lock around this
+        // read/modify/write also keeps distinct runs from two tabs from
+        // overwriting one another's stale snapshot.
+        sessionRuns[runId] = cost;
+        const entries = Object.entries(sessionRuns);
+        if (entries.length > _MAX_COST_RUNS_PER_SESSION) {
+          const overflow = entries.slice(0, entries.length - _MAX_COST_RUNS_PER_SESSION);
+          const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
+          costs[sid] = (costs[sid] || 0) + overflow.reduce(
+            (total, entry) => total + (Number(entry[1]) || 0),
+            0,
+          );
+          overflow.forEach(([oldRunId]) => delete sessionRuns[oldRunId]);
+          localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+        }
+        runCosts[sid] = sessionRuns;
+        localStorage.setItem(_COST_RUNS_KEY, JSON.stringify(runCosts));
+      } catch (_e) { /* ignore */ }
+    } else {
+      try {
+        const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
+        costs[sid] = (costs[sid] || 0) + cost;
+        localStorage.setItem(_COST_KEY, JSON.stringify(costs));
+      } catch (_e) { /* ignore */ }
+    }
+    metrics._costRecorded = true;
+    metrics._costRecordPending = false;
+    const currentSid = window.sessionModule && window.sessionModule.getCurrentSessionId();
+    if (currentSid === sid) updateSessionCostUI();
+  };
+
+  let writeStarted = false;
+  const guardedWrite = () => {
+    writeStarted = true;
+    writeCost();
+  };
+  try {
+    if (
+      typeof navigator !== 'undefined'
+      && navigator.locks
+      && typeof navigator.locks.request === 'function'
+    ) {
+      const pendingWrite = navigator.locks.request(_COST_LEDGER_LOCK, guardedWrite);
+      if (pendingWrite && typeof pendingWrite.catch === 'function') {
+        pendingWrite.catch(() => {
+          if (!writeStarted) guardedWrite();
+        });
+      }
+    } else {
+      guardedWrite();
+    }
+  } catch (_e) {
+    if (!writeStarted) guardedWrite();
+  }
+  return cost;
 }
 
 /** Create a timestamp span for role labels.
@@ -1198,7 +1373,7 @@ document.addEventListener('click', function(e) {
       } catch {}
     });
   } else if (kind === 'document') {
-    import('./document.js?v=20260722emailfastindex1').then(mod => {
+    import('./document.js?v=20260815approvalsave1').then(mod => {
       const open = mod.loadDocument
         || mod.openDocument
         || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
@@ -1220,7 +1395,7 @@ document.addEventListener('click', function(e) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'email') {
-    import('./emailLibrary.js?v=20260722emailfastindex1').then(mod => {
+    import('./emailLibrary.js?v=20260815approvalsave1').then(mod => {
       const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
       if (open) open({ uid: id });
     }).catch(() => {});
@@ -1379,7 +1554,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     try {
       const [galleryMod, editorMod] = await Promise.all([
         import('./gallery.js'),
-        import('./galleryEditor.js'),
+        loadPanel('editor'),
       ]);
       // Ensure the Gallery modal is open so the editor has a container
       // to render into; switch its tabs to the Edit tab.
@@ -1871,23 +2046,19 @@ export function displayMetrics(messageElement, metrics) {
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
   const model = metrics.model || 'Unknown';
-  const cost = _billableCost(model, inputTokens, outputTokens);
+  const cost = _metricsBillableCost(
+    metrics,
+    model,
+    inputTokens,
+    outputTokens,
+  );
 
   // Nothing useful to show — bail out (only if ALL metrics are missing)
   if (!responseTime && !inputTokens && !outputTokens && tps == null && !ctxPct) return;
 
-  // Accumulate session cost (only on fresh metrics, not history reload)
-  if (!metrics._fromHistory) {
-    const _sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (_sid && cost !== null) {
-      try {
-        const _costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        _costs[_sid] = (_costs[_sid] || 0) + cost;
-        localStorage.setItem(_COST_KEY, JSON.stringify(_costs));
-      } catch (_e) { /* ignore */ }
-      updateSessionCostUI();
-    }
-  }
+  // Rendering can occur when metrics arrive and again after [DONE]. The
+  // ledger mutation is idempotent for that shared payload.
+  recordSessionMetricsCost(metrics);
 
   // Keep token counts in the Message Stats popup; the footer should stay slim.
   const costStr0 = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : null;
@@ -2156,6 +2327,42 @@ export function removeAskUserCards(root) {
   scope.querySelectorAll('.ask-user-card').forEach((node) => node.remove());
 }
 
+// While a choice card is visible, let plain 1–3 activate the corresponding
+// rendered option. Reuse the option's click path so the question keeps its
+// existing submission semantics. Tool approval cards are excluded: that card
+// exists to make consent deliberate after untrusted context influenced the
+// run, and its first option is the widest grant, so a stray digit must not
+// answer it.
+function _handleAskUserShortcut(event) {
+  if (
+    event.defaultPrevented
+    || event.repeat
+    || event.isComposing
+    || event.ctrlKey
+    || event.altKey
+    || event.metaKey
+    || event.shiftKey
+  ) return;
+  if (!/^[1-3]$/.test(event.key)) return;
+
+  const target = event.target;
+  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+
+  const focusedCard = document.activeElement?.closest?.('.ask-user-card') || null;
+  const mainCard = document.querySelector('#chat-history .ask-user-card');
+  const compareCards = document.querySelectorAll('.compare-pane .ask-user-card');
+  const card = focusedCard || mainCard || (compareCards.length === 1 ? compareCards[0] : null);
+  if (!card) return;
+  if (card.dataset.askUserKind === 'tool_approval') return;
+  const option = card.querySelectorAll('.ask-user-option')[Number(event.key) - 1];
+  if (!option || option.disabled) return;
+
+  event.preventDefault();
+  option.click();
+}
+
+document.addEventListener('keydown', _handleAskUserShortcut);
+
 /**
  * Render an ask_user payload as a durable choice card.
  *
@@ -2165,11 +2372,15 @@ export function removeAskUserCards(root) {
  */
 export function renderAskUserCard(payload, options) {
   const aq = payload || {};
+  if (aq.resolved) return null;
   const opts = Array.isArray(aq.options) ? aq.options : [];
-  const chatBox = document.getElementById('chat-history');
+  const renderOptions = options || {};
+  const chatBox = renderOptions.root || document.getElementById('chat-history');
+  const onSubmit = typeof renderOptions.onSubmit === 'function'
+    ? renderOptions.onSubmit
+    : null;
   if (!chatBox || !aq.question || opts.length < 2) return null;
 
-  const renderOptions = options || {};
   removeAskUserCards(chatBox);
 
   const card = document.createElement('div');
@@ -2177,6 +2388,8 @@ export function renderAskUserCard(payload, options) {
   card.setAttribute('role', 'group');
   card.tabIndex = -1;
   const multi = !!aq.multi;
+  const isToolApproval = aq.kind === 'tool_approval' && !!aq.approval_id;
+  card.dataset.askUserKind = isToolApproval ? 'tool_approval' : 'question';
   const emojiText = (value) => svgifyEmoji(uiModule.esc(String(value)));
 
   const head = document.createElement('div');
@@ -2185,7 +2398,6 @@ export function renderAskUserCard(payload, options) {
   closeBtn.type = 'button';
   closeBtn.className = 'modal-close ask-user-close';
   closeBtn.setAttribute('aria-label', 'Dismiss question');
-  closeBtn.textContent = '×';
   closeBtn.addEventListener('click', () => {
     card.remove();
     const input = uiModule.el('message');
@@ -2201,12 +2413,44 @@ export function renderAskUserCard(payload, options) {
   card.appendChild(question);
   card.setAttribute('aria-labelledby', question.id);
 
+  if (isToolApproval && aq.action) {
+    const action = document.createElement('div');
+    action.className = 'ask-user-option-desc';
+    const effects = Array.isArray(aq.action.effects)
+      ? aq.action.effects.join(', ')
+      : '';
+    action.textContent = [
+      aq.action.tool || 'tool',
+      aq.action.content || '',
+      effects ? `Effects: ${effects}` : '',
+      aq.action.workspace ? `Workspace: ${aq.action.workspace}` : '',
+      aq.action.document_id ? `Document: ${aq.action.document_id}` : '',
+      aq.action.document_version != null
+        ? `Document version: ${aq.action.document_version}`
+        : '',
+      aq.action.digest ? `Approval fingerprint: ${aq.action.digest}` : '',
+    ].filter(Boolean).join('\n');
+    action.style.whiteSpace = 'pre-wrap';
+    card.appendChild(action);
+  }
+
   const list = document.createElement('div');
   list.className = 'ask-user-options';
   card.appendChild(list);
 
   const send = (text) => {
     if (!text) return;
+    if (onSubmit) {
+      const accepted = onSubmit({
+        kind: 'answer',
+        text,
+        label: text,
+        payload: aq,
+        card,
+      });
+      if (accepted !== false) card.remove();
+      return;
+    }
     card.remove();
     const input = uiModule.el('message');
     if (input) input.value = text;
@@ -2238,7 +2482,32 @@ export function renderAskUserCard(payload, options) {
     }
     if (!multi) {
       row.type = 'button';
-      row.addEventListener('click', () => send(label));
+      row.addEventListener('click', () => {
+        if (isToolApproval) {
+          const detail = {
+            approval_id: aq.approval_id,
+            decision: String((opt && opt.value) || '').toLowerCase(),
+            label,
+            document_id: aq.action && aq.action.document_id
+              ? String(aq.action.document_id)
+              : '',
+          };
+          if (onSubmit) {
+            const accepted = onSubmit({
+              kind: 'tool_approval',
+              ...detail,
+              payload: aq,
+              card,
+            });
+            if (accepted !== false) card.remove();
+          } else {
+            card.remove();
+            document.dispatchEvent(new CustomEvent('odysseus:tool-approval', { detail }));
+          }
+        } else {
+          send(label);
+        }
+      });
     }
     list.appendChild(row);
   });
@@ -2274,7 +2543,7 @@ export function renderAskUserCard(payload, options) {
   });
   other.appendChild(otherInput);
   other.appendChild(otherSend);
-  card.appendChild(other);
+  if (!isToolApproval) card.appendChild(other);
 
   chatBox.appendChild(card);
   if (renderOptions.scroll !== false) {
@@ -2304,9 +2573,19 @@ export function addMessage(role, content, modelName, metadata) {
     const textRaw = Array.isArray(content) ? markdownModule.renderContent(content) : content;
 
     // --- Agent multi-bubble reconstruction from saved metadata ---
-    if (role === 'assistant' && metadata && metadata.tool_events && metadata.tool_events.length > 0) {
+    if (
+      role === 'assistant'
+      && metadata
+      && (
+        (Array.isArray(metadata.tool_events) && metadata.tool_events.length > 0)
+        || (Array.isArray(metadata.round_texts) && metadata.round_texts.length > 1)
+      )
+    ) {
       const roundTexts = metadata.round_texts || [];
-      const toolEvents = metadata.tool_events;
+      const roundModels = metadata.round_models || [];
+      const roundEndpointIds = metadata.round_endpoint_ids || [];
+      const roundEndpointLabels = metadata.round_endpoint_labels || [];
+      const toolEvents = metadata.tool_events || [];
       let pendingAskUser = null;
       let lastWrap = null;
       let firstMsgAi = null;
@@ -2314,16 +2593,20 @@ export function addMessage(role, content, modelName, metadata) {
 
       const toolsByRound = {};
       for (const ev of toolEvents) {
-        const r = ev.round || 1;
+        const r = ev.round ?? 1;
         if (!toolsByRound[r]) toolsByRound[r] = [];
         toolsByRound[r].push(ev);
       }
 
-      const maxRound = Math.max(...Object.keys(toolsByRound).map(Number), roundTexts.length);
+      const toolRounds = Object.keys(toolsByRound).map(Number);
+      const maxRound = Math.max(toolRounds.length ? Math.max(...toolRounds) : 0, roundTexts.length);
 
-      for (let r = 0; r < maxRound; r++) {
-        const roundNum = r + 1;
-        const txt = resolveDocumentPlaceholderLinks((roundTexts[r] || '').trim(), metadata);
+      const firstRound = (toolsByRound[0] || []).length ? 0 : 1;
+      for (let roundNum = firstRound; roundNum <= maxRound; roundNum++) {
+        const r = roundNum - 1;
+        const txt = r >= 0
+          ? resolveDocumentPlaceholderLinks((roundTexts[r] || '').trim(), metadata)
+          : '';
 
         if (txt) {
           const wrap = document.createElement('div');
@@ -2331,10 +2614,31 @@ export function addMessage(role, content, modelName, metadata) {
           const roleEl = document.createElement('div');
           roleEl.className = 'role';
           const pair = replyModelPair(modelName, metadata);
-          const contModel = pair.actualModel || pair.requestedModel;
-          roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
-          if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
-            roleEl.title = pair.requestedModel + ' -> ' + contModel;
+          const contModel = roundModels[r] || pair.actualModel || pair.requestedModel;
+          const contEndpointId = r < roundEndpointIds.length
+            ? roundEndpointIds[r]
+            : pair.actualEndpointId;
+          const contEndpointLabel = r < roundEndpointLabels.length
+            ? roundEndpointLabels[r]
+            : pair.actualEndpointLabel;
+          roleEl.textContent = modelRouteLabel(
+            pair.requestedModel,
+            contModel,
+            pair.requestedEndpointLabel,
+            contEndpointLabel,
+            pair.requestedEndpointId,
+            contEndpointId,
+          );
+          if (
+            pair.requestedModel
+            && contModel
+            && (
+              !sameModelName(pair.requestedModel, contModel)
+              || (pair.requestedEndpointId && contEndpointId && pair.requestedEndpointId !== contEndpointId)
+            )
+          ) {
+            roleEl.title = pair.requestedModel + ' -> ' + contModel
+              + ' (' + pair.requestedEndpointLabel + ' -> ' + contEndpointLabel + ')';
           }
           applyModelColor(roleEl, contModel);
           if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
@@ -2384,7 +2688,7 @@ export function addMessage(role, content, modelName, metadata) {
             box.appendChild(threadWrap);
           }
           for (const ev of roundTools) {
-            if (ev.ask_user) pendingAskUser = ev.ask_user;
+            if (ev.ask_user && !ev.ask_user.resolved) pendingAskUser = ev.ask_user;
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (ev.output && ev.output.trim()) {
@@ -2489,7 +2793,14 @@ export function addMessage(role, content, modelName, metadata) {
     const isCompacted = metadata?.compacted;
     const replyModels = replyModelPair(modelName, metadata);
     const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(
+      replyModels.requestedModel,
+      resolvedModel,
+      replyModels.requestedEndpointLabel,
+      replyModels.actualEndpointLabel,
+      replyModels.requestedEndpointId,
+      replyModels.actualEndpointId,
+    );
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2500,8 +2811,14 @@ export function addMessage(role, content, modelName, metadata) {
     }
     r.textContent = _roleText;
     if (role !== 'user') {
-      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && !sameModelName(replyModels.requestedModel, resolvedModel)) {
-        r.title = replyModels.requestedModel + ' -> ' + resolvedModel;
+      const endpointChanged = Boolean(
+        replyModels.requestedEndpointId
+        && replyModels.actualEndpointId
+        && replyModels.requestedEndpointId !== replyModels.actualEndpointId
+      );
+      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && (!sameModelName(replyModels.requestedModel, resolvedModel) || endpointChanged)) {
+        r.title = replyModels.requestedModel + ' -> ' + resolvedModel
+          + ' (' + replyModels.requestedEndpointLabel + ' -> ' + replyModels.actualEndpointLabel + ')';
       }
       if (!isSlash && !isCompacted) applyModelColor(r, resolvedModel);
       r.appendChild(roleTimestamp(metadata?.timestamp));
@@ -2785,6 +3102,7 @@ const chatRenderer = {
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
+  recordSessionMetricsCost,
   roleTimestamp,
   stripToolBlocks,
   copyMessageText,

@@ -64,7 +64,10 @@ async def chat_with_model(content: str, session_id: Optional[str] = None, owner:
         return {"model": model, "response": response}
     except Exception as e:
         logger.error(f"chat_with_model failed: {e}")
-        return {"error": f"Failed to get response from {model_spec}: {e}"}
+        return {
+            "error": f"Failed to get response from {model_spec}: {e}",
+            "untrusted_content": True,
+        }
 
 
 async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
@@ -110,7 +113,10 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
         return {"model": model, "response": response, "teacher": True}
     except Exception as e:
         logger.error(f"ask_teacher failed: {e}")
-        return {"error": f"Teacher call failed ({model_spec}): {e}"}
+        return {
+            "error": f"Teacher call failed ({model_spec}): {e}",
+            "untrusted_content": True,
+        }
 
 
 async def list_models(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:

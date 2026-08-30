@@ -238,10 +238,11 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
         lambda owner: True,
     )
 
-    from src.tool_execution import execute_tool_block
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
     desc, result = await execute_tool_block(
         _make_block("read_file", "/etc/shadow"),
         owner="admin-user",
+        security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert "outside the allowed roots" in (result.get("error") or "")
     assert result.get("exit_code") == 1
@@ -266,10 +267,11 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
         lambda owner: True,
     )
 
-    from src.tool_execution import execute_tool_block
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
     desc, result = await execute_tool_block(
         _make_block("write_file", "~/.ssh/authorized_keys\nssh-rsa AAAAB3..."),
         owner="admin-user",
+        security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert "sensitive directory" in (result.get("error") or "")
     assert result.get("exit_code") == 1
@@ -294,10 +296,11 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
         lambda owner: True,
     )
 
-    from src.tool_execution import execute_tool_block
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
     desc, result = await execute_tool_block(
         _make_block("write_file", "/etc/cron.d/agent-payload\n* * * * * root /tmp/p\n"),
         owner="admin-user",
+        security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert "outside the allowed roots" in (result.get("error") or "")
     assert result.get("exit_code") == 1

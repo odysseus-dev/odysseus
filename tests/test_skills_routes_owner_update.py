@@ -1,3 +1,4 @@
+import asyncio
 import json
 import textwrap
 from pathlib import Path
@@ -6,9 +7,12 @@ import pytest
 from fastapi import Request
 from fastapi.datastructures import State
 
+import routes.skills_routes as skills_routes
 from routes.skills_routes import SkillUpdateRequest, setup_skills_routes
 from services.memory.skill_format import slugify
 from services.memory.skills import SkillsManager
+from src.tool_approvals import tool_approval_store
+from src.tool_capabilities import capabilities_for_action
 
 
 def _write_skill_md(skills_root: Path, category: str, name: str,
@@ -134,3 +138,70 @@ async def test_save_skill_markdown_route_passes_owner_to_manager(tmp_path):
     assert "description: after" in saved
     assert "status: published" in saved
     assert "- updated step" in saved
+
+
+@pytest.mark.asyncio
+async def test_manual_skill_test_approval_resumes_only_its_sealed_action(
+    tmp_path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "skills"
+    _write_skill_md(skills_root, "general", "approval-skill", "alice")
+    sm = SkillsManager(str(tmp_path))
+    router = setup_skills_routes(sm)
+    approve_route = _route_handler(
+        router,
+        "/api/skills/{skill_id}/test-approval",
+        "POST",
+    )
+
+    pending = tool_approval_store.create(
+        owner="alice",
+        session_id=None,
+        origin_run_id="skill-run",
+        tool_name="bash",
+        content="printf approved",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf approved"),
+    )
+    key = ("alice", "approval-skill")
+    skills_routes._skill_test_jobs[key] = {
+        "status": "awaiting_approval",
+        "task": "test task",
+        "log": [],
+        "approval": pending.public_payload(),
+        "_transcript": ["proposal\n"],
+        "_run": {
+            "md": "skill markdown",
+            "url": "http://example.test",
+            "model": "model",
+            "headers": None,
+            "owner": "alice",
+        },
+    }
+    captured = {}
+
+    async def fake_resume(*args, **kwargs):
+        captured["approval"] = kwargs.get("exact_approval")
+        captured["messages"] = kwargs.get("messages")
+
+    monkeypatch.setattr(skills_routes, "_run_skill_test_job", fake_resume)
+    try:
+        result = await approve_route(
+            _request("alice", {
+                "approval_id": pending.approval_id,
+                "decision": "approve",
+            }),
+            "approval-skill",
+        )
+        await asyncio.sleep(0)
+
+        assert result == {"ok": True, "status": "running", "decision": "approve"}
+        assert captured["approval"].pending == pending
+        assert "Approved the exact bash action" in captured["messages"][-1]["content"]
+        assert captured["messages"][-3]["metadata"]["tool_gate_untrusted"] is True
+        assert "proposal" in captured["messages"][-3]["content"]
+        assert tool_approval_store.peek(pending.approval_id) is None
+    finally:
+        skills_routes._skill_test_jobs.pop(key, None)
