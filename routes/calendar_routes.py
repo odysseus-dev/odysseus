@@ -10,6 +10,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import or_, and_
+from sqlalchemy.exc import IntegrityError
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent
@@ -221,22 +222,125 @@ class EventUpdate(BaseModel):
 
 # ── Helpers ──
 
+_DEFAULT_CALENDAR_NAMESPACE = uuid.UUID("4840613a-9847-4a3b-bd75-19e6bc5fc3ce")
+
+
+def _default_calendar_id(owner: str, collision_index: int = 0) -> str:
+    """Return one stable primary-key candidate for an owner's lazy default.
+
+    Slot zero preserves the original owner-derived identifier.  Later slots
+    let a username be reused after its prior calendar was migrated to another
+    owner during a rename, without making concurrent first use choose random
+    and therefore divergent identifiers.
+    """
+    if collision_index == 0:
+        candidate_name = owner
+    else:
+        candidate_name = json.dumps(
+            [owner, collision_index],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    return str(uuid.uuid5(_DEFAULT_CALENDAR_NAMESPACE, candidate_name))
+
+
+def _begin_sqlite_default_write(db) -> None:
+    """Serialize an absent-default check with other SQLite writers.
+
+    SQLite's default deferred transactions allow two workers to both read an
+    empty calendar set before either writes.  ``BEGIN IMMEDIATE`` acquires the
+    writer reservation before the second, authoritative lookup.  We issue it
+    only when the driver has not already opened a write transaction; a caller
+    with a pending write already owns the required reservation.
+    """
+    connection = db.connection()
+    dbapi_connection = connection.connection
+    driver_connection = getattr(
+        dbapi_connection,
+        "driver_connection",
+        dbapi_connection,
+    )
+    if not getattr(driver_connection, "in_transaction", False):
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+
 def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
-    """Create default calendar if none exist for this owner."""
+    """Return the owner's calendar, staging a default in the caller's transaction.
+
+    A stable owner-derived primary key makes concurrent first-use inserts
+    converge on one row on every SQL backend.  SQLite additionally serializes
+    the absent-row check because its deferred transactions otherwise permit
+    both workers to read the gap before either writes.  Other backends recover
+    a lost insert race inside a savepoint so the caller's event transaction
+    remains usable and atomic.
+    """
     owner = owner or FALLBACK_OWNER
     cal = db.query(CalendarCal).filter(CalendarCal.owner == owner).first()
-    if not cal:
+    if cal:
+        return cal
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        _begin_sqlite_default_write(db)
+        # Another worker may have committed while BEGIN IMMEDIATE waited.
+        cal = db.query(CalendarCal).filter(CalendarCal.owner == owner).first()
+        if cal:
+            return cal
+
+    collision_index = 0
+    while True:
+        default_id = _default_calendar_id(owner, collision_index)
+
+        if dialect == "sqlite":
+            # BEGIN IMMEDIATE above makes this occupancy check authoritative:
+            # another SQLite writer cannot rename, delete, or claim this slot
+            # until the caller commits or rolls back.
+            occupant = db.query(CalendarCal).filter(
+                CalendarCal.id == default_id,
+            ).first()
+            if occupant is not None:
+                if occupant.owner == owner:
+                    return occupant
+                collision_index += 1
+                continue
+
         cal = CalendarCal(
-            id=str(uuid.uuid4()),
+            id=default_id,
             owner=owner,
             name="Personal",
             color="#5b8abf",
             source="local",
         )
-        db.add(cal)
-        db.commit()
-        db.refresh(cal)
-    return cal
+
+        if dialect == "sqlite":
+            db.add(cal)
+            db.flush()
+            return cal
+
+        try:
+            # A uniqueness failure rolls back only this savepoint, not an event
+            # or reminder already staged by the caller's outer transaction.
+            with db.begin_nested():
+                db.add(cal)
+                db.flush()
+            return cal
+        except IntegrityError:
+            # Use a locking/current read so repeatable-read backends can observe
+            # the row that won after our transaction's original empty snapshot.
+            occupant = db.query(CalendarCal).filter(
+                CalendarCal.id == default_id,
+            ).with_for_update().first()
+            if occupant is None:
+                # Do not misclassify an unrelated integrity failure as an ID
+                # collision and loop forever. A concurrently deleted winner is
+                # safe for the caller to retry as a fresh transaction.
+                raise
+            if occupant.owner == owner:
+                return occupant
+            # A renamed calendar owns this deterministic slot. Advance to the
+            # next stable slot; concurrent callers for this owner will still
+            # converge there.
+            collision_index += 1
 
 
 # Per-request user time context. chat_routes sets this from browser timezone
@@ -1015,6 +1119,9 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             _ensure_default_calendar(db, owner)
+            # Listing calendars intentionally lazily creates a durable default.
+            # Other callers commit it with the event they are creating.
+            db.commit()
             cals = db.query(CalendarCal).filter(CalendarCal.owner == owner).all()
             return {"calendars": [
                 {"name": c.name, "href": c.id, "color": c.color, "source": c.source}
@@ -1023,6 +1130,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
+            db.rollback()
             logger.error("Failed to list calendars: %s", e)
             raise HTTPException(500, "Failed to list calendars")
         finally:
