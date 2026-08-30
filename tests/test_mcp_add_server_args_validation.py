@@ -36,6 +36,12 @@ def _add_server(monkeypatch):
     """Register add_server on the shared module-level router and return the
     freshly-added route's raw endpoint function, bypassing HTTP/Form parsing
     (require_admin is the only other thing the function touches via `request`).
+
+    Callers must pass every Form(...) parameter add_server reads past the args
+    check (url, oauth_file, oauth_config): calling the endpoint directly skips
+    FastAPI's dependency resolution, so an omitted one arrives as the Form
+    marker object itself rather than its declared default, and later code
+    (e.g. `if oauth_file:`) reads that marker as truthy.
     """
     monkeypatch.setattr(mcp_routes, "require_admin", lambda request: None)
     manager = MagicMock()
@@ -62,6 +68,9 @@ def test_add_server_rejects_malformed_args_instead_of_defaulting(monkeypatch):
             command="mcp-server-filesystem",
             args="/app/data/jarvis-files",  # the exact value from issue #6211
             env="{}",
+            url=None,
+            oauth_file=None,
+            oauth_config=None,
         ))
 
     assert exc.value.status_code == 400
@@ -80,6 +89,9 @@ def test_add_server_still_accepts_valid_json_args(monkeypatch):
         command="mcp-server-filesystem",
         args=json.dumps(["/app/data/jarvis-files"]),
         env="{}",
+        url=None,
+        oauth_file=None,
+        oauth_config=None,
     ))
 
     assert result["connected"] is True
@@ -101,6 +113,9 @@ def test_add_server_still_defaults_empty_args_to_empty_list(monkeypatch):
         command="some-command",
         args="",
         env="{}",
+        url=None,
+        oauth_file=None,
+        oauth_config=None,
     ))
 
     assert result["connected"] is True
