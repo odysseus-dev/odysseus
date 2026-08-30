@@ -2144,11 +2144,11 @@ const SELF_TOKEN_SCOPES = [
   { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
   { key: 'memory:read', label: 'Memory', detail: 'Read memory' },
   { key: 'memory:write', label: 'Memory write', detail: 'Write memory' },
-  { key: 'cookbook:read', label: 'Cookbook', detail: 'Read model inventory and presets' },
-  { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Start and stop model servers' },
+  { key: 'cookbook:read', label: 'Cookbook', detail: 'Read model inventory and presets', adminOnly: true },
+  { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Start and stop model servers', adminOnly: true },
 ];
 
-function initSelfApiTokens() {
+function initSelfApiTokens(isAdmin) {
   const listEl = el('settings-api-tokens-list');
   const createPanel = el('settings-api-tokens-create');
   const newBtn = el('settings-api-token-new-btn');
@@ -2163,7 +2163,7 @@ function initSelfApiTokens() {
   if (!listEl || !newBtn) return;
 
   // Build scope checkboxes once
-  scopesEl.innerHTML = SELF_TOKEN_SCOPES.map(s => `
+  scopesEl.innerHTML = SELF_TOKEN_SCOPES.filter(s => !s.adminOnly || isAdmin).map(s => `
     <label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;cursor:pointer;">
       <input type="checkbox" class="self-token-scope" value="${esc(s.key)}" title="${esc(s.detail)}">
       <span>${esc(s.label)}</span>
@@ -2307,6 +2307,11 @@ function initAccount() {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
       }
+      const tokenCard = el('settings-api-tokens-card');
+      if (tokenCard && d.authenticated) {
+        tokenCard.style.display = '';
+        initSelfApiTokens(!!d.is_admin);
+      }
     }).catch(() => {});
 
   // Update password placeholder and policy from server
@@ -2449,9 +2454,6 @@ function initAccount() {
     }
     render2FA();
   }
-
-  // Personal API Tokens
-  initSelfApiTokens();
 
   // Logout
   const logoutBtn = el('settings-logout-btn');

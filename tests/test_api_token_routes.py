@@ -583,10 +583,10 @@ def test_update_token_normal_object_still_works(monkeypatch, token_routes_mod):
 # ---------------------------------------------------------------------------
 
 
-def _self_req(username: str, *, is_api_token: bool = False, invalidator=None):
+def _self_req(username: str, *, is_api_token: bool = False, is_admin: bool = True, invalidator=None):
     """A request whose state carries a cookie user (or a bearer API token)."""
     app_state = SimpleNamespace(
-        auth_manager=_admin_mgr(True),
+        auth_manager=_admin_mgr(is_admin),
     )
     if invalidator is not None:
         app_state.invalidate_token_cache = invalidator
@@ -656,13 +656,48 @@ def test_list_self_only_returns_own_tokens(monkeypatch, token_routes_mod):
         id="b001", name="Bob token", owner="bob", token_prefix="ody_bo",
         scopes="chat", is_active=True, last_used_at=now, created_at=now,
     )
+    row_alice_inactive = SimpleNamespace(
+        id="a002", name="Old Alice token", owner="alice", token_prefix="ody_old",
+        scopes="chat", is_active=False, last_used_at=now, created_at=now,
+    )
 
-    fake_session = MagicMock()
-    # The handler filters on owner == user, so the mock query chain must
-    # return only alice's row after the filter.  We mock .all() to return
-    # the union, but the real DB filter would exclude bob.  Simulate it by
-    # having the mock return only alice's row.
-    fake_session.query.return_value.filter.return_value.all.return_value = [row_alice]
+    class _Predicate:
+        def __init__(self, field, value):
+            self.field = field
+            self.value = value
+
+        def matches(self, row):
+            return getattr(row, self.field) == self.value
+
+    class _Column:
+        def __init__(self, field):
+            self.field = field
+
+        def __eq__(self, value):
+            return _Predicate(self.field, value)
+
+    class _FakeApiToken:
+        owner = _Column("owner")
+        is_active = _Column("is_active")
+
+    class _Query:
+        def __init__(self, rows):
+            self.rows = rows
+            self.predicates = []
+
+        def filter(self, *predicates):
+            self.predicates.extend(predicates)
+            return self
+
+        def all(self):
+            return [
+                row for row in self.rows
+                if all(predicate.matches(row) for predicate in self.predicates)
+            ]
+
+    query = _Query([row_alice, row_bob, row_alice_inactive])
+    fake_session = SimpleNamespace(query=lambda model: query)
+    monkeypatch.setattr(mod, "ApiToken", _FakeApiToken)
     monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
 
     req = _self_req("alice")
@@ -672,6 +707,10 @@ def test_list_self_only_returns_own_tokens(monkeypatch, token_routes_mod):
     assert len(result) == 1
     assert result[0]["id"] == "a001"
     assert result[0]["owner"] == "alice"
+    assert [(p.field, p.value) for p in query.predicates] == [
+        ("owner", "alice"),
+        ("is_active", True),
+    ]
 
 
 # -- delete not-yours returns 404 (not 403) to avoid existence oracle --
@@ -709,6 +748,68 @@ def test_create_self_rejects_unknown_scope(monkeypatch, token_routes_mod):
     with pytest.raises(HTTPException) as exc:
         create_self(request=req, name="bad-token", scopes="admin,shell")
     assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("scopes", ["cookbook:read", "cookbook:launch"])
+def test_create_self_rejects_cookbook_scopes_for_non_admin(monkeypatch, token_routes_mod, scopes):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    create_self = _get_handler(mod, "POST", "/tokens/self")
+    with pytest.raises(HTTPException) as exc:
+        create_self(request=_self_req("alice", is_admin=False), name="cookbook", scopes=scopes)
+
+    assert exc.value.status_code == 403
+    fake_session.add.assert_not_called()
+
+
+def test_create_self_allows_cookbook_scopes_for_admin(monkeypatch, token_routes_mod):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+    monkeypatch.setattr(mod, "bcrypt", SimpleNamespace(
+        hashpw=lambda pw, salt: b"$2b$12$FAKEHASH",
+        gensalt=lambda: b"fakesalt",
+    ))
+
+    create_self = _get_handler(mod, "POST", "/tokens/self")
+    result = create_self(
+        request=_self_req("alice", is_admin=True),
+        name="cookbook",
+        scopes="cookbook:launch",
+    )
+
+    assert result["scopes"] == ["cookbook:read", "cookbook:launch"]
+    fake_session.add.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs"),
+    [
+        ("GET", "/tokens/self", {}),
+        ("POST", "/tokens/self", {"name": "disabled"}),
+        ("DELETE", "/tokens/self/{token_id}", {"token_id": "abc12345"}),
+    ],
+)
+def test_self_serve_routes_reject_auth_disabled(monkeypatch, token_routes_mod, method, path, kwargs):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    mod = token_routes_mod
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    handler = _get_handler(mod, method, path)
+    with pytest.raises(HTTPException) as exc:
+        handler(request=_self_req(""), **kwargs)
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Personal API tokens require AUTH_ENABLED=true"
+    fake_session.add.assert_not_called()
+    fake_session.delete.assert_not_called()
 
 
 # -- owner forced from session (not client) --
