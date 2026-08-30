@@ -12,6 +12,7 @@ import logging
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
 from src.auth_helpers import effective_user, is_bearer_principal, require_chat_scope
+from src.session_provenance import persist_session_endpoint_provenance
 from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
 
 logger = logging.getLogger(__name__)
@@ -220,15 +221,24 @@ def setup_compare_routes(session_manager: SessionManager):
                 # `ep` is None (raw admin URL or no match), so a comparison can
                 # never inherit another user's key/headers.
                 headers = build_headers(ep.api_key, ep.base_url) if (ep and ep.api_key) else None
-                resolved.append((sid, selected_model, session_endpoint_url, headers))
+                resolved.append(
+                    (
+                        sid,
+                        selected_model,
+                        session_endpoint_url,
+                        headers,
+                        str(ep.id) if ep is not None else None,
+                        "registered" if ep is not None else None,
+                    )
+                )
         finally:
             db.close()
 
         # Both endpoints validated — only now create the ephemeral [CMP]
         # sessions and copy any resolved headers.
-        for sid, model, session_endpoint_url, headers in resolved:
+        for sid, model, session_endpoint_url, headers, endpoint_id, provenance in resolved:
             name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
-            session_manager.create_session(
+            comparison_session = session_manager.create_session(
                 session_id=sid,
                 name=name,
                 endpoint_url=session_endpoint_url,
@@ -236,6 +246,14 @@ def setup_compare_routes(session_manager: SessionManager):
                 rag=False,
                 owner=user,
             )
+            if provenance in {"registered", "direct"}:
+                persist_session_endpoint_provenance(
+                    session_manager,
+                    sid,
+                    comparison_session,
+                    model_endpoint_id=endpoint_id,
+                    endpoint_provenance=provenance,
+                )
             if headers:
                 s = session_manager.sessions.get(sid)
                 if s:

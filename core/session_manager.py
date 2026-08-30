@@ -165,6 +165,8 @@ class SessionManager:
             headers=headers,
             history=[],
             owner=getattr(db_session, "owner", None),
+            model_endpoint_id=getattr(db_session, "model_endpoint_id", None),
+            endpoint_provenance=getattr(db_session, "endpoint_provenance", None),
             is_important=getattr(db_session, "is_important", False) or False,
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
@@ -221,6 +223,8 @@ class SessionManager:
             headers=headers,
             history=history,
             owner=getattr(db_session, 'owner', None),
+            model_endpoint_id=getattr(db_session, 'model_endpoint_id', None),
+            endpoint_provenance=getattr(db_session, 'endpoint_provenance', None),
             is_important=getattr(db_session, 'is_important', False) or False,
         )
 
@@ -502,6 +506,8 @@ class SessionManager:
             session.rag = db_session.rag
             session.archived = db_session.archived
             session.owner = getattr(db_session, "owner", None)
+            session.model_endpoint_id = getattr(db_session, "model_endpoint_id", None)
+            session.endpoint_provenance = getattr(db_session, "endpoint_provenance", None)
             session.is_important = getattr(db_session, "is_important", False) or False
             session.message_count = (
                 db.query(DbChatMessage)
@@ -601,6 +607,50 @@ class SessionManager:
             raise
         finally:
             db.close()
+
+    def set_session_endpoint_provenance(
+        self,
+        session_id: str,
+        *,
+        model_endpoint_id: Optional[str],
+        endpoint_provenance: str,
+    ) -> bool:
+        """Persist the server-owned endpoint provenance for a session.
+
+        ``registered`` rows carry an exact ModelEndpoint id. ``direct`` rows
+        deliberately carry no endpoint id and retain direct API-key
+        compatibility. The values are assigned only after the durable write
+        succeeds so an in-memory session cannot claim provenance the database
+        did not accept.
+        """
+        provenance = str(endpoint_provenance or "").strip().lower()
+        endpoint_id = str(model_endpoint_id or "").strip() or None
+        if provenance == "registered" and not endpoint_id:
+            raise ValueError("registered session provenance requires an endpoint id")
+        if provenance == "direct":
+            endpoint_id = None
+        if provenance not in {"registered", "direct"}:
+            raise ValueError("unsupported session endpoint provenance")
+
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session is None:
+                raise KeyError(f"Session {session_id} not found")
+            db_session.model_endpoint_id = endpoint_id
+            db_session.endpoint_provenance = provenance
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        session = self.sessions.get(session_id)
+        if session is not None:
+            session.model_endpoint_id = endpoint_id
+            session.endpoint_provenance = provenance
+        return True
 
     def delete_session(self, session_id: str) -> bool:
         """Permanently delete a session and all its messages."""

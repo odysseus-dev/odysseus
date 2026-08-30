@@ -27,6 +27,7 @@ from src.message_metadata import (
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
 from src.upload_handler import reserve_message_upload_references
+from src.session_provenance import persist_session_endpoint_provenance
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -477,6 +478,20 @@ def setup_session_routes(
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
         )
+        if endpoint_row is not None or request_api_key:
+            try:
+                persist_session_endpoint_provenance(
+                    session_manager,
+                    sid,
+                    session,
+                    model_endpoint_id=getattr(endpoint_row, "id", None),
+                    endpoint_provenance=(
+                        "registered" if endpoint_row is not None else "direct"
+                    ),
+                )
+            except Exception as exc:
+                logger.error("Failed to persist session endpoint provenance for %s: %s", sid, exc)
+                raise HTTPException(500, "Failed to persist session endpoint provenance") from exc
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
         resolved_base = endpoint_url
@@ -540,6 +555,7 @@ def setup_session_routes(
             _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
             endpoint_api_key = ""
             endpoint_base_url = ""
+            endpoint_row = None
             if endpoint_id:
                 from core.database import ModelEndpoint
                 from src.auth_helpers import owner_filter
@@ -555,13 +571,23 @@ def setup_session_routes(
                     ep = q.first()
                     if not ep:
                         raise HTTPException(400, "Model endpoint no longer exists")
+                    endpoint_row = ep
                     endpoint_base_url = ep.base_url or ""
                     endpoint_api_key = ep.api_key or ""
                     endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
                 finally:
                     _db.close()
+            if is_bearer_principal(request) and endpoint_row is not None:
+                from routes.model_routes import _validate_bearer_model_selection
+
+                # Validate before mutating either the in-memory or durable
+                # session. The same server-owned inventory is enforced again
+                # immediately before each bearer LLM consumer.
+                model = _validate_bearer_model_selection(endpoint_row, model)
             session.model = model
             session.endpoint_url = endpoint_url
+            session.model_endpoint_id = getattr(endpoint_row, "id", None)
+            session.endpoint_provenance = "registered" if endpoint_row is not None else None
             # Update auth headers from the endpoint's stored API key
             if endpoint_api_key:
                 from src.endpoint_resolver import build_headers
@@ -576,6 +602,8 @@ def setup_session_routes(
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
                     db_session.headers = session.headers or {}
+                    db_session.model_endpoint_id = getattr(endpoint_row, "id", None)
+                    db_session.endpoint_provenance = "registered" if endpoint_row is not None else None
                     db_session.updated_at = utcnow_naive()
                     db.commit()
             finally:
@@ -1049,6 +1077,11 @@ def setup_session_routes(
         recent = history[-recent_keep:]
         if not older:
             raise HTTPException(400, "Nothing old enough to compact")
+
+        if capability.is_bearer:
+            from routes.chat_helpers import _validate_bearer_session_model
+
+            _validate_bearer_session_model(session, owner=effective_user(request))
 
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
         from src.llm_core import llm_call_async

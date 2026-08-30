@@ -23,12 +23,14 @@ from src.message_metadata import (
 )
 from src.topic_analyzer import analyze_topics
 from src.upload_handler import reserve_message_upload_references
+from src.session_provenance import persist_session_endpoint_provenance
 from routes.session_routes import (
     _message_role,
     _message_text,
     _reject_compact_during_active_run,
     _verify_session_owner,
 )
+from routes.chat_helpers import _validate_bearer_session_model
 
 logger = logging.getLogger(__name__)
 
@@ -664,6 +666,15 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             if not source:
                 raise HTTPException(404, "Session not found")
 
+            source_provenance = getattr(source, "endpoint_provenance", None)
+            source_endpoint_id = getattr(source, "model_endpoint_id", None)
+            if (
+                is_bearer_principal(request)
+                and (hasattr(source, "endpoint_provenance") or hasattr(source, "model_endpoint_id"))
+                and source_provenance not in {"registered", "direct"}
+            ):
+                raise HTTPException(400, "Session endpoint provenance is unavailable")
+
             # Create new session
             new_id = str(uuid.uuid4())
             fork_name = f"\u2ADD {source.name}"
@@ -675,6 +686,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 rag=False,
                 owner=getattr(source, 'owner', None),
             )
+            if source_provenance in {"registered", "direct"}:
+                persist_session_endpoint_provenance(
+                    session_manager,
+                    new_id,
+                    new_session,
+                    model_endpoint_id=source_endpoint_id,
+                    endpoint_provenance=source_provenance,
+                )
 
             # Copy messages up to keep_count
             msgs_to_copy = source.history[:keep_count]
@@ -795,6 +814,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
             if len(session.history) < 6:
                 return {"status": "ok", "message": "Not enough messages to compact"}
+
+            if capability.is_bearer:
+                _validate_bearer_session_model(session, owner=owner)
 
             context_kwargs = {}
             if not capability.allow_live_probes:
@@ -927,6 +949,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "after": pct_after,
             }
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Manual compact error {session_id}: {e}")
             raise HTTPException(500, str(e))

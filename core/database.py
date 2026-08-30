@@ -187,6 +187,13 @@ class Session(TimestampMixin, Base):
     endpoint_url = Column(String, nullable=False)
     model = Column(String, nullable=False)
     owner = Column(String, nullable=True, index=True)  # username; null = legacy/shared
+
+    # Bearer-chat sessions must retain the exact server-owned endpoint they
+    # were created from.  Keep this reference non-cascading so endpoint
+    # disable/delete/owner changes remain observable as an orphan and fail
+    # closed at the next bearer LLM boundary.
+    model_endpoint_id = Column(String, nullable=True, index=True)
+    endpoint_provenance = Column(String, nullable=True)
     
     # Configuration flags
     rag = Column(Boolean, default=False)
@@ -993,6 +1000,40 @@ def _migrate_add_owner_column():
             logging.getLogger(__name__).info("Migrated: added 'owner' column to sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"Migration check failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_session_endpoint_provenance_columns():
+    """Add the durable endpoint identity used by bearer session validation."""
+    import sqlite3
+
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+        if "model_endpoint_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN model_endpoint_id TEXT")
+        if "endpoint_provenance" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN endpoint_provenance TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_sessions_model_endpoint_id "
+            "ON sessions(model_endpoint_id)"
+        )
+        conn.commit()
+        logging.getLogger(__name__).info(
+            "Migrated: added session endpoint identity/provenance columns"
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Session endpoint provenance migration failed: %s", e
+        )
     finally:
         try:
             conn.close()
@@ -2152,6 +2193,7 @@ def init_db():
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
+    _migrate_add_session_endpoint_provenance_columns()
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()

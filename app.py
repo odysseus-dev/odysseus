@@ -516,23 +516,45 @@ async def serve_generated_image(filename: str, request: Request):
     # SECURITY: filename is the only key, so anyone who knows / guesses a
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
+    _is_bearer = False
     try:
-        from src.auth_helpers import get_current_user
+        from src.auth_helpers import (
+            effective_user,
+            get_current_user,
+            is_bearer_principal,
+            require_chat_scope,
+        )
         from core.database import SessionLocal as _SL, GalleryImage as _GI
-        _user = get_current_user(request)
+        _is_bearer = is_bearer_principal(request)
+        if _is_bearer:
+            # Gallery JSON attributes rows to the token owner. Reuse the same
+            # owner/scope gate for the binary follow-up so the returned URL is
+            # actually readable by that bearer principal.
+            require_chat_scope(request)
+            _user = effective_user(request)
+        else:
+            _user = get_current_user(request)
         if _user:
             _db = _SL()
             try:
                 _row = _db.query(_GI).filter(_GI.filename == filename).first()
                 # Generated-but-not-yet-imported images have no row → allow.
-                # Row exists with a different owner → 404 (don't confirm existence).
-                if _row is not None and _row.owner and _row.owner != _user:
+                # A bearer gallery row must have the exact token owner; cookie
+                # callers retain the legacy null-owner compatibility below.
+                if _row is not None and (
+                    (_is_bearer and _row.owner != _user)
+                    or (not _is_bearer and _row.owner and _row.owner != _user)
+                ):
                     raise HTTPException(status_code=404, detail="Image not found")
             finally:
                 _db.close()
     except HTTPException:
         raise
     except Exception as _e:
+        if _is_bearer:
+            # An authenticated bearer request must not become a public file
+            # read because ownership lookup degraded or the DB was unavailable.
+            raise HTTPException(status_code=404, detail="Image not found") from _e
         logger.warning("Image ownership verification failed for %r", filename, exc_info=_e)
     ext = filename.rsplit('.', 1)[-1].lower()
     mime = {

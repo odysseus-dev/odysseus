@@ -18,6 +18,7 @@ from src.auth_helpers import (
 )
 from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
+from src.session_provenance import persist_session_endpoint_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +366,12 @@ def setup_webhook_routes(
             _sess_owner = getattr(sess, "owner", None)
             if not _caller_owns_session(_sess_owner, _tok_user):
                 raise HTTPException(404, "Session not found")
+            if is_bearer_principal(request):
+                from routes.chat_helpers import _validate_bearer_session_model
+
+                # Existing-session resume is an LLM boundary too; ownership
+                # alone must not authorize the persisted endpoint/model.
+                _validate_bearer_session_model(sess, owner=token_owner)
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
         if not sess and body.api_key:
@@ -396,6 +403,12 @@ def setup_webhook_routes(
             sess = session_manager.create_session(
                 session_id=sid, name="API Chat", endpoint_url=endpoint_url,
                 model=model, owner=token_owner,
+            )
+            persist_session_endpoint_provenance(
+                session_manager,
+                sid,
+                sess,
+                endpoint_provenance="direct",
             )
             sess.headers = build_headers(api_key, base_url)
             session_manager.save_sessions()
@@ -446,12 +459,29 @@ def setup_webhook_routes(
                 session_id=sid, name="API Chat", endpoint_url=endpoint_url,
                 model=model, owner=token_owner,
             )
+            endpoint_id = getattr(ep, "id", None)
+            if endpoint_id:
+                persist_session_endpoint_provenance(
+                    session_manager,
+                    sid,
+                    sess,
+                    model_endpoint_id=endpoint_id,
+                    endpoint_provenance="registered",
+                )
             if api_key:
                 sess.headers = build_headers(api_key, base_url)
                 session_manager.save_sessions()
             session_id = sid
 
         # --- Send message and get response ---
+        if is_bearer_principal(request):
+            from routes.chat_helpers import _validate_bearer_session_model
+
+            # The fallback branch has just created the session, so it did not
+            # pass through the existing-session gate above. Recheck the
+            # durable endpoint identity immediately before the LLM boundary
+            # for every bearer path, including malformed endpoint rows.
+            _validate_bearer_session_model(sess, owner=token_owner)
         sess.add_message(ChatMessage("user", message))
 
         messages = [{"role": m.role, "content": m.content} for m in sess.history]

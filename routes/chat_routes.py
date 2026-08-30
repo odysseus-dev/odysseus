@@ -434,11 +434,21 @@ def _clear_orphaned_session_endpoint(
         return False
     db = SessionLocal()
     try:
+        provenance = (getattr(sess, "endpoint_provenance", None) or "").strip().lower()
+        endpoint_id = (getattr(sess, "model_endpoint_id", None) or "").strip()
+        if provenance == "direct":
+            return False
         q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
         if owner:
             from src.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
-        endpoints = q.all()
+        if provenance == "registered":
+            if not endpoint_id:
+                endpoints = []
+            else:
+                endpoints = q.filter(ModelEndpoint.id == endpoint_id).all()
+        else:
+            endpoints = q.all()
         for ep in endpoints:
             if _session_url_matches_endpoint(sess.endpoint_url or "", ep.base_url or ""):
                 return False
@@ -568,15 +578,24 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             return False
     db = SessionLocal()
     try:
-        # Prefer the endpoint whose base URL matches the session — we know the
-        # user already pointed this session at that endpoint, so its first
-        # cached model is the most defensible default.
+        provenance = (getattr(sess, "endpoint_provenance", None) or "").strip().lower()
+        endpoint_id = (getattr(sess, "model_endpoint_id", None) or "").strip()
+        has_provenance_fields = hasattr(sess, "endpoint_provenance") or hasattr(sess, "model_endpoint_id")
+        if not allow_live_probes and has_provenance_fields and provenance not in {"registered", "direct"}:
+            return False
+        # Registered sessions use their immutable endpoint identity. URL-only
+        # fallback remains for legacy browser sessions, but is never used to
+        # recover a bearer session with a missing/invalid identity.
         ep = None
         if getattr(sess, "endpoint_url", ""):
             q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
             if owner:
                 from src.auth_helpers import owner_filter
                 q = owner_filter(q, ModelEndpoint, owner)
+            if provenance == "registered":
+                if not endpoint_id:
+                    return False
+                q = q.filter(ModelEndpoint.id == endpoint_id)
             endpoints = q.all()
             for cand in endpoints:
                 if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
@@ -707,6 +726,7 @@ def _reconcile_selected_route_from_request(
 
     endpoint_url = ""
     headers = None
+    resolved_endpoint_id = None
     if selected_endpoint_id or selected_endpoint_url:
         try:
             from src.auth_helpers import owner_filter
@@ -718,15 +738,26 @@ def _reconcile_selected_route_from_request(
                     q = q.filter(ModelEndpoint.id == selected_endpoint_id)
                 if owner:
                     q = owner_filter(q, ModelEndpoint, owner)
-                candidates = q.all() if selected_endpoint_url and not selected_endpoint_id else [q.first()]
-                ep = None
-                for cand in candidates:
-                    if not cand:
-                        continue
-                    if selected_endpoint_id or _session_url_matches_endpoint(selected_endpoint_url, cand.base_url or ""):
-                        ep = cand
-                        break
+                if selected_endpoint_id:
+                    candidates = [q.first()]
+                else:
+                    candidates = [
+                        cand for cand in q.all()
+                        if cand and _session_url_matches_endpoint(
+                            selected_endpoint_url,
+                            cand.base_url or "",
+                        )
+                    ]
+                    # A URL is not stable identity. Refuse to choose between
+                    # duplicate visible endpoints instead of binding the
+                    # session to whichever row happens to come first.
+                    if len(candidates) != 1:
+                        return False
+                ep = candidates[0] if candidates else None
                 if not ep:
+                    return False
+                resolved_endpoint_id = str(getattr(ep, "id", "") or "").strip() or None
+                if not resolved_endpoint_id:
                     return False
                 endpoint_url = build_chat_url(normalize_base(ep.base_url or ""))
                 headers = build_headers(ep.api_key or "", ep.base_url or "") if ep.api_key else {}
@@ -742,12 +773,16 @@ def _reconcile_selected_route_from_request(
     if (
         selected_model == (getattr(sess, "model", "") or "")
         and endpoint_url == (getattr(sess, "endpoint_url", "") or "")
+        and resolved_endpoint_id == (getattr(sess, "model_endpoint_id", "") or "")
+        and getattr(sess, "endpoint_provenance", None) == "registered"
     ):
         return False
 
     sess.model = selected_model
     sess.endpoint_url = endpoint_url
     sess.headers = headers or {}
+    sess.model_endpoint_id = resolved_endpoint_id
+    sess.endpoint_provenance = "registered"
     db = SessionLocal()
     try:
         db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
@@ -755,6 +790,8 @@ def _reconcile_selected_route_from_request(
             db_session.model = selected_model
             db_session.endpoint_url = endpoint_url
             db_session.headers = sess.headers or {}
+            db_session.model_endpoint_id = resolved_endpoint_id
+            db_session.endpoint_provenance = "registered"
             db_session.updated_at = datetime.utcnow()
             db.commit()
     finally:
@@ -2929,6 +2966,11 @@ def setup_chat_routes(
             sess = session_manager.get_session(session_id)
         except (KeyError, SessionNotFoundError):
             raise HTTPException(404, "Session not found")
+
+        if capability.is_bearer:
+            # Rewrite is a direct streaming LLM consumer, so it must enforce
+            # the same server-owned session model/endpoint invariant as chat.
+            _validate_bearer_session_model(sess, owner=effective_user(request))
 
         messages = [
             {"role": "system", "content": (

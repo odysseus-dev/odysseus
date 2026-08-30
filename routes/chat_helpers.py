@@ -531,9 +531,20 @@ def resolve_session_auth(
         is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(sess, "endpoint_url", "") or "")
     except Exception:
         is_chatgpt_subscription = False
+    provenance = (getattr(sess, "endpoint_provenance", None) or "").strip().lower()
+    endpoint_id = (getattr(sess, "model_endpoint_id", None) or "").strip()
     has_auth = _has_auth_keys(sess.headers)
-    if has_auth and not is_chatgpt_subscription:
+    if has_auth and not is_chatgpt_subscription and provenance != "registered":
         return
+    if provenance == "direct":
+        # A direct API-key session owns its request headers; a same-URL
+        # registered endpoint must never supply another user's credentials by
+        # coincidence.
+        return
+    if provenance == "registered":
+        # Do not carry a previously persisted key through endpoint rotation or
+        # an unavailable endpoint while attempting exact re-resolution below.
+        sess.headers = {}
 
     try:
         from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
@@ -549,6 +560,10 @@ def resolve_session_auth(
                 # with similar endpoint URLs can borrow each other's API key.
                 from src.auth_helpers import owner_filter
                 q = owner_filter(q, ModelEndpoint, owner)
+            if provenance == "registered":
+                if not endpoint_id:
+                    return
+                q = q.filter(ModelEndpoint.id == endpoint_id)
             for ep in q.all():
                 if not _session_url_matches_endpoint(target_url, ep.base_url or ""):
                     continue
@@ -617,6 +632,12 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     if not session_base:
         return None
 
+    provenance = getattr(sess, "endpoint_provenance", None)
+    endpoint_id = (getattr(sess, "model_endpoint_id", None) or "").strip()
+    if provenance == "direct":
+        # Direct API-key sessions are intentionally outside the registered
+        # endpoint inventory. Never borrow a same-URL endpoint's model list.
+        return None
     db = SessionLocal()
     try:
         q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
@@ -624,6 +645,10 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
         if owner:
             from src.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
+        if provenance == "registered":
+            if not endpoint_id:
+                return None
+            q = q.filter(ModelEndpoint.id == endpoint_id)
         endpoints = q.all()
         for ep in endpoints:
             try:
@@ -660,40 +685,78 @@ def _validate_bearer_session_model(sess, owner: str | None = None) -> Optional[s
     sessions, including provider-auth-backed rows, must use the visible
     server-owned inventory and never trigger a provider lookup here.
     """
+    # Lightweight in-memory test doubles from older route tests do not carry
+    # durable provenance fields. They cannot represent a persisted bearer
+    # session; retain their historical seam while every SessionManager-loaded
+    # object (which always has both fields) takes the fail-closed path below.
+    if not hasattr(sess, "endpoint_provenance") and not hasattr(sess, "model_endpoint_id"):
+        return None
+
+    provenance = (getattr(sess, "endpoint_provenance", None) or "").strip().lower()
+    endpoint_id = (getattr(sess, "model_endpoint_id", None) or "").strip()
+    if provenance == "direct":
+        if endpoint_id:
+            raise HTTPException(400, "Direct API-key sessions cannot carry a registered endpoint")
+        # No registered ModelEndpoint row is consulted for this documented
+        # compatibility path.
+        return None
+    if provenance != "registered":
+        raise HTTPException(400, "Session endpoint provenance is unavailable")
+    if not owner:
+        raise HTTPException(403, "A bearer session owner is required")
+    if not endpoint_id:
+        raise HTTPException(400, "Registered session endpoint identity is unavailable")
+
     endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
     requested = (getattr(sess, "model", "") or "").strip()
-    if not endpoint_url or not requested:
-        return None
-    try:
-        session_base = normalize_base(endpoint_url)
-    except Exception:
-        session_base = endpoint_url.rstrip("/")
-    if not session_base:
-        return None
+    if not endpoint_url:
+        raise HTTPException(400, "Registered session endpoint is not configured")
+    if not requested:
+        raise HTTPException(400, "Registered session model is not configured")
 
     db = SessionLocal()
     try:
-        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-        if owner:
-            from src.auth_helpers import owner_filter
+        from src.auth_helpers import owner_filter
 
-            q = owner_filter(q, ModelEndpoint, owner)
-        for ep in q.all():
-            try:
-                if normalize_base(getattr(ep, "base_url", "") or "") != session_base:
-                    continue
-            except Exception:
-                continue
-            from routes.model_routes import _validate_bearer_model_selection
+        q = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == endpoint_id,
+            ModelEndpoint.is_enabled == True,
+        )
+        q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
+        if len(endpoints) != 1:
+            # This covers disabled/deleted/owner-mismatched rows as well as
+            # malformed duplicate results. Do not fall back to URL matching.
+            raise HTTPException(400, "Registered model endpoint is no longer available")
+        ep = endpoints[0]
+        if not _session_url_matches_endpoint(endpoint_url, getattr(ep, "base_url", "") or ""):
+            raise HTTPException(400, "Session endpoint provenance is stale")
 
-            sess.model = _validate_bearer_model_selection(ep, requested)
-            return sess.model
+        from routes.model_routes import _validate_bearer_model_selection
+
+        validated = _validate_bearer_model_selection(ep, requested)
+
+        # A session may outlive an endpoint-key rotation. For bearer calls,
+        # use the current static key for this exact endpoint and never trust a
+        # stale persisted Authorization header. Provider-auth rows remain
+        # request-local and are intentionally empty in cache-only mode.
+        try:
+            from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
+
+            base, api_key = resolve_endpoint_runtime(
+                ep,
+                owner=owner,
+                allow_live_probes=False,
+            )
+            sess.headers = build_headers(api_key, base)
+        except Exception as exc:
+            logger.warning("Could not refresh bearer session endpoint auth: %s", exc)
+            sess.headers = {}
+
+        sess.model = validated
+        return validated
     finally:
         db.close()
-
-    # No registered endpoint means this is the documented direct API-key
-    # compatibility path, not an endpoint-picker selection.
-    return None
 
 
 def _session_is_research_spinoff(sess) -> bool:

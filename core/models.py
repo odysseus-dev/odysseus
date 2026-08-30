@@ -90,6 +90,8 @@ class Session:
     headers: Optional[Dict[str, str]] = None
     history: List[ChatMessage] = None
     owner: Optional[str] = None
+    model_endpoint_id: Optional[str] = None
+    endpoint_provenance: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
 
