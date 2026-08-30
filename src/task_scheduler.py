@@ -84,18 +84,23 @@ async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -
             pending = fut
             owner = True
     if not owner:
-        return await pending
+        return await asyncio.shield(pending)
     try:
         val = await fetch()
         async with _shared_cache_lock:
             _shared_cache[key] = (time.monotonic() + ttl, val)
             _shared_cache_pending.pop(key, None)
-        pending.set_result(val)
+        if not pending.done():
+            pending.set_result(val)
         return val
-    except Exception as e:
+    except BaseException as e:
         async with _shared_cache_lock:
             _shared_cache_pending.pop(key, None)
-        pending.set_exception(e)
+        if not pending.done():
+            if isinstance(e, asyncio.CancelledError):
+                pending.cancel()
+            else:
+                pending.set_exception(e)
         raise
 
 
