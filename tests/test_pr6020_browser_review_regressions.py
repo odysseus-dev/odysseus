@@ -167,8 +167,14 @@ export function __pr6020StreamStateSmoke() {
       // sessions.js reads navigator.platform at module load (issue caught
       // running the full suite on PR #6148 — a sibling test in this same
       // file already stubs a local navigator for an unrelated purpose, this
-      // harness just never got the same global shim).
-      globalThis.navigator = {{ platform: "" }};
+      // harness just never got the same global shim). Node 21+ ships its
+      // own real `navigator` global as a getter-only property, so a plain
+      // assignment throws "Cannot set property navigator ... which has
+      // only a getter" on Node 22 (CI) even though it silently works on
+      // Node 20 (this repo's dev containers, which don't predefine it) —
+      // caught live on PR #6019's CI run, same root cause, see handoff.md.
+      // defineProperty overrides Node's descriptor either way.
+      Object.defineProperty(globalThis, "navigator", {{ value: {{ platform: "" }}, writable: true, configurable: true }});
       const chat = await import({json.dumps(module_uri)});
       console.log(JSON.stringify(chat.__pr6020StreamStateSmoke()));
       process.exit(0);
