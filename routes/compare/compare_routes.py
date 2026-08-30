@@ -4,19 +4,23 @@ import json
 import uuid
 import random
 from datetime import datetime
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from typing import List
 from pydantic import BaseModel
 import logging
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user, is_bearer_principal, require_chat_scope
 from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/compare", tags=["compare"])
+router = APIRouter(
+    prefix="/api/compare",
+    tags=["compare"],
+    dependencies=[Depends(require_chat_scope)],
+)
 
 
 def _owned_endpoint_by_url(db, base_url, owner):
@@ -64,6 +68,37 @@ class RecordVoteRequest(BaseModel):
     is_blind: bool = True
 
 
+def _validate_bearer_compare_models(models, owner: str) -> list[str]:
+    """Validate record-only comparison models against visible endpoint caches."""
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    from routes.model_routes import _validate_bearer_model_selection
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
+        selected = []
+        for requested in models:
+            matches = []
+            for ep in endpoints:
+                try:
+                    matches.append(_validate_bearer_model_selection(ep, requested))
+                except HTTPException:
+                    continue
+            unique = list(dict.fromkeys(matches))
+            if len(unique) != 1:
+                raise HTTPException(
+                    400,
+                    f"Model is not permitted by a visible server endpoint: {requested}",
+                )
+            selected.append(unique[0])
+        return selected
+    finally:
+        db.close()
+
+
 def setup_compare_routes(session_manager: SessionManager):
     """Setup comparison routes."""
 
@@ -84,7 +119,9 @@ def setup_compare_routes(session_manager: SessionManager):
         Returns the comparison ID and the two session IDs so the client
         can fire two independent SSE streams to /api/chat_stream.
         """
-        user = getattr(request.state, 'current_user', None)
+        require_chat_scope(request)
+        user = effective_user(request)
+        bearer = is_bearer_principal(request)
         comp_id = str(uuid.uuid4())
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
@@ -160,6 +197,13 @@ def setup_compare_routes(session_manager: SessionManager):
                 _reject_raw_endpoint_url_for_non_admin(
                     request, user, str(ep.id) if ep is not None else None, endpoint
                 )
+                selected_model = model
+                if bearer:
+                    if ep is None:
+                        raise HTTPException(403, "Choose a registered model endpoint")
+                    from routes.model_routes import _validate_bearer_model_selection
+
+                    selected_model = _validate_bearer_model_selection(ep, model)
                 # Bind the [CMP] session to the RESOLVED endpoint, not the raw
                 # caller-supplied string. When the URL matches a registered
                 # endpoint visible to the caller, use that row's own normalized
@@ -176,7 +220,7 @@ def setup_compare_routes(session_manager: SessionManager):
                 # `ep` is None (raw admin URL or no match), so a comparison can
                 # never inherit another user's key/headers.
                 headers = build_headers(ep.api_key, ep.base_url) if (ep and ep.api_key) else None
-                resolved.append((sid, model, session_endpoint_url, headers))
+                resolved.append((sid, selected_model, session_endpoint_url, headers))
         finally:
             db.close()
 
@@ -203,8 +247,8 @@ def setup_compare_routes(session_manager: SessionManager):
             comp = Comparison(
                 id=comp_id,
                 prompt=prompt,
-                model_a=model_a,
-                model_b=model_b,
+                model_a=resolved[0][1],
+                model_b=resolved[1][1],
                 # Record the URL the session actually dials. For URL callers this
                 # is their raw input; for id-only callers (empty endpoint_a/_b)
                 # fall back to the resolved endpoint URL so the column stays
@@ -241,7 +285,8 @@ def setup_compare_routes(session_manager: SessionManager):
         winner: str = Form(...),  # "left", "right", or "tie"
     ):
         """Record the user's vote and reveal model names if blind."""
-        user = get_current_user(request)
+        require_chat_scope(request)
+        user = effective_user(request)
         db = SessionLocal()
         try:
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
@@ -283,15 +328,20 @@ def setup_compare_routes(session_manager: SessionManager):
     @router.post("/record")
     def record_comparison(request: Request, body: RecordVoteRequest):
         """Lightweight endpoint to record a comparison vote from the frontend."""
-        user = get_current_user(request)
+        require_chat_scope(request)
+        user = effective_user(request)
         comp_id = str(uuid.uuid4())
 
-        model_a = body.models[0] if len(body.models) > 0 else ""
-        model_b = body.models[1] if len(body.models) > 1 else ""
+        models = list(body.models or [])
+        if is_bearer_principal(request):
+            models = _validate_bearer_compare_models(models, user)
+
+        model_a = models[0] if len(models) > 0 else ""
+        model_b = models[1] if len(models) > 1 else ""
 
         # For N>2 models, store the full list as JSON in blind_mapping
-        if len(body.models) > 2:
-            blind_mapping = json.dumps({"models": body.models})
+        if len(models) > 2:
+            blind_mapping = json.dumps({"models": models})
         else:
             blind_mapping = None
 
@@ -320,7 +370,8 @@ def setup_compare_routes(session_manager: SessionManager):
     @router.get("/history")
     def list_comparisons(request: Request):
         """List past comparisons."""
-        user = get_current_user(request)
+        require_chat_scope(request)
+        user = effective_user(request)
         db = SessionLocal()
         try:
             q = db.query(Comparison)
@@ -346,7 +397,8 @@ def setup_compare_routes(session_manager: SessionManager):
     @router.delete("/{comp_id}")
     def delete_comparison(request: Request, comp_id: str):
         """Delete a comparison and its ephemeral sessions."""
-        user = get_current_user(request)
+        require_chat_scope(request)
+        user = effective_user(request)
         db = SessionLocal()
         try:
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()

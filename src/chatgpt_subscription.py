@@ -251,7 +251,17 @@ def access_token_is_expiring(access_token: str, skew_seconds: int = CHATGPT_ACCE
     return exp <= int(time.time()) + int(skew_seconds)
 
 
-def resolve_runtime_credentials(auth_id: str, owner: Optional[str] = None, *, force_refresh: bool = False) -> Dict[str, Any]:
+def resolve_runtime_credentials(
+    auth_id: str,
+    owner: Optional[str] = None,
+    *,
+    force_refresh: bool = False,
+    allow_live_probes: bool = True,
+) -> Dict[str, Any]:
+    if not allow_live_probes:
+        raise ChatGPTSubscriptionReauthRequired(
+            "ChatGPT Subscription credentials are unavailable when live probes are disabled."
+        )
     ProviderAuthSession, SessionLocal, utcnow_naive = _database_handles()
     db = SessionLocal()
     try:

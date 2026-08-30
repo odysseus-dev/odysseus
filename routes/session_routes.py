@@ -370,6 +370,7 @@ def setup_session_routes(
         user = effective_user(request)
         endpoint_api_key = ""
         endpoint_base_url = ""
+        endpoint_row = None
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
         if endpoint_id and endpoint_id.strip():
             from core.database import ModelEndpoint
@@ -403,7 +404,14 @@ def setup_session_routes(
             from src.endpoint_resolver import build_headers
             validation_headers = build_headers(effective_api_key, endpoint_base_url or endpoint_url)
 
-        if skip_val:
+        if is_bearer_principal(request) and endpoint_row is not None:
+            # Bearer requests are cache-only, but cache-only does not mean
+            # caller-authorized. Validate explicit selections and choose an
+            # empty selection deterministically from the server-owned picker.
+            from routes.model_routes import _validate_bearer_model_selection
+
+            model_to_use = _validate_bearer_model_selection(endpoint_row, model_to_use)
+        elif skip_val:
             # skip_validation = trust the caller and do NOT probe /v1/models.
             # Used for custom endpoints AND for bare placeholder sessions with no
             # model at all (e.g. an email reply draft just needs a session to live

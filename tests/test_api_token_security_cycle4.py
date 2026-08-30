@@ -400,6 +400,10 @@ def test_explicit_bearer_model_does_not_require_live_setup_probe(monkeypatch):
         is_enabled=True,
         base_url="https://api.example.test/v1",
         api_key=None,
+        endpoint_kind="api",
+        cached_models=json.dumps(["provider-model"]),
+        pinned_models=json.dumps(["explicit-model"]),
+        hidden_models=None,
     )
     monkeypatch.setattr(sr, "SessionLocal", lambda: _EndpointDb(endpoint))
 

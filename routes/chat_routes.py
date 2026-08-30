@@ -63,6 +63,7 @@ from routes.model_routes import (
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
+    _validate_bearer_session_model,
     save_assistant_response,
     run_post_response_tasks,
     accumulate_token_usage,
@@ -847,6 +848,8 @@ def setup_chat_routes(
             )
         if not (getattr(sess, "endpoint_url", "") or "").strip():
             raise HTTPException(400, "Selected model endpoint is not configured")
+        if request_capability.is_bearer:
+            _validate_bearer_session_model(sess, owner=owner)
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
@@ -869,6 +872,7 @@ def setup_chat_routes(
         foreground_policy = resolve_foreground_model_policy(
             owner=owner,
             allowed_models=_allowed_models_for_request(request),
+            allow_live_probes=request_capability.allow_live_probes,
         )
 
         # Build shared context (preset, preprocess, preface, compact)
@@ -913,6 +917,7 @@ def setup_chat_routes(
             sess.headers,
             owner=owner,
             policy=foreground_policy,
+            allow_live_probes=request_capability.allow_live_probes,
         )
         route_descriptors = build_foreground_route_descriptors(
             sess.endpoint_url,
@@ -921,6 +926,7 @@ def setup_chat_routes(
             owner=owner,
             policy=foreground_policy,
             selected_endpoint_id=chat_request.selected_endpoint_id,
+            allow_live_probes=request_capability.allow_live_probes,
         )
         candidate_request_factory = None
         selected_context_length = getattr(ctx, "context_length", 0)
@@ -1151,7 +1157,11 @@ def setup_chat_routes(
         # its way through a plain chat request (and fail, especially with the
         # shell disabled).
         auto_escalated = False
-        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        _tool_intent = (
+            _classify_tool_intent(message)
+            if not api_token_request and isinstance(message, str)
+            else None
+        )
         _workspace_agent_intent = False
         if not api_token_request and chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
@@ -1388,6 +1398,8 @@ def setup_chat_routes(
                 )
             if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
+            if request_capability.is_bearer:
+                _validate_bearer_session_model(sess, owner=owner)
             if (
                 not api_token_request
                 and chat_mode == "chat"
@@ -1501,6 +1513,7 @@ def setup_chat_routes(
         foreground_policy = resolve_foreground_model_policy(
             owner=owner,
             allowed_models=_allowed_models_for_request(request),
+            allow_live_probes=request_capability.allow_live_probes,
         )
 
         # Build shared context (stream path uses enhanced_message for context preface)
@@ -1966,6 +1979,7 @@ def setup_chat_routes(
                 sess.headers,
                 owner=_user,
                 policy=_foreground_policy,
+                allow_live_probes=request_capability.allow_live_probes,
             )
             _foreground_route_descriptors = build_foreground_route_descriptors(
                 sess.endpoint_url,
@@ -1974,6 +1988,7 @@ def setup_chat_routes(
                 owner=_user,
                 policy=_foreground_policy,
                 selected_endpoint_id=selected_endpoint_id,
+                allow_live_probes=request_capability.allow_live_probes,
             )
             _chat_request_factory = None
             _selected_context_length = getattr(ctx, "context_length", 0)

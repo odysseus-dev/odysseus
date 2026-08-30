@@ -67,9 +67,40 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
     """Run an existing route handler with request.state.current_user temporarily
     set to ``owner`` so its internal get_current_user/require_user calls see
     the scope-gated owner (not the "api" pseudo-user the bearer middleware sets).
-    Restores the original value when done. Works for sync and async handlers."""
+    Temporarily hide the bearer header as well: nested legacy handlers classify
+    the raw header independently of ``request.state.api_token``. Restore every
+    request value when done. Works for sync and async handlers."""
     orig = getattr(request.state, "current_user", None)
     orig_api_token = getattr(request.state, "api_token", None)
+    missing = object()
+    scope = getattr(request, "scope", None)
+    original_scope_headers = missing
+    original_cached_headers = missing
+    original_mapping_headers = missing
+
+    if isinstance(scope, dict) and "headers" in scope:
+        original_scope_headers = scope["headers"]
+        scope["headers"] = [
+            (name, value)
+            for name, value in (original_scope_headers or [])
+            if not (
+                (isinstance(name, bytes) and name.lower() == b"authorization")
+                or (isinstance(name, str) and name.casefold() == "authorization")
+            )
+        ]
+        request_dict = getattr(request, "__dict__", {})
+        if "_headers" in request_dict:
+            original_cached_headers = request_dict["_headers"]
+            request_dict.pop("_headers", None)
+    else:
+        current_headers = getattr(request, "headers", missing)
+        if isinstance(current_headers, dict):
+            original_mapping_headers = current_headers
+            request.headers = {
+                name: value
+                for name, value in current_headers.items()
+                if str(name).casefold() != "authorization"
+            }
     request.state.current_user = owner
     request.state.api_token = False
     try:
@@ -86,6 +117,14 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
                 pass
         else:
             request.state.api_token = orig_api_token
+        if original_scope_headers is not missing:
+            scope["headers"] = original_scope_headers
+            request_dict = getattr(request, "__dict__", {})
+            request_dict.pop("_headers", None)
+            if original_cached_headers is not missing:
+                request_dict["_headers"] = original_cached_headers
+        if original_mapping_headers is not missing:
+            request.headers = original_mapping_headers
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:

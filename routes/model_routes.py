@@ -1372,6 +1372,68 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
     ), pinned
 
 
+def _validate_bearer_model_selection(
+    ep,
+    requested_model: Optional[str],
+    *,
+    allow_empty: bool = False,
+) -> str:
+    """Validate a bearer-selected model against the server-owned picker.
+
+    Bearer requests cannot perform a provider model probe. Their model choice
+    must therefore come from the same endpoint-local cache/pin inventory that
+    the server exposes to the model picker. ``allow_empty`` is used only by
+    default-chat, where an explicitly empty inventory has a deterministic empty
+    result rather than an implicit provider alias.
+    """
+    if ep is None:
+        if allow_empty:
+            return ""
+        raise HTTPException(400, "A registered model endpoint is required")
+
+    base_url = _normalize_base(getattr(ep, "base_url", "") or "")
+    kind = _effective_endpoint_kind(ep, base_url)
+    models, _ = _picker_models_for_endpoint(ep, base_url, kind)
+    models = [model for model in models if isinstance(model, str) and model.strip()]
+    requested = str(requested_model or "").strip()
+    if not requested:
+        if models:
+            return models[0]
+        if allow_empty:
+            return ""
+        raise HTTPException(400, "No permitted model is configured for this endpoint")
+    # A registered local endpoint may intentionally have no persisted
+    # catalog: local models are operator-controlled and bearer requests
+    # must not discover them live. Preserve that documented compatibility
+    # path, while still enforcing any inventory that the server does own
+    # and rejecting explicitly hidden entries below.
+    raw_inventory = _merge_model_ids(
+        _normalize_model_ids(getattr(ep, "cached_models", None)),
+        _normalize_model_ids(getattr(ep, "pinned_models", None)),
+    )
+    hidden = set(_normalize_model_ids(getattr(ep, "hidden_models", None)))
+    if (
+        requested
+        and not raw_inventory
+        and _classify_endpoint(base_url, kind) == "local"
+        and requested not in hidden
+    ):
+        return requested
+    if requested in models:
+        return requested
+
+    requested_base = os.path.basename(requested.rstrip("/"))
+    matches = [
+        model for model in models
+        if os.path.basename(model.rstrip("/")) == requested_base
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise HTTPException(400, "Model selection is ambiguous for this endpoint")
+    raise HTTPException(400, f"Model is not permitted for this endpoint: {requested}")
+
+
 def _api_key_fingerprint(api_key: Optional[str]) -> str:
     """Stable, non-secret label for distinguishing same-URL credentials."""
     key = (api_key or "").strip()
@@ -2501,7 +2563,13 @@ def setup_model_routes(model_discovery):
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
-            if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
+            if is_bearer_principal(request):
+                model = _validate_bearer_model_selection(
+                    ep,
+                    model,
+                    allow_empty=True,
+                )
+            elif not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
                 try:
                     visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
                     if visible:

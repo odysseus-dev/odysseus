@@ -59,6 +59,8 @@ def _load_policy_preferences(owner: Optional[str]) -> dict:
 def resolve_foreground_model_policy(
     owner: Optional[str] = None,
     allowed_models: Optional[Collection[str]] = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> ForegroundModelPolicy:
     """Resolve an explicit owner-scoped policy, failing closed to strict mode.
 
@@ -95,11 +97,13 @@ def resolve_foreground_model_policy(
     if resolve_fallback_entries is not _DEFAULT_FALLBACK_ENTRY_RESOLVER:
         # Preserve the long-standing resolver seam used by downstream tests and
         # integrations. Production uses the descriptor-aware resolver below.
-        compatibility_candidates = resolve_fallback_entries(
-            entries,
-            owner=owner,
-            require_exact_model=True,
-        )
+        resolver_kwargs = {
+            "owner": owner,
+            "require_exact_model": True,
+        }
+        if not allow_live_probes:
+            resolver_kwargs["allow_live_probes"] = False
+        compatibility_candidates = resolve_fallback_entries(entries, **resolver_kwargs)
         # Known limitation of this test-only seam: alignment matches on model
         # alone, so when two entries share a model and the resolver skips the
         # first, the surviving candidate inherits the skipped entry's
@@ -128,11 +132,13 @@ def resolve_foreground_model_policy(
             }
             resolved_routes.append((candidate, descriptor))
     else:
-        resolved_routes = resolve_fallback_entries_with_descriptors(
-            entries,
-            owner=owner,
-            require_exact_model=True,
-        )
+        resolver_kwargs = {
+            "owner": owner,
+            "require_exact_model": True,
+        }
+        if not allow_live_probes:
+            resolver_kwargs["allow_live_probes"] = False
+        resolved_routes = resolve_fallback_entries_with_descriptors(entries, **resolver_kwargs)
     candidates = [candidate for candidate, _descriptor in resolved_routes]
     if not candidates:
         return ForegroundModelPolicy()
@@ -146,10 +152,19 @@ def resolve_foreground_model_policy(
     )
 
 
-def resolve_foreground_fallback_candidates(owner: Optional[str] = None) -> list:
+def resolve_foreground_fallback_candidates(
+    owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
+) -> list:
     """Return only candidates explicitly enabled by the current user."""
 
-    return list(resolve_foreground_model_policy(owner).fallback_candidates)
+    return list(
+        resolve_foreground_model_policy(
+            owner,
+            allow_live_probes=allow_live_probes,
+        ).fallback_candidates
+    )
 
 
 def build_foreground_model_candidates(
@@ -158,10 +173,16 @@ def build_foreground_model_candidates(
     headers: Optional[Dict[str, Any]] = None,
     owner: Optional[str] = None,
     policy: Optional[ForegroundModelPolicy] = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> list:
     """Build the ordered candidate list for a foreground request."""
 
-    policy = policy or resolve_foreground_model_policy(owner)
+    if policy is None:
+        policy_kwargs = {}
+        if not allow_live_probes:
+            policy_kwargs["allow_live_probes"] = False
+        policy = resolve_foreground_model_policy(owner, **policy_kwargs)
     primary = (endpoint_url, model, headers or {})
     candidates = [primary]
     for candidate in policy.fallback_candidates:
@@ -177,21 +198,38 @@ def build_foreground_route_descriptors(
     owner: Optional[str] = None,
     policy: Optional[ForegroundModelPolicy] = None,
     selected_endpoint_id: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> list:
     """Build safe route metadata parallel to foreground candidates."""
 
-    policy = policy or resolve_foreground_model_policy(owner)
+    if policy is None:
+        policy_kwargs = {}
+        if not allow_live_probes:
+            policy_kwargs["allow_live_probes"] = False
+        policy = resolve_foreground_model_policy(owner, **policy_kwargs)
     selected = None
     if selected_endpoint_id:
+        descriptor_kwargs = {"owner": owner}
+        if not allow_live_probes:
+            descriptor_kwargs["allow_live_probes"] = False
         selected = resolve_route_descriptor_by_id(
             selected_endpoint_id,
             endpoint_url,
             model,
             headers or {},
-            owner=owner,
+            **descriptor_kwargs,
         )
     if selected is None:
-        selected = resolve_route_descriptor(endpoint_url, model, headers or {}, owner=owner)
+        descriptor_kwargs = {"owner": owner}
+        if not allow_live_probes:
+            descriptor_kwargs["allow_live_probes"] = False
+        selected = resolve_route_descriptor(
+            endpoint_url,
+            model,
+            headers or {},
+            **descriptor_kwargs,
+        )
     primary = (endpoint_url, model, headers or {})
     candidates = [primary]
     descriptors = [selected]

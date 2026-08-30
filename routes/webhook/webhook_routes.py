@@ -124,6 +124,33 @@ def _cached_endpoint_model_ids(endpoint) -> list[str]:
         return ids
 
 
+def _validate_bearer_sync_model(endpoint, requested_model: str) -> str:
+    """Validate a configured sync model without probing its provider."""
+    try:
+        from routes.model_routes import _validate_bearer_model_selection
+
+        return _validate_bearer_model_selection(endpoint, requested_model)
+    except ImportError:
+        # Keep the lightweight webhook test/import seam usable when optional
+        # route modules are deliberately stubbed. Production uses the
+        # central picker validator above; this fallback remains cache-only.
+        models = _cached_endpoint_model_ids(endpoint)
+        requested = str(requested_model or "").strip()
+        if requested and requested in models:
+            return requested
+        if not requested and models:
+            return models[0]
+        if (
+            requested
+            and not models
+            and not getattr(endpoint, "cached_models", None)
+            and not getattr(endpoint, "pinned_models", None)
+            and "localhost" in str(getattr(endpoint, "base_url", "")).lower()
+        ):
+            return requested
+        raise HTTPException(400, "Model is not permitted for this endpoint")
+
+
 def setup_webhook_routes(
     webhook_manager: WebhookManager,
     auth_manager,
@@ -389,23 +416,27 @@ def setup_webhook_routes(
 
             base_url = normalize_base(ep.base_url)
             endpoint_url = build_chat_url(base_url)
-            model = body.model or "auto"
+            model = body.model or ""
             api_key = ep.api_key
             if getattr(ep, "provider_auth_id", None):
                 try:
                     from src.endpoint_resolver import resolve_endpoint_runtime
-                    base_url, api_key = resolve_endpoint_runtime(ep, owner=token_owner)
+                    runtime_kwargs = {}
+                    if not capability.allow_live_probes:
+                        runtime_kwargs["allow_live_probes"] = False
+                    base_url, api_key = resolve_endpoint_runtime(
+                        ep,
+                        owner=token_owner,
+                        **runtime_kwargs,
+                    )
                     endpoint_url = build_chat_url(base_url)
                 except Exception:
                     raise HTTPException(500, "Could not resolve endpoint credentials")
 
-            if model == "auto":
-                # This route is bearer-only. Resolve auto from the endpoint's
-                # already persisted catalog and leave the provider alias in
-                # place when no cache exists; neither choice needs a new
-                # /models or /tags request during ordinary chat.
-                ids = _cached_endpoint_model_ids(ep)
-                model = ids[0] if ids else "auto"
+            # This route is bearer-only. Explicit and empty selections both
+            # use the same server-owned, cache-only picker inventory; an empty
+            # inventory is an error rather than an implicit provider alias.
+            model = _validate_bearer_sync_model(ep, model)
 
             if not session_manager:
                 raise HTTPException(500, "Session manager not available")

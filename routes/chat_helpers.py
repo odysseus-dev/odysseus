@@ -652,6 +652,50 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     return None
 
 
+def _validate_bearer_session_model(sess, owner: str | None = None) -> Optional[str]:
+    """Enforce endpoint-picker authority for a bearer session model.
+
+    Direct API-key sessions intentionally have no ``ModelEndpoint`` row and
+    retain their documented compatibility behavior. Registered endpoint
+    sessions, including provider-auth-backed rows, must use the visible
+    server-owned inventory and never trigger a provider lookup here.
+    """
+    endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
+    requested = (getattr(sess, "model", "") or "").strip()
+    if not endpoint_url or not requested:
+        return None
+    try:
+        session_base = normalize_base(endpoint_url)
+    except Exception:
+        session_base = endpoint_url.rstrip("/")
+    if not session_base:
+        return None
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+
+            q = owner_filter(q, ModelEndpoint, owner)
+        for ep in q.all():
+            try:
+                if normalize_base(getattr(ep, "base_url", "") or "") != session_base:
+                    continue
+            except Exception:
+                continue
+            from routes.model_routes import _validate_bearer_model_selection
+
+            sess.model = _validate_bearer_model_selection(ep, requested)
+            return sess.model
+    finally:
+        db.close()
+
+    # No registered endpoint means this is the documented direct API-key
+    # compatibility path, not an endpoint-picker selection.
+    return None
+
+
 def _session_is_research_spinoff(sess) -> bool:
     """True if this session was created via research "Discuss" spin-off.
 

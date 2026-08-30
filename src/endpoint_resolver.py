@@ -143,7 +143,12 @@ def _endpoint_enabled_models(ep) -> list:
     return [m for m in merged if m not in hidden]
 
 
-def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Optional[str]]:
+def resolve_endpoint_runtime(
+    ep,
+    owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
+) -> Tuple[str, Optional[str]]:
     """Resolve a ModelEndpoint row to its runtime base URL and bearer/API key.
 
     Static-key providers use ``ModelEndpoint.api_key``. Session-backed providers
@@ -153,7 +158,7 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     base = normalize_base(getattr(ep, "base_url", "") or "")
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
-    if auth_id:
+    if auth_id and allow_live_probes:
         from src.chatgpt_subscription import resolve_runtime_credentials
 
         creds = resolve_runtime_credentials(auth_id, owner=owner)
@@ -346,6 +351,8 @@ def resolve_endpoint(
     fallback_model: Optional[str] = None,
     fallback_headers: Optional[Dict] = None,
     owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> Tuple[Optional[str], Optional[str], Optional[Dict]]:
     """Resolve an endpoint/model from settings, with fallback.
 
@@ -407,7 +414,14 @@ def resolve_endpoint(
             return fallback_url, fallback_model, fallback_headers
 
         try:
-            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            runtime_kwargs = {}
+            if not allow_live_probes:
+                runtime_kwargs["allow_live_probes"] = False
+            base, api_key = resolve_endpoint_runtime(
+                ep,
+                owner=owner,
+                **runtime_kwargs,
+            )
         except Exception as e:
             logger.warning("Could not resolve endpoint runtime credentials: %s", e)
             return fallback_url, fallback_model, fallback_headers
@@ -440,6 +454,7 @@ def _resolve_endpoint_by_id_with_descriptor(
     owner: Optional[str] = None,
     *,
     require_exact_model: bool = False,
+    allow_live_probes: bool = True,
 ) -> Optional[Tuple[Tuple[str, str, Dict], dict]]:
     """Resolve a concrete endpoint/model plus its non-secret descriptor.
 
@@ -461,7 +476,14 @@ def _resolve_endpoint_by_id_with_descriptor(
         if not ep:
             return None
         try:
-            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            runtime_kwargs = {}
+            if not allow_live_probes:
+                runtime_kwargs["allow_live_probes"] = False
+            base, api_key = resolve_endpoint_runtime(
+                ep,
+                owner=owner,
+                **runtime_kwargs,
+            )
         except Exception as e:
             logger.warning("Could not resolve endpoint runtime credentials: %s", e)
             return None
@@ -509,15 +531,17 @@ def resolve_endpoint_by_id(
     owner: Optional[str] = None,
     *,
     require_exact_model: bool = False,
+    allow_live_probes: bool = True,
 ) -> Optional[Tuple[str, str, Dict]]:
     """Resolve a specific endpoint id (+ optional model) to its runtime route."""
 
-    resolved = _resolve_endpoint_by_id_with_descriptor(
-        ep_id,
-        model,
-        owner=owner,
-        require_exact_model=require_exact_model,
-    )
+    descriptor_kwargs = {
+        "owner": owner,
+        "require_exact_model": require_exact_model,
+    }
+    if not allow_live_probes:
+        descriptor_kwargs["allow_live_probes"] = False
+    resolved = _resolve_endpoint_by_id_with_descriptor(ep_id, model, **descriptor_kwargs)
     return resolved[0] if resolved else None
 
 
@@ -526,6 +550,8 @@ def resolve_route_descriptor(
     model: str,
     headers: Optional[Dict] = None,
     owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> dict:
     """Return the visible endpoint identity for an already-resolved route.
 
@@ -548,11 +574,16 @@ def resolve_route_descriptor(
             q = owner_filter(q, ModelEndpoint, owner)
         expected = (endpoint_url.rstrip("/"), model, headers or {})
         for ep in q.all():
+            descriptor_kwargs = {
+                "owner": owner,
+                "require_exact_model": True,
+            }
+            if not allow_live_probes:
+                descriptor_kwargs["allow_live_probes"] = False
             resolved = _resolve_endpoint_by_id_with_descriptor(
                 ep.id,
                 model,
-                owner=owner,
-                require_exact_model=True,
+                **descriptor_kwargs,
             )
             if not resolved:
                 continue
@@ -577,6 +608,8 @@ def resolve_route_descriptor_by_id(
     model: str,
     headers: Optional[Dict] = None,
     owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> Optional[dict]:
     """Resolve a selected route's identity without relying on row order.
 
@@ -586,11 +619,16 @@ def resolve_route_descriptor_by_id(
     identical.
     """
 
+    descriptor_kwargs = {
+        "owner": owner,
+        "require_exact_model": True,
+    }
+    if not allow_live_probes:
+        descriptor_kwargs["allow_live_probes"] = False
     resolved = _resolve_endpoint_by_id_with_descriptor(
         endpoint_id,
         model,
-        owner=owner,
-        require_exact_model=True,
+        **descriptor_kwargs,
     )
     if not resolved:
         return None
@@ -600,24 +638,46 @@ def resolve_route_descriptor_by_id(
     return descriptor if actual == expected else None
 
 
-def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
+def resolve_utility_fallback_candidates(
+    owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
+) -> list:
     """Configured fallback chain for the Utility model (`utility_model_fallbacks`)."""
-    return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
+    fallback_kwargs = {"owner": owner}
+    if not allow_live_probes:
+        fallback_kwargs["allow_live_probes"] = False
+    return _resolve_fallback_candidates("utility_model_fallbacks", **fallback_kwargs)
 
 
-def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
+def resolve_vision_fallback_candidates(
+    owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
+) -> list:
     """Configured fallback chain for the Vision model (`vision_model_fallbacks`)."""
-    return _resolve_fallback_candidates("vision_model_fallbacks", owner=owner)
+    fallback_kwargs = {"owner": owner}
+    if not allow_live_probes:
+        fallback_kwargs["allow_live_probes"] = False
+    return _resolve_fallback_candidates("vision_model_fallbacks", **fallback_kwargs)
 
 
-def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
+def _resolve_fallback_candidates(
+    setting_key: str,
+    owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
+) -> list:
     try:
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
         chain = get_user_setting(setting_key, owner or "", settings.get(setting_key) or []) or []
     except Exception:
         return []
-    return resolve_fallback_entries(chain, owner=owner)
+    resolver_kwargs = {"owner": owner}
+    if not allow_live_probes:
+        resolver_kwargs["allow_live_probes"] = False
+    return resolve_fallback_entries(chain, **resolver_kwargs)
 
 
 def resolve_fallback_entries(
@@ -625,6 +685,7 @@ def resolve_fallback_entries(
     owner: Optional[str] = None,
     *,
     require_exact_model: bool = False,
+    allow_live_probes: bool = True,
 ) -> list:
     """Resolve ordered endpoint/model entries within the caller's owner scope."""
 
@@ -632,11 +693,16 @@ def resolve_fallback_entries(
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
+        resolver_kwargs = {
+            "owner": owner,
+            "require_exact_model": require_exact_model,
+        }
+        if not allow_live_probes:
+            resolver_kwargs["allow_live_probes"] = False
         resolved = resolve_endpoint_by_id(
             entry.get("endpoint_id", ""),
             entry.get("model", ""),
-            owner=owner,
-            require_exact_model=require_exact_model,
+            **resolver_kwargs,
         )
         if resolved and resolved not in out:
             out.append(resolved)
@@ -648,6 +714,7 @@ def resolve_fallback_entries_with_descriptors(
     owner: Optional[str] = None,
     *,
     require_exact_model: bool = False,
+    allow_live_probes: bool = True,
 ) -> list:
     """Resolve ordered entries while retaining safe endpoint provenance."""
 
@@ -656,11 +723,16 @@ def resolve_fallback_entries_with_descriptors(
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
+        descriptor_kwargs = {
+            "owner": owner,
+            "require_exact_model": require_exact_model,
+        }
+        if not allow_live_probes:
+            descriptor_kwargs["allow_live_probes"] = False
         resolved = _resolve_endpoint_by_id_with_descriptor(
             entry.get("endpoint_id", ""),
             entry.get("model", ""),
-            owner=owner,
-            require_exact_model=require_exact_model,
+            **descriptor_kwargs,
         )
         if not resolved:
             continue
