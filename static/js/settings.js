@@ -5036,7 +5036,11 @@ async function initUnifiedIntegrations() {
         fd.append('transport', transport);
         if (transport === 'stdio') {
           fd.append('command', el('uf-mcp-cmd').value);
-          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
+          // Unlike env below, an unparseable args value is not silently
+          // defaulted: it would spawn the subprocess with an empty argv.
+          let args;
+          try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); }
+          catch (_) { el('uf-mcp-msg').textContent = 'Args must be valid JSON, e.g. ["-y", "pkg"]'; return; }
           let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
           fd.append('args', args);
           fd.append('env', env);

@@ -181,10 +181,15 @@ def setup_mcp_routes(mcp_manager: McpManager):
         if transport == "http" and not url:
             raise HTTPException(400, "url is required for HTTP transport")
 
-        # Parse JSON fields
-        try:
-            parsed_args = json.loads(args) if args else []
-        except json.JSONDecodeError:
+        # Parse JSON fields. args is not defaulted on a parse failure: an
+        # unparseable value is silently discarded downstream (stdio spawns
+        # with an empty argv), so the caller must be told instead.
+        if args:
+            try:
+                parsed_args = json.loads(args)
+            except json.JSONDecodeError:
+                raise HTTPException(400, "args must be valid JSON, e.g. [\"-y\", \"pkg\"]")
+        else:
             parsed_args = []
         try:
             parsed_env = json.loads(env) if env else {}
