@@ -527,7 +527,7 @@ def _first_image_attachment(chat_handler, att_ids: List[str], owner: str | None 
     return None
 
 
-def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
+def _recover_empty_session_model(sess, session_id: str, owner: str | None = None, *, allow_live_probes: bool = True) -> bool:
     """Re-populate sess.model from the matching endpoint's cached models.
 
     Covers the window between endpoint setup and the first chat send: the
@@ -535,6 +535,11 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
     written (Issue #587 — UI uses the cached endpoint list, not s.model).
     For ChatGPT Subscription, also repairs stale OpenAI API model names such as
     ``gpt-5`` that are not accepted by the Codex-backed ChatGPT account route.
+
+    Bearer chat callers set ``allow_live_probes`` to false. They may use the
+    already-persisted visible cache for this request, but recovery must not
+    resolve provider credentials, refresh the catalog, or persist a model/cache
+    change as a side effect.
     """
     current_model = (getattr(sess, "model", "") or "").strip()
     endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
@@ -585,7 +590,7 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 visible = cached
         if current_model and current_model in {str(item).strip() for item in visible}:
             return False
-        if is_chatgpt_subscription:
+        if is_chatgpt_subscription and allow_live_probes:
             live_models = []
             if getattr(ep, "provider_auth_id", None):
                 try:
@@ -617,6 +622,16 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         if not isinstance(model, str) or not model.strip():
             return False
         model = model.strip()
+        if not allow_live_probes:
+            # Keep this request usable without turning cache-based recovery
+            # into a durable session mutation. The normal chat save path will
+            # persist user/assistant messages, not this transient selection.
+            sess.model = model
+            logger.info(
+                "Recovered session model for %s from cached endpoint model %r (no persistence)",
+                session_id, model,
+            )
+            return True
         # Persist so the next request, websocket reconnect, or page reload
         # picks up the same model (we'd otherwise re-pick on every send
         # and silently switch on the user if the cached order shifts).
@@ -779,13 +794,19 @@ def setup_chat_routes(
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
         owner = effective_user(request)
+        request_capability = build_request_capability(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
         # Empty model + live endpoint = setup race (Issue #587). Repair from
         # the endpoint's cached model list before privilege checks, which
         # otherwise see "" and behave inconsistently with the allowlist.
-        _recover_empty_session_model(sess, session, owner=owner)
+        _recover_empty_session_model(
+            sess,
+            session,
+            owner=owner,
+            allow_live_probes=request_capability.allow_live_probes,
+        )
         if not getattr(sess, "model", "").strip():
             raise HTTPException(
                 400,
@@ -798,7 +819,6 @@ def setup_chat_routes(
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
 
-        request_capability = build_request_capability(request)
         api_token_request = request_capability.is_bearer
         tool_policy = build_effective_tool_policy(last_user_message=message)
         allow_tool_preprocessing = (
@@ -1311,7 +1331,12 @@ def setup_chat_routes(
             # the first cached model off the matching endpoint so the
             # upstream isn't called with model="" (which surfaces as a
             # generic 401/503).
-            _recover_empty_session_model(sess, session, owner=owner)
+            _recover_empty_session_model(
+                sess,
+                session,
+                owner=owner,
+                allow_live_probes=request_capability.allow_live_probes,
+            )
             if not getattr(sess, "model", "").strip():
                 raise HTTPException(
                     400,

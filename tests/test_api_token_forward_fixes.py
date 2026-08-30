@@ -395,7 +395,7 @@ def test_bearer_context_preprocessing_does_not_fetch_embedded_urls(monkeypatch):
 async def test_sync_bearer_chat_cannot_use_research_memory_or_background_extraction(monkeypatch):
     from routes import chat_routes
 
-    calls = {"memory": 0, "research": 0, "post": []}
+    calls = {"memory": 0, "research": 0, "post": [], "recovery": []}
 
     class _ChatHandler:
         async def handle_memory_command(self, _session, _message):
@@ -435,7 +435,11 @@ async def test_sync_bearer_chat_cannot_use_research_memory_or_background_extract
 
     monkeypatch.setattr(chat_routes, "_verify_session_owner", lambda *args, **kwargs: None)
     monkeypatch.setattr(chat_routes, "_clear_orphaned_session_endpoint", lambda *args, **kwargs: False)
-    monkeypatch.setattr(chat_routes, "_recover_empty_session_model", lambda *args, **kwargs: False)
+    def recover(*args, **kwargs):
+        calls["recovery"].append(kwargs)
+        return False
+
+    monkeypatch.setattr(chat_routes, "_recover_empty_session_model", recover)
     monkeypatch.setattr(chat_routes, "_enforce_chat_privileges", lambda *args, **kwargs: None)
     monkeypatch.setattr(chat_routes, "resolve_session_auth", lambda *args, **kwargs: None)
     monkeypatch.setattr(chat_routes, "build_chat_context", build_context)
@@ -483,6 +487,7 @@ async def test_sync_bearer_chat_cannot_use_research_memory_or_background_extract
     assert calls["memory"] == 0
     assert calls["research"] == 0
     assert calls["post"] and calls["post"][0]["allow_background_extraction"] is False
+    assert calls["recovery"] == [{"owner": "alice", "allow_live_probes": False}]
 
 
 @pytest.mark.asyncio
@@ -497,6 +502,13 @@ async def test_stream_bearer_chat_disables_deferred_memory_extraction(monkeypatc
         captured,
         capture_completion=True,
     )
+    recovery_calls = []
+
+    def recover(*args, **kwargs):
+        recovery_calls.append(kwargs)
+        return False
+
+    monkeypatch.setattr(chat_routes, "_recover_empty_session_model", recover)
     request = SimpleNamespace(
         headers={},
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
@@ -520,6 +532,184 @@ async def test_stream_bearer_chat_disables_deferred_memory_extraction(monkeypatc
 
     assert captured["post_processed"]
     assert captured["post_processed"][0][1]["allow_background_extraction"] is False
+    assert recovery_calls == [{"owner": "alice", "allow_live_probes": False}]
+
+
+class _RecoveryPredicate:
+    def __or__(self, _other):
+        return self
+
+
+class _RecoveryColumn:
+    def __eq__(self, _value):
+        return _RecoveryPredicate()
+
+
+class _RecoveryEndpointModel:
+    is_enabled = _RecoveryColumn()
+    owner = _RecoveryColumn()
+
+
+class _RecoverySessionModel:
+    id = _RecoveryColumn()
+    owner = _RecoveryColumn()
+
+
+class _RecoveryQuery:
+    def __init__(self, db, model):
+        self.db = db
+        self.model = model
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        if self.model is _RecoveryEndpointModel:
+            return [self.db.endpoint]
+        return []
+
+    def first(self):
+        if self.model is _RecoverySessionModel:
+            return self.db.session_row
+        return None
+
+
+class _RecoveryDb:
+    def __init__(self, endpoint, session_row):
+        self.endpoint = endpoint
+        self.session_row = session_row
+        self.commits = 0
+        self.rollbacks = 0
+
+    def query(self, model):
+        return _RecoveryQuery(self, model)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        return None
+
+
+def _recovery_harness(monkeypatch, cached_models):
+    from routes import chat_routes
+    from src import chatgpt_subscription
+
+    endpoint = SimpleNamespace(
+        id="endpoint-1",
+        base_url="https://chatgpt.com",
+        cached_models=json.dumps(cached_models),
+        hidden_models=None,
+        provider_auth_id="provider-auth-1",
+    )
+    session_row = SimpleNamespace(
+        id="session-1",
+        owner="alice",
+        model="",
+        updated_at=None,
+    )
+    db = _RecoveryDb(endpoint, session_row)
+    sess = SimpleNamespace(
+        id="session-1",
+        endpoint_url="https://chatgpt.com/backend-api/codex",
+        model="",
+        headers={},
+    )
+
+    monkeypatch.setattr(chat_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(chat_routes, "ModelEndpoint", _RecoveryEndpointModel)
+    monkeypatch.setattr(chat_routes, "DBSession", _RecoverySessionModel)
+    monkeypatch.setattr(chat_routes, "_session_url_matches_endpoint", lambda *args: True)
+    monkeypatch.setattr(
+        chatgpt_subscription,
+        "is_chatgpt_subscription_base",
+        lambda _url: True,
+    )
+    return chat_routes, db, endpoint, session_row, sess
+
+
+def test_bearer_empty_model_recovery_fails_without_cache_or_live_probe(monkeypatch):
+    chat_routes, db, endpoint, session_row, sess = _recovery_harness(monkeypatch, [])
+    from src import chatgpt_subscription, endpoint_resolver
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("bearer recovery must not resolve credentials or fetch models")
+
+    monkeypatch.setattr(chatgpt_subscription, "fetch_available_models", forbidden)
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint_runtime", forbidden)
+
+    assert chat_routes._recover_empty_session_model(
+        sess,
+        "session-1",
+        owner="alice",
+        allow_live_probes=False,
+    ) is False
+    assert sess.model == ""
+    assert session_row.model == ""
+    assert endpoint.cached_models == "[]"
+    assert db.commits == 0
+    assert db.rollbacks == 0
+
+
+def test_bearer_model_recovery_uses_cache_without_endpoint_or_session_writes(monkeypatch):
+    chat_routes, db, endpoint, session_row, sess = _recovery_harness(
+        monkeypatch,
+        ["cached-model"],
+    )
+    from src import chatgpt_subscription, endpoint_resolver
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("bearer recovery must not resolve credentials or fetch models")
+
+    monkeypatch.setattr(chatgpt_subscription, "fetch_available_models", forbidden)
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint_runtime", forbidden)
+
+    assert chat_routes._recover_empty_session_model(
+        sess,
+        "session-1",
+        owner="alice",
+        allow_live_probes=False,
+    ) is True
+    assert sess.model == "cached-model"
+    assert session_row.model == ""
+    assert endpoint.cached_models == '["cached-model"]'
+    assert db.commits == 0
+    assert db.rollbacks == 0
+
+
+def test_interactive_model_recovery_retains_live_catalog_and_persistence(monkeypatch):
+    chat_routes, db, endpoint, session_row, sess = _recovery_harness(monkeypatch, [])
+    from src import chatgpt_subscription, endpoint_resolver
+
+    seen = {}
+
+    def resolve(ep, owner=None):
+        seen["resolve"] = (ep, owner)
+        return ep.base_url, "owner-secret"
+
+    def fetch(api_key):
+        seen["fetch"] = api_key
+        return ["gpt-live"]
+
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint_runtime", resolve)
+    monkeypatch.setattr(chatgpt_subscription, "fetch_available_models", fetch)
+
+    # Interactive callers retain the helper's live-probe default.
+    assert chat_routes._recover_empty_session_model(
+        sess,
+        "session-1",
+        owner="alice",
+    ) is True
+    assert seen["resolve"] == (endpoint, "alice")
+    assert seen["fetch"] == "owner-secret"
+    assert sess.model == "gpt-live"
+    assert session_row.model == "gpt-live"
+    assert json.loads(endpoint.cached_models) == ["gpt-live"]
+    assert db.commits == 2
+    assert db.rollbacks == 0
 
 
 @pytest.mark.asyncio
