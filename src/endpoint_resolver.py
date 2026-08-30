@@ -158,10 +158,13 @@ def resolve_endpoint_runtime(
     base = normalize_base(getattr(ep, "base_url", "") or "")
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
-    if auth_id and allow_live_probes:
+    if auth_id:
         from src.chatgpt_subscription import resolve_runtime_credentials
 
-        creds = resolve_runtime_credentials(auth_id, owner=owner)
+        credential_kwargs = {}
+        if not allow_live_probes:
+            credential_kwargs["allow_live_probes"] = False
+        creds = resolve_runtime_credentials(auth_id, owner=owner, **credential_kwargs)
         base = normalize_base(creds.get("base_url") or base)
         api_key = creds.get("api_key")
     return base, api_key

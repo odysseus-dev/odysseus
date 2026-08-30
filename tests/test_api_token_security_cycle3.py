@@ -162,8 +162,10 @@ def test_bearer_session_lifecycle_routes_do_not_emit_webhook_or_event(monkeypatc
     assert result.model == "stored-model"
 
     create_openai = _latest_endpoint(router, "/api/session/openai", "POST")
-    openai_result = create_openai(request, name="OpenAI", model="gpt-4o", rag="false")
-    assert openai_result["model"] == "gpt-4o"
+    with pytest.raises(HTTPException) as exc:
+        create_openai(request, name="OpenAI", model="gpt-4o", rag="false")
+    assert exc.value.status_code == 403
+    assert len(manager.sessions) == 1
     webhook_manager.fire_and_forget.assert_not_called()
     assert events == []
 

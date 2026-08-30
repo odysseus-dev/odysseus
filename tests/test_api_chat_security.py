@@ -59,6 +59,9 @@ def _load_webhook_routes_for_test(monkeypatch):
     core_pkg.__path__ = []
     core_db = types.ModuleType("core.database")
     core_db.SessionLocal = object
+    # The production sync-chat path reuses the central bearer session
+    # validator, which imports the durable Session model at invocation time.
+    core_db.Session = object
     core_db.Webhook = object
     core_db.ModelEndpoint = object
     core_middleware = types.ModuleType("core.middleware")
@@ -242,10 +245,12 @@ def _install_sync_chat_stubs(monkeypatch):
     endpoint_resolver.normalize_base = lambda url: (url or "").strip().rstrip("/")
     endpoint_resolver.build_chat_url = lambda base_url: f"{base_url}/chat/completions"
     endpoint_resolver.build_models_url = lambda base_url: f"{base_url}/models"
+    endpoint_resolver.resolve_endpoint = lambda *args, **kwargs: None
     endpoint_resolver.build_headers = lambda api_key, base_url: {"Authorization": f"Bearer {api_key}"}
 
     llm_core = types.ModuleType("src.llm_core")
     llm_core.llm_call_async = _llm_call_async
+    llm_core.normalize_model_id = lambda *args, **kwargs: None
     core_models.ChatMessage = _ChatMessage
 
     monkeypatch.setitem(sys.modules, "python_multipart", python_multipart)

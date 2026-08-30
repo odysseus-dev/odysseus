@@ -258,10 +258,6 @@ def resolve_runtime_credentials(
     force_refresh: bool = False,
     allow_live_probes: bool = True,
 ) -> Dict[str, Any]:
-    if not allow_live_probes:
-        raise ChatGPTSubscriptionReauthRequired(
-            "ChatGPT Subscription credentials are unavailable when live probes are disabled."
-        )
     ProviderAuthSession, SessionLocal, utcnow_naive = _database_handles()
     db = SessionLocal()
     try:
@@ -276,6 +272,21 @@ def resolve_runtime_credentials(
             raise ChatGPTSubscriptionAuthNotFound("ChatGPT Subscription credentials were not found for this user.")
 
         access_token = row.access_token or ""
+        if not allow_live_probes:
+            # Bearer chat may use an owner-scoped access token already held in
+            # the encrypted provider-auth row, but it must not refresh OAuth or
+            # probe the provider. Reject a missing/near-expiry cache entry so a
+            # request cannot reach the provider without valid Authorization.
+            if not access_token or access_token_is_expiring(access_token):
+                raise ChatGPTSubscriptionReauthRequired(
+                    "ChatGPT Subscription credentials are unavailable without a live refresh."
+                )
+            return {
+                "provider": CHATGPT_SUBSCRIPTION_PROVIDER,
+                "base_url": (row.base_url or DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL).rstrip("/"),
+                "api_key": access_token,
+                "auth_mode": row.auth_mode or "chatgpt",
+            }
         if force_refresh or access_token_is_expiring(access_token):
             with _refresh_lock_for(auth_id):
                 db.refresh(row)

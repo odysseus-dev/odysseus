@@ -997,6 +997,14 @@ def setup_session_routes(
         rag: str = Form(None)
     ):
         require_chat_scope(request)
+        # This legacy alias uses the server-owned OPENAI_API_KEY rather than a
+        # caller-selected, owner-visible ModelEndpoint. A bearer must not turn
+        # that credential into an owner-attributed session whose provenance
+        # cannot be represented as either a registered endpoint or a direct
+        # caller-supplied key. Registered bearer chat remains available through
+        # POST /api/session with endpoint_id.
+        if is_bearer_principal(request):
+            raise HTTPException(403, "Bearer callers must choose a registered model endpoint")
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
         sid = str(uuid.uuid4())

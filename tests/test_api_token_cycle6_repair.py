@@ -346,7 +346,7 @@ def test_bearer_session_model_is_checked_against_endpoint_inventory(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_sync_chat_uses_cached_model_and_skips_provider_runtime_resolution(monkeypatch):
+async def test_sync_chat_uses_cached_provider_auth_without_live_refresh(monkeypatch):
     from routes import webhook_routes
     from src import chatgpt_subscription, llm_core
 
@@ -367,9 +367,10 @@ async def test_sync_chat_uses_cached_model_and_skips_provider_runtime_resolution
     monkeypatch.setattr(
         chatgpt_subscription,
         "resolve_runtime_credentials",
-        lambda *args, **kwargs: runtime_calls.append((args, kwargs)) or pytest.fail(
-            "bearer sync resolved provider credentials"
-        ),
+        lambda *args, **kwargs: runtime_calls.append((args, kwargs)) or {
+            "base_url": endpoint.base_url,
+            "api_key": "cached-access-token",
+        },
     )
     llm_calls = []
 
@@ -410,24 +411,58 @@ async def test_sync_chat_uses_cached_model_and_skips_provider_runtime_resolution
 
     result = await route(request=_Request(), body=body)
     assert result["model"] == "allowed-model"
-    assert runtime_calls == []
+    assert runtime_calls == [
+        (("provider-auth",), {"owner": "alice", "allow_live_probes": False})
+    ]
+    assert llm_calls[0]["headers"]["Authorization"] == "Bearer cached-access-token"
     assert llm_calls[0]["allow_live_probes"] is False
 
 
-def test_provider_runtime_guard_is_no_live_without_opening_credentials_db(monkeypatch):
+def test_provider_runtime_guard_uses_cached_credentials_without_refresh(monkeypatch):
     from src import chatgpt_subscription
+
+    row = SimpleNamespace(
+        access_token="cached-access-token",
+        base_url="https://chatgpt.com/backend-api/codex",
+        auth_mode="chatgpt",
+    )
+
+    class _Query:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return row
+
+    class _Db:
+        def query(self, _model):
+            return _Query()
+
+        def refresh(self, _row):
+            raise AssertionError("cache-only provider resolution refreshed credentials")
+
+        def close(self):
+            return None
 
     monkeypatch.setattr(
         chatgpt_subscription,
         "_database_handles",
-        lambda: pytest.fail("no-live provider guard opened the credentials database"),
+        lambda: (cdb.ProviderAuthSession, lambda: _Db(), lambda: None),
     )
-    with pytest.raises(chatgpt_subscription.ChatGPTSubscriptionReauthRequired):
-        chatgpt_subscription.resolve_runtime_credentials(
-            "provider-auth",
-            owner="alice",
-            allow_live_probes=False,
-        )
+    monkeypatch.setattr(
+        chatgpt_subscription, "access_token_is_expiring", lambda token: False
+    )
+    monkeypatch.setattr(
+        chatgpt_subscription,
+        "refresh_oauth_tokens",
+        lambda *args, **kwargs: pytest.fail("cache-only provider resolution refreshed credentials"),
+    )
+
+    result = chatgpt_subscription.resolve_runtime_credentials(
+        "provider-auth", owner="alice", allow_live_probes=False
+    )
+    assert result["api_key"] == "cached-access-token"
+    assert result["base_url"] == "https://chatgpt.com/backend-api/codex"
 
 
 def test_foreground_descriptors_propagate_no_live_to_provider_endpoint_resolution(monkeypatch):
@@ -446,10 +481,14 @@ def test_foreground_descriptors_propagate_no_live_to_provider_endpoint_resolutio
         hidden_models=None,
     )
     monkeypatch.setattr(endpoint_resolver, "SessionLocal", lambda: _EndpointDb(endpoint))
+    runtime_calls = []
     monkeypatch.setattr(
         chatgpt_subscription,
         "resolve_runtime_credentials",
-        lambda *args, **kwargs: pytest.fail("foreground descriptor resolved provider credentials"),
+        lambda *args, **kwargs: runtime_calls.append((args, kwargs)) or {
+            "base_url": endpoint.base_url,
+            "api_key": "cached-access-token",
+        },
     )
 
     descriptors = foreground_model_routing.build_foreground_route_descriptors(
@@ -461,6 +500,9 @@ def test_foreground_descriptors_propagate_no_live_to_provider_endpoint_resolutio
         allow_live_probes=False,
     )
     assert descriptors[0]["endpoint_label"] in {"Subscription", "Selected route"}
+    assert runtime_calls == [
+        (("provider-auth",), {"owner": "alice", "allow_live_probes": False})
+    ]
 
 
 @pytest.mark.asyncio

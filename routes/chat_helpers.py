@@ -683,7 +683,7 @@ def _validate_bearer_session_model(sess, owner: str | None = None) -> Optional[s
     Direct API-key sessions intentionally have no ``ModelEndpoint`` row and
     retain their documented compatibility behavior. Registered endpoint
     sessions, including provider-auth-backed rows, must use the visible
-    server-owned inventory and never trigger a provider lookup here.
+    server-owned inventory and never trigger a live provider lookup here.
     """
     # Lightweight in-memory test doubles from older route tests do not carry
     # durable provenance fields. They cannot represent a persisted bearer
@@ -737,9 +737,9 @@ def _validate_bearer_session_model(sess, owner: str | None = None) -> Optional[s
         validated = _validate_bearer_model_selection(ep, requested)
 
         # A session may outlive an endpoint-key rotation. For bearer calls,
-        # use the current static key for this exact endpoint and never trust a
-        # stale persisted Authorization header. Provider-auth rows remain
-        # request-local and are intentionally empty in cache-only mode.
+        # use the current exact-endpoint credentials and never trust a stale
+        # persisted Authorization header. Provider-auth credentials are
+        # owner-scoped, request-local, and cache-only in this boundary.
         try:
             from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
 
@@ -752,6 +752,9 @@ def _validate_bearer_session_model(sess, owner: str | None = None) -> Optional[s
         except Exception as exc:
             logger.warning("Could not refresh bearer session endpoint auth: %s", exc)
             sess.headers = {}
+            if getattr(ep, "provider_auth_id", None):
+                raise HTTPException(401, "Registered provider credentials are unavailable") from exc
+            raise HTTPException(400, "Registered endpoint credentials are unavailable") from exc
 
         sess.model = validated
         return validated
