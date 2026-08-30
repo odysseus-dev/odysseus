@@ -184,21 +184,27 @@ class McpManager:
         """Connect to an MCP server via stdio transport."""
         try:
             from mcp import ClientSession, StdioServerParameters
-            from mcp.client.stdio import stdio_client
+            from mcp.client.stdio import stdio_client, get_default_environment
             from contextlib import AsyncExitStack
+
+            # Passing env=None does not mean "inherit the parent environment" —
+            # the MCP SDK substitutes a minimal allowlist (HOME, PATH, …). The
+            # built-in NPX browser server passed nothing and so lost
+            # PLAYWRIGHT_BROWSERS_PATH, then reported `Browser "firefox" is not
+            # installed` with the browser sitting one directory away.
+            #
+            # Only the built-ins get the full environment. User-added servers
+            # are third-party processes: this one file's environment carries
+            # ODYSSEUS_INTERNAL_TOKEN (an admin bypass) among other secrets, so
+            # handing them os.environ would leak credentials to an arbitrary
+            # command. They keep the SDK's filtered default, plus whatever the
+            # server's own configuration explicitly sets.
+            base = os.environ if self.is_builtin(server_id) else get_default_environment()
 
             server_params = StdioServerParameters(
                 command=command,
                 args=args,
-                # `None` is not "inherit the parent environment" — the MCP SDK
-                # substitutes a minimal default one. Callers that pass an env
-                # (the Python builtins, via builtin_python_env) inherit
-                # everything; callers that pass none lose the whole container
-                # environment. The NPX browser server is in the second group,
-                # so it loses PLAYWRIGHT_BROWSERS_PATH and then reports
-                # `Browser "firefox" is not installed` with the browser sitting
-                # one directory away.
-                env={**os.environ, **(env or {})},
+                env={**base, **env},
             )
 
             stack = AsyncExitStack()
