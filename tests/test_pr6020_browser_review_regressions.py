@@ -114,7 +114,13 @@ export function __pr6020StreamStateSmoke() {
     module_uri = module_path.as_uri()
     script = f"""
       globalThis.window = globalThis;
-      globalThis.navigator = {{ platform: "" }};
+      // Node 21+ ships a real (getter-only) `navigator` global of its own —
+      // a plain assignment throws "Cannot set property navigator ... which
+      // has only a getter" on Node 22 (CI), even though it's silently a
+      // no-op-turned-fresh-global on Node 20 (this repo's other test
+      // containers), which doesn't predefine it. defineProperty overrides
+      // either case.
+      Object.defineProperty(globalThis, "navigator", {{ value: {{ platform: "" }}, writable: true, configurable: true }});
       globalThis.addEventListener = () => {{}};
       globalThis.removeEventListener = () => {{}};
       globalThis.dispatchEvent = () => {{}};
