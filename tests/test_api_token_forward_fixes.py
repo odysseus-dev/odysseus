@@ -395,7 +395,7 @@ def test_bearer_context_preprocessing_does_not_fetch_embedded_urls(monkeypatch):
 async def test_sync_bearer_chat_cannot_use_research_memory_or_background_extraction(monkeypatch):
     from routes import chat_routes
 
-    calls = {"memory": 0, "research": 0, "post": [], "recovery": []}
+    calls = {"memory": 0, "research": 0, "post": [], "recovery": [], "orphan": []}
 
     class _ChatHandler:
         async def handle_memory_command(self, _session, _message):
@@ -434,7 +434,11 @@ async def test_sync_bearer_chat_cannot_use_research_memory_or_background_extract
         return "answer", args[0][0], "selected-model"
 
     monkeypatch.setattr(chat_routes, "_verify_session_owner", lambda *args, **kwargs: None)
-    monkeypatch.setattr(chat_routes, "_clear_orphaned_session_endpoint", lambda *args, **kwargs: False)
+    def clear_orphan(*args, **kwargs):
+        calls["orphan"].append(kwargs)
+        return False
+
+    monkeypatch.setattr(chat_routes, "_clear_orphaned_session_endpoint", clear_orphan)
     def recover(*args, **kwargs):
         calls["recovery"].append(kwargs)
         return False
@@ -487,6 +491,7 @@ async def test_sync_bearer_chat_cannot_use_research_memory_or_background_extract
     assert calls["memory"] == 0
     assert calls["research"] == 0
     assert calls["post"] and calls["post"][0]["allow_background_extraction"] is False
+    assert calls["orphan"] == [{"owner": "alice", "allow_live_probes": False}]
     assert calls["recovery"] == [{"owner": "alice", "allow_live_probes": False}]
 
 
@@ -503,12 +508,28 @@ async def test_stream_bearer_chat_disables_deferred_memory_extraction(monkeypatc
         capture_completion=True,
     )
     recovery_calls = []
+    boundary_calls = {"reconcile": [], "orphan": [], "auth": []}
 
     def recover(*args, **kwargs):
         recovery_calls.append(kwargs)
         return False
 
     monkeypatch.setattr(chat_routes, "_recover_empty_session_model", recover)
+    monkeypatch.setattr(
+        chat_routes,
+        "_reconcile_selected_route_from_request",
+        lambda *args, **kwargs: boundary_calls["reconcile"].append(kwargs) or False,
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_clear_orphaned_session_endpoint",
+        lambda *args, **kwargs: boundary_calls["orphan"].append(kwargs) or False,
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "resolve_session_auth",
+        lambda *args, **kwargs: boundary_calls["auth"].append(kwargs),
+    )
     request = SimpleNamespace(
         headers={},
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
@@ -532,6 +553,9 @@ async def test_stream_bearer_chat_disables_deferred_memory_extraction(monkeypatc
 
     assert captured["post_processed"]
     assert captured["post_processed"][0][1]["allow_background_extraction"] is False
+    assert boundary_calls["reconcile"] == [{"owner": "alice", "allow_live_probes": False}]
+    assert boundary_calls["orphan"] == [{"owner": "alice", "allow_live_probes": False}]
+    assert boundary_calls["auth"] == [{"owner": "alice", "allow_live_probes": False}]
     assert recovery_calls == [{"owner": "alice", "allow_live_probes": False}]
 
 
@@ -680,6 +704,114 @@ def test_bearer_model_recovery_uses_cache_without_endpoint_or_session_writes(mon
     assert db.rollbacks == 0
 
 
+def test_bearer_model_recovery_uses_pinned_only_cache_inventory(monkeypatch):
+    chat_routes, db, endpoint, session_row, sess = _recovery_harness(
+        monkeypatch,
+        ["stale-cached-model"],
+    )
+    endpoint.pinned_models = json.dumps(["pinned-model"])
+    endpoint.hidden_models = json.dumps(["stale-cached-model"])
+
+    assert chat_routes._recover_empty_session_model(
+        sess,
+        "session-1",
+        owner="alice",
+        allow_live_probes=False,
+    ) is True
+    assert sess.model == "pinned-model"
+    assert session_row.model == ""
+    assert db.commits == 0
+
+
+def test_bearer_no_live_recovery_boundaries_do_not_open_or_commit(monkeypatch):
+    from routes import chat_helpers, chat_routes
+
+    session = SimpleNamespace(
+        id="session-1",
+        endpoint_url="https://api.example.test/v1/chat/completions",
+        model="selected-model",
+        headers={"Authorization": "Bearer selected"},
+    )
+
+    def forbidden_db(*args, **kwargs):
+        raise AssertionError("bearer no-live boundary opened a database session")
+
+    monkeypatch.setattr(chat_routes, "SessionLocal", forbidden_db)
+    assert chat_routes._clear_orphaned_session_endpoint(
+        session,
+        owner="alice",
+        allow_live_probes=False,
+    ) is False
+    assert chat_routes._reconcile_selected_route_from_request(
+        SimpleNamespace(),
+        session,
+        "session-1",
+        {"selected_model": "new-model", "selected_endpoint_id": "ep"},
+        owner="alice",
+        allow_live_probes=False,
+    ) is False
+
+    monkeypatch.setattr(chat_helpers, "SessionLocal", forbidden_db)
+    monkeypatch.setattr(
+        "src.endpoint_resolver.resolve_endpoint_runtime",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("bearer no-live auth resolved provider credentials")
+        ),
+    )
+    original_headers = dict(session.headers)
+    chat_helpers.resolve_session_auth(
+        session,
+        "session-1",
+        owner="alice",
+        allow_live_probes=False,
+    )
+    assert session.headers == original_headers
+
+
+@pytest.mark.asyncio
+async def test_bearer_context_compaction_uses_session_route_without_utility_resolution(monkeypatch):
+    from src import context_compactor
+
+    resolver_calls = []
+    llm_calls = []
+    monkeypatch.setattr(
+        context_compactor,
+        "resolve_endpoint",
+        lambda *args, **kwargs: resolver_calls.append((args, kwargs)) or (
+            "https://utility.example/v1",
+            "utility-model",
+            {"Authorization": "Bearer utility"},
+        ),
+    )
+    monkeypatch.setattr(context_compactor, "get_context_length", lambda *args, **kwargs: 1)
+
+    async def summarize(*args, **kwargs):
+        llm_calls.append((args, kwargs))
+        return "summary"
+
+    monkeypatch.setattr(context_compactor, "llm_call_async", summarize)
+    session = SimpleNamespace()
+    messages = [{"role": "user", "content": f"message {i}"} for i in range(6)]
+
+    _result, _context, compacted = await context_compactor.maybe_compact(
+        session,
+        "https://selected.example/v1/chat/completions",
+        "selected-model",
+        messages,
+        {"Authorization": "Bearer selected"},
+        owner="alice",
+        persist=False,
+        allow_live_probes=False,
+    )
+
+    assert compacted is True
+    assert resolver_calls == []
+    assert llm_calls[0][0][:2] == (
+        "https://selected.example/v1/chat/completions",
+        "selected-model",
+    )
+    assert llm_calls[0][1]["headers"] == {"Authorization": "Bearer selected"}
+    assert llm_calls[0][1]["allow_live_probes"] is False
 def test_interactive_model_recovery_retains_live_catalog_and_persistence(monkeypatch):
     chat_routes, db, endpoint, session_row, sess = _recovery_harness(monkeypatch, [])
     from src import chatgpt_subscription, endpoint_resolver
@@ -998,19 +1130,40 @@ def test_bearer_cannot_reach_workspace_or_hwfit_direct_handlers(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_codex_bearer_rejected_before_direct_and_router_host_control(monkeypatch):
+async def test_codex_bearer_data_scope_is_allowed_but_host_control_is_denied(monkeypatch):
     import routes.codex_routes as codex_routes
 
+    async def manage_notes(*args, **kwargs):
+        return {"owner": kwargs["owner"], "ok": True}
+
+    monkeypatch.setattr(codex_routes, "do_manage_notes", manage_notes)
     router = codex_routes.setup_codex_routes()
-    bearer = _request(scopes=("chat", "cookbook:read", "cookbook:launch"))
-    direct_cases = [
-        ("/api/codex/capabilities", "GET", (bearer,)),
+    bearer = _request(scopes=("chat", "todos:read", "cookbook:read", "cookbook:launch"))
+    capabilities = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/codex/capabilities" and "GET" in route.methods
+    )
+    assert capabilities(bearer)["tools"]["todos"]["read"] is True
+
+    todos = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/codex/todos" and "GET" in route.methods
+    )
+    assert await todos(bearer) == {"owner": "alice", "ok": True}
+
+    with pytest.raises(HTTPException) as missing_scope:
+        await todos(_request(scopes=("chat",)))
+    assert missing_scope.value.status_code == 403
+
+    direct_host_cases = [
         ("/api/codex/plugin.zip", "GET", (bearer,)),
         ("/api/codex/cookbook/tasks", "GET", (bearer,)),
         ("/api/codex/cookbook/serve", "POST", (bearer, {})),
         ("/api/codex/cookbook/output/{session_id}", "GET", (bearer, "serve-1")),
     ]
-    for path, method, args in direct_cases:
+    for path, method, args in direct_host_cases:
         endpoint = next(
             route.endpoint
             for route in router.routes
@@ -1027,11 +1180,19 @@ async def test_codex_bearer_rejected_before_direct_and_router_host_control(monke
     headers = {
         "x-api-token": "1",
         "x-api-owner": "alice",
-        "x-api-scopes": "cookbook:read,cookbook:launch",
+        "x-api-scopes": "todos:read,cookbook:read,cookbook:launch",
     }
     async with _client(_PrincipalState(app)) as client:
+        capabilities_response = await client.get("/api/codex/capabilities", headers=headers)
+        assert capabilities_response.status_code == 200, capabilities_response.text
+        assert capabilities_response.json()["tools"]["todos"]["read"] is True
+
+        todos_response = await client.get("/api/codex/todos", headers=headers)
+        assert todos_response.status_code == 200, todos_response.text
+        assert todos_response.json() == {"owner": "alice", "ok": True}
+
         for method, path, kwargs in (
-            ("GET", "/api/codex/capabilities", {}),
+            ("GET", "/api/codex/plugin.zip", {}),
             ("GET", "/api/codex/cookbook/tasks", {}),
             ("POST", "/api/codex/cookbook/serve", {"json": {}}),
         ):

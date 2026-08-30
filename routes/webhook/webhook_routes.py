@@ -75,26 +75,53 @@ def _cached_endpoint_model_ids(endpoint) -> list[str]:
     ``auto`` alias, but it must not turn an ordinary chat request into a remote
     catalog probe. Malformed/legacy cache shapes are treated as empty.
     """
-    raw = getattr(endpoint, "cached_models", None)
-    if not raw:
-        return []
     try:
-        value = json.loads(raw) if isinstance(raw, str) else raw
-    except (TypeError, ValueError):
-        return []
-    if isinstance(value, dict):
-        value = value.get("data") or value.get("models") or []
-    if not isinstance(value, list):
-        return []
-    ids = []
-    for item in value:
-        if isinstance(item, str) and item.strip():
-            ids.append(item.strip())
-        elif isinstance(item, dict):
-            model_id = item.get("id") or item.get("name") or item.get("model")
-            if isinstance(model_id, str) and model_id.strip():
-                ids.append(model_id.strip())
-    return ids
+        from routes.model_routes import _effective_endpoint_kind, _picker_models_for_endpoint
+
+        base_url = getattr(endpoint, "base_url", "") or ""
+        kind = _effective_endpoint_kind(endpoint, base_url)
+        models, _ = _picker_models_for_endpoint(endpoint, base_url, kind)
+        return models
+    except Exception:
+        raw = getattr(endpoint, "cached_models", None)
+        pinned_raw = getattr(endpoint, "pinned_models", None)
+        hidden_raw = getattr(endpoint, "hidden_models", None)
+        if not raw and not pinned_raw:
+            return []
+        try:
+            value = json.loads(raw) if isinstance(raw, str) else raw
+            pinned = json.loads(pinned_raw) if isinstance(pinned_raw, str) else pinned_raw
+            hidden = json.loads(hidden_raw) if isinstance(hidden_raw, str) else hidden_raw
+        except (TypeError, ValueError):
+            return []
+        if isinstance(value, dict):
+            value = value.get("data") or value.get("models") or []
+        if isinstance(pinned, dict):
+            pinned = pinned.get("data") or pinned.get("models") or []
+        if isinstance(hidden, dict):
+            hidden = hidden.get("data") or hidden.get("models") or []
+        if not isinstance(value, list):
+            value = []
+        if not isinstance(pinned, list):
+            pinned = []
+        if not isinstance(hidden, list):
+            hidden = []
+        raw_ids = value + pinned
+        hidden_ids = {str(item).strip() for item in hidden if str(item).strip()}
+        ids = []
+        for item in raw_ids:
+            if isinstance(item, str) and item.strip():
+                model_id = item.strip()
+            elif isinstance(item, dict):
+                model_id = item.get("id") or item.get("name") or item.get("model")
+                if not isinstance(model_id, str) or not model_id.strip():
+                    continue
+                model_id = model_id.strip()
+            else:
+                continue
+            if model_id not in hidden_ids and model_id not in ids:
+                ids.append(model_id)
+        return ids
 
 
 def setup_webhook_routes(

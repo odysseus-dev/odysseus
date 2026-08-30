@@ -1,9 +1,9 @@
 """Codex integration routes.
 
 These are small HTTP surfaces intended for the Codex plugin/MCP bridge. They
-reuse existing Odysseus helpers. The bridge is an interactive host-control
-plane and is unavailable to bearer principals; cookie/admin callers retain the
-documented operation path.
+reuse existing Odysseus helpers. Owner-scoped data operations support bearer
+principals with the matching token scope; the Cookbook/plugin host-control
+plane remains interactive-only.
 """
 
 import asyncio
@@ -90,7 +90,6 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
     """Return the data owner if the caller is allowed for this Codex action."""
-    require_non_bearer_request(request)
     if getattr(request.state, "api_token", False) is True:
         scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         if not scopes.intersection(allowed):
@@ -102,7 +101,6 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
 
 def _scope_owner_all(request: Request, required: set[str]) -> str:
     """Return owner only when an API token has every required scope."""
-    require_non_bearer_request(request)
     if getattr(request.state, "api_token", False) is True:
         scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         missing = required - scopes
@@ -120,6 +118,7 @@ def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
     privileges because cookbook surfaces expose host topology, task logs, tmux
     commands, and model-serving controls.
     """
+    require_non_bearer_request(request)
     owner = _scope_owner(request, allowed)
     if getattr(request.state, "api_token", False) is not True:
         require_admin(request)
@@ -156,7 +155,6 @@ def setup_codex_routes(
     router = APIRouter(
         prefix="/api/codex",
         tags=["codex"],
-        dependencies=[Depends(require_non_bearer_request)],
     )
     email_list_endpoint = _find_endpoint(email_router, "GET", "/api/email/list")
     email_read_endpoint = _find_endpoint(email_router, "GET", "/api/email/read/{uid}")
@@ -172,7 +170,6 @@ def setup_codex_routes(
 
     @router.get("/capabilities")
     def capabilities(request: Request):
-        require_non_bearer_request(request)
         token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         has_token = getattr(request.state, "api_token", False) is True
         def scoped(allowed):
@@ -222,7 +219,7 @@ def setup_codex_routes(
             },
         }
 
-    @router.get("/plugin.zip")
+    @router.get("/plugin.zip", dependencies=[Depends(require_non_bearer_request)])
     def plugin_zip(request: Request):
         require_non_bearer_request(request)
         require_authenticated_request(request)
@@ -522,7 +519,7 @@ def setup_codex_routes(
 
     # ── Cookbook surface ──
     # These handlers retain their legacy scope constants for compatibility
-    # with callers and tests, but the bridge is now an interactive-only
+    # with callers and tests, but the bridge is an interactive-only
     # host-control plane. Bearer principals are rejected before any task-list,
     # tmux-output, launch, stop, or model-serving operation.
 
@@ -568,14 +565,14 @@ def setup_codex_routes(
                                 if k not in ("hf_token", "_secrets")}
         return clean
 
-    @router.get("/cookbook/tasks")
+    @router.get("/cookbook/tasks", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_tasks(request: Request):
         _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         state = _read_cookbook_state()
         tasks = state.get("tasks") or []
         return {"tasks": [_redact_task(t) for t in tasks]}
 
-    @router.get("/cookbook/servers")
+    @router.get("/cookbook/servers", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_servers(request: Request):
         _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         state = _read_cookbook_state()
@@ -594,7 +591,7 @@ def setup_codex_routes(
             })
         return {"servers": cleaned}
 
-    @router.get("/cookbook/output/{session_id}")
+    @router.get("/cookbook/output/{session_id}", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_output(request: Request, session_id: str, tail: int = 400):
         _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         # Defensive: session_id must be the tmux-style id we issue
@@ -636,7 +633,7 @@ def setup_codex_routes(
             "task": _redact_task(task),
         }
 
-    @router.post("/cookbook/serve")
+    @router.post("/cookbook/serve", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_serve(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         # Wraps /api/model/serve with the SAME validation the UI uses.
@@ -675,7 +672,7 @@ def setup_codex_routes(
             raise HTTPException(503, "model serve endpoint unavailable")
         return await serve_endpoint(request, req)
 
-    @router.post("/cookbook/stop/{session_id}")
+    @router.post("/cookbook/stop/{session_id}", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_stop(request: Request, session_id: str):
         _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         import re as _re
@@ -692,7 +689,7 @@ def setup_codex_routes(
         result = await _run_shell(cmd, timeout=10)
         return {"session_id": session_id, "exit_code": result.get("exit_code"), "host": host or "local"}
 
-    @router.get("/cookbook/cached")
+    @router.get("/cookbook/cached", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_cached(request: Request, host: str | None = None):
         """List cached models on a configured server (or local if host is omitted).
         Mirrors `list_cached_models` from the chat agent so external agents have
@@ -754,7 +751,7 @@ def setup_codex_routes(
             platform=params.get("platform") or None,
         )
 
-    @router.get("/cookbook/presets")
+    @router.get("/cookbook/presets", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_presets(request: Request):
         """List saved serve presets (model + host + port + launch cmd).
         Counterpart to `list_serve_presets`. Use BEFORE composing a `serve`
@@ -775,7 +772,7 @@ def setup_codex_routes(
             })
         return {"presets": out, "default_host": (state.get("env") or {}).get("defaultServer", "")}
 
-    @router.post("/cookbook/preset/{name}")
+    @router.post("/cookbook/preset/{name}", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_serve_preset(request: Request, name: str):
         """Launch a saved preset by name. Reuses the working cmd + host the
         user already saved, avoiding the cmd-allowlist trial-and-error loop."""
@@ -825,7 +822,7 @@ def setup_codex_routes(
             raise HTTPException(503, "model serve endpoint unavailable")
         return await serve_endpoint(request, req)
 
-    @router.post("/cookbook/adopt")
+    @router.post("/cookbook/adopt", dependencies=[Depends(require_non_bearer_request)])
     async def codex_cookbook_adopt(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         """Adopt an existing tmux session (one started via raw ssh+tmux) into
         cookbook tracking. Needed when serve_model rejects a cmd and the

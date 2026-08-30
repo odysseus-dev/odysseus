@@ -55,7 +55,11 @@ from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
+from routes.model_routes import (
+    _effective_endpoint_kind,
+    _picker_models_for_endpoint,
+    _visible_models,
+)
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -414,8 +418,17 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     return sess in variants or sess.startswith(base + "/")
 
 
-def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
+def _clear_orphaned_session_endpoint(
+    sess,
+    owner: str | None = None,
+    *,
+    allow_live_probes: bool = True,
+) -> bool:
     """Clear a session model if its endpoint was deleted from ModelEndpoint."""
+    if not allow_live_probes:
+        # Bearer chat must not turn an orphan check into a session/database
+        # mutation. Interactive callers retain the repair behavior below.
+        return False
     if not getattr(sess, "endpoint_url", ""):
         return False
     db = SessionLocal()
@@ -581,13 +594,16 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         except Exception as e:
             logger.warning("Failed to parse cached_models for endpoint %r", getattr(ep, "id", "?"), exc_info=e)
             cached = []
-        if not cached:
-            visible = []
-        else:
-            try:
-                visible = _visible_models(cached, getattr(ep, "hidden_models", None))
-            except Exception:
-                visible = cached
+        try:
+            base_url = getattr(ep, "base_url", "") or ""
+            kind = _effective_endpoint_kind(ep, base_url)
+            visible, _ = _picker_models_for_endpoint(ep, base_url, kind)
+        except Exception:
+            visible = _visible_models(
+                cached,
+                getattr(ep, "hidden_models", None),
+                getattr(ep, "pinned_models", None),
+            )
         if current_model and current_model in {str(item).strip() for item in visible}:
             return False
         if is_chatgpt_subscription and allow_live_probes:
@@ -611,9 +627,15 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             if not cached:
                 return False
             try:
-                visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+                base_url = getattr(ep, "base_url", "") or ""
+                kind = _effective_endpoint_kind(ep, base_url)
+                visible, _ = _picker_models_for_endpoint(ep, base_url, kind)
             except Exception:
-                visible = cached
+                visible = _visible_models(
+                    cached,
+                    getattr(ep, "hidden_models", None),
+                    getattr(ep, "pinned_models", None),
+                )
             if current_model and current_model in {str(item).strip() for item in visible}:
                 return False
         if not visible:
@@ -661,6 +683,8 @@ def _reconcile_selected_route_from_request(
     session_id: str,
     form_data,
     owner: str | None = None,
+    *,
+    allow_live_probes: bool = True,
 ) -> bool:
     """Apply the model route the browser selected before streaming.
 
@@ -669,6 +693,11 @@ def _reconcile_selected_route_from_request(
     stream request includes the route that was selected at click/send time.
     Trust only registered endpoint ids, or the session's existing endpoint URL.
     """
+    if not allow_live_probes:
+        # The bearer path may consume the already-selected session route, but
+        # it must not resolve credentials or persist a browser-supplied route.
+        return False
+
     selected_model = str(form_data.get("selected_model") or "").strip()
     selected_endpoint_id = str(form_data.get("selected_endpoint_id") or "").strip()
     selected_endpoint_url = str(form_data.get("selected_endpoint_url") or "").strip()
@@ -795,7 +824,11 @@ def setup_chat_routes(
             raise HTTPException(404, f"Session '{session}' not found")
         owner = effective_user(request)
         request_capability = build_request_capability(request)
-        if _clear_orphaned_session_endpoint(sess, owner=owner):
+        if _clear_orphaned_session_endpoint(
+            sess,
+            owner=owner,
+            allow_live_probes=request_capability.allow_live_probes,
+        ):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
         # Empty model + live endpoint = setup race (Issue #587). Repair from
@@ -1322,8 +1355,19 @@ def setup_chat_routes(
                 external_untrusted_context_seen = (
                     external_untrusted_context_seen or retired_tool_approval_taint
                 )
-            _reconcile_selected_route_from_request(request, sess, session, form_data, owner=owner)
-            if _clear_orphaned_session_endpoint(sess, owner=owner):
+            _reconcile_selected_route_from_request(
+                request,
+                sess,
+                session,
+                form_data,
+                owner=owner,
+                allow_live_probes=request_capability.allow_live_probes,
+            )
+            if _clear_orphaned_session_endpoint(
+                sess,
+                owner=owner,
+                allow_live_probes=request_capability.allow_live_probes,
+            ):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but
             # s.model never made it onto the DB row (first-send race after
@@ -1402,7 +1446,12 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         # Ensure session has auth headers
-        resolve_session_auth(sess, session, owner=effective_user(request))
+        resolve_session_auth(
+            sess,
+            session,
+            owner=effective_user(request),
+            allow_live_probes=request_capability.allow_live_probes,
+        )
 
         # Check for research_pending BEFORE mode persist overwrites it
         # An approval response resumes the sealed agent action.  Do not let

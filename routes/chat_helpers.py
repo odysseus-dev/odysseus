@@ -514,8 +514,18 @@ def _has_auth_keys(headers) -> bool:
     )
 
 
-def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
+def resolve_session_auth(
+    sess,
+    session_id: str,
+    owner: Optional[str] = None,
+    *,
+    allow_live_probes: bool = True,
+):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
+    if not allow_live_probes:
+        # Bearer chat is cache-only and request-local. Do not resolve provider
+        # credentials or write recovered headers/session state in this mode.
+        return
     try:
         from src.chatgpt_subscription import is_chatgpt_subscription_base
         is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(sess, "endpoint_url", "") or "")
@@ -594,7 +604,7 @@ def _match_cached_model_id(requested: str, models) -> Optional[str]:
 
 
 def _normalize_model_id_from_cache(sess) -> Optional[str]:
-    """Use stored endpoint model IDs before falling back to a live /models probe."""
+    """Use stored ``cached_models``/pinned IDs before a live /models probe."""
     endpoint_url = getattr(sess, "endpoint_url", "") or ""
     requested = getattr(sess, "model", "") or ""
     if not endpoint_url or not requested:
@@ -622,11 +632,12 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
             except Exception:
                 continue
 
-            raw_models = getattr(ep, "cached_models", None)
-            if not raw_models:
-                continue
             try:
-                models = json.loads(raw_models) if isinstance(raw_models, str) else raw_models
+                from routes.model_routes import _effective_endpoint_kind, _picker_models_for_endpoint
+
+                base_url = getattr(ep, "base_url", "") or ""
+                kind = _effective_endpoint_kind(ep, base_url)
+                models, _ = _picker_models_for_endpoint(ep, base_url, kind)
             except Exception:
                 continue
 

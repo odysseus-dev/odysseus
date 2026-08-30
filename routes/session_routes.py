@@ -1043,12 +1043,16 @@ def setup_session_routes(
             raise HTTPException(400, "Nothing old enough to compact")
 
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
-        from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
         owner = getattr(session, "owner", None) or effective_user(request)
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
+        if capability.allow_live_probes:
+            from src.endpoint_resolver import resolve_endpoint
+
+            url, model, headers = resolve_endpoint("utility", owner=owner)
+            if not url or not model:
+                url, model, headers = session.endpoint_url, session.model, session.headers
+        else:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
             raise HTTPException(400, "No model configured for compaction")

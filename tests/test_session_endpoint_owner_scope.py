@@ -49,9 +49,10 @@ def test_chat_endpoint_recovery_paths_are_owner_scoped():
     chat_routes = (root / "routes" / "chat_routes.py").read_text(encoding="utf-8")
     chat_helpers = (root / "routes" / "chat_helpers.py").read_text(encoding="utf-8")
 
-    assert "def _clear_orphaned_session_endpoint(sess, owner:" in chat_routes
+    assert "def _clear_orphaned_session_endpoint(" in chat_routes
     assert "def _recover_empty_session_model(sess, session_id: str, owner:" in chat_routes
     assert "q = owner_filter(q, ModelEndpoint, owner)" in chat_routes
-    assert "resolve_session_auth(sess, session, owner=effective_user(request))" in chat_routes
-    assert "def resolve_session_auth(sess, session_id: str, owner:" in chat_helpers
+    assert "allow_live_probes=request_capability.allow_live_probes" in chat_routes
+    assert "def resolve_session_auth(" in chat_helpers
+    assert "allow_live_probes: bool = True" in chat_helpers
     assert "update_q = update_q.filter(DBSession.owner == owner)" in chat_helpers

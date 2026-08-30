@@ -300,6 +300,97 @@ def test_session_creation_passes_bearer_no_live_capability_to_model_validation(m
     assert seen["allow_live_probes"] is False
 
 
+def test_bearer_session_creation_uses_pinned_only_cache_inventory(monkeypatch):
+    from routes import session_routes as sr
+    from src import database, llm_core
+
+    endpoint = SimpleNamespace(
+        id="ep",
+        is_enabled=True,
+        base_url="https://api.example.test/v1",
+        api_key=None,
+        endpoint_kind="api",
+        cached_models=json.dumps(["stale-cached-model"]),
+        pinned_models=json.dumps(["server-pinned-model"]),
+        hidden_models=json.dumps(["stale-cached-model"]),
+    )
+    db = _EndpointDb(endpoint)
+    monkeypatch.setattr(sr, "SessionLocal", lambda: db)
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(sr, "_reject_raw_endpoint_url_for_non_admin", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        llm_core,
+        "httpx_get_kimi_aware",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("bearer setup attempted a live model probe")
+        ),
+    )
+    manager = SimpleNamespace(
+        create_session=lambda **kwargs: SimpleNamespace(
+            id=kwargs["session_id"],
+            name=kwargs["name"],
+            model=kwargs["model"],
+            endpoint_url=kwargs["endpoint_url"],
+            rag=kwargs["rag"],
+            headers={},
+        ),
+    )
+    router = sr.setup_session_routes(manager, {})
+    create_session = _endpoint(router, "/api/session", "POST")
+
+    result = create_session(
+        request=_Request(),
+        name="chat",
+        endpoint_url="",
+        model="",
+        rag=None,
+        skip_validation=None,
+        api_key="",
+        endpoint_id="ep",
+    )
+
+    assert result.model == "server-pinned-model"
+
+
+def test_bearer_cache_only_model_normalization_rejects_forbidden_fallback(monkeypatch):
+    from routes import chat_helpers
+    from src import database, llm_core
+
+    endpoint = SimpleNamespace(
+        id="ep",
+        is_enabled=True,
+        base_url="https://api.example.test/v1",
+        endpoint_kind="api",
+        cached_models=json.dumps(["stale-cached-model"]),
+        pinned_models=json.dumps(["server-pinned-model"]),
+        hidden_models=json.dumps(["stale-cached-model"]),
+    )
+    db = _EndpointDb(endpoint)
+    monkeypatch.setattr(chat_helpers, "SessionLocal", lambda: db)
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        llm_core,
+        "httpx_get_kimi_aware",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("cache-only normalization attempted a live probe")
+        ),
+    )
+
+    allowed = SimpleNamespace(
+        endpoint_url="https://api.example.test/v1/chat/completions",
+        model="server-pinned-model",
+        owner="alice",
+    )
+    forbidden = SimpleNamespace(
+        endpoint_url=allowed.endpoint_url,
+        model="stale-cached-model",
+        owner="alice",
+    )
+
+    assert chat_helpers._normalize_model_id_from_cache(allowed) == "server-pinned-model"
+    assert chat_helpers._normalize_model_id_from_cache(forbidden) is None
+
+
 def test_explicit_bearer_model_does_not_require_live_setup_probe(monkeypatch):
     from routes import session_routes as sr
     from src import llm_core
@@ -530,6 +621,9 @@ class _EndpointDb:
     def first(self):
         return self.endpoint
 
+    def all(self):
+        return [self.endpoint]
+
     def close(self):
         return None
 
@@ -545,7 +639,9 @@ async def test_sync_chat_fallback_uses_cached_models_without_provider_probe(monk
         created_at=1,
         base_url="http://127.0.0.1:11434/v1",
         api_key="configured-key",
-        cached_models=json.dumps(["cached-model"]),
+        cached_models=json.dumps(["stale-cached-model"]),
+        pinned_models=json.dumps(["server-pinned-model"]),
+        hidden_models=json.dumps(["stale-cached-model"]),
         provider_auth_id=None,
     )
     monkeypatch.setattr(wr, "SessionLocal", lambda: _EndpointDb(endpoint))
@@ -590,5 +686,5 @@ async def test_sync_chat_fallback_uses_cached_models_without_provider_probe(monk
         provider=None,
     )
     result = await sync_chat(request=_Request(), body=body)
-    assert result["model"] == "cached-model"
+    assert result["model"] == "server-pinned-model"
     assert seen["allow_live_probes"] is False

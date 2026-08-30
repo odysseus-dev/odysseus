@@ -379,11 +379,17 @@ async def maybe_compact(
         if "[Conversation summary" in m.get("content", "")
     )
 
-    # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
-    compact_url = util_url or endpoint_url
-    compact_model = util_model or model
-    compact_headers = util_headers if util_url else headers
+    # Use the utility model only for interactive/live-capable callers. Bearer
+    # chat must stay on the already-selected session route and headers.
+    if allow_live_probes:
+        util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
+        compact_url = util_url or endpoint_url
+        compact_model = util_model or model
+        compact_headers = util_headers if util_url else headers
+    else:
+        compact_url = endpoint_url
+        compact_model = model
+        compact_headers = headers
 
     prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
         "{count}", str(len(older))

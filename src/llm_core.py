@@ -1881,11 +1881,29 @@ def _configured_cached_model_ids(
         for ep in rows:
             if _model_list_base(getattr(ep, "base_url", "")) != target:
                 continue
-            models = _parse_model_cache(getattr(ep, "cached_models", None) or getattr(ep, "models", None))
-            if not models:
-                continue
-            hidden = set(_parse_model_cache(getattr(ep, "hidden_models", None)))
-            return [m for m in models if m not in hidden]
+            cached = _parse_model_cache(getattr(ep, "cached_models", None) or getattr(ep, "models", None))
+            pinned_raw = getattr(ep, "pinned_models", None)
+            pinned = _parse_model_cache(pinned_raw)
+            try:
+                # Keep cache-only validation aligned with the model picker:
+                # explicit API pins are an allow-list, legacy API rows use
+                # cached-visible models, and local endpoints merge cache+pins.
+                from routes.model_routes import _effective_endpoint_kind, _picker_models_for_endpoint
+
+                base_url = getattr(ep, "base_url", "") or ""
+                kind = _effective_endpoint_kind(ep, base_url)
+                models, _ = _picker_models_for_endpoint(ep, base_url, kind)
+            except Exception:
+                # The model route module is not required for this low-level
+                # helper. Preserve the safe cache+pin behavior if it cannot be
+                # imported during an unusual bootstrap/test sequence.
+                hidden = set(_parse_model_cache(getattr(ep, "hidden_models", None)))
+                models = []
+                for model in cached + pinned:
+                    if model not in models and model not in hidden:
+                        models.append(model)
+            if models or (pinned_raw is not None and str(pinned_raw).strip() != ""):
+                return models
     except Exception:
         return []
     finally:
