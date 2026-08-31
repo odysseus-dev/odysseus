@@ -2,11 +2,13 @@ import asyncio
 import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
-from core.platform_compat import IS_WINDOWS, find_bash
+from core.platform_compat import IS_WINDOWS, find_bash, kill_process_tree
 from src.constants import MAX_OUTPUT_CHARS
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
@@ -15,6 +17,128 @@ DEFAULT_PYTHON_TIMEOUT = 60 * 60
 PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
 TMUX_CAPTURE_LINES = 2000
+_TMUX_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _posix_parent_map() -> dict[int, list[int]]:
+    """Snapshot parent relationships using procfs, with a portable ps fallback."""
+    children_by_parent: dict[int, list[int]] = collections.defaultdict(list)
+    if sys.platform.startswith("linux"):
+        try:
+            for entry in os.scandir("/proc"):
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    stat = open(f"/proc/{entry.name}/stat", encoding="utf-8").read()
+                    fields = stat.rpartition(")")[2].split()
+                    children_by_parent[int(fields[1])].append(int(entry.name))
+                except (OSError, ValueError, IndexError):
+                    continue
+            return children_by_parent
+        except OSError:
+            children_by_parent.clear()
+
+    try:
+        output = subprocess.check_output(
+            ["ps", "-eo", "pid=,ppid="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=1,
+        )
+    except Exception:
+        return children_by_parent
+
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            pid, parent_pid = map(int, parts)
+        except ValueError:
+            continue
+        children_by_parent[parent_pid].append(pid)
+    return children_by_parent
+
+
+def _posix_descendant_pids(root_pid: int) -> list[int]:
+    """Return a best-effort snapshot of descendants before their parent exits."""
+    children_by_parent = _posix_parent_map()
+    descendants: list[int] = []
+    seen: set[int] = set()
+    pending = list(children_by_parent.get(root_pid, ()))
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        descendants.append(pid)
+        pending.extend(children_by_parent.get(pid, ()))
+    return descendants
+
+
+def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill an agent subprocess and descendants, including detached groups."""
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    if IS_WINDOWS:
+        kill_process_tree(pid)
+        return
+
+    descendants = _posix_descendant_pids(pid)
+    own_group = os.getpgrp()
+    try:
+        root_group = os.getpgid(pid)
+    except OSError:
+        root_group = None
+
+    detached_groups: set[int] = set()
+    for child_pid in descendants:
+        try:
+            child_group = os.getpgid(child_pid)
+        except OSError:
+            continue
+        if child_group not in {root_group, own_group}:
+            detached_groups.add(child_group)
+
+    try:
+        if root_group is not None and root_group != own_group:
+            os.killpg(root_group, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except (OSError, ProcessLookupError):
+            pass
+
+    for group in detached_groups:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+    for child_pid in reversed(descendants):
+        if child_pid == os.getpid():
+            continue
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+
+
+async def _await_subprocess_creation(create_coro):
+    """Make process creation cancellation-safe so a spawned child is never lost."""
+    create_task = asyncio.create_task(create_coro)
+    try:
+        return await asyncio.shield(create_task)
+    except asyncio.CancelledError:
+        try:
+            proc = await asyncio.shield(create_task)
+            _kill_proc_tree(proc)
+            await asyncio.shield(proc.wait())
+        except Exception:
+            pass
+        raise
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
@@ -34,8 +158,13 @@ async def _create_bash_subprocess(command: str, **kwargs):
                 "Git Bash is required for the Bash tool on Windows; "
                 "install Git for Windows and restart Odysseus"
             )
-        return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
-    return await asyncio.create_subprocess_shell(command, **kwargs)
+        return await _await_subprocess_creation(
+            asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
+        )
+    kwargs.setdefault("start_new_session", True)
+    return await _await_subprocess_creation(
+        asyncio.create_subprocess_shell(command, **kwargs)
+    )
 
 
 def _tmux_session_name(session_id: Optional[str]) -> str:
@@ -44,13 +173,35 @@ def _tmux_session_name(session_id: Optional[str]) -> str:
 
 
 async def _run_exec(*args: str, timeout: float = 10) -> Tuple[str, str, int]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    create_task = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
     )
     try:
+        proc = await asyncio.shield(create_task)
+    except asyncio.CancelledError:
+        try:
+            proc = await asyncio.shield(create_task)
+            proc.kill()
+            await asyncio.shield(proc.wait())
+        except Exception:
+            pass
+        raise
+    try:
         out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            await asyncio.shield(proc.wait())
+        except Exception:
+            pass
+        raise
     except asyncio.TimeoutError:
         try:
             proc.kill()
@@ -81,6 +232,69 @@ async def _tmux_send_line(name: str, line: str) -> None:
     if line:
         await _run_exec("tmux", "send-keys", "-t", name, "-l", line, timeout=5)
     await _run_exec("tmux", "send-keys", "-t", name, "C-m", timeout=5)
+
+
+async def _interrupt_tmux_command(
+    name: str, protected_descendants: Optional[set[int]] = None
+) -> None:
+    """Interrupt the active command without killing older persistent session jobs."""
+    pane_pid = None
+    out, _, rc = await _run_exec(
+        "tmux", "display-message", "-p", "-t", name, "#{pane_pid}", timeout=3
+    )
+    if rc == 0:
+        try:
+            pane_pid = int(out.strip())
+        except ValueError:
+            pass
+
+    descendants = _posix_descendant_pids(pane_pid) if pane_pid else []
+    protected = set(protected_descendants or ())
+    # A persistent background job may fork after the command starts. Protect its
+    # current subtree as well as the processes present in the initial snapshot.
+    for pid in tuple(protected):
+        protected.update(_posix_descendant_pids(pid))
+    descendants = [pid for pid in descendants if pid not in protected]
+    await _run_exec("tmux", "send-keys", "-t", name, "C-c", timeout=3)
+    if pane_pid is None:
+        return
+
+    try:
+        pane_group = os.getpgid(pane_pid)
+    except OSError:
+        pane_group = None
+    protected_groups: set[int] = set()
+    for pid in protected:
+        try:
+            protected_groups.add(os.getpgid(pid))
+        except OSError:
+            pass
+    groups: set[int] = set()
+    for pid in descendants:
+        try:
+            group = os.getpgid(pid)
+        except OSError:
+            continue
+        if group != pane_group and group not in protected_groups:
+            groups.add(group)
+    for group in groups:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except OSError:
+            pass
+    for pid in reversed(descendants):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    ready_marker = f"__ODYSSEUS_INTERRUPT_READY_{time.time_ns()}__"
+    await _tmux_send_line(name, f"printf '{ready_marker}\\n'")
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if ready_marker in await _tmux_capture(name):
+            return
+        await asyncio.sleep(0.05)
 
 
 async def _ensure_tmux_session(name: str, cwd: str, env: Optional[dict]) -> None:
@@ -140,48 +354,83 @@ async def _run_tmux_bash(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
 ) -> Tuple[str, str, Optional[int], bool]:
     name = _tmux_session_name(session_id)
-    await _ensure_tmux_session(name, cwd, env)
+    lock = _TMUX_SESSION_LOCKS.setdefault(name, asyncio.Lock())
+    async with lock:
+        body = ""
+        protected_descendants: set[int] = set()
+        command_started = False
+        # Conservative until the query completes: cancellation must never tear
+        # down or interrupt a possibly pre-existing persistent session.
+        session_existed = True
+        try:
+            session_existed = await _tmux_has_session(name)
+            pane_out, _, pane_rc = await _run_exec(
+                "tmux", "display-message", "-p", "-t", name, "#{pane_pid}", timeout=3
+            )
+            if pane_rc == 0:
+                try:
+                    protected_descendants.update(
+                        _posix_descendant_pids(int(pane_out.strip()))
+                    )
+                except ValueError:
+                    pass
+            await _ensure_tmux_session(name, cwd, env)
 
-    stamp = f"{int(time.time() * 1000)}-{abs(hash(content)) % 1000000}"
-    start_marker = f"__ODYSSEUS_CMD_START_{stamp}__"
-    end_prefix = f"__ODYSSEUS_CMD_END_{stamp}__:"
-    wrapped = (
-        f"printf '\\n{start_marker}\\n'\n"
-        f"{content}\n"
-        f"__ody_rc=$?\n"
-        f"printf '\\n{end_prefix}%s\\n' \"$__ody_rc\"\n"
-    )
-    for line in wrapped.splitlines():
-        await _tmux_send_line(name, line)
+            stamp = f"{int(time.time() * 1000)}-{abs(hash(content)) % 1000000}"
+            start_marker = f"__ODYSSEUS_CMD_START_{stamp}__"
+            end_prefix = f"__ODYSSEUS_CMD_END_{stamp}__:"
+            wrapped = (
+                f"printf '\\n{start_marker}\\n'\n"
+                f"{content}\n"
+                f"__ody_rc=$?\n"
+                f"printf '\\n{end_prefix}%s\\n' \"$__ody_rc\"\n"
+            )
+            for line in wrapped.splitlines():
+                await _tmux_send_line(name, line)
+                # The first completed line is a harmless start marker. Once it
+                # has been submitted, later cancellation may need to interrupt
+                # the command stream; cancellation before that preserves an
+                # existing session because no user command can have run.
+                command_started = True
 
-    started = time.time()
-    last_tail = ""
-    while True:
-        capture = await _tmux_capture(name)
-        body, done = _output_after_marker(capture, start_marker, end_prefix)
-        tail = "\n".join(body.splitlines()[-PROGRESS_TAIL_LINES:])
-        if progress_cb and tail != last_tail:
-            last_tail = tail
-            try:
-                await progress_cb({
-                    "elapsed_s": round(time.time() - started, 1),
-                    "tail": tail,
-                    "tmux_session": name,
-                })
-            except Exception:
-                pass
-        if done:
-            rc = _extract_marker_rc(capture, end_prefix)
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", rc, False
-        if time.time() - started > timeout:
-            try:
-                await _run_exec("tmux", "send-keys", "-t", name, "C-c", timeout=3)
-            except Exception:
-                pass
-            cleaned = _clean_tmux_command_output(body, wrapped)
-            return cleaned, "", 124, True
-        await asyncio.sleep(0.5)
+            started = time.time()
+            last_tail = ""
+            while True:
+                capture = await _tmux_capture(name)
+                body, done = _output_after_marker(capture, start_marker, end_prefix)
+                tail = "\n".join(body.splitlines()[-PROGRESS_TAIL_LINES:])
+                if progress_cb and tail != last_tail:
+                    last_tail = tail
+                    try:
+                        await progress_cb({
+                            "elapsed_s": round(time.time() - started, 1),
+                            "tail": tail,
+                            "tmux_session": name,
+                        })
+                    except Exception:
+                        pass
+                if done:
+                    rc = _extract_marker_rc(capture, end_prefix)
+                    cleaned = _clean_tmux_command_output(body, wrapped)
+                    return cleaned, "", rc, False
+                if time.time() - started > timeout:
+                    await _interrupt_tmux_command(name, protected_descendants)
+                    cleaned = _clean_tmux_command_output(body, wrapped)
+                    return cleaned, "", 124, True
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            if command_started:
+                await asyncio.shield(
+                    _interrupt_tmux_command(name, protected_descendants)
+                )
+            elif not session_existed:
+                # Cancellation while creating a new persistent session must not
+                # leave a half-configured tmux shell behind. Existing sessions
+                # are intentionally preserved because no command was sent.
+                await asyncio.shield(
+                    _run_exec("tmux", "kill-session", "-t", name, timeout=3)
+                )
+            raise
 
 
 def _clean_tmux_command_output(text: str, wrapped_command: str) -> str:
@@ -252,19 +501,13 @@ async def _run_subprocess_streaming(
         await asyncio.wait_for(proc.wait(), timeout=timeout)
     except asyncio.TimeoutError:
         timed_out = True
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _kill_proc_tree(proc)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
         except Exception:
             pass
     except asyncio.CancelledError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _kill_proc_tree(proc)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
         except Exception:
@@ -361,12 +604,15 @@ class PythonTool:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
-        proc = await asyncio.create_subprocess_exec(
-            (sys.executable or "python"), "-I", "-c", content,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=_subproc_env,
-            cwd=agent_cwd(),
+        proc = await _await_subprocess_creation(
+            asyncio.create_subprocess_exec(
+                (sys.executable or "python"), "-I", "-c", content,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=_subproc_env,
+                cwd=agent_cwd(),
+                **({"start_new_session": True} if not IS_WINDOWS else {}),
+            )
         )
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
