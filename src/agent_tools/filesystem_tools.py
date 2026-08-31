@@ -3,8 +3,8 @@ import json
 import os
 import re
 import difflib
-import fnmatch
 import shutil
+import time
 from typing import Optional, Dict, Any, Tuple, List
 
 from src.constants import MAX_READ_CHARS, MAX_DIFF_LINES, MAX_OUTPUT_CHARS
@@ -407,7 +407,11 @@ def _apply_patch_hunks(original: str, hunks: List[List[str]], label: str) -> str
 
 class LsTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import (
+            _is_denied_tool_path,
+            _resolve_search_root,
+            _truncate,
+        )
         raw_path = ""
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -430,6 +434,8 @@ class LsTool:
                 with os.scandir(root) as it:
                     for entry in it:
                         if entry.name.startswith("."):
+                            continue
+                        if _is_denied_tool_path(os.path.realpath(entry.path)):
                             continue
                         try:
                             is_dir = entry.is_dir(follow_symlinks=False)
@@ -565,6 +571,7 @@ class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import (
             _SENSITIVE_FILE_PATTERNS,
+            _agent_readable_data_subdirs,
             _can_traverse_tool_path,
             _is_denied_tool_path,
             _path_within,
@@ -600,44 +607,118 @@ class GrepTool:
             import re as _re
             import shutil
             rg = shutil.which("rg")
-            # ripgrep does not offer a policy callback for each traversed
-            # result.  When the search root contains DATA_DIR, use the Python
-            # walker so protected state can be pruned while legitimate data
-            # carve-outs remain searchable.
             from src.constants import DATA_DIR
-            if _path_within(os.path.realpath(DATA_DIR), os.path.realpath(root)):
-                rg = None
+            real_root = os.path.realpath(root)
+            data_dir = os.path.realpath(DATA_DIR)
+            spans_state = _path_within(data_dir, real_root)
+            if spans_state and not rg:
+                return None, "grep: ripgrep is required when the search root contains application state"
             if rg:
-                cmd = [
-                    rg, "--no-config", "--no-follow", "--line-number",
-                    "--no-heading", "--color=never", "--max-count", str(max_hits),
-                ]
-                if ignore_case:
-                    cmd.append("--ignore-case")
-                if glob_pat:
-                    cmd += ["--glob", glob_pat]
-                # --iglob (not --glob) so the exclusion is case-insensitive:
-                # on a case-insensitive filesystem "ID_RSA"/"Known_Hosts"
-                # resolve to the same secret as their lowercase forms, and the
-                # Python fallback below already folds case via _is_sensitive_path.
-                for _pat in _SENSITIVE_FILE_PATTERNS:
-                    cmd += ["--iglob", f"!*{_pat}*"]
-                for _d in _CODENAV_SKIP_DIRS:
-                    cmd += ["--glob", f"!**/{_d}/**"]
-                cmd += ["--regexp", pattern, root]
-                try:
-                    import subprocess
-                    p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-                    lines = [ln for ln in (p.stdout or "").splitlines() if ln][:max_hits]
-                    return lines, None
-                except subprocess.TimeoutExpired:
-                    return None, "grep: timed out"
-                except Exception as _e:
-                    return None, f"grep: {_e}"
+                searches: list[tuple[str, list[str]]] = [(real_root, [])]
+                if spans_state:
+                    searches = []
+                    # Search everything outside DATA_DIR with a native rg glob
+                    # exclusion.  Search validated carve-outs separately so
+                    # their contents remain available without exposing state
+                    # siblings.  --no-follow prevents a symlink from bypassing
+                    # the excluded canonical subtree.
+                    if real_root != data_dir:
+                        rel_data = os.path.relpath(data_dir, real_root).replace(
+                            os.sep, "/"
+                        )
+                        searches.append(
+                            (real_root, [f"!{rel_data}", f"!{rel_data}/**"])
+                        )
+                    seen_roots: set[str] = set()
+                    for readable in _agent_readable_data_subdirs():
+                        if not _path_within(
+                            readable, real_root
+                        ) or not os.path.exists(readable):
+                            continue
+                        canonical = os.path.realpath(readable)
+                        if canonical not in seen_roots:
+                            seen_roots.add(canonical)
+                            searches.append((canonical, []))
+
+                lines: list[str] = []
+                deadline = time.monotonic() + 20
+                for search_root, state_excludes in searches:
+                    remaining_hits = max_hits - len(lines)
+                    if remaining_hits <= 0:
+                        break
+                    cmd = [
+                        rg, "--no-config", "--no-follow", "--line-number",
+                        "--no-heading", "--color=never", "--max-count",
+                        str(remaining_hits),
+                    ]
+                    if ignore_case:
+                        cmd.append("--ignore-case")
+                    if glob_pat:
+                        cmd += ["--glob", glob_pat]
+                    # --iglob (not --glob) so the exclusion is case-insensitive:
+                    # on a case-insensitive filesystem "ID_RSA"/"Known_Hosts"
+                    # resolve to the same secret as their lowercase forms.
+                    for _pat in _SENSITIVE_FILE_PATTERNS:
+                        cmd += ["--iglob", f"!*{_pat}*"]
+                    for _d in _CODENAV_SKIP_DIRS:
+                        cmd += ["--glob", f"!**/{_d}/**"]
+                    for exclusion in state_excludes:
+                        cmd += ["--glob", exclusion]
+                    cmd += ["--regexp", pattern, search_root]
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        return None, "grep: timed out"
+                    try:
+                        import queue
+                        import subprocess
+                        import threading
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
+                            text=True,
+                            bufsize=1,
+                        )
+                    except Exception as _e:
+                        return None, f"grep: {_e}"
+                    output: queue.Queue[Optional[str]] = queue.Queue()
+
+                    def _read_stdout() -> None:
+                        assert process.stdout is not None
+                        try:
+                            for line in process.stdout:
+                                output.put(line.rstrip("\n"))
+                        finally:
+                            output.put(None)
+
+                    threading.Thread(target=_read_stdout, daemon=True).start()
+                    try:
+                        while len(lines) < max_hits:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                return None, "grep: timed out"
+                            try:
+                                line = output.get(timeout=remaining)
+                            except queue.Empty:
+                                return None, "grep: timed out"
+                            if line is None:
+                                break
+                            if line and line not in lines:
+                                lines.append(line)
+                    finally:
+                        if process.poll() is None:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=1)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait()
+                return lines, None
             try:
                 rx = _re.compile(pattern, _re.IGNORECASE if ignore_case else 0)
             except _re.error as _e:
                 return None, f"grep: bad pattern: {_e}"
+            glob_rx = _glob_to_regex(glob_pat.replace("\\", "/")) if glob_pat else None
             hits = []
             if os.path.isfile(root):
                 file_iter = [root]
@@ -653,7 +734,12 @@ class GrepTool:
                         and _can_traverse_tool_path(os.path.realpath(os.path.join(dp, d)))
                     ]
                     for fn in fns:
-                        if glob_pat and not fnmatch.fnmatch(fn, glob_pat):
+                        rel = os.path.relpath(os.path.join(dp, fn), root).replace(
+                            os.sep, "/"
+                        )
+                        if glob_rx and not (
+                            glob_rx.fullmatch(rel) or glob_rx.fullmatch(fn)
+                        ):
                             continue
                         file_iter.append(os.path.join(dp, fn))
             for fp in file_iter:

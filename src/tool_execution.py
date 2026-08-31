@@ -129,14 +129,39 @@ def _is_sensitive_path(resolved: str) -> bool:
 def _path_within(resolved: str, root: str) -> bool:
     """True when *resolved* is *root* itself or sits underneath it.
 
-    Folds case before comparing, because the caller is a deny rule: a missed
-    match here ALLOWS the path, where a missed match in the allowlist below
-    only rejects it. On default macOS a case-variant name opens the same file
-    and realpath does not canonicalise case, so an unfolded compare would let
-    the state directory through. casefold rather than os.path.normcase for the
-    reason given above _is_sensitive_path: normcase is a no-op on POSIX, which
-    is exactly where that gap lives.
+    Use the platform's path-case rules.  This helper participates in allow
+    decisions, so unconditional case-folding would let a distinct ``/DATA``
+    tree masquerade as a descendant of ``/data`` on case-sensitive systems.
     """
+    resolved, root = os.path.normcase(resolved), os.path.normcase(root)
+    if resolved == root:
+        return True
+    try:
+        if os.path.commonpath([resolved, root]) == root:
+            return True
+    except ValueError:
+        return False
+    # normcase is intentionally conservative about assumptions (notably on
+    # POSIX), so consult the filesystem when paths exist.  This recognizes a
+    # case alias on a case-insensitive volume without treating distinct
+    # case-sensitive paths as the same allow root.
+    if os.path.exists(root):
+        candidate = resolved
+        while True:
+            try:
+                if os.path.exists(candidate) and os.path.samefile(candidate, root):
+                    return True
+            except OSError:
+                pass
+            parent = os.path.dirname(candidate)
+            if parent == candidate:
+                break
+            candidate = parent
+    return False
+
+
+def _path_within_conservative(resolved: str, root: str) -> bool:
+    """Containment for deny decisions, folding case to fail closed."""
     resolved, root = resolved.casefold(), root.casefold()
     if resolved == root:
         return True
@@ -151,7 +176,8 @@ def _agent_readable_data_subdirs() -> tuple[str, ...]:
 
     The agent's own scratch folder, plus the directories of user content whose
     paths the application itself gives to the model, which it would then be
-    unable to open:
+    unable to open.  These normally live under DATA_DIR; the documented mail
+    attachment override may instead name a disjoint external directory:
 
       UPLOAD_DIR            the chat upload manifest renders "path=<p>" and
                             says to read it with read_file (agent_loop.py)
@@ -174,29 +200,37 @@ def _agent_readable_data_subdirs() -> tuple[str, ...]:
         UPLOAD_DIR,
     )
     configured = (
-        AGENT_WORKSPACE_DIR,
-        UPLOAD_DIR,
-        MAIL_ATTACHMENTS_DIR,
-        PERSONAL_DIR,
-        PERSONAL_UPLOADS_DIR,
+        (AGENT_WORKSPACE_DIR, False),
+        (UPLOAD_DIR, False),
+        # This has a documented environment override and may legitimately
+        # live outside DATA_DIR, but it must never equal/contain DATA_DIR.
+        (MAIL_ATTACHMENTS_DIR, True),
+        (PERSONAL_DIR, False),
+        (PERSONAL_UPLOADS_DIR, False),
     )
     data_dir = os.path.realpath(DATA_DIR)
     safe: list[str] = []
-    for raw in configured:
+    for raw, external_ok in configured:
         value = str(raw or "").strip()
-        # These paths are security-policy carve-outs, not ordinary allowlist
-        # entries.  Accept only explicit absolute paths whose canonical target
-        # is a strict descendant of DATA_DIR.  In particular, an empty/dot,
-        # filesystem-root, ancestor, equality, or symlink-equivalent setting
-        # must not turn the whole state directory into readable content.
+        # These paths are security-policy roots, not ordinary allowlist
+        # entries.  Accept only explicit absolute directory paths.  State
+        # carve-outs must be strict DATA_DIR descendants; the documented mail
+        # override may also be disjoint.  Empty/dot, filesystem-root, ancestor,
+        # equality, file, or symlink-equivalent settings fail closed.
         if not value or not os.path.isabs(os.path.expanduser(value)):
             continue
         resolved = os.path.realpath(os.path.expanduser(value))
-        if (
-            resolved == data_dir
-            or not _path_within(resolved, data_dir)
-            or _is_sensitive_path(resolved)
-        ):
+        if os.path.exists(resolved) and not os.path.isdir(resolved):
+            continue
+        inside_data = resolved != data_dir and _path_within(resolved, data_dir)
+        external_safe = (
+            external_ok
+            and resolved != data_dir
+            and os.path.dirname(resolved) != resolved
+            and not _path_within(data_dir, resolved)
+            and not _path_within(resolved, data_dir)
+        )
+        if not (inside_data or external_safe) or _is_sensitive_path(resolved):
             continue
         safe.append(resolved)
     return tuple(safe)
@@ -217,7 +251,7 @@ def _is_app_state_path(resolved: str) -> bool:
     own settings.json or app.db inside a real workspace is not caught.
     """
     from src.constants import DATA_DIR
-    if not _path_within(resolved, os.path.realpath(DATA_DIR)):
+    if not _path_within_conservative(resolved, os.path.realpath(DATA_DIR)):
         return False
     return not any(
         _path_within(resolved, d)

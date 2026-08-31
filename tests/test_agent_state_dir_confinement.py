@@ -20,7 +20,9 @@ so the guard is a property of the path, not of the root it arrived through.
 import asyncio
 import importlib
 import os
-from contextlib import contextmanager
+import shutil
+import time
+from contextlib import contextmanager, nullcontext
 
 import pytest
 
@@ -40,7 +42,7 @@ from src.tool_execution import (
     agent_cwd,
     vet_workspace,
 )
-from src.agent_tools.filesystem_tools import GlobTool, GrepTool
+from src.agent_tools.filesystem_tools import GlobTool, GrepTool, LsTool
 
 APP_STATE_FILES = [
     "sessions.json",   # session token -> username, cleartext
@@ -343,3 +345,170 @@ def test_recursive_glob_and_grep_hide_state_from_extra_root(tmp_path, monkeypatc
     assert "auth.json" not in glob_result["output"]
     assert "public.txt" in grep_result["output"]
     assert "auth.json" not in grep_result["output"]
+
+
+def test_existing_file_cannot_become_a_readable_directory_carveout(
+    tmp_path, monkeypatch
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _configure_test_data_tree(monkeypatch, data_dir)
+    secret = data_dir / "auth.json"
+    secret.write_text("STATE_SECRET\n", encoding="utf-8")
+    current_constants = importlib.import_module("src.constants")
+    monkeypatch.setattr(current_constants, "UPLOAD_DIR", str(secret))
+    current_execution = importlib.import_module("src.tool_execution")
+
+    assert (
+        os.path.realpath(secret)
+        not in current_execution._agent_readable_data_subdirs()
+    )
+    with pytest.raises(ValueError, match="application state"):
+        current_execution._resolve_tool_path(str(secret))
+
+
+def test_external_mail_attachment_directory_remains_readable(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _configure_test_data_tree(monkeypatch, data_dir)
+    external = tmp_path / "external-mail"
+    external.mkdir()
+    attachment = external / "message.txt"
+    attachment.write_text("mail body\n", encoding="utf-8")
+    current_constants = importlib.import_module("src.constants")
+    monkeypatch.setattr(current_constants, "MAIL_ATTACHMENTS_DIR", str(external))
+    current_execution = importlib.import_module("src.tool_execution")
+
+    assert current_execution._resolve_tool_path(str(attachment)) == os.path.realpath(
+        attachment
+    )
+
+
+@pytest.mark.skipif(
+    os.path.normcase("DATA") == os.path.normcase("data"),
+    reason="requires a platform with case-sensitive path comparison",
+)
+def test_case_distinct_path_cannot_masquerade_as_readable_descendant(
+    tmp_path, monkeypatch
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _configure_test_data_tree(monkeypatch, data_dir)
+    distinct = tmp_path / "DATA" / "agent_workspace"
+    distinct.mkdir(parents=True)
+    current_execution = importlib.import_module("src.tool_execution")
+    monkeypatch.setattr(current_execution, "AGENT_WORKSPACE_DIR", str(distinct))
+
+    assert (
+        os.path.realpath(distinct)
+        not in current_execution._agent_readable_data_subdirs()
+    )
+
+
+@pytest.mark.parametrize("use_workspace", [True, False])
+def test_ls_hides_protected_entries_when_root_contains_data(
+    tmp_path, monkeypatch, use_workspace
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _configure_test_data_tree(monkeypatch, data_dir)
+    (tmp_path / "visible.txt").write_text("visible\n", encoding="utf-8")
+    secret = data_dir / "settings.json"
+    secret.write_text("SECRET_WITH_SIZE\n", encoding="utf-8")
+    if use_workspace:
+        context = current_workspace_at(tmp_path)
+        content = '{"path": ""}'
+    else:
+        monkeypatch.setattr("src.settings.get_setting", lambda *_a, **_k: [str(tmp_path)])
+        context = nullcontext()
+        content = f'{{"path": "{tmp_path}"}}'
+
+    with context:
+        result = asyncio.run(LsTool().execute(content, {}))
+
+    assert "visible.txt" in result["output"]
+    assert "settings.json" not in result["output"]
+    assert "SECRET_WITH_SIZE" not in result["output"]
+    assert "data/" not in result["output"]
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="requires ripgrep")
+def test_state_spanning_grep_bounds_dangerous_regex(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data_dir)
+    workspace = readable["AGENT_WORKSPACE_DIR"]
+    workspace.mkdir()
+    (workspace / "long.txt").write_text("a" * 250_000 + "!\n", encoding="utf-8")
+    (data_dir / "auth.txt").write_text("a" * 250_000 + "!\n", encoding="utf-8")
+
+    started = time.monotonic()
+    with current_workspace_at(tmp_path):
+        result = asyncio.run(GrepTool().execute(
+            '{"pattern": "(a+)+$", "path": "", "max_results": 1}', {}
+        ))
+    elapsed = time.monotonic() - started
+
+    assert result["exit_code"] == 0
+    assert "auth.txt" not in result["output"]
+    assert elapsed < 5
+
+
+def test_state_spanning_grep_stops_process_at_max_results(tmp_path, monkeypatch):
+    import subprocess
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _configure_test_data_tree(monkeypatch, data_dir)
+    instances = []
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(
+                f"{tmp_path}/visible-{index}.txt:1:MATCH\n" for index in range(100)
+            )
+            self.terminated = False
+            instances.append(self)
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            self.terminated = True
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/rg")
+    monkeypatch.setattr(subprocess, "Popen", FakeProcess)
+    with current_workspace_at(tmp_path):
+        result = asyncio.run(GrepTool().execute(
+            '{"pattern": "MATCH", "path": "", "max_results": 1}', {}
+        ))
+
+    assert len(instances) == 1
+    assert instances[0].terminated is True
+    assert result["output"].count(":1:MATCH") == 1
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="requires ripgrep")
+def test_state_spanning_grep_keeps_relative_glob_semantics(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data_dir)
+    nested = readable["AGENT_WORKSPACE_DIR"] / "nested"
+    nested.mkdir(parents=True)
+    (nested / "readable.py").write_text("PATH_GLOB_MARKER\n", encoding="utf-8")
+    (data_dir / "protected.py").write_text("PATH_GLOB_MARKER\n", encoding="utf-8")
+
+    with current_workspace_at(tmp_path):
+        result = asyncio.run(GrepTool().execute(
+            '{"pattern": "PATH_GLOB_MARKER", "path": "", "glob": "**/*.py"}',
+            {},
+        ))
+
+    assert "readable.py" in result["output"]
+    assert "protected.py" not in result["output"]
