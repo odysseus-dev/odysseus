@@ -65,6 +65,7 @@ from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
     is_web_search_explicitly_denied,
+    tools_denied_without_web,
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
@@ -1451,7 +1452,7 @@ def setup_chat_routes(
             disabled_tools.add("bash")
         _explicit_web_intent = _explicit_web_intent or bool(_tool_intent and _tool_intent.category == "web")
         if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
-            disabled_tools.update(WEB_TOOL_NAMES)
+            disabled_tools.update(tools_denied_without_web(research_requested=do_research))
         if _explicit_web_intent:
             # A direct lookup/search request should not drift into personal
             # tools or shell fallbacks. It can only use web_search/web_fetch

@@ -19,6 +19,21 @@ GUIDE_ONLY_DIRECTIVE = (
 WEB_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
 
 
+def tools_denied_without_web(*, research_requested: bool) -> frozenset[str]:
+    """Tool names to deny on a turn that did not enable web access.
+
+    trigger_research reaches the public internet through the same search backend
+    as web_search, only with a much larger crawl behind it, so leaving it callable
+    makes the composer's web toggle advisory. A user who asked for Deep Research
+    has opted in explicitly — and routes/chat_routes.py gates that request on this
+    very tool name, so denying it there would turn the feature off instead.
+    """
+
+    if research_requested:
+        return WEB_TOOL_NAMES
+    return WEB_TOOL_NAMES | {"trigger_research"}
+
+
 def tool_toggle_enabled(value: object) -> bool:
     """Return true only for explicit true-like tool toggle values."""
 
