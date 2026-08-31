@@ -1046,22 +1046,23 @@ async function _executeTaskStop(el, task) {
   }
   _updateTask(task.sessionId, { _userStopped: true });
   const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-  if (task.type === 'serve' && task.payload) {
-    _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
-  }
   const ollamaUnload = _ollamaUnloadCommand(task, outputText);
-  if (ollamaUnload) {
-    try {
-      await fetch('/api/shell/exec', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: ollamaUnload }),
-      });
-    } catch {}
-  }
   try {
     const result = await _stopCookbookSession(task);
-    return !!(result && result.ok);
+    if (!(result && result.ok)) return false;
+    if (task.type === 'serve' && task.payload) {
+      await _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
+    }
+    if (ollamaUnload) {
+      try {
+        await fetch('/api/shell/exec', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: ollamaUnload }),
+        });
+      } catch {}
+    }
+    return true;
   } catch {
     return false;
   }
@@ -1103,6 +1104,10 @@ async function _stopCookbookSession(task) {
   if (taskType === 'download') {
     const repoId = task?.payload?.repo_id || task?.payload?.repoId || '';
     if (repoId) body.repo_id = repoId;
+    const localDir = task?.payload?.local_dir || task?.payload?.localDir || '';
+    const include = task?.payload?.include || '';
+    if (localDir) body.local_dir = localDir;
+    if (include) body.include = include;
   }
   try {
     const r = await fetch('/api/cookbook/stop-session', {
@@ -3016,15 +3021,6 @@ export function _renderRunningTab() {
       const outputText = el.querySelector('.cookbook-output-pre')?.textContent || liveTask.output || '';
       const isLive = liveTask.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(liveStatus || '');
       const ollamaUnload = _ollamaUnloadCommand(liveTask, outputText);
-      if (ollamaUnload) {
-        try {
-          await fetch('/api/shell/exec', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: ollamaUnload }),
-          });
-        } catch (_) { /* unload best-effort */ }
-      }
       let killOk = true;
       try {
         const result = await _stopCookbookSession(liveTask);
@@ -3046,6 +3042,15 @@ export function _renderRunningTab() {
       if (!killOk) {
         try { uiModule.showToast('Kill failed — session may still be running. Check `tmux ls` on the server.', 'error'); } catch (_) {}
         return;
+      }
+      if (ollamaUnload) {
+        try {
+          await fetch('/api/shell/exec', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: ollamaUnload }),
+          });
+        } catch (_) { /* unload best-effort */ }
       }
       if (liveTask.type === 'serve' && liveTask.payload) {
         const endpointUrl = _endpointUrlForTask(liveTask, outputText);

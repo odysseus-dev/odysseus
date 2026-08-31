@@ -45,8 +45,22 @@ def test_failed_stop_rolls_back_live_serve_and_download_statuses():
 def test_stop_cookbook_session_sends_repo_id_only_for_downloads():
     source = RUNNING_JS.read_text(encoding="utf-8")
     idx = source.index("async function _stopCookbookSession")
-    block = source[idx:idx + 900]
+    block = source[idx:idx + 1300]
     assert "task_type: taskType" in block
     assert "if (taskType === 'download')" in block
     assert "body.repo_id = repoId" in block
+    assert "body.local_dir = localDir" in block
+    assert "body.include = include" in block
     assert block.index("if (taskType === 'download')") < block.index("body.repo_id = repoId")
+
+
+def test_serve_cleanup_happens_only_after_stop_succeeds():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("async function _executeTaskStop")
+    block = source[idx:source.index("async function _onTaskStop", idx)]
+    stop_idx = block.index("const result = await _stopCookbookSession(task)")
+    success_idx = block.index("if (!(result && result.ok)) return false")
+    endpoint_idx = block.index("await _removeEndpointByUrl")
+    unload_idx = block.index("body: JSON.stringify({ command: ollamaUnload })")
+    assert stop_idx < success_idx < endpoint_idx
+    assert stop_idx < success_idx < unload_idx

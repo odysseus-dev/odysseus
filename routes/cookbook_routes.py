@@ -1,8 +1,10 @@
 """Cookbook routes — model download, serve, cache scanning, and cookbook state sync."""
 
 import asyncio
+import hashlib
 import json
 import logging
+import ntpath
 import os
 import re
 import shlex
@@ -423,12 +425,53 @@ def _coerce_ssh_port(v: str | None) -> str | None:
         return None
 
 
+def _normalize_download_cache_path(local_dir: str | None) -> str:
+    """Return a stable identity for the effective Hugging Face hub cache."""
+    raw = (local_dir or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+        raw = raw[1:-1]
+    if raw:
+        cache = raw.rstrip("/\\") + "/hub"
+    else:
+        cache = (
+            os.environ.get("HUGGINGFACE_HUB_CACHE")
+            or os.environ.get("HF_HUB_CACHE")
+            or os.path.join(
+                os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface"),
+                "hub",
+            )
+        )
+    if re.match(r"^[A-Za-z]:[\\/]", cache) or "\\" in cache:
+        return ntpath.normcase(ntpath.normpath(cache))
+    return os.path.normcase(os.path.normpath(os.path.expanduser(cache)))
+
+
+def _download_target_key(
+    repo_id: str,
+    local_dir: str | None = None,
+    include: str | None = None,
+) -> str:
+    """Hash all request dimensions that define a local HF download target."""
+    identity = json.dumps(
+        {
+            "repo_id": (repo_id or "").strip(),
+            "cache": _normalize_download_cache_path(local_dir),
+            "include": (include or "").strip(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
     _state_get_cache = {"ts": 0.0, "mtime": 0.0, "value": None}
     _tasks_status_cache = {"ts": 0.0, "value": None}
     _tasks_status_inflight = {"task": None}
+    _download_launch_claims: set[str] = set()
+    _download_launch_claims_lock = asyncio.Lock()
 
     def _mask_secret(value: str) -> str:
         if not value:
@@ -1126,18 +1169,6 @@ def setup_cookbook_routes() -> APIRouter:
         out = probe.stdout or ""
         return True, _parse_windows_download_scan(out, repo_id)
 
-    def _scan_windows_download_processes(repo_id: str) -> int | None:
-        """PID of any live process downloading repo_id (Windows, best-effort).
-
-        Catches downloaders that cookbook session files no longer track —
-        e.g. a stop issued from a stale browser tab running pre-tree-kill JS
-        deleted the .pid file but left the hf/python children running. Those
-        orphans hold the HF cache file locks and deadlock any new download of
-        the same repo.
-        """
-        _scan_ok, pid = _scan_windows_download_processes_checked(repo_id)
-        return pid
-
     def _ssh_powershell_argv(remote: str, ssh_port: str | None, ps: str) -> list[str]:
         ssh_args = [
             "ssh",
@@ -1162,13 +1193,6 @@ def setup_cookbook_routes() -> APIRouter:
         except Exception:
             return 1, ""
         return proc.returncode or 0, (stdout or b"").decode("utf-8", errors="replace")
-
-    async def _scan_remote_windows_download_processes(
-        remote: str, ssh_port: str | None, repo_id: str
-    ) -> int | None:
-        """PID of a live remote-Windows downloader for repo_id (best-effort)."""
-        _rc, out = await _ssh_powershell(remote, ssh_port, _windows_download_process_scan_ps())
-        return _parse_windows_download_scan(out, repo_id)
 
     def _local_ps1_sessions_for_repo(repo_id: str) -> list[str]:
         """Session ids whose local _run.ps1 references an HF download of repo_id."""
@@ -1224,9 +1248,11 @@ def setup_cookbook_routes() -> APIRouter:
                 except OSError:
                     pass
 
+    # Keep the historical filename so already-running wrappers remain compatible.
+    # New entries are target hashes, not repository ids.
     _STOPPED_REPOS_PATH = TMUX_LOG_DIR / "cookbook-stopped-repos.json"
 
-    def _read_stopped_repos() -> set[str]:
+    def _read_stopped_downloads() -> set[str]:
         try:
             text = _STOPPED_REPOS_PATH.read_text(encoding="utf-8").strip()
             if not text:
@@ -1241,41 +1267,45 @@ def setup_cookbook_routes() -> APIRouter:
             pass
         return set()
 
-    def _write_stopped_repos(repos: set[str]) -> None:
+    def _write_stopped_downloads(targets: set[str]) -> None:
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         _STOPPED_REPOS_PATH.write_text(
-            "\n".join(sorted(repos)) + ("\n" if repos else ""),
+            "\n".join(sorted(targets)) + ("\n" if targets else ""),
             encoding="utf-8",
         )
 
-    def _mark_download_stopped(repo_id: str) -> None:
-        if not repo_id:
+    def _mark_download_stopped(download_key: str) -> None:
+        if not download_key:
             return
-        repos = _read_stopped_repos()
-        repos.add(repo_id)
-        _write_stopped_repos(repos)
+        targets = _read_stopped_downloads()
+        targets.add(download_key)
+        _write_stopped_downloads(targets)
 
-    def _clear_download_stopped(repo_id: str) -> None:
-        if not repo_id:
+    def _clear_download_stopped(download_key: str) -> None:
+        if not download_key:
             return
-        repos = _read_stopped_repos()
-        if repo_id in repos:
-            repos.remove(repo_id)
-            _write_stopped_repos(repos)
+        targets = _read_stopped_downloads()
+        if download_key in targets:
+            targets.remove(download_key)
+            _write_stopped_downloads(targets)
 
     def _session_stop_file(session_id: str) -> Path:
         return TMUX_LOG_DIR / f"{session_id}.stop"
 
-    def _write_session_stop_marker(session_id: str, repo_id: str | None = None) -> None:
+    def _write_session_stop_marker(
+        session_id: str, download_key: str | None = None
+    ) -> None:
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         try:
             _session_stop_file(session_id).write_text("1", encoding="utf-8")
         except OSError:
             pass
-        if repo_id:
-            _mark_download_stopped(repo_id)
+        if download_key:
+            _mark_download_stopped(download_key)
 
-    def _bash_download_stop_guard(session_id: str, repo_id: str | None = None) -> list[str]:
+    def _bash_download_stop_guard(
+        session_id: str, download_key: str | None = None
+    ) -> list[str]:
         """Bash lines that honour a user stop between download attempts."""
         stop = shlex.quote(_session_stop_file(session_id).as_posix())
         lines = [
@@ -1283,33 +1313,56 @@ def setup_cookbook_routes() -> APIRouter:
             f"_ODYSSEUS_STOPPED_REPOS={shlex.quote(_STOPPED_REPOS_PATH.as_posix())}",
             "trap 'echo \"\"; echo \"DOWNLOAD_STOPPED\"; exit 130' INT TERM",
         ]
-        if repo_id:
-            lines.append(f"_ODYSSEUS_REPO={shlex.quote(repo_id)}")
+        if download_key:
+            lines.append(
+                f"_ODYSSEUS_DOWNLOAD_KEY={shlex.quote(download_key)}"
+            )
         return lines
 
     def _bash_download_attempt_guard() -> str:
         return (
             '  if [ -f "$_ODYSSEUS_STOP_FILE" ]; then '
             'echo ""; echo "DOWNLOAD_STOPPED"; exit 130; fi; '
-            'if [ -n "${_ODYSSEUS_REPO:-}" ] && [ -f "${_ODYSSEUS_STOPPED_REPOS:-}" ] '
-            '&& grep -Fxq "$_ODYSSEUS_REPO" "$_ODYSSEUS_STOPPED_REPOS" 2>/dev/null; then '
+            'if [ -n "${_ODYSSEUS_DOWNLOAD_KEY:-}" ] && [ -f "${_ODYSSEUS_STOPPED_REPOS:-}" ] '
+            '&& grep -Fxq "$_ODYSSEUS_DOWNLOAD_KEY" "$_ODYSSEUS_STOPPED_REPOS" 2>/dev/null; then '
             'echo ""; echo "DOWNLOAD_STOPPED"; exit 130; fi'
         )
 
-    def _find_live_local_download(repo_id: str) -> dict | None:
-        """Live LOCAL download of this repo, if any (honours user-stop markers)."""
-        if repo_id in _read_stopped_repos():
-            live = _probe_live_local_download(repo_id)
+    def _script_download_key(script_text: str) -> str:
+        match = re.search(
+            r"(?m)^_ODYSSEUS_DOWNLOAD_KEY=['\"]?([0-9a-f]{64})['\"]?\s*$",
+            script_text or "",
+        )
+        return match.group(1) if match else ""
+
+    def _find_live_local_download(
+        repo_id: str, download_key: str
+    ) -> dict | None:
+        """Live LOCAL download of this exact target, if any."""
+        if download_key in _read_stopped_downloads():
+            live = _probe_live_local_download(repo_id, download_key)
             if live:
                 if live.get("session_id"):
-                    _stop_local_windows_session(live["session_id"], repo_id)
-                elif live.get("orphan_pid") and pid_alive(live["orphan_pid"]):
-                    kill_process_tree(live["orphan_pid"])
+                    stopped = _stop_local_windows_session(
+                        live["session_id"], repo_id, download_key
+                    )
+                    if not stopped.get("ok"):
+                        return {
+                            "recovery_required": True,
+                            "error": stopped.get("error")
+                            or "failed to stop the prior download",
+                        }
+                elif live.get("orphan_pid"):
+                    # An untracked process has no reliable cache/include identity.
+                    # Never kill it merely because its repository matches.
+                    return live
             return None
-        return _probe_live_local_download(repo_id)
+        return _probe_live_local_download(repo_id, download_key)
 
-    def _probe_live_local_download(repo_id: str) -> dict | None:
-        """Probe for a live LOCAL download without honouring user-stop markers."""
+    def _probe_live_local_download(
+        repo_id: str, download_key: str
+    ) -> dict | None:
+        """Probe for a live LOCAL download without honouring stop markers."""
         try:
             sids = sorted({
                 p.stem.removesuffix("_run")
@@ -1327,13 +1380,23 @@ def setup_cookbook_routes() -> APIRouter:
                 continue
             if not _cmdline_references_hf_repo(script_text, repo_id):
                 continue
+            script_key = _script_download_key(script_text)
             if IS_WINDOWS:
                 try:
                     pid = int((TMUX_LOG_DIR / f"{sid}.pid").read_text(encoding="utf-8").strip())
                 except (OSError, ValueError):
                     continue
                 if pid_alive(pid):
-                    return {"session_id": sid}
+                    if script_key == download_key:
+                        return {"session_id": sid}
+                    if not script_key:
+                        return {
+                            "recovery_required": True,
+                            "error": (
+                                f"Legacy download session {sid} is running for {repo_id}, "
+                                "but its cache/include identity is unknown"
+                            ),
+                        }
             else:
                 try:
                     probe = subprocess.run(
@@ -1344,9 +1407,27 @@ def setup_cookbook_routes() -> APIRouter:
                 except Exception:
                     continue
                 if probe.returncode == 0:
-                    return {"session_id": sid}
+                    if script_key == download_key:
+                        return {"session_id": sid}
+                    if not script_key:
+                        return {
+                            "recovery_required": True,
+                            "error": (
+                                f"Legacy download session {sid} is running for {repo_id}, "
+                                "but its cache/include identity is unknown"
+                            ),
+                        }
         if IS_WINDOWS:
-            orphan_pid = _scan_windows_download_processes(repo_id)
+            scan_ok, orphan_pid = _scan_windows_download_processes_checked(repo_id)
+            if not scan_ok:
+                return {
+                    "recovery_required": True,
+                    "scan_failed": True,
+                    "error": (
+                        "Could not verify whether a local Windows downloader is "
+                        "still running; recovery is required before retrying"
+                    ),
+                }
             if orphan_pid:
                 return {"orphan_pid": orphan_pid}
         return None
@@ -1401,7 +1482,37 @@ def setup_cookbook_routes() -> APIRouter:
             time.sleep(0.05)
         return not pid_alive(pid)
 
-    def _stop_local_windows_session(session_id: str, repo_id: str | None = None) -> dict:
+    def _other_live_local_download_session(
+        session_id: str, repo_id: str
+    ) -> str | None:
+        """Return another tracked live local-Windows session for this repo."""
+        try:
+            outer_scripts = sorted(TMUX_LOG_DIR.glob("cookbook-*.sh"))
+        except OSError:
+            return None
+        for outer in outer_scripts:
+            candidate = outer.stem.removesuffix("_run")
+            if candidate == session_id or not _SESSION_ID_RE.match(candidate):
+                continue
+            runner = TMUX_LOG_DIR / f"{candidate}_run.sh"
+            try:
+                text = runner.read_text(encoding="utf-8")
+                pid = int(
+                    (TMUX_LOG_DIR / f"{candidate}.pid")
+                    .read_text(encoding="utf-8")
+                    .strip()
+                )
+            except (OSError, ValueError):
+                continue
+            if _cmdline_references_hf_repo(text, repo_id) and pid_alive(pid):
+                return candidate
+        return None
+
+    def _stop_local_windows_session(
+        session_id: str,
+        repo_id: str | None = None,
+        download_key: str | None = None,
+    ) -> dict:
         """Kill a local Windows detached cookbook session and orphan downloaders."""
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
         found_process = False
@@ -1442,7 +1553,12 @@ def setup_cookbook_routes() -> APIRouter:
                         "detail": "recovery artifacts preserved",
                     }
                 detail.append(f"killed session process pid {pid}")
-        if repo_id:
+        other_session = (
+            _other_live_local_download_session(session_id, repo_id)
+            if repo_id
+            else None
+        )
+        if repo_id and not other_session:
             for _ in range(3):
                 scan_ok, orphan = _scan_windows_download_processes_checked(repo_id)
                 if not scan_ok:
@@ -1463,9 +1579,19 @@ def setup_cookbook_routes() -> APIRouter:
                         "detail": "recovery artifacts preserved",
                     }
                 detail.append(f"killed orphan downloader pid {orphan}")
+        elif other_session and not found_process:
+            return {
+                "ok": False,
+                "stopped": False,
+                "error": (
+                    "could not safely attribute an untracked downloader while "
+                    f"session {other_session} is also downloading {repo_id}"
+                ),
+                "detail": "recovery artifacts preserved",
+            }
         # Already-dead sessions are success (same as tmux "session not found"):
         # scans succeeded and nothing live remains. Only kill/scan failures fail.
-        _write_session_stop_marker(session_id, repo_id)
+        _write_session_stop_marker(session_id, download_key)
         _unlink_session_artifacts(session_id)
         return {
             "ok": True,
@@ -1478,13 +1604,46 @@ def setup_cookbook_routes() -> APIRouter:
         remote: str,
         ssh_port: str | None = None,
         repo_id: str | None = None,
+        download_key: str | None = None,
     ) -> dict:
-        """PR1: remote Windows stop is out of scope — fail closed."""
+        """Kill a remote Windows detached cookbook session and its process tree."""
+        ps = (
+            "$sd = Join-Path $env:TEMP 'odysseus-sessions'; "
+            f"$sid = '{session_id}'; "
+            "$pidPath = Join-Path $sd ($sid + '.pid'); "
+            "$p = Get-Content $pidPath -ErrorAction SilentlyContinue; "
+            "$failed = $false; "
+            "if (($p -match '^\\d+$') -and (([int]$p) -ne $PID)) { "
+            "$target = Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue; "
+            "if ($target) { taskkill /F /T /PID $p 2>$null | Out-Null; "
+            "if ($LASTEXITCODE -ne 0) { $failed = $true } } }; "
+            "try { $sessionPids = @(Get-CimInstance Win32_Process -ErrorAction Stop | "
+            "Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and "
+            "$_.CommandLine -like ('*' + $sid + '*') } | "
+            "ForEach-Object { $_.ProcessId }) } catch { exit 1 }; "
+            "foreach ($sessionPid in $sessionPids) { "
+            "taskkill /F /T /PID $sessionPid 2>$null | Out-Null; "
+            "if ($LASTEXITCODE -ne 0) { $failed = $true } }; "
+            "if ($failed) { exit 1 }; "
+            "Remove-Item (Join-Path $sd ($sid + '.*')) "
+            "-Force -ErrorAction SilentlyContinue; exit 0"
+        )
+        rc, _out = await _ssh_powershell(remote, ssh_port, ps)
+        if rc != 0:
+            return {
+                "ok": False,
+                "stopped": False,
+                "error": f"remote session stop failed (exit {rc})",
+                "detail": "recovery artifacts preserved",
+                "exit_code": rc,
+            }
+        _write_session_stop_marker(session_id, download_key)
+        _unlink_session_artifacts(session_id)
         return {
-            "ok": False,
-            "stopped": False,
-            "error": "remote Windows stop-session is not supported in this build",
-            "detail": "recovery artifacts preserved",
+            "ok": True,
+            "stopped": True,
+            "detail": "remote session tree stopped",
+            "exit_code": rc,
         }
 
     def _tmux_stop_succeeded(returncode: int, stderr: bytes | str = b"") -> bool:
@@ -1506,6 +1665,7 @@ def setup_cookbook_routes() -> APIRouter:
         ssh_port: str | None = None,
         platform: str = "",
         repo_id: str | None = None,
+        download_key: str | None = None,
     ) -> dict:
         if not _SESSION_ID_RE.match(session_id):
             return {"ok": False, "error": "invalid session_id"}
@@ -1514,8 +1674,10 @@ def setup_cookbook_routes() -> APIRouter:
         is_win = _resolve_windows_platform(remote or None, platform) == "windows"
         if remote:
             if is_win:
-                return await _stop_remote_windows_session(session_id, remote, sport, repo_id)
-            _write_session_stop_marker(session_id, repo_id)
+                return await _stop_remote_windows_session(
+                    session_id, remote, sport, repo_id, download_key
+                )
+            _write_session_stop_marker(session_id, download_key)
             sid = shlex.quote(session_id)
             ssh_args = [
                 "ssh",
@@ -1540,8 +1702,10 @@ def setup_cookbook_routes() -> APIRouter:
             ok = _tmux_stop_succeeded(proc.returncode, stderr)
             return {"ok": ok, "exit_code": proc.returncode}
         if IS_WINDOWS or is_win:
-            return await asyncio.to_thread(_stop_local_windows_session, session_id, repo_id)
-        _write_session_stop_marker(session_id, repo_id)
+            return await asyncio.to_thread(
+                _stop_local_windows_session, session_id, repo_id, download_key
+            )
+        _write_session_stop_marker(session_id, download_key)
         sid = shlex.quote(session_id)
         cmd = (
             f"tmux has-session -t {sid} 2>/dev/null || exit 0; "
@@ -1557,8 +1721,11 @@ def setup_cookbook_routes() -> APIRouter:
         ok = _tmux_stop_succeeded(proc.returncode, stderr)
         return {"ok": ok, "exit_code": proc.returncode}
 
-    @router.post("/api/model/download")
-    async def model_download(request: Request, req: ModelDownloadRequest):
+    async def _model_download_impl(
+        request: Request,
+        req: ModelDownloadRequest,
+        download_key: str | None = None,
+    ):
         """Download a HuggingFace model in a tmux session.
         Uses `hf download` CLI directly — runs in tmux via `script -qc`
         for real TTY progress, streams ANSI-stripped output via log file."""
@@ -1579,11 +1746,17 @@ def setup_cookbook_routes() -> APIRouter:
         req.local_dir = _validate_local_dir(req.local_dir)
         req.hf_token = "" if is_ollama_download else (req.hf_token or _load_stored_hf_token())
         _validate_token(req.hf_token)
+        if not is_ollama_download:
+            download_key = _download_target_key(
+                req.repo_id,
+                req.local_dir,
+                req.include,
+            )
 
         if not is_ollama_download:
             # Explicit launch from the UI/agent — clear any prior user-stop
             # marker so Retry works, while background auto-reattach stays off.
-            _clear_download_stopped(req.repo_id)
+            _clear_download_stopped(download_key or "")
         # Concurrent downloads of the same repo deadlock on the HF cache's
         # per-file locks ("Still waiting to acquire lock..."). If a live local
         # session is already downloading this repo, reattach the UI to it instead
@@ -1591,7 +1764,9 @@ def setup_cookbook_routes() -> APIRouter:
         # frontend's tmux has-session zombie probe; Ollama serializes pulls in
         # its own daemon.
         if not is_ollama_download and not (req.remote_host or "").strip():
-            live = await asyncio.to_thread(_find_live_local_download, req.repo_id)
+            live = await asyncio.to_thread(
+                _find_live_local_download, req.repo_id, download_key or ""
+            )
             if live and live.get("session_id"):
                 live_sid = live["session_id"]
                 logger.info(
@@ -1602,6 +1777,20 @@ def setup_cookbook_routes() -> APIRouter:
                     "session_id": live_sid,
                     "remote": "local",
                     "reused": True,
+                }
+            if live and live.get("recovery_required"):
+                logger.warning(
+                    "Download of %s blocked because liveness could not be "
+                    "established safely: %s",
+                    req.repo_id,
+                    live.get("error", "unknown Windows process state"),
+                )
+                return {
+                    "ok": False,
+                    "error": live.get("error")
+                    or "Could not safely verify the previous download state",
+                    "recovery_required": True,
+                    "session_id": "",
                 }
             if live and live.get("orphan_pid"):
                 pid = live["orphan_pid"]
@@ -1837,7 +2026,7 @@ def setup_cookbook_routes() -> APIRouter:
             # Retry transient failures, but honour explicit user stops between
             # attempts so a stopped download cannot silently resume.
             mw = 4 if req.disable_hf_transfer else 8
-            runner_lines.extend(_bash_download_stop_guard(session_id, req.repo_id))
+            runner_lines.extend(_bash_download_stop_guard(session_id, download_key))
             runner_lines.append('_max_retries=10; _attempt=0; _ec=0')
             runner_lines.append('while [ $_attempt -lt $_max_retries ]; do')
             runner_lines.append('  _attempt=$((_attempt+1))')
@@ -1885,7 +2074,7 @@ def setup_cookbook_routes() -> APIRouter:
             # Retry transient failures, but honour explicit user stops between
             # attempts so a stopped download cannot silently resume.
             _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null' if is_ollama_download else (hf_cmd if IS_WINDOWS else f"{hf_cmd} < /dev/null")
-            lines.extend(_bash_download_stop_guard(session_id, req.repo_id))
+            lines.extend(_bash_download_stop_guard(session_id, download_key))
             lines.append('_max_retries=10; _attempt=0; _ec=0')
             lines.append('while [ $_attempt -lt $_max_retries ]; do')
             lines.append('  _attempt=$((_attempt+1))')
@@ -1944,6 +2133,39 @@ def setup_cookbook_routes() -> APIRouter:
             pass
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local"}
+
+    @router.post("/api/model/download")
+    async def model_download(request: Request, req: ModelDownloadRequest):
+        """Serialize the local probe-to-launch window for each exact HF target."""
+        backend = (req.backend or "").strip().lower()
+        is_ollama_download = backend == "ollama" or (
+            "/" not in req.repo_id and ":" in req.repo_id
+        )
+        if is_ollama_download or (req.remote_host or "").strip():
+            return await _model_download_impl(request, req)
+
+        download_key = _download_target_key(
+            req.repo_id,
+            req.local_dir,
+            req.include,
+        )
+        async with _download_launch_claims_lock:
+            if download_key in _download_launch_claims:
+                return {
+                    "ok": False,
+                    "error": (
+                        "An identical local download is already being checked "
+                        "or launched; retry shortly to reattach"
+                    ),
+                    "launch_in_progress": True,
+                    "session_id": "",
+                }
+            _download_launch_claims.add(download_key)
+        try:
+            return await _model_download_impl(request, req, download_key)
+        finally:
+            async with _download_launch_claims_lock:
+                _download_launch_claims.discard(download_key)
 
     @router.get("/api/model/cached")
     async def model_cached(request: Request, host: str | None = None, model_dir: str | None = None, ssh_port: str | None = None, platform: str | None = None):
@@ -3856,6 +4078,8 @@ def setup_cookbook_routes() -> APIRouter:
         ssh_port: str | None = None
         platform: str | None = None
         repo_id: str | None = None
+        local_dir: str | None = None
+        include: str | None = None
         # download | serve | dependency | … — gates download-only stop side effects
         task_type: str | None = None
 
@@ -3880,6 +4104,15 @@ def setup_cookbook_routes() -> APIRouter:
             if task_type == "download" and repo_id_raw and _REPO_ID_RE.match(repo_id_raw)
             else None
         )
+        download_key = None
+        if repo_id_for_stop:
+            local_dir = _validate_local_dir(getattr(req, "local_dir", None))
+            include = _validate_include(getattr(req, "include", None))
+            download_key = _download_target_key(
+                repo_id_for_stop,
+                local_dir,
+                include,
+            )
         platform = _resolve_windows_platform(req.remote_host, req.platform)
         return await _stop_cookbook_session_impl(
             req.session_id.strip(),
@@ -3887,6 +4120,7 @@ def setup_cookbook_routes() -> APIRouter:
             ssh_port=sport,
             platform=platform,
             repo_id=repo_id_for_stop,
+            download_key=download_key,
         )
 
 
