@@ -258,6 +258,16 @@ def resolve_runtime_credentials(
     force_refresh: bool = False,
     allow_live_probes: bool = True,
 ) -> Dict[str, Any]:
+    normalized_owner = None
+    if not allow_live_probes:
+        from src.owner_identity import is_request_sentinel_owner, normalize_owner
+
+        normalized_owner = normalize_owner(owner)
+        if normalized_owner is None or is_request_sentinel_owner(normalized_owner):
+            raise ChatGPTSubscriptionAuthNotFound(
+                "ChatGPT Subscription credentials require an authenticated owner."
+            )
+
     ProviderAuthSession, SessionLocal, utcnow_naive = _database_handles()
     db = SessionLocal()
     try:
@@ -265,7 +275,9 @@ def resolve_runtime_credentials(
             ProviderAuthSession.id == auth_id,
             ProviderAuthSession.provider == CHATGPT_SUBSCRIPTION_PROVIDER,
         )
-        if owner:
+        if not allow_live_probes:
+            q = q.filter(ProviderAuthSession.owner == normalized_owner)
+        elif owner:
             q = q.filter(ProviderAuthSession.owner == owner)
         row = q.first()
         if row is None:
