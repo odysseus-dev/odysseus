@@ -18,15 +18,21 @@ from types import SimpleNamespace
 import pytest
 
 from src.tool_execution import (
+    NO_TOOL_SECURITY_CONTEXT,
     _AGENT_WORKDIR,
     _active_workspace,
     _resolve_search_root,
     _resolve_tool_path,
     _resolve_tool_path_in_workspace,
     agent_cwd,
-    execute_tool_block,
+    execute_tool_block as _execute_tool_block,
     get_active_workspace,
 )
+
+
+async def execute_tool_block(*args, **kwargs):
+    kwargs.setdefault("security_context", NO_TOOL_SECURITY_CONTEXT)
+    return await _execute_tool_block(*args, **kwargs)
 
 
 def _block(tool, content=""):

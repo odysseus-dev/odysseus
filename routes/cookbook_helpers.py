@@ -1204,6 +1204,41 @@ def _safe_env_prefix(ep: str | None) -> str | None:
     return f'[ -f "{path}" ] && source "{path}" || true'
 
 
+def _local_windows_bash_env_prefix(ep: str | None) -> str | None:
+    """Convert a frontend PowerShell venv prefix for the local Git Bash runner."""
+    if not ep:
+        return ep
+
+    prefix = ep.strip()
+    if not prefix.startswith("&"):
+        return ep
+
+    raw_path = prefix[1:].lstrip()
+    if not raw_path:
+        return ep
+    if raw_path.startswith("'"):
+        if len(raw_path) < 2 or not raw_path.endswith("'"):
+            return ep
+        quoted_path = raw_path[1:-1]
+        if "'" in quoted_path.replace("''", ""):
+            return ep
+        path = quoted_path.replace("''", "'")
+    else:
+        path = raw_path.rstrip()
+        if "'" in path or '"' in path:
+            return ep
+    if any(c in path for c in "\r\n;&|`$<>"):
+        return ep
+    if not path.replace("\\", "/").casefold().endswith("/scripts/activate.ps1"):
+        return ep
+
+    bash_path = _git_bash_path(path)
+    if "\\" in bash_path:
+        return ep
+    bash_path = bash_path[: -len("Activate.ps1")] + "activate"
+    return "source " + shlex.quote(bash_path)
+
+
 def _ssh_ps(host, script_path, port=None):
     """Build SSH command to run a PowerShell script on a Windows remote."""
     pf = f"-p {port} " if port and port != "22" else ""

@@ -45,10 +45,11 @@ services:
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
+      - COMPANION_BASE_URL=${COMPANION_BASE_URL:-}
       - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
       - ODYSSEUS_ADMIN_PASSWORD=${ODYSSEUS_ADMIN_PASSWORD:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1}
-      - SECURE_COOKIES=${SECURE_COOKIES:-false}
+      - SECURE_COOKIES=${SECURE_COOKIES:-}
       - EMBEDDING_URL=${EMBEDDING_URL:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
@@ -73,6 +74,11 @@ services:
       - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
       - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
       - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}
+      # Externally reachable origin for MCP OAuth callbacks. The container
+      # always listens on 7000 and cannot see the host port map above, so
+      # remote MCP OAuth needs this set whenever the browser reaches
+      # Odysseus on anything other than http://localhost:7000.
+      - OAUTH_REDIRECT_BASE_URL=${OAUTH_REDIRECT_BASE_URL:-}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       # PUID / PGID — the user/group the container drops to before
@@ -132,12 +138,17 @@ services:
           fi
           sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
         fi
+        # Advisory: a settings file the migration cannot parse or rewrite must
+        # not be what stops searxng from booting. It explains itself on stderr
+        # and we carry on, letting searxng report anything genuinely wrong.
+        /usr/local/searxng/.venv/bin/python /tmp/migrate-searxng-settings.py /etc/searxng/settings.yml || true
         exec /usr/local/searxng/entrypoint.sh
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro,z
+      - ./scripts/migrate_searxng_settings.py:/tmp/migrate-searxng-settings.py:ro,z
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-}

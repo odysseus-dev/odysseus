@@ -9685,11 +9685,11 @@ body.fullwidth-chat .chat-history {
 .agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after {
   content: '';
   position: absolute;
-  /* -17px (was -15) nudges the terminating dot 2px further left so it
-     sits flush with the thread's left rail when the search node is
-     expanded. This is the "big glow dot at the bottom" the user sees
-     after a web_search step. */
-  left: -17px;
+  /* Centre the 6px dot on the rail: the rail sits at left:5px + 2px wide,
+     so its centre is 6px from the thread's left edge and the dot's left
+     edge belongs at 3px — i.e. 3px - padding-left. Keep this in step with
+     .agent-thread-dot and with the mobile padding override below. */
+  left: -19px;
   bottom: 5px;
   width: 6px;
   height: 6px;
@@ -9957,6 +9957,11 @@ body.fullwidth-chat .chat-history {
   .agent-thread-dot {
     left: -16px;
     top: 10px;
+  }
+  /* padding-left drops to 18px here, so the terminating dot needs its own
+     offset (3px - 18px) to stay centred on the rail. */
+  .agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after {
+    left: -15px;
   }
 }
 
@@ -23600,7 +23605,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* ===== Settings Modal Layout ===== */
 .settings-modal-content {
-  width: min(720px, 92vw);
+  width: min(1040px, 94vw);
   max-height: 85vh;
   padding: 0;
   container-type: inline-size;
@@ -23654,10 +23659,13 @@ body.gallery-selecting .gallery-dl-btn,
 }
 
 .settings-sidebar {
-  width: 160px;
-  flex-shrink: 0;
+  position: relative;
+  width: var(--settings-sidebar-width, 220px);
+  flex: 0 0 var(--settings-sidebar-width, 220px);
+  min-width: 0;
   border-right: 1px solid var(--border);
   padding: 8px;
+  transition: width 0.16s ease, flex-basis 0.16s ease;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -41135,4 +41143,259 @@ body.theme-frosted .modal {
 @media (max-width: 768px) {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
+}
+
+/* ── Settings navigation / finder ────────────────────────────── */
+.settings-sidebar-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.settings-nav-search-wrap {
+  position: relative;
+  margin: 0 0 8px;
+}
+
+.settings-nav-search {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 5px 9px 5px 29px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+}
+
+.settings-nav-search:focus {
+  border-color: var(--accent, var(--red));
+}
+
+.settings-nav-search::placeholder {
+  color: var(--fg);
+  opacity: 0.45;
+}
+
+.settings-nav-search-icon {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  left: 9px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.settings-nav-search-results {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 100%;
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.settings-search-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-search-result:hover,
+.settings-search-result.active {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.settings-search-result-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.settings-search-result-group {
+  flex: 0 0 auto;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  opacity: 0.5;
+}
+
+.settings-search-empty {
+  padding: 8px;
+  color: var(--fg);
+  font-size: 10px;
+  text-align: center;
+  opacity: 0.55;
+}
+
+.settings-sidebar-resize-handle {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.settings-sidebar-resize-handle:hover,
+.settings-sidebar-resizing .settings-sidebar-resize-handle {
+  background: var(--accent, var(--red));
+  opacity: 0.45;
+}
+
+.settings-sidebar-resizing {
+  transition: none;
+  user-select: none;
+}
+
+body.settings-sidebar-resize-active {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.settings-sidebar-toggle {
+  position: absolute;
+  z-index: 25;
+  top: 9px;
+  right: -13px;
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, border-color 0.12s ease;
+}
+
+.settings-sidebar:hover .settings-sidebar-toggle,
+.settings-sidebar-toggle:focus-visible,
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
+  opacity: 1;
+}
+
+.settings-sidebar-toggle:hover,
+.settings-sidebar-toggle:focus-visible {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+
+.settings-sidebar-toggle-expand {
+  display: none;
+}
+
+.settings-sidebar.settings-sidebar-collapsed {
+  width: 34px;
+  flex-basis: 34px;
+  padding: 0;
+}
+
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
+  display: none;
+}
+
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-resize-handle {
+  display: none;
+}
+
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
+  top: 10px;
+  right: 5px;
+}
+
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-collapse {
+  display: none;
+}
+
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-expand {
+  display: block;
+}
+
+/* The existing narrow/snapped layout is a horizontal tab rail. Sidebar
+   resizing/collapse applies only to the vertical desktop layout. */
+@container settings-modal (max-width: 620px) {
+  .settings-sidebar {
+    width: auto;
+    flex: 0 0 auto;
+    transition: none;
+  }
+
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .settings-nav-search-wrap,
+  .settings-sidebar-resize-handle,
+  .settings-sidebar-toggle {
+    display: none;
+  }
+
+  .settings-sidebar.settings-sidebar-collapsed {
+    width: auto;
+    flex-basis: auto;
+    padding: 6px;
+  }
+
+  .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
+    display: flex;
+  }
+}
+
+@media (max-width: 600px) {
+  .settings-sidebar {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .settings-nav-search-wrap,
+  .settings-sidebar-resize-handle,
+  .settings-sidebar-toggle {
+    display: none;
+  }
 }

@@ -47,6 +47,8 @@ def test_tool_task_cancelled_on_generator_close(monkeypatch):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    # This test exercises task cancellation, not owner authorization.
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
     monkeypatch.setattr(al, "execute_tool_block", _slow_exec, raising=False)
 
     native_calls = [{"name": "bash", "arguments": json.dumps({"command": "sleep 60"})}]

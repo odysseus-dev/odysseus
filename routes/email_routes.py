@@ -5004,7 +5004,6 @@ def setup_email_routes():
             from src.endpoint_resolver import (
                 resolve_endpoint,
                 resolve_utility_fallback_candidates,
-                resolve_chat_fallback_candidates,
             )
             from src.llm_core import llm_call_async_with_fallback
 
@@ -5065,8 +5064,6 @@ def setup_email_routes():
             except Exception:
                 pass
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
-                _add(*cand)
-            for cand in resolve_chat_fallback_candidates(owner=owner) or []:
                 _add(*cand)
             if not candidates:
                 return {"success": False, "error": "No LLM endpoint configured"}
@@ -5327,13 +5324,11 @@ def setup_email_routes():
             # Build a candidate chain so a stale session-stored API key
             # (the most common cause of "authentication failed" here)
             # doesn't kill AI Reply outright — fall through to the
-            # user's Utility / Default endpoints and the active Utility
-            # fallback chain. The retired default-fallback hook stays empty.
-            # Dedupe by url+model so we don't retry the same broken endpoint.
+            # user's Utility / Default endpoints and active Utility fallback
+            # chain. Dedupe by url+model so we don't retry the same endpoint.
             from src.llm_core import llm_call_async_with_fallback
             from src.endpoint_resolver import (
                 resolve_utility_fallback_candidates,
-                resolve_chat_fallback_candidates,
             )
             _seen = set()
             _candidates = []
@@ -5358,10 +5353,8 @@ def setup_email_routes():
                 _add(_d_url, _d_model, _d_headers)
             except Exception:
                 pass
-            # Active Utility fallbacks, then the retired default hook.
+            # Active Utility fallbacks last.
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
-                _add(*cand)
-            for cand in resolve_chat_fallback_candidates(owner=owner) or []:
                 _add(*cand)
             _messages = [
                 {"role": "system", "content": system_prompt},

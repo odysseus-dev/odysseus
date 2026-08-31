@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import src.agent_loop as al
 from src.agent_tools import ToolBlock
-from src.tool_execution import execute_tool_block
+from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
 from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
@@ -194,7 +194,11 @@ def test_agent_loop_policy_blocks_disabled_web_tool_call_before_execution(monkey
 def test_executor_policy_backstop_blocks_tools():
     policy = build_effective_tool_policy(last_user_message="Do not use tools.")
     desc, result = asyncio.run(
-        execute_tool_block(ToolBlock("bash", "echo should-not-run"), tool_policy=policy)
+        execute_tool_block(
+            ToolBlock("bash", "echo should-not-run"),
+            tool_policy=policy,
+            security_context=NO_TOOL_SECURITY_CONTEXT,
+        )
     )
     assert desc == "bash: BLOCKED"
     assert result["exit_code"] == 1

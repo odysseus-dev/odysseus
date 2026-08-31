@@ -231,23 +231,11 @@
       }
     }
   </style>
-  <!-- KaTeX CSS is loaded with media="print" so it doesn't block render,
-       then flipped to "all" via JS after load. Mermaid init runs once the
-       library finishes loading. Both hooks are wired via addEventListener
-       below (inline onload= attrs are blocked by CSP script-src-attr). -->
-  <link id="katex-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" media="print">
-  <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
-  <script id="mermaid-script" async src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script nonce="{{CSP_NONCE}}">
-    (function(){
-      var k = document.getElementById('katex-css');
-      if (k) k.addEventListener('load', function(){ k.media = 'all'; }, { once: true });
-      var m = document.getElementById('mermaid-script');
-      if (m) m.addEventListener('load', function(){
-        if (window.odysseusInitMermaid) window.odysseusInitMermaid();
-      }, { once: true });
-    })();
-  </script>
+  <!-- KaTeX and Mermaid are vendored in /static/lib and pulled in by
+       static/js/markdown.js the first time a page actually renders math or a
+       ```mermaid fence. They used to load here from cdn.jsdelivr.net on every
+       page load, which cost ~985 KB on the wire, broke offline installs, and
+       announced every session to a third party. -->
   <!-- Preload the two faces first paint actually uses: Fira Code 400 and 600,
        the app font and the weight the sidebar and header text render at. They
        are declared in style.css, so without a hint they are only discovered
@@ -258,8 +246,8 @@
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
   <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
-  <link rel="modulepreload" href="/static/app.js?v=20260808startupshell1">
-  <link rel="modulepreload" href="/static/js/chat.js?v=20260801fix1">
+  <link rel="modulepreload" href="/static/app.js?v=20260815toolapproval4">
+  <link rel="modulepreload" href="/static/js/chat.js?v=20260815toolapproval4">
   <link rel="modulepreload" href="/static/js/ui.js">
   <link rel="modulepreload" href="/static/js/sessions.js">
   <link rel="modulepreload" href="/static/js/markdown.js">
@@ -1421,6 +1409,55 @@
       </div>
       <div class="settings-layout">
         <div class="settings-sidebar">
+          <button
+            type="button"
+            class="settings-sidebar-toggle"
+            id="settings-sidebar-toggle"
+            aria-label="Collapse settings navigation"
+            title="Collapse settings navigation"
+          >
+            <svg class="settings-sidebar-toggle-collapse" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            <svg class="settings-sidebar-toggle-expand" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+
+          <div
+            class="settings-sidebar-resize-handle"
+            id="settings-sidebar-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize settings navigation"
+            aria-valuemin="150"
+            aria-valuemax="340"
+            aria-valuenow="220"
+            tabindex="0"
+          ></div>
+
+          <div class="settings-sidebar-content">
+          <div class="settings-nav-search-wrap">
+            <svg class="settings-nav-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="M20 20l-4-4"></path>
+            </svg>
+            <input
+              type="search"
+              id="settings-nav-search"
+              class="settings-nav-search"
+              placeholder="Find settings…"
+              autocomplete="off"
+              aria-label="Find settings"
+              aria-controls="settings-nav-search-results"
+            />
+            <div
+              id="settings-nav-search-results"
+              class="settings-nav-search-results hidden"
+              role="listbox"
+              aria-label="Settings search results"
+            ></div>
+          </div>
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
           <button class="settings-nav-item active" data-settings-tab="services">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
@@ -1481,9 +1518,10 @@
             <span>Users</span>
           </button>
           <button class="settings-nav-item admin-only" data-settings-tab="system">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v-.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/></svg>
             <span>System</span>
           </button>
+          </div>
         </div>
         <div class="settings-panels">
 
@@ -1503,13 +1541,6 @@
                 <label class="settings-label">Model</label>
                 <span class="adm-model-logo" id="set-defaultModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-defaultModelSelect" class="settings-select"></select>
-              </div>
-              <div class="settings-row" style="align-items:flex-start;" hidden>
-                <label class="settings-label" style="margin-top:6px;">Fallbacks</label>
-                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
-                  <div id="set-defaultFallbacks" class="settings-fallbacks"></div>
-                  <button type="button" class="settings-fallback-add" id="set-defaultAddFallback" title="Add a model to try if the one above fails">+ Add fallback</button>
-                </div>
               </div>
               <div id="set-defaultChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
@@ -2539,20 +2570,20 @@
 <script type="module" src="/static/js/search.js"></script>
 <script type="module" src="/static/js/spinner.js"></script>
 <script type="module" src="/static/js/tts-ai.js"></script>
-<script type="module" src="/static/js/document.js?v=20260722emailfastindex1"></script>
+<script type="module" src="/static/js/document.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/gallery.js?v=20260708match1"></script>
-<script type="module" src="/static/js/chatRenderer.js?v=20260722emailfastindex1"></script>
+<script type="module" src="/static/js/chatRenderer.js?v=20260819approvalcontrol1"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
-<script type="module" src="/static/js/chatStream.js?v=20260722emailfastindex1"></script>
-  <script type="module" src="/static/js/chat.js?v=20260801fix1"></script>
+<script type="module" src="/static/js/chatStream.js?v=20260819approvalcontrol1"></script>
+  <script type="module" src="/static/js/chat.js?v=20260819approvalcontrol1"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js?v=20260723compareicon1"></script>
+<script type="module" src="/static/js/settings.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js?v=20260808startupshell1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20260815toolapproval4"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
