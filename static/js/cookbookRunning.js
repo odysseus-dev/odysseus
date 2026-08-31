@@ -2855,23 +2855,34 @@ export function _renderRunningTab() {
           _copyText(last);
           uiModule.showToast('Copied last 50 lines');
         }});
-        // Label matches behavior — the kill handler ALWAYS first kills
-        // the live tmux session and (for serve tasks) deletes the
-        // matching model-endpoint, THEN animates the task card out.
-        // Just "Remove" hid that it stops the live serve too.
         // ── Danger section ──────────────────────────────────────────
-        const _isLive = task.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
+        const _isLiveServe = task.type === 'serve'
+          && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
+        const _isLiveDownload = task.type === 'download'
+          && ['running', 'queued'].includes(task.status || '');
+        if (_isLiveServe || _isLiveDownload) {
+          items.push({
+            group: 'danger',
+            label: _isLiveDownload ? 'Cancel download' : 'Stop server',
+            action: 'stop',
+            tooltip: _isLiveDownload
+              ? 'Stop this download but keep its row and progress log'
+              : 'Stop the live server but keep its row and log',
+            danger: true,
+          });
+        }
         items.push({
           group: 'danger',
-          label: _isLive ? 'Stop and remove' : 'Remove',
+          label: (_isLiveServe || _isLiveDownload) ? 'Stop and remove' : 'Remove',
           action: 'kill',
-          tooltip: _isLive
-            ? 'Kill the live tmux session, deregister the chat endpoint, and remove this row'
+          tooltip: (_isLiveServe || _isLiveDownload)
+            ? 'Stop the live task and remove this row'
             : 'Remove this row',
           danger: true,
         });
-        // Cancel = mobile-only dismiss item. Same pattern as the email kebab.
-        items.push({ group: 'danger', label: 'Cancel', action: 'cancel', mobileOnly: true, custom: () => {} });
+        // Mobile-only menu dismiss item; avoid calling it "Cancel", which is
+        // ambiguous beside the real download cancellation action.
+        items.push({ group: 'danger', label: 'Close menu', action: 'cancel', mobileOnly: true, custom: () => {} });
 
         const _MENU_ICONS = {
           'start-now': '<polygon points="6 4 20 12 6 20 6 4"/>',

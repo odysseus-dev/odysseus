@@ -64,3 +64,12 @@ def test_serve_cleanup_happens_only_after_stop_succeeds():
     unload_idx = block.index("body: JSON.stringify({ command: ollamaUnload })")
     assert stop_idx < success_idx < endpoint_idx
     assert stop_idx < success_idx < unload_idx
+
+
+def test_active_download_menu_cancel_dispatches_real_stop_action():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("const _isLiveDownload")
+    block = source[idx:idx + 1400]
+    assert "label: _isLiveDownload ? 'Cancel download' : 'Stop server'" in block
+    assert "action: 'stop'" in block
+    assert "label: 'Close menu'" in block
