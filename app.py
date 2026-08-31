@@ -503,6 +503,12 @@ class _RevalidatingStatic(StaticFiles):
         resp = await super().get_response(path, scope)
         if path.endswith((".js", ".css", ".html")):
             resp.headers["Cache-Control"] = "no-cache"
+        if path == "sw.js":
+            # The worker is served from /static/ but has to control the app at
+            # /. Without this header the browser caps its scope at the script's
+            # own directory and silently registers a worker that controls
+            # nothing (index.html asks for scope "/" and would be rejected).
+            resp.headers["Service-Worker-Allowed"] = "/"
         return resp
 
 
