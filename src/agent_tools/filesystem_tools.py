@@ -646,10 +646,13 @@ class GrepTool:
                     remaining_hits = max_hits - len(lines)
                     if remaining_hits <= 0:
                         break
+                    # JSON output gives us the canonical match pathname so it
+                    # can be revalidated before any line reaches the model.
+                    # This is required for hardlink aliases inside an allowed
+                    # workspace; lexical/path checks alone cannot see them.
                     cmd = [
-                        rg, "--no-config", "--no-follow", "--line-number",
-                        "--no-heading", "--color=never", "--max-count",
-                        str(remaining_hits),
+                        rg, "--json", "--no-config", "--no-follow",
+                        "--max-count", str(remaining_hits),
                     ]
                     if ignore_case:
                         cmd.append("--ignore-case")
@@ -703,8 +706,38 @@ class GrepTool:
                                 return None, "grep: timed out"
                             if line is None:
                                 break
-                            if line and line not in lines:
-                                lines.append(line)
+                            if not line:
+                                continue
+                            try:
+                                event = json.loads(line)
+                            except (TypeError, json.JSONDecodeError):
+                                # Keep lightweight/fake runners compatible with
+                                # the historical plain `path:line:text` stream;
+                                # still revalidate the path before exposing it.
+                                pieces = line.split(":", 2)
+                                if len(pieces) >= 3:
+                                    plain_path = pieces[0]
+                                    if not _is_denied_tool_path(os.path.realpath(plain_path)):
+                                        if line not in lines:
+                                            lines.append(line)
+                                continue
+                            if event.get("type") != "match":
+                                continue
+                            match = event.get("data") or {}
+                            path_data = match.get("path") or {}
+                            match_path = path_data.get("text")
+                            if not match_path:
+                                continue
+                            if _is_denied_tool_path(os.path.realpath(match_path)):
+                                continue
+                            line_text = (match.get("lines") or {}).get("text", "")
+                            line_number = match.get("line_number", "?")
+                            rendered = (
+                                f"{match_path}:{line_number}:"
+                                f"{line_text.rstrip()[:_CODENAV_MAX_LINE]}"
+                            )
+                            if rendered not in lines:
+                                lines.append(rendered)
                     finally:
                         if process.poll() is None:
                             process.terminate()

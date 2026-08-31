@@ -2,6 +2,7 @@
 """Initialize all application components and dependencies."""
 import os
 import logging
+import stat
 from typing import Dict, Any
 
 from src.constants import (
@@ -28,10 +29,37 @@ logger = logging.getLogger(__name__)
 
 def create_directories():
     """Create necessary directories if they don't exist."""
-    for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
-                      AGENT_WORKSPACE_DIR):
+    for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
         os.makedirs(directory, exist_ok=True)
-        
+
+    # The model-controlled workspace must be a real child of DATA_DIR.  Never
+    # follow a pre-existing symlink here: it would silently move the default
+    # native-file root outside the application volume before any resolver runs.
+    data_root = os.path.realpath(DATA_DIR)
+    workspace = os.path.abspath(os.path.expanduser(AGENT_WORKSPACE_DIR))
+    try:
+        if os.path.commonpath([workspace, data_root]) != data_root or workspace == data_root:
+            raise RuntimeError("agent workspace must resolve inside DATA_DIR")
+    except ValueError as exc:
+        raise RuntimeError("agent workspace must resolve inside DATA_DIR") from exc
+    if os.path.lexists(workspace):
+        mode = os.lstat(workspace).st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise RuntimeError("agent workspace must be a real directory")
+    else:
+        os.mkdir(workspace, 0o700)
+    resolved_workspace = os.path.realpath(workspace)
+    try:
+        inside = os.path.commonpath([resolved_workspace, data_root]) == data_root
+    except ValueError:
+        inside = False
+    if resolved_workspace == data_root or not inside:
+        raise RuntimeError("agent workspace must resolve inside DATA_DIR")
+    try:
+        os.chmod(workspace, 0o700)
+    except OSError:
+        pass
+
 def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     """
     Initialize all manager and handler instances.

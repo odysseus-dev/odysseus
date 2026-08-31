@@ -15,6 +15,7 @@ import logging
 import os
 import pathlib
 import re
+import stat
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -259,9 +260,22 @@ def _is_app_state_path(resolved: str) -> bool:
     )
 
 
+def _is_hardlinked_regular_file(resolved: str) -> bool:
+    """Reject inode aliases that can smuggle DATA_DIR state into an allow root."""
+    try:
+        target = os.stat(resolved, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISREG(target.st_mode) and getattr(target, "st_nlink", 1) > 1
+
+
 def _is_denied_tool_path(resolved: str) -> bool:
     """Apply every path deny to a canonical traversal result."""
-    return _is_sensitive_path(resolved) or _is_app_state_path(resolved)
+    return (
+        _is_sensitive_path(resolved)
+        or _is_app_state_path(resolved)
+        or _is_hardlinked_regular_file(resolved)
+    )
 
 
 def _can_traverse_tool_path(resolved: str) -> bool:
@@ -357,6 +371,8 @@ def _resolve_tool_path(raw_path: str) -> str:
         raise ValueError(
             f"path '{raw_path}' is inside the application state directory"
         )
+    if _is_hardlinked_regular_file(resolved):
+        raise ValueError(f"path '{raw_path}' is a hard-linked file")
 
     for root in _tool_path_roots():
         if resolved == root:
@@ -396,6 +412,8 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
         raise ValueError(
             f"path '{raw_path}' is inside the application state directory"
         )
+    if _is_hardlinked_regular_file(resolved):
+        raise ValueError(f"path '{raw_path}' is a hard-linked file")
     if resolved != base:
         # normcase so containment holds on case-insensitive filesystems
         # (Windows, default macOS): it lowercases on Windows and is a no-op on

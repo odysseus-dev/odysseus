@@ -102,6 +102,39 @@ def test_blocks_app_state_reached_through_a_symlink(tmp_path):
         _resolve_tool_path(str(link / "sessions.json"))
 
 
+def test_native_file_tools_hide_control_plane_hardlink_alias(tmp_path, monkeypatch):
+    """A pathname inside an allowed root must not alias a protected state inode."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data_dir)
+    workspace = readable["AGENT_WORKSPACE_DIR"]
+    workspace.mkdir()
+    secret = data_dir / "sessions.json"
+    secret.write_text("LIVE_ADMIN_SESSION\n", encoding="utf-8")
+    alias = workspace / "notes.txt"
+    try:
+        os.link(secret, alias)
+    except OSError:
+        pytest.skip("cannot create hardlink")
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        importlib.import_module("src.tool_execution")._resolve_tool_path(str(alias))
+
+    ls_result = asyncio.run(LsTool().execute(
+        f'{{"path": "{workspace}"}}', {}
+    ))
+    glob_result = asyncio.run(GlobTool().execute(
+        f'{{"pattern": "**/*", "path": "{workspace}"}}', {}
+    ))
+    grep_result = asyncio.run(GrepTool().execute(
+        f'{{"pattern": "LIVE_ADMIN_SESSION", "path": "{workspace}"}}', {}
+    ))
+    assert "notes.txt" not in ls_result["output"]
+    assert "notes.txt" not in glob_result["output"]
+    assert "notes.txt" not in grep_result["output"]
+    assert ":1:LIVE_ADMIN_SESSION" not in grep_result["output"]
+
+
 def test_blocks_app_state_on_a_case_insensitive_filesystem():
     """On default macOS a case-variant path opens the same file, and realpath
     does not canonicalise case there the way it does on Windows.
@@ -118,6 +151,33 @@ def test_blocks_app_state_on_a_case_insensitive_filesystem():
 def test_default_search_root_is_the_agent_workspace():
     """grep/glob/ls with no path fall back to roots[0]. That was DATA_DIR."""
     assert _resolve_search_root("") == os.path.realpath(AGENT_WORKSPACE_DIR)
+
+
+def test_startup_rejects_agent_workspace_symlink_escape(tmp_path, monkeypatch):
+    """Startup must not accept a dedicated workspace redirected outside DATA_DIR."""
+    import src.app_initializer as app_initializer
+    import src.tool_execution as tool_execution
+
+    data_dir = tmp_path / "data"
+    outside = tmp_path / "outside"
+    data_dir.mkdir()
+    outside.mkdir()
+    workspace = data_dir / "agent_workspace"
+    try:
+        workspace.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("cannot create symlink")
+
+    personal = data_dir / "personal_docs"
+    monkeypatch.setattr(app_initializer, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(app_initializer, "PERSONAL_DIR", str(personal))
+    monkeypatch.setattr(app_initializer, "RUNBOOK_DIR", str(personal / "runbook"))
+    monkeypatch.setattr(app_initializer, "UPLOAD_DIR", str(data_dir / "uploads"))
+    monkeypatch.setattr(app_initializer, "AGENT_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setattr(tool_execution, "AGENT_WORKSPACE_DIR", str(workspace))
+
+    with pytest.raises(RuntimeError, match="real directory"):
+        app_initializer.create_directories()
 
 
 def test_agent_workspace_is_inside_the_data_directory():
