@@ -17,6 +17,8 @@ together, because closing only the first leaves the other two working:
 so the guard is a property of the path, not of the root it arrived through.
 """
 
+import asyncio
+import importlib
 import os
 from contextlib import contextmanager
 
@@ -38,6 +40,7 @@ from src.tool_execution import (
     agent_cwd,
     vet_workspace,
 )
+from src.agent_tools.filesystem_tools import GlobTool, GrepTool
 
 APP_STATE_FILES = [
     "sessions.json",   # session token -> username, cleartext
@@ -223,3 +226,120 @@ def test_sensitive_deny_list_still_fires_inside_the_agent_workspace():
     """The new guard is layered on the existing one, not a replacement."""
     with pytest.raises(ValueError, match="sensitive directory"):
         _resolve_tool_path(os.path.join(AGENT_WORKSPACE_DIR, "id_rsa"))
+
+
+# ── Misconfigured carve-outs and recursive traversal ────────────────
+
+def _configure_test_data_tree(monkeypatch, data_dir):
+    current_constants = importlib.import_module("src.constants")
+    current_execution = importlib.import_module("src.tool_execution")
+    monkeypatch.setattr(current_constants, "DATA_DIR", str(data_dir), raising=False)
+    readable = {
+        "AGENT_WORKSPACE_DIR": data_dir / "agent_workspace",
+        "UPLOAD_DIR": data_dir / "uploads",
+        "MAIL_ATTACHMENTS_DIR": data_dir / "mail-attachments",
+        "PERSONAL_DIR": data_dir / "personal_docs",
+        "PERSONAL_UPLOADS_DIR": data_dir / "personal_uploads",
+    }
+    for name, path in readable.items():
+        monkeypatch.setattr(current_constants, name, str(path), raising=False)
+    monkeypatch.setattr(
+        current_execution,
+        "AGENT_WORKSPACE_DIR",
+        str(readable["AGENT_WORKSPACE_DIR"]),
+    )
+    return readable
+
+
+@contextmanager
+def current_workspace_at(path):
+    current_execution = importlib.import_module("src.tool_execution")
+    token = current_execution._active_workspace.set(os.path.realpath(path))
+    try:
+        yield
+    finally:
+        current_execution._active_workspace.reset(token)
+
+
+@pytest.mark.parametrize(
+    "bad_kind", ["equal", "ancestor", "root", "empty", "dot", "symlink"]
+)
+def test_invalid_readable_carveout_cannot_cancel_state_deny(
+    tmp_path, monkeypatch, bad_kind
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data_dir)
+    bad = {
+        "equal": str(data_dir),
+        "ancestor": str(tmp_path),
+        "root": os.path.abspath(os.sep),
+        "empty": "",
+        "dot": ".",
+    }.get(bad_kind)
+    if bad_kind == "symlink":
+        link = tmp_path / "data-link"
+        try:
+            link.symlink_to(data_dir, target_is_directory=True)
+        except OSError:
+            pytest.skip("cannot create symlink")
+        bad = str(link)
+    current_execution = importlib.import_module("src.tool_execution")
+    monkeypatch.setattr(current_execution, "AGENT_WORKSPACE_DIR", bad)
+    secret = data_dir / "settings.json"
+    secret.write_text("STATE_SECRET\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="application state"):
+        current_execution._resolve_tool_path(str(secret))
+    with pytest.raises(ValueError, match="default agent workspace"):
+        current_execution._resolve_search_root("")
+    assert os.path.realpath(readable["UPLOAD_DIR"]) in current_execution._tool_path_roots()
+
+
+def test_recursive_glob_and_grep_hide_state_but_keep_readable_descendants(
+    tmp_path, monkeypatch
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data_dir)
+    workspace = readable["AGENT_WORKSPACE_DIR"]
+    workspace.mkdir()
+    (workspace / "notes.json").write_text("SHARED_MARKER readable\n", encoding="utf-8")
+    (data_dir / "settings.json").write_text("SHARED_MARKER secret\n", encoding="utf-8")
+
+    with current_workspace_at(tmp_path):
+        glob_result = asyncio.run(GlobTool().execute(
+            '{"pattern": "**/*.json", "path": ""}', {}
+        ))
+        grep_result = asyncio.run(GrepTool().execute(
+            '{"pattern": "SHARED_MARKER", "path": ""}', {}
+        ))
+
+    assert "notes.json" in glob_result["output"]
+    assert "settings.json" not in glob_result["output"]
+    assert "notes.json" in grep_result["output"]
+    assert "settings.json" not in grep_result["output"]
+
+
+def test_recursive_glob_and_grep_hide_state_from_extra_root(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data_dir)
+    readable["AGENT_WORKSPACE_DIR"].mkdir()
+    (readable["AGENT_WORKSPACE_DIR"] / "public.txt").write_text(
+        "TOKEN visible\n", encoding="utf-8"
+    )
+    (data_dir / "auth.json").write_text("TOKEN hidden\n", encoding="utf-8")
+    monkeypatch.setattr("src.settings.get_setting", lambda *_a, **_k: [str(tmp_path)])
+
+    glob_result = asyncio.run(GlobTool().execute(
+        f'{{"pattern": "**/*", "path": "{tmp_path}"}}', {}
+    ))
+    grep_result = asyncio.run(GrepTool().execute(
+        f'{{"pattern": "TOKEN", "path": "{tmp_path}"}}', {}
+    ))
+
+    assert "public.txt" in glob_result["output"]
+    assert "auth.json" not in glob_result["output"]
+    assert "public.txt" in grep_result["output"]
+    assert "auth.json" not in grep_result["output"]

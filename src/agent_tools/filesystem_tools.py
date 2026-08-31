@@ -458,7 +458,8 @@ class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import (
             _SENSITIVE_BASENAMES,
-            _is_sensitive_path,
+            _can_traverse_tool_path,
+            _is_denied_tool_path,
             _resolve_tool_path,
             _resolve_search_root,
             _truncate,
@@ -507,7 +508,7 @@ class GlobTool:
                 # .ssh/id_rsa, …) falls through to the walk, which skips it —
                 # otherwise glob would surface secret paths that read_file /
                 # grep already refuse to touch.
-                if inside and os.path.exists(cand) and not _is_sensitive_path(cand):
+                if inside and os.path.exists(cand) and not _is_denied_tool_path(cand):
                     return [cand], None
                 # Literal not at exact path — fall through to walk so
                 # e.g. "foo.py" still matches at any depth (like rglob).
@@ -517,13 +518,18 @@ class GlobTool:
             cap = _CODENAV_MAX_HITS * 5
             try:
                 for dp, dns, fns in os.walk(base):
+                    if not _can_traverse_tool_path(os.path.realpath(dp)):
+                        dns[:] = []
+                        continue
                     # Prune skipped dirs before descending (unlike rglob which
                     # descends first then filters — fatal on large node_modules).
                     # Sensitive dirs (.ssh, .gnupg, …) are pruned too so glob
                     # never enumerates the keys/tokens inside them.
                     dns[:] = [
                         d for d in dns
-                        if d not in _CODENAV_SKIP_DIRS and d not in _SENSITIVE_BASENAMES
+                        if d not in _CODENAV_SKIP_DIRS
+                        and d not in _SENSITIVE_BASENAMES
+                        and _can_traverse_tool_path(os.path.realpath(os.path.join(dp, d)))
                     ]
                     for name in fns + dns:
                         full = os.path.join(dp, name)
@@ -531,7 +537,7 @@ class GlobTool:
                         if regex.fullmatch(rel) or regex.fullmatch(name):
                             # Skip deny-listed sensitive files (.env, id_rsa,
                             # known_hosts, …) the same way grep does.
-                            if _is_sensitive_path(os.path.realpath(full)):
+                            if _is_denied_tool_path(os.path.realpath(full)):
                                 continue
                             try:
                                 mtime = os.stat(full).st_mtime
@@ -559,7 +565,9 @@ class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import (
             _SENSITIVE_FILE_PATTERNS,
-            _is_sensitive_path,
+            _can_traverse_tool_path,
+            _is_denied_tool_path,
+            _path_within,
             _resolve_tool_path,
             _resolve_search_root,
             _truncate,
@@ -592,9 +600,18 @@ class GrepTool:
             import re as _re
             import shutil
             rg = shutil.which("rg")
+            # ripgrep does not offer a policy callback for each traversed
+            # result.  When the search root contains DATA_DIR, use the Python
+            # walker so protected state can be pruned while legitimate data
+            # carve-outs remain searchable.
+            from src.constants import DATA_DIR
+            if _path_within(os.path.realpath(DATA_DIR), os.path.realpath(root)):
+                rg = None
             if rg:
-                cmd = [rg, "--line-number", "--no-heading", "--color=never",
-                       "--max-count", str(max_hits)]
+                cmd = [
+                    rg, "--no-config", "--no-follow", "--line-number",
+                    "--no-heading", "--color=never", "--max-count", str(max_hits),
+                ]
                 if ignore_case:
                     cmd.append("--ignore-case")
                 if glob_pat:
@@ -627,7 +644,14 @@ class GrepTool:
             else:
                 file_iter = []
                 for dp, dns, fns in os.walk(root):
-                    dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
+                    if not _can_traverse_tool_path(os.path.realpath(dp)):
+                        dns[:] = []
+                        continue
+                    dns[:] = [
+                        d for d in dns
+                        if d not in _CODENAV_SKIP_DIRS
+                        and _can_traverse_tool_path(os.path.realpath(os.path.join(dp, d)))
+                    ]
                     for fn in fns:
                         if glob_pat and not fnmatch.fnmatch(fn, glob_pat):
                             continue
@@ -635,7 +659,7 @@ class GrepTool:
             for fp in file_iter:
                 if len(hits) >= max_hits:
                     break
-                if _is_sensitive_path(os.path.realpath(fp)):
+                if _is_denied_tool_path(os.path.realpath(fp)):
                     continue
                 try:
                     with open(fp, "r", encoding="utf-8", errors="strict") as f:

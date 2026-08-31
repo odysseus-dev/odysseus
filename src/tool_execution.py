@@ -167,18 +167,39 @@ def _agent_readable_data_subdirs() -> tuple[str, ...]:
     when grep/glob/ls are called with no path.
     """
     from src.constants import (
+        DATA_DIR,
         MAIL_ATTACHMENTS_DIR,
         PERSONAL_DIR,
         PERSONAL_UPLOADS_DIR,
         UPLOAD_DIR,
     )
-    return (
+    configured = (
         AGENT_WORKSPACE_DIR,
         UPLOAD_DIR,
         MAIL_ATTACHMENTS_DIR,
         PERSONAL_DIR,
         PERSONAL_UPLOADS_DIR,
     )
+    data_dir = os.path.realpath(DATA_DIR)
+    safe: list[str] = []
+    for raw in configured:
+        value = str(raw or "").strip()
+        # These paths are security-policy carve-outs, not ordinary allowlist
+        # entries.  Accept only explicit absolute paths whose canonical target
+        # is a strict descendant of DATA_DIR.  In particular, an empty/dot,
+        # filesystem-root, ancestor, equality, or symlink-equivalent setting
+        # must not turn the whole state directory into readable content.
+        if not value or not os.path.isabs(os.path.expanduser(value)):
+            continue
+        resolved = os.path.realpath(os.path.expanduser(value))
+        if (
+            resolved == data_dir
+            or not _path_within(resolved, data_dir)
+            or _is_sensitive_path(resolved)
+        ):
+            continue
+        safe.append(resolved)
+    return tuple(safe)
 
 
 def _is_app_state_path(resolved: str) -> bool:
@@ -199,8 +220,25 @@ def _is_app_state_path(resolved: str) -> bool:
     if not _path_within(resolved, os.path.realpath(DATA_DIR)):
         return False
     return not any(
-        _path_within(resolved, os.path.realpath(d))
+        _path_within(resolved, d)
         for d in _agent_readable_data_subdirs()
+    )
+
+
+def _is_denied_tool_path(resolved: str) -> bool:
+    """Apply every path deny to a canonical traversal result."""
+    return _is_sensitive_path(resolved) or _is_app_state_path(resolved)
+
+
+def _can_traverse_tool_path(resolved: str) -> bool:
+    """Allow walking a denied state parent only to reach safe carve-outs."""
+    if _is_sensitive_path(resolved):
+        return False
+    if not _is_app_state_path(resolved):
+        return True
+    return any(
+        _path_within(readable, resolved)
+        for readable in _agent_readable_data_subdirs()
     )
 
 
@@ -416,7 +454,10 @@ def _resolve_search_root(raw_path: str) -> str:
         return _resolve_tool_path_in_workspace(ws, raw or ws)
     if not raw:
         roots = _tool_path_roots()
-        return roots[0] if roots else os.path.realpath(".")
+        default_root = os.path.realpath(AGENT_WORKSPACE_DIR)
+        if default_root in roots and not _is_denied_tool_path(default_root):
+            return default_root
+        raise ValueError("default agent workspace is not a safe readable data subdirectory")
     return _resolve_tool_path(raw)
 
 logger = logging.getLogger(__name__)
