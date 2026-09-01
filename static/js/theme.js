@@ -145,9 +145,27 @@ function _relativeLuminance(hex) {
 // would fall below ~3:1, in which case near-black. Shared by every
 // accent-painted surface so each one is judged against the background it
 // actually renders, not a global accent.
+// WCAG AA for normal-size text. These tokens land on button labels around
+// 9-15px, so the 3:1 large-text/UI-component floor is not enough.
+const _AA_NORMAL_TEXT = 4.5;
+
+function _contrastRatio(aHex, bHex) {
+  const a = _relativeLuminance(aHex);
+  const b = _relativeLuminance(bHex);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 function _readableOn(bgHex) {
-  const contrastWithWhite = 1.05 / (_relativeLuminance(bgHex) + 0.05);
-  return contrastWithWhite < 3 ? '#171717' : '#fff';
+  // Pick whichever end of the range actually contrasts better, rather than
+  // assuming white unless it fails. Black rather than #171717 is what makes
+  // the floor reachable everywhere: backgrounds with luminance between
+  // ~0.183 and ~0.214 clear 4.5:1 against neither #fff nor #171717, while
+  // the best of #fff/#000 is never worse than 4.58:1.
+  const onWhite = _contrastRatio('#fff', bgHex);
+  const onBlack = _contrastRatio('#000', bgHex);
+  if (onWhite >= onBlack) return '#fff';
+  // Dark text wins; keep the softer near-black when it still clears AA.
+  return _contrastRatio('#171717', bgHex) >= _AA_NORMAL_TEXT ? '#171717' : '#000';
 }
 
 // sRGB mix matching CSS color-mix(in srgb, a pct%, b). Needed where a

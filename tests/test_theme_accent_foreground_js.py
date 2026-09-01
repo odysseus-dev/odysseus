@@ -54,7 +54,7 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
     src = _THEME_JS.read_text(encoding="utf-8")
     helpers = "\n".join(
         _extract_fn(src, name)
-        for name in ("hexToRgb", "_relativeLuminance", "_readableOn", "_mixSrgb")
+        for name in ("hexToRgb", "_relativeLuminance", "_contrastRatio", "_readableOn", "_mixSrgb")
     ) if "function hexToRgb(" in src else "\n".join(
         [
             # hexToRgb is imported from ./color/hex.js in the module; inline an
@@ -63,6 +63,8 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
             "if(h.length===3)h=h.split('').map(x=>x+x).join('');"
             "return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};}",
             _extract_fn(src, "_relativeLuminance"),
+            "const _AA_NORMAL_TEXT = 4.5;",
+            _extract_fn(src, "_contrastRatio"),
             _extract_fn(src, "_readableOn"),
             _extract_fn(src, "_mixSrgb"),
         ]
@@ -74,8 +76,10 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
         const l = [_relativeLuminance(a), _relativeLuminance(b)].sort((x, y) => y - x);
         return (l[0] + 0.05) / (l[1] + 0.05);
       }};
-      // Dark accent, deliberately light custom send button.
-      const red = '#e06c75';
+      // Genuinely dark accent, deliberately light custom send button.
+      // (#e06c75, the stock accent, is NOT dark enough for white under AA --
+      // it yields 3.20:1 -- so it is asserted separately below.)
+      const red = '#7a2530';
       const accentPrimary = '#f2c14e';
       const sendBg = '#f2c14e';
       const sendHover = '#f7d488';
@@ -100,6 +104,9 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
         sendHoverContrast: contrast(sendHover, onSendHover),
         newchatContrast: contrast(newchatBg, onNewchat),
         naiveSendContrast: contrast(sendBg, onAccent),
+        stockAccentFg: _readableOn('#e06c75'),
+        stockAccentOnWhite: contrast('#e06c75', '#fff'),
+        stockAccentChosen: contrast('#e06c75', _readableOn('#e06c75')),
       }}));
     """
     out = _run_node(script)
@@ -114,7 +121,15 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
     # Reusing the accent's foreground on the send button is what used to happen.
     assert out["naiveSendContrast"] < 3, out
 
-    # Every surface clears the 3:1 floor against the background it renders.
+    # The stock accent is the reason the 3:1 floor was not enough: white on
+    # #e06c75 is 3.20:1, which cleared the old floor and fails AA. The pair
+    # now flips to dark text instead of shipping sub-AA white.
+    assert 3 <= out["stockAccentOnWhite"] < 4.5, out
+    assert out["stockAccentFg"] == "#171717", out
+    assert out["stockAccentChosen"] >= 4.5, out
+
+    # These tokens land on button labels around 9-15px, which WCAG treats as
+    # normal-size text: 4.5:1, not the 3:1 large-text/UI-component floor.
     for key in (
         "accentContrast",
         "accentPrimaryContrast",
@@ -123,7 +138,7 @@ def test_accent_foregrounds_follow_their_own_backgrounds():
         "sendHoverContrast",
         "newchatContrast",
     ):
-        assert out[key] >= 3, (key, out[key])
+        assert out[key] >= 4.5, (key, out[key])
 
 
 def test_no_rule_pairs_on_accent_with_an_independent_background():
@@ -151,3 +166,62 @@ def test_primary_hover_states_use_the_derived_hover_pair():
     assert "background:var(--accent-primary-hover); color:var(--on-accent-primary-hover)" in css
     assert "background: var(--accent-primary-hover);" in css
     assert "color: var(--on-accent-primary-hover);" in css
+
+
+def test_readable_on_clears_aa_for_every_background():
+    """No background may be left without an AA-passing foreground.
+
+    `#fff` clears 4.5:1 only up to luminance ~0.1833 and `#171717` only from
+    ~0.2136, so backgrounds in between clear AA against neither. Pure black
+    closes that band: the better of `#fff`/`#000` is never worse than 4.58:1.
+    """
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+
+    src = _THEME_JS.read_text(encoding="utf-8")
+    helpers = "\n".join(
+        [
+            "function hexToRgb(h){h=String(h).replace('#','');"
+            "if(h.length===3)h=h.split('').map(x=>x+x).join('');"
+            "return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};}",
+            _extract_fn(src, "_relativeLuminance"),
+            "const _AA_NORMAL_TEXT = 4.5;",
+            _extract_fn(src, "_contrastRatio"),
+            _extract_fn(src, "_readableOn"),
+        ]
+    )
+    script = f"""
+      {helpers}
+      const hx = (n) => n.toString(16).padStart(2, '0');
+      let worst = Infinity, worstBg = null, failures = 0, scanned = 0;
+      for (let r = 0; r < 256; r += 5)
+        for (let g = 0; g < 256; g += 5)
+          for (let b = 0; b < 256; b += 5) {{
+            const bg = '#' + hx(r) + hx(g) + hx(b);
+            const ratio = _contrastRatio(_readableOn(bg), bg);
+            scanned++;
+            if (ratio < 4.5) failures++;
+            if (ratio < worst) {{ worst = ratio; worstBg = bg; }}
+          }}
+      // The band where a #fff/#171717-only choice has no AA-passing answer.
+      const band = ['#767676', '#7a7a7a', '#808080', '#428d6f'].map((bg) => ({{
+        bg,
+        chosen: _readableOn(bg),
+        ratio: _contrastRatio(_readableOn(bg), bg),
+        bestOfWhiteAndSoftBlack: Math.max(
+          _contrastRatio('#fff', bg), _contrastRatio('#171717', bg)
+        ),
+      }}));
+      console.log(JSON.stringify({{ scanned, failures, worst, worstBg, band }}));
+    """
+    out = _run_node(script)
+
+    assert out["failures"] == 0, out
+    assert out["worst"] >= 4.5, out
+
+    # At least one sampled colour must actually exercise the gap, otherwise
+    # this test would keep passing if the fallback were removed again.
+    exercised = [c for c in out["band"] if c["bestOfWhiteAndSoftBlack"] < 4.5]
+    assert exercised, out["band"]
+    for case in exercised:
+        assert case["ratio"] >= 4.5, case
