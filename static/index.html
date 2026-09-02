@@ -2052,6 +2052,34 @@
               <!-- Populated by JS -->
             </div>
           </div>
+          <div class="admin-card" id="settings-api-tokens-card" style="display:none">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 1a3 3 0 0 0-3 3v2H7a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V9a3 3 0 0 0-3-3h-2V4a3 3 0 0 0-3-3z"/></svg>Personal API Tokens</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Create tokens to access your Odysseus data from scripts, apps, or external tools. Tokens are scoped — only grant the permissions your use case needs.</div>
+            <div id="settings-api-tokens-list" style="margin-bottom:10px;">
+              <!-- Populated by JS -->
+            </div>
+            <div id="settings-api-tokens-create" style="display:none;border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
+              <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <input id="settings-api-token-name" type="text" placeholder="Token name (e.g. 'My backup script')" style="flex:1;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
+                <button class="admin-btn-add" id="settings-api-token-create-btn" style="white-space:nowrap;">Create</button>
+              </div>
+              <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Select which data this token can access. Leave all unchecked for chat-only access.</div>
+              <div id="settings-api-token-scopes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 12px;">
+                <!-- Populated by JS -->
+              </div>
+              <div id="settings-api-token-create-msg" style="font-size:11px;margin-top:6px;min-height:16px;"></div>
+              <div id="settings-api-token-reveal" style="display:none;margin-top:8px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
+                <div style="font-size:11px;opacity:0.5;margin-bottom:4px;">Copy this token now — it won't be shown again.</div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <code id="settings-api-token-value" style="flex:1;padding:4px 8px;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:4px;word-break:break-all;user-select:all;"></code>
+                  <button class="admin-btn-sm" id="settings-api-token-copy-btn" title="Copy to clipboard" style="flex-shrink:0;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button class="admin-btn-add" id="settings-api-token-new-btn" style="margin-top:4px;">+ New Token</button>
+          </div>
         </div>
 
         <!-- ═══ EMAIL TAB ═══ -->

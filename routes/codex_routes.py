@@ -113,13 +113,16 @@ def _scope_owner_all(request: Request, required: set[str]) -> str:
 def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
     """Authorize a Codex cookbook route.
 
-    For API-token callers, enforce the given scope set.
-    For cookie-session callers, additionally require admin privileges
-    because cookbook surfaces expose host topology, task logs, tmux
-    commands, and model-serving controls.
+    Cookbook surfaces expose host topology, task logs, tmux commands, and
+    model-serving controls, so both cookie users and API-token owners must
+    currently be administrators.
     """
     owner = _scope_owner(request, allowed)
-    if not getattr(request.state, "api_token", False):
+    if getattr(request.state, "api_token", False):
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        if not auth_mgr or not auth_mgr.is_admin(owner):
+            raise HTTPException(403, "Cookbook API tokens require an admin owner")
+    else:
         require_admin(request)
     return owner
 
@@ -168,6 +171,11 @@ def setup_codex_routes(
     def capabilities(request: Request):
         token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         has_token = bool(getattr(request.state, "api_token", False))
+        token_owner = getattr(request.state, "api_token_owner", None)
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        cookbook_allowed = not has_token or bool(
+            token_owner and auth_mgr and auth_mgr.is_admin(token_owner)
+        )
         def scoped(allowed):
             return bool(token_scopes.intersection(allowed)) if has_token else True
         return {
@@ -204,8 +212,8 @@ def setup_codex_routes(
                     "available": documents_library_endpoint is not None,
                 },
                 "cookbook": {
-                    "read": scoped(COOKBOOK_READ_SCOPES),
-                    "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
+                    "read": cookbook_allowed and scoped(COOKBOOK_READ_SCOPES),
+                    "launch": cookbook_allowed and scoped(COOKBOOK_LAUNCH_SCOPES),
                     "actions": ["tasks", "servers", "output", "serve", "stop"],
                 },
             },
