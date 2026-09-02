@@ -1877,6 +1877,9 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
+    if (meta && typeof window.__odysseusSetSecurityMode === 'function') {
+      window.__odysseusSetSecurityMode(meta.security_mode || 'sandbox');
+    }
 
     // Detach any in-flight stream to background instead of aborting
     try {

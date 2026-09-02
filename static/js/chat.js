@@ -7,7 +7,7 @@
 
 import Storage from './storage.js';
 import uiModule from './ui.js';
-import sessionModule from './sessions.js';
+import sessionModule from './sessions.js?v=20260825agentmodes1';
 import chatRenderer from './chatRenderer.js?v=20260819approvalcontrol1';
 import chatStream from './chatStream.js?v=20260819approvalcontrol1';
 import { addAITTSButton } from './tts-ai.js';
@@ -1878,6 +1878,15 @@ import { loadPanel } from './panels.js';
       // on; explicit web/current-info requests are handled by the backend
 	      // intent gate.
 	      const toggleState = Storage.loadToggleState();
+	      const securityMode = ['sandbox', 'full_access'].includes(toggleState.security_mode)
+	        ? toggleState.security_mode
+	        : 'sandbox';
+	      if (sessionModule && typeof sessionModule.getSessions === 'function') {
+	        const currentMeta = sessionModule.getSessions().find(
+	          (item) => String(item.id) === String(streamSessionId)
+	        );
+	        if (currentMeta) currentMeta.security_mode = securityMode;
+	      }
 	      const isPlanMode = !!toggleState.plan_mode && !(el('research-toggle') && el('research-toggle').checked);
 	      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
       const isIncognito = isIncognitoForSend;
@@ -1894,6 +1903,7 @@ import { loadPanel } from './panels.js';
 	        isAgentMode = true;
 	      }
 	      fd.append('mode', isAgentMode ? 'agent' : 'chat');
+	      fd.append('security_mode', securityMode);
 	      fd.append('plan_mode', isPlanMode ? 'true' : 'false');
 	      if (!isPlanMode && _pendingApprovedPlan) {
 	        fd.append('approved_plan', _pendingApprovedPlan.slice(0, 8192));

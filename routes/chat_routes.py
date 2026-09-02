@@ -39,11 +39,18 @@ from src.foreground_model_routing import (
 )
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
+from src.execution_sandbox import network_profile_for_internet_preference
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
-from core.database import SessionLocal, get_session_mode, set_session_mode
+from core.database import (
+    SessionLocal,
+    get_session_mode,
+    get_session_security_mode,
+    set_session_mode,
+    set_session_security_mode,
+)
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from core.log_safety import redact_url
@@ -68,6 +75,8 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
+from src.agent_run_policy import AgentRunMode, parse_agent_run_mode
+from src.tool_security import owner_is_admin_or_single_user
 
 logger = logging.getLogger(__name__)
 
@@ -965,6 +974,10 @@ def setup_chat_routes(
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        requested_security_mode = (
+            form_data.get("security_mode")
+            or (body or {}).get("security_mode")
+        )
         tool_approval_id = (
             form_data.get("tool_approval_id")
             or (body or {}).get("tool_approval_id")
@@ -1124,6 +1137,35 @@ def setup_chat_routes(
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             owner = effective_user(request)
+            persisted_security_mode = (
+                getattr(sess, "security_mode", None)
+                or get_session_security_mode(session)
+            )
+            if requested_security_mode not in (None, ""):
+                requested_security_mode = str(requested_security_mode).strip().lower()
+                if requested_security_mode not in {
+                    AgentRunMode.ASK.value,
+                    AgentRunMode.SANDBOX.value,
+                    AgentRunMode.FULL_ACCESS.value,
+                }:
+                    raise HTTPException(400, "Invalid agent security mode.")
+                effective_security_mode = parse_agent_run_mode(
+                    requested_security_mode
+                )
+            else:
+                effective_security_mode = parse_agent_run_mode(
+                    persisted_security_mode
+                )
+            if (
+                effective_security_mode is AgentRunMode.FULL_ACCESS
+                and not owner_is_admin_or_single_user(owner)
+            ):
+                if requested_security_mode not in (None, ""):
+                    raise HTTPException(
+                        403,
+                        "Full access agent mode requires an admin user.",
+                    )
+                effective_security_mode = AgentRunMode.SANDBOX
             if tool_approval_id:
                 pending_tool_approval = tool_approval_store.peek(tool_approval_id)
                 normalized_owner = str(owner or "").strip().casefold()
@@ -1149,6 +1191,14 @@ def setup_chat_routes(
                     raise HTTPException(
                         409,
                         "Tool approvals cannot be consumed while plan mode is active.",
+                    )
+                if (
+                    pending_tool_approval.security_mode
+                    != effective_security_mode.value
+                ):
+                    raise HTTPException(
+                        409,
+                        "The thread security state changed; review the action again.",
                     )
                 exact_tool_approval = tool_approval_store.consume(
                     tool_approval_id,
@@ -1583,6 +1633,12 @@ def setup_chat_routes(
         _effective_mode = 'research' if effective_do_research else (chat_mode or 'chat')
         if _effective_mode in ('agent', 'research', 'chat'):
             set_session_mode(session, _effective_mode)
+        if (
+            requested_security_mode not in (None, "")
+            or effective_security_mode.value != persisted_security_mode
+        ):
+            set_session_security_mode(session, effective_security_mode.value)
+            sess.security_mode = effective_security_mode.value
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
@@ -2291,6 +2347,14 @@ def setup_chat_routes(
                     elif _explicit_browser_intent:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
 
+                    # For now, Bubblewrap networking follows the existing user
+                    # web toggle. This mapping may change in the future; keep
+                    # every other toggle's behavior unchanged for now. The
+                    # server snapshots a BROKERED_ONLY or NETWORKLESS profile;
+                    # Sandbox mode never exposes the raw container namespace.
+                    _sandbox_network_profile = network_profile_for_internet_preference(
+                        _search_enabled
+                    )
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,
@@ -2328,6 +2392,8 @@ def setup_chat_routes(
                         defer_context_shaping=_foreground_policy.enabled,
                         external_untrusted_context_seen=external_untrusted_context_seen,
                         exact_approval=exact_tool_approval,
+                        security_mode=effective_security_mode.value,
+                        network_profile=_sandbox_network_profile,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

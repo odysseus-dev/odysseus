@@ -167,6 +167,33 @@ def test_sqlite_db_path_handles_file_uri_forms(tmp_path):
     )
 
 
+def test_shared_sqlite_resolver_canonicalizes_absent_paths_without_core_import(
+    tmp_path,
+):
+    from src.sqlite_paths import normalize_sqlite_url, resolve_sqlite_db_path
+
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    expected = str(app_root / "relative.db")
+
+    assert normalize_sqlite_url(
+        "sqlite+pysqlite:///relative.db",
+        app_root=str(app_root),
+    ) == f"sqlite+pysqlite:///{expected}"
+    assert resolve_sqlite_db_path(
+        "sqlite+pysqlite:///relative.db",
+        app_root=str(app_root),
+    ) == expected
+    assert resolve_sqlite_db_path(
+        f"sqlite+pysqlite:///file://localhost{expected}?uri=true",
+        app_root=str(app_root),
+    ) == expected
+    assert resolve_sqlite_db_path(
+        "sqlite+pysqlite:///file:memdb1?mode=memory&uri=true",
+        app_root=str(app_root),
+    ) is None
+
+
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="POSIX mode bits (0o600) don't exist on Windows; safe_chmod no-ops there.",

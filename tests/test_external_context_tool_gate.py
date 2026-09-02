@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
     KNOWN_CAPABILITY_TOOLS,
     ResultIntegrity,
@@ -20,6 +21,16 @@ from src.tool_capabilities import (
 
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
+
+
+@pytest.fixture(autouse=True)
+def _enable_disabled_gate_for_legacy_coverage(monkeypatch):
+    """Keep the removal-bound gate covered without enabling it in production."""
+    monkeypatch.setattr(
+        tool_capabilities,
+        "AGENT_ACTION_APPROVAL_GATE_ENABLED",
+        True,
+    )
 
 
 def _collect_agent_events(generator):
@@ -1321,7 +1332,7 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     assert "/test-approval`" in skills
     assert "approval_id: approval.approval_id" in skills
     assert "['approve', 'Allow once'" in skills
-    assert index.count("app.js?v=20260815toolapproval4") == 2
+    assert index.count("app.js?v=20260817agentmodes1") == 2
     assert "app.js?v=20260808startupshell1" not in index
     approval_module_sources = [
         (root / path).read_text()

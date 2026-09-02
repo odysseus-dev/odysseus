@@ -60,6 +60,16 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 **Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
 
+### Agent Run Authority
+
+Model output requests an action; it does not authorize one. `src/tool_capabilities.py` classifies each built-in tool's effects and result integrity, while `src/agent_run_policy.py` combines those fixed classifications with the thread's server-owned security mode. The temporary blanket gate that armed after any untrusted tool result is disabled; mode-owned authority checks remain active.
+
+- **Sandbox (default):** process execution stays inside the workspace sandbox. Brokered public reads, private/workspace operations, and contained execution can continue without a new approval merely because earlier context was untrusted. Unknown tools, arbitrary network egress, external side effects, admin changes, and destructive actions still require an exact approval.
+- **Full access:** an admin or intentional single-user deployment may explicitly opt into direct execution with that user's normal OS permissions. This is never the default, and route, agent-loop, and dispatcher gates reject it for non-admin users.
+- **Ask (not exposed in the current selector):** uses the workspace sandbox and requires an exact approval for every risky action.
+
+Exact approvals are opaque, expiring, one-use server records bound to the owner, session, origin run, exact tool name and input, workspace, security mode, effect classification, and external-context state. The browser submits only the opaque approval ID and the user's approve/deny decision. The separate review step for saving a teacher-generated reusable skill remains active.
+
 ## Security Headers
 
 `core/middleware.py:SecurityHeadersMiddleware` sets headers on every response:
@@ -72,7 +82,7 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 These are open, acknowledged, and contributor help is welcome:
 
-1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal.
+1. **Linux sandbox portability and explicit Full Access.** Agent `bash`, Python, tmux, and detached background commands default to a Bubblewrap profile with a private network namespace, cleared environment, private temp/home, one writable workspace, credential-path overlays, read-only `.git` metadata, and generous per-process rlimits. Internet-enabled process execution is limited to the trusted HTTP(S) egress broker; raw container networking is never shared with either mode. Odysseus performs the actual capability probes under the service user before process execution. A failed probe blocks only process tools and never downgrades automatically. An administrator may temporarily enable **Full Access** only after a warning plus typed confirmation. Full Access grants the process the Odysseus operating-system user's filesystem view while retaining the sandbox's private PID/network policy; an already-running Full Access process retains its launch-time authority until it exits or is killed. The process boundary mounts a fresh procfs scoped to its private PID namespace. Hard workspace-disk quotas and aggregate agent-pool/per-instance CPU, memory, and PID ceilings are not established in this slice; current limits are per process and the aggregate design is tracked separately.
 
 2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
 
