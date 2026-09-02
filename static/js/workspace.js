@@ -2,8 +2,8 @@
 //
 // Workspace picker: browse server directories in a draggable modal, choose a
 // folder, and show it as a removable pill in the chat input bar. While set, the
-// chat request sends `workspace` so the agent's file/shell tools are confined
-// to that folder (see routes/chat_routes.py + src/tool_execution.py).
+// chat request sends `workspace` so file tools and the default process Sandbox
+// are confined to that folder (see routes/chat_routes.py + src/tool_execution.py).
 
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
@@ -26,11 +26,20 @@ function _basename(p) {
   return parts[parts.length - 1] || p;
 }
 
-// Workspace only applies to agent mode (it scopes the file/shell tools), so the
-// pill + overflow entry are hidden in chat mode, like the bash toggle.
+// Workspace only applies to agent mode (it scopes file tools and is the process
+// cwd/Sandbox root), so the pill + overflow entry are hidden in chat mode.
 function _isChatMode() {
   const b = document.getElementById('mode-chat-btn');
   return !!(b && b.classList.contains('active'));
+}
+
+function _effectiveProcessNetwork() {
+  const webToggle = document.getElementById('web-toggle');
+  return webToggle && webToggle.checked ? 'brokered HTTP(S) only' : 'networkless';
+}
+
+function _workspaceBoundaryText() {
+  return `Bash, Python, and detached processes use Sandbox by default and are confined to this folder. Explicitly confirmed Full Access treats it only as the starting directory and can reach files available to the Odysseus service user. Effective next-turn process network profile: ${_effectiveProcessNetwork()}.`;
 }
 
 export function syncWorkspaceIndicator(path) {
@@ -41,7 +50,7 @@ export function syncWorkspaceIndicator(path) {
   if (pill) {
     pill.style.display = (path && !chat) ? '' : 'none';
     pill.classList.toggle('active', !!path);
-    if (path) pill.title = `Workspace: ${path}\nFile tools are confined here; shell commands start here but are not sandboxed and can reach outside it.\nClick to clear.`;
+    if (path) pill.title = `Workspace: ${path}\nFile tools are confined here. ${_workspaceBoundaryText()}\nClick to clear.`;
   }
   if (name) name.textContent = path ? _basename(path) : '';
   if (overflow) {
@@ -105,6 +114,8 @@ function _render(data) {
     pathEl.value = data.path;
     pathEl.title = data.path;
   }
+  const boundaryNote = _modal.querySelector('#workspace-boundary-note');
+  if (boundaryNote) boundaryNote.textContent = `File tools are confined to this folder. ${_workspaceBoundaryText()}`;
   let rows = '';
   if (data.parent) {
     rows += `<div class="workspace-row workspace-up" data-path="${encodeURIComponent(data.parent)}">↑ ..</div>`;
@@ -153,7 +164,7 @@ function _getModal() {
       <input type="text" class="styled-prompt-input workspace-cur" id="workspace-cur-path"
              spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
              placeholder="Type or paste a folder path, then press Enter" />
-      <p class="muted workspace-note">File tools are <strong>confined</strong> to this folder. Shell commands start here but are <strong>not sandboxed</strong> and can reach outside it. A workspace scopes the tools; it is not a security boundary.</p>
+      <p class="muted workspace-note" id="workspace-boundary-note"></p>
       <div class="modal-body workspace-body" id="workspace-body"></div>
       <div class="modal-footer workspace-footer">
         <button type="button" class="confirm-btn confirm-btn-secondary" id="workspace-cancel">Cancel</button>
@@ -199,6 +210,12 @@ export function closeWorkspaceBrowser() {
 export function initWorkspace() {
   // Restore persisted workspace into the pill on load.
   syncWorkspaceIndicator(getWorkspace());
+  const webToggle = document.getElementById('web-toggle');
+  if (webToggle) webToggle.addEventListener('change', () => {
+    syncWorkspaceIndicator(getWorkspace());
+    const boundaryNote = _modal && _modal.querySelector('#workspace-boundary-note');
+    if (boundaryNote) boundaryNote.textContent = `File tools are confined to this folder. ${_workspaceBoundaryText()}`;
+  });
   const overflow = document.getElementById('overflow-workspace-btn');
   if (overflow) overflow.addEventListener('click', openWorkspaceBrowser);
   const pill = document.getElementById('workspace-indicator-btn');

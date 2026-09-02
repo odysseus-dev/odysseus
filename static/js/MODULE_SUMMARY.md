@@ -96,7 +96,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | Module | Responsibility |
 |---|---|
 | **`sessions.js`** | Chat session list loading, creation, switching, renaming, archiving, library modal, and direct-chat creation. Tracks current session, streaming/research indicators in the sidebar. |
-| **`workspace.js`** | Workspace folder path management for shell/file tool confinement. |
+| **`workspace.js`** | Workspace folder path management for file-tool confinement plus default Sandbox/explicit Full Access and effective process-network descriptions. |
 | **`search-chat.js`** | In-chat history search. |
 | **`skills.js`** | Client-side skill library UI (load, edit, delete, test, and audit status display). |
 

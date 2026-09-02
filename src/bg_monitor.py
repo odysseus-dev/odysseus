@@ -16,6 +16,10 @@ import logging
 
 from src import bg_jobs
 from src.prompt_security import untrusted_context_message
+from src.execution_sandbox import (
+    SandboxNetworkProfile,
+    network_profile_from_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +40,12 @@ def _background_result_message(rec):
     return untrusted_context_message("background job output", inject)
 
 
-async def _drain_agent(sess, messages):
+async def _drain_agent(
+    sess,
+    messages,
+    *,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
+):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
@@ -51,6 +60,7 @@ async def _drain_agent(sess, messages):
         session_id=sess.id,
         max_rounds=_FOLLOWUP_MAX_ROUNDS,
         owner=getattr(sess, "owner", None),
+        network_profile=network_profile,
     ):
         if not chunk.startswith("data: "):
             continue
@@ -121,7 +131,11 @@ async def _run_followup(rec: dict) -> bool:
     context = sess.get_context_messages()
     context.append(_background_result_message(rec))
 
-    full, tool_events = await _drain_agent(sess, context)
+    full, tool_events = await _drain_agent(
+        sess,
+        context,
+        network_profile=network_profile_from_snapshot(rec.get("network_profile")),
+    )
 
     # Persist ONLY the assistant continuation so it renders as a normal agent
     # turn — a standard chat bubble plus `tool_events` that the frontend
@@ -135,6 +149,8 @@ async def _run_followup(rec: dict) -> bool:
             "model": sess.model,
             "bg_job_id": rec["id"],
             "bg_result": bg_jobs.result_text(rec)[:4000],
+            "execution_mode": rec.get("execution_mode", "sandbox"),
+            "execution_warning": rec.get("warning") or "",
         },
     ))
     sm.save_sessions()

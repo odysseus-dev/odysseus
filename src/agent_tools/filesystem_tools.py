@@ -658,20 +658,69 @@ class GrepTool:
             out += f"\n... [capped at {max_hits} matches]"
         return {"output": _truncate(out), "exit_code": 0}
 
+def _process_workspace_contract(
+    *,
+    workspace_selected: bool,
+    execution_mode,
+    network_profile,
+) -> str:
+    from src.execution_sandbox import SandboxNetworkProfile
+    from src.process_execution import ProcessExecutionMode
+
+    network = (
+        "brokered HTTP(S) only"
+        if network_profile is SandboxNetworkProfile.BROKERED_ONLY
+        else "networkless"
+    )
+    if execution_mode is ProcessExecutionMode.FULL_ACCESS:
+        boundary = (
+            "Process mode: Full Access (explicitly confirmed). The workspace is "
+            "the starting directory, but Bash, Python, and detached processes can "
+            "reach files available to the Odysseus service user."
+        )
+    elif workspace_selected:
+        boundary = (
+            "Process mode: Sandbox. Bash, Python, and detached processes are "
+            "confined to this workspace."
+        )
+    else:
+        boundary = (
+            "Process mode: Sandbox. Bash, Python, and detached processes are "
+            "confined to the default agent workspace."
+        )
+    return f"{boundary} Effective process network profile: {network}."
+
+
 class GetWorkspaceTool:
-    """Report the active workspace folder (no args). File tools are confined to
-    it; the shell starts there (cwd) but is NOT sandboxed."""
+    """Report the workspace plus the effective process boundary for this turn."""
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import get_active_workspace
+        from src.execution_sandbox import SandboxNetworkProfile
+        from src.process_execution import configured_process_execution_mode
+
         ws = get_active_workspace()
+        execution_mode = configured_process_execution_mode()
+        network_profile = ctx.get(
+            "network_profile", SandboxNetworkProfile.NETWORKLESS
+        )
+        if not isinstance(network_profile, SandboxNetworkProfile):
+            network_profile = SandboxNetworkProfile.NETWORKLESS
+        contract = _process_workspace_contract(
+            workspace_selected=bool(ws),
+            execution_mode=execution_mode,
+            network_profile=network_profile,
+        )
         if ws:
             return {
-                "output": f"{ws}\n(File tools are confined to this folder; the shell starts "
-                          f"here but is not sandboxed and can reach outside it.)",
+                "output": f"{ws}\nFile tools are confined to this folder. {contract}",
                 "exit_code": 0,
+                "execution_mode": execution_mode.value,
+                "network_profile": network_profile.value,
             }
         return {
             "output": "No workspace is set. File tools use the default allowed roots; "
-                      "resolve paths from the user or use absolute paths.",
+                      f"resolve paths from the user or use absolute paths. {contract}",
             "exit_code": 0,
+            "execution_mode": execution_mode.value,
+            "network_profile": network_profile.value,
         }

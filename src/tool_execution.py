@@ -29,10 +29,15 @@ from src.tool_security import (
 )
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
+from src.execution_sandbox import SandboxNetworkProfile
 from src.tool_policy import ToolPolicy
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.constants import (
+    AGENT_WORKSPACE_DIR,
+    MAX_OUTPUT_CHARS,
+    MAX_READ_CHARS,
+    MAX_DIFF_LINES,
+)
 from src.tool_utils import _truncate, get_mcp_manager
-
 
 class _MissingToolSecurityContext:
     pass
@@ -45,12 +50,11 @@ class _NoToolSecurityContext:
 _MISSING_TOOL_SECURITY_CONTEXT = _MissingToolSecurityContext()
 NO_TOOL_SECURITY_CONTEXT = _NoToolSecurityContext()
 
-# Persistent working directory for agent subprocesses.
-# Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
-# (/app/data) and the local data directory for manual installs.
-# Using this as cwd and HOME prevents the agent from silently creating files
-# in ephemeral container layers that are lost on the next rebuild.
-_AGENT_WORKDIR = DATA_DIR
+# Dedicated persistent workspace for agent subprocesses when the user did not
+# select an explicit workspace.  Keeping it below (rather than equal to)
+# DATA_DIR lets the process sandbox mount this directory without exposing app
+# databases, auth state, uploads, logs, or provider credentials.
+_AGENT_WORKDIR = AGENT_WORKSPACE_DIR
 
 
 
@@ -343,9 +347,8 @@ def _owner_is_admin(owner: Optional[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 # Map legacy tool names -> (MCP server_id, MCP tool_name)
+_PROCESS_TOOLS = frozenset({"bash", "python"})
 _MCP_TOOL_MAP = {
-    "bash":           ("bash",       "bash"),
-    "python":         ("python",     "python"),
     "read_file":      ("filesystem", "read_file"),
     "write_file":     ("filesystem", "write_file"),
     "web_search":     ("web_search", "web_search"),
@@ -408,8 +411,6 @@ def _parse_write_file(content: str) -> Dict:
 
 
 _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
-    "bash":           lambda c: {"command": c},
-    "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
     "web_fetch":      lambda c: {"url": c.split("\n")[0].strip()},
     "read_file":      lambda c: {"path": c.split("\n")[0].strip()},
@@ -463,11 +464,17 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
     if not mcp:
-        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
+        return await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            network_profile=network_profile,
+        ) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
@@ -476,7 +483,12 @@ async def _call_mcp_tool(
 
     # If MCP server not connected, try direct fallback
     if isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
-        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        fallback = await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            network_profile=network_profile,
+        )
         if fallback:
             return fallback
 
@@ -536,21 +548,14 @@ async def _direct_fallback(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Optional[Dict]:
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
-    }
-
     try:
         ctx = {
             "progress_cb": progress_cb,
-            "subproc_env": _subproc_env,
             "session_id": session_id,
             "owner": owner,
+            "network_profile": network_profile,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -604,6 +609,7 @@ async def execute_tool_block(
         | _MissingToolSecurityContext
     ) = _MISSING_TOOL_SECURITY_CONTEXT,
     exact_approval: Optional[ExactToolApproval] = None,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -718,6 +724,7 @@ async def execute_tool_block(
             owner=owner,
             progress_cb=progress_cb,
             tool_policy=tool_policy,
+            network_profile=network_profile,
             approved_document_id=(
                 exact_approval.pending.document_id
                 if approval_claimed
@@ -752,6 +759,7 @@ async def _execute_tool_block_impl(
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     tool_policy: Optional[Any] = None,
+    network_profile: SandboxNetworkProfile = SandboxNetworkProfile.NETWORKLESS,
     approved_document_id: Optional[str] = None,
     approved_document_version: Optional[int] = None,
     approved_document_digest: Optional[str] = None,
@@ -871,7 +879,23 @@ async def _execute_tool_block_impl(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            try:
+                rec = await asyncio.to_thread(
+                    bg_jobs.launch,
+                    _bg_cmd,
+                    session_id=session_id,
+                    cwd=agent_cwd(),
+                    network_profile=network_profile,
+                )
+            except Exception as exc:
+                return (
+                    "bash (background): BLOCKED",
+                    {
+                        "error": f"Unable to launch sandboxed background job: {exc}",
+                        "exit_code": 1,
+                        "blocked": True,
+                    },
+                )
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
@@ -886,23 +910,53 @@ async def _execute_tool_block_impl(
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
+                "execution_mode": rec.get("execution_mode", "sandbox"),
             }
+            if rec.get("warning"):
+                result["warning"] = rec["warning"]
             logger.info(f"Tool executed: {desc} -> bg job {rec['id']}")
             return desc, result
 
-    # Route MCP-extracted tools through the MCP manager. Forward
-    # the progress callback so long-running subprocess tools
-    # (bash, python) can stream `tool_progress` events to the UI.
-    if tool in _MCP_TOOL_MAP:
+    # Process tools have a native sandbox boundary and must never be
+    # intercepted by a configured MCP server with the same name.
+    if tool in _PROCESS_TOOLS:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+        result = await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            session_id=session_id,
+            owner=owner,
+            network_profile=network_profile,
+        ) or {
+            "error": f"{tool}: execution failed",
+            "exit_code": 1,
+            "blocked": True,
+        }
+    # Route remaining MCP-extracted tools through the MCP manager.
+    elif tool in _MCP_TOOL_MAP:
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"{tool}: {first_line}"
+        result = await _call_mcp_tool(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            network_profile=network_profile,
+        )
     elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+        result = (
+            await _direct_fallback(
+                tool,
+                content,
+                progress_cb=progress_cb,
+                network_profile=network_profile,
+            )
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+        )
     elif tool in ("apply_patch", "todowrite"):
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}" if first_line else tool
@@ -1108,7 +1162,12 @@ async def _execute_tool_block_impl(
     elif tool in dynamic_handlers:
         first_line = content.split(chr(10))[0][:80]
         desc = f"registry: {tool} {first_line}".strip()
-        res = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        res = await _direct_fallback(
+            tool,
+            content,
+            progress_cb=progress_cb,
+            network_profile=network_profile,
+        )
 
         if isinstance(res, tuple):
             desc, result = res
