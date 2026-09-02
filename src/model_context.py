@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import ipaddress
 import logging
+import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -230,6 +231,9 @@ KNOWN_CONTEXT_WINDOWS = {
     'wizard': 32768,
     'openchat': 8192,
     'solar': 32768,
+
+    # --- Liquid ---
+    'lfm': 32768,
 }
 
 # ---------------------------------------------------------------------------
@@ -473,9 +477,26 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         return result, True
     if api_ctx:
         return api_ctx, True
+
+    try:
+        _local_ctx_max = int(os.environ.get("ODYSSEUS_LOCAL_CONTEXT_MAX", "4096"))
+    except (ValueError, TypeError):
+        _local_ctx_max = 4096
+
     if known:
+        if is_local_endpoint(endpoint_url):
+            # Local endpoints running known models often default to 2048 or 4096 n_ctx.
+            # Avoid using the native large window (e.g. 64k/131k) to prevent HTTP 400 errors.
+            clamped = min(known, _local_ctx_max)
+            logger.info(f"Local endpoint for {model} using clamped known context: {clamped} (native max: {known})")
+            return clamped, True
         logger.info(f"Using known context window for {model}: {known}")
         return known, True
+
+    if is_local_endpoint(endpoint_url):
+        # Local endpoints running unknown models generally default to 2048 or 4096.
+        logger.warning(f"Unknown context window for local model {model}, falling back to {_local_ctx_max}")
+        return _local_ctx_max, True
 
     return DEFAULT_CONTEXT, False
 
