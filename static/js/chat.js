@@ -36,6 +36,7 @@ import {
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
 import { loadPanel } from './panels.js';
+import workspaceModule from './workspace.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -1922,7 +1923,8 @@ import { loadPanel } from './panels.js';
       if (isIncognito) {
         fd.append('incognito', 'true');
       }
-      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      await workspaceModule.whenWorkspaceReady();
+      const _ws = workspaceModule.getWorkspace();
       if (_ws) {
         fd.append('workspace', _ws);
       }
@@ -3234,10 +3236,10 @@ import { loadPanel } from './panels.js';
                 const _wsPath = (json.data && json.data.path) || '';
                 import('./workspace.js').then((m) => {
                   const ws = m.default || m;
-                  if (ws && ws.setWorkspace) ws.setWorkspace('');
+                  if (ws && ws.clearWorkspace) ws.clearWorkspace({ quiet: true, localOnFailure: true });
                 });
                 uiModule.showToast(
-                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
+                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; the saved selection was cleared`,
                   6000
                 );
                 continue;

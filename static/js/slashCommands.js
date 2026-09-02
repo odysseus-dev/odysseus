@@ -1256,6 +1256,7 @@ async function _cmdToggleDoc(args, ctx) {
 // Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
 // show / set <path> / clear / pick (open the directory browser).
 async function _cmdWorkspace(args, ctx) {
+  await workspaceModule.whenWorkspaceReady();
   const sub = (args[0] || '').toLowerCase();
   const rest = args.slice(1).join(' ').trim();
   const cur = workspaceModule.getWorkspace();
@@ -1268,10 +1269,9 @@ async function _cmdWorkspace(args, ctx) {
     // Validate server-side before persisting so the pill never claims a
     // workspace the backend will refuse to bind (typo, file path, deleted
     // folder, sensitive dir, filesystem root).
-    workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
-      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
-      else slashReply(`Not a usable workspace folder on the Odysseus backend: <code>${uiModule.esc(rest)}</code>. If Odysseus is running in Docker, use the container path, usually <code>/app</code>, or use <code>/workspace pick</code>.`);
-    });
+    const result = await workspaceModule.vetAndSetWorkspace(rest);
+    if (result.ok) slashReply(`Workspace set: <code>${uiModule.esc(result.path)}</code>`);
+    else slashReply(`${uiModule.esc(result.error || 'Not a usable workspace folder.')} Use <code>/workspace pick</code>${result.can_create ? ' to create it safely.' : '.'}`);
     return true;
   }
   if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {

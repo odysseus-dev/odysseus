@@ -63,7 +63,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 # Core imports
 from core.constants import (
-    BASE_DIR, STATIC_DIR, SESSIONS_FILE,
+    AGENT_WORKSPACE_DIR, BASE_DIR, STATIC_DIR, SESSIONS_FILE,
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
@@ -1032,6 +1032,10 @@ app.router.lifespan_context = _lifespan
 async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
+    try:
+        os.makedirs(AGENT_WORKSPACE_DIR, mode=0o700, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to create the default agent workspace: %s", exc)
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.

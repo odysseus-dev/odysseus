@@ -12,6 +12,7 @@ the get_workspace tool, no-leak across calls, and the admin-gated browse route.
 """
 import json
 import os
+import shutil
 import tempfile
 from types import SimpleNamespace
 
@@ -267,6 +268,11 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    shutil.which("bwrap") is None
+    or not os.path.isfile("/usr/local/libexec/odysseus-seccomp-launcher"),
+    reason="the shipped Bubblewrap and trusted launcher are required",
+)
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
@@ -279,7 +285,7 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
 @pytest.mark.asyncio
 async def test_get_workspace_tool(ws, admin):
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a", workspace=ws)
-    assert r["exit_code"] == 0 and r["output"].startswith(ws) and "not sandboxed" in r["output"]
+    assert r["exit_code"] == 0 and r["output"].startswith(ws) and "process sandbox" in r["output"]
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a")  # none active
     assert r["exit_code"] == 0 and "No workspace" in r["output"]
 
@@ -430,13 +436,14 @@ def test_workspace_coding_mode_prompt_is_injected(monkeypatch):
 
 # ── browse route is admin-gated ─────────────────────────────────────────
 
-def test_browse_is_admin_gated(monkeypatch):
+def test_browse_is_admin_gated(monkeypatch, tmp_path):
     from fastapi import HTTPException
     import routes.workspace_routes as wr
 
     router = wr.setup_workspace_routes()
     browse = next(r.endpoint for r in router.routes if r.path == "/api/workspace/browse")
 
+    monkeypatch.setattr(wr, "AGENT_WORKSPACE_DIR", str(tmp_path / "agent_workspace"))
     monkeypatch.setattr(wr, "get_current_user", lambda req: "bob")
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: False)
     with pytest.raises(HTTPException) as ei:
@@ -456,14 +463,45 @@ def test_vet_workspace_accepts_normal_dir(ws):
     assert vet_workspace(ws) == os.path.realpath(ws)
 
 
-def test_vet_workspace_rejects_sensitive_root(tmp_path):
+def test_vet_workspace_applies_process_sandbox_policy(ws, monkeypatch):
+    import src.execution_sandbox as execution_sandbox
+    from src.tool_execution import vet_workspace
+
+    seen = []
+
+    def reject_for_process_sandbox(path):
+        seen.append(path)
+        return None, "process sandbox policy rejected this workspace"
+
+    monkeypatch.setattr(
+        execution_sandbox,
+        "validate_sandbox_workspace_path",
+        reject_for_process_sandbox,
+    )
+
+    assert vet_workspace(ws) is None
+    assert seen == [os.path.realpath(ws)]
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".ssh",
+        ".codex",
+        ".git",
+        ".config/gh",
+        ".env.local",
+        ".npmrc",
+    ],
+)
+def test_vet_workspace_rejects_sensitive_root(tmp_path, relative):
     # The resolver deny-lists sensitive paths inside the workspace, but the
     # empty-path search root is the workspace itself - a sensitive root must
     # be rejected before it is bound or `ls` with no path would list it.
     from src.tool_execution import vet_workspace
-    ssh_dir = tmp_path / ".ssh"
-    ssh_dir.mkdir()
-    assert vet_workspace(str(ssh_dir)) is None
+    sensitive_dir = tmp_path / relative
+    sensitive_dir.mkdir(parents=True)
+    assert vet_workspace(str(sensitive_dir)) is None
 
 
 def test_vet_workspace_rejects_nondir_and_empty(ws):
@@ -481,24 +519,30 @@ def test_vet_workspace_rejects_filesystem_root():
     assert vet_workspace("/") is None
 
 
-def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch):
+def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch, tmp_path):
     import routes.workspace_routes as wr
 
     router = wr.setup_workspace_routes()
     browse = next(r.endpoint for r in router.routes if r.path == "/api/workspace/browse")
     vet = next(r.endpoint for r in router.routes if r.path == "/api/workspace/vet")
 
+    monkeypatch.setattr(wr, "AGENT_WORKSPACE_DIR", str(tmp_path / "agent_workspace"))
     monkeypatch.setattr(wr, "get_current_user", lambda req: "admin")
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
 
     out = browse(request=object(), path="/")
     assert out["selectable"] is False
     out = browse(request=object(), path=os.path.expanduser("~"))
-    assert out["selectable"] is True
+    assert out["selectable"] is False
+    assert "broad" in out["selectable_reason"].lower()
 
-    assert vet(request=object(), path="/") == {"ok": False, "path": None}
+    out = vet(request=object(), path="/")
+    assert out["ok"] is False and out["path"] is None
+    assert "root" in out["error"].lower() or "broad" in out["error"].lower()
     home = os.path.realpath(os.path.expanduser("~"))
-    assert vet(request=object(), path="~") == {"ok": True, "path": home}
+    out = vet(request=object(), path="~")
+    assert out["ok"] is False and out["path"] is None
+    assert "broad" in out["error"].lower()
 
     from fastapi import HTTPException
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: False)
