@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import get_route_path
 
 from src.owner_identity import INTERNAL_TOOL_USER, auth_disabled
@@ -45,6 +45,9 @@ def path_is_route_or_child(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
+CODEX_COOKBOOK_PREFIX = "/api/codex/cookbook"
+
+
 def is_cors_preflight(method: str, headers) -> bool:
     """True for a genuine CORS preflight: an OPTIONS request carrying the
     Access-Control-Request-Method header. Such requests are credential-less by
@@ -52,6 +55,100 @@ def is_cors_preflight(method: str, headers) -> bool:
     401s the preflight and breaks every cross-origin browser/WebView client.
     Pure so it can be unit-tested without standing up the app."""
     return method == "OPTIONS" and "access-control-request-method" in headers
+
+
+def is_codex_cookbook_path(path: str) -> bool:
+    """Match only the duplicate Codex Cookbook route family."""
+    return path == CODEX_COOKBOOK_PREFIX or path.startswith(
+        f"{CODEX_COOKBOOK_PREFIX}/"
+    )
+
+
+def is_odysseus_bearer_authorization(value: str | None) -> bool:
+    """Recognize an Odysseus Bearer value, including proxy-combined fields."""
+    if not isinstance(value, str):
+        return False
+    for candidate in value.split(","):
+        parts = candidate.strip().split(None, 1)
+        if (
+            len(parts) == 2
+            and parts[0].casefold() == "bearer"
+            and parts[1].startswith("ody_")
+        ):
+            return True
+    return False
+
+
+def _header_values(headers, name: str) -> list[str]:
+    """Return every field value, with a mapping fallback for direct callers."""
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        values = getlist(name)
+    else:
+        value = headers.get(name)
+        values = value if isinstance(value, (list, tuple)) else [value]
+    return [value for value in values if isinstance(value, str)]
+
+
+def _internal_header_matches(value: str) -> bool:
+    """Compare raw or proxy-combined values without obs-text type failures."""
+    candidates = [value]
+    trimmed_value = value.strip(" \t")
+    if trimmed_value != value:
+        candidates.append(trimmed_value)
+    if "," in value:
+        for part in value.split(","):
+            candidates.append(part)
+            trimmed_part = part.strip(" \t")
+            if trimmed_part != part:
+                candidates.append(trimmed_part)
+    try:
+        expected = INTERNAL_TOOL_TOKEN.encode("utf-8")
+    except (AttributeError, UnicodeError):
+        return False
+    for candidate in candidates:
+        try:
+            if secrets.compare_digest(candidate.encode("utf-8"), expected):
+                return True
+        except (AttributeError, TypeError, UnicodeError):
+            continue
+    return False
+
+
+def require_codex_cookbook_browser(request: Request) -> None:
+    """Reject bearer and internal-tool principals at the shared boundary."""
+    current_user = getattr(request.state, "current_user", None)
+    if (
+        getattr(request.state, "api_token", False)
+        or current_user == "api"
+        or current_user == INTERNAL_TOOL_USER
+    ):
+        raise HTTPException(403, "Forbidden")
+    if any(
+        is_odysseus_bearer_authorization(value)
+        for value in _header_values(request.headers, "authorization")
+    ):
+        raise HTTPException(403, "Forbidden")
+    if any(
+        _internal_header_matches(value)
+        for value in _header_values(request.headers, INTERNAL_TOOL_HEADER)
+    ):
+        raise HTTPException(403, "Forbidden")
+
+
+class CodexCookbookBoundaryMiddleware(BaseHTTPMiddleware):
+    """Apply the Codex Cookbook principal gate before request-body parsing."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if is_codex_cookbook_path(get_route_path(request.scope)):
+            try:
+                require_codex_cookbook_browser(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
+                )
+        return await call_next(request)
 
 
 def require_admin(request: Request):
