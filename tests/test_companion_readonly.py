@@ -117,12 +117,16 @@ def _ep(
     )
 
 
-def _models_route():
+def _companion_route(path):
     for route in setup_companion_routes().routes:
-        if getattr(route, "path", "") == "/api/companion/models":
+        if getattr(route, "path", "") == path:
             assert "GET" in getattr(route, "methods", set())
             return route.endpoint
-    raise AssertionError("GET /api/companion/models route not found")
+    raise AssertionError(f"GET {path} route not found")
+
+
+def _models_route():
+    return _companion_route("/api/companion/models")
 
 
 def _call_models_route(monkeypatch, rows, request):
@@ -254,6 +258,38 @@ def test_models_route_rejects_api_token_without_chat_scope(monkeypatch):
 
     assert exc.value.status_code == 403
     assert "chat scope" in exc.value.detail
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/companion/ping",
+        "/api/companion/info",
+        "/api/companion/models",
+    ],
+)
+def test_all_companion_bearer_reads_reject_tokens_without_chat_scope(path):
+    with pytest.raises(HTTPException) as exc:
+        _companion_route(path)(
+            _request(
+                api_token=True,
+                api_token_owner="alice",
+                api_token_scopes=["todos:read"],
+                current_user="api",
+            )
+        )
+
+    assert exc.value.status_code == 403
+    assert "chat scope" in exc.value.detail
+
+
+@pytest.mark.parametrize("path", ["/api/companion/ping", "/api/companion/info"])
+def test_companion_identity_reads_still_allow_cookie_sessions(path):
+    result = _companion_route(path)(
+        _request(api_token=False, current_user="alice")
+    )
+
+    assert isinstance(result, dict)
 
 
 def test_models_route_unresolved_owner_returns_only_shared_rows(monkeypatch):

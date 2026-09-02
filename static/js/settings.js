@@ -3513,6 +3513,7 @@ async function initUnifiedIntegrations() {
     }
     for (const tok of (Array.isArray(tokenRes) ? tokenRes : [])) {
       const scopes = tok.scopes || [];
+      const retiredScopes = tok.retired_scopes || [];
       const lowerName = (tok.name || '').toLowerCase();
       let agentType = null;
       if (lowerName.startsWith('claude agent')) agentType = 'claude';
@@ -3522,7 +3523,10 @@ async function initUnifiedIntegrations() {
         agentType = 'codex';
       }
       if (!agentType) continue;
-      const detail = `${tok.token_prefix || 'token'}... - ${scopes.join(', ') || 'chat'}`;
+      const scopeDetail = scopes.length
+        ? scopes.join(', ')
+        : (retiredScopes.length ? `no active scopes; retired: ${retiredScopes.join(', ')}` : 'chat');
+      const detail = `${tok.token_prefix || 'token'}... - ${scopeDetail}`;
       items.push({ type: agentType, id: tok.id, name: tok.name || (agentType === 'claude' ? 'Claude Agent' : 'Codex Agent'), detail, enabled: true, data: tok });
     }
     // Vaultwarden removed as an integration option.
@@ -5086,8 +5090,6 @@ async function initUnifiedIntegrations() {
       { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
       { key: 'memory:read', label: 'Memory', detail: 'Read memory when enabled' },
       { key: 'memory:write', label: 'Memory write', detail: 'Write memory when enabled' },
-      { key: 'cookbook:read', label: 'Cookbook', detail: 'List cookbook tasks + tail their tmux output (debug a model serve from outside the UI)' },
-      { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Launch and stop cookbook serve tasks. Powerful: runs SSH commands on your configured servers, bounded by the same allowlist the UI uses (vllm/python3/sglang/llama-server/...)' },
     ];
     // Strict name-prefix match keeps Codex and Claude tokens in their own forms.
     const agentTokens = (Array.isArray(tokens) ? tokens : []).filter(tok =>
@@ -5100,7 +5102,6 @@ async function initUnifiedIntegrations() {
       email: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2 6 12 13 22 6"/></svg>',
       calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
       memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2a2.5 2.5 0 0 0-2.5 2.5 2.5 2.5 0 0 0-2.5 2.5A2.5 2.5 0 0 0 2 9.5v3A2.5 2.5 0 0 0 4.5 15a2.5 2.5 0 0 0 2.5 2.5A2.5 2.5 0 0 0 9.5 20H10V2z"/><path d="M14.5 2a2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1 2.5 2.5A2.5 2.5 0 0 1 22 9.5v3A2.5 2.5 0 0 1 19.5 15a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 14.5 20H14V2z"/></svg>',
-      cookbook: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
     };
     const _scopeNiceLabel = (label) => label.replace(/\s+(write|drafts?|send)$/i, '');
     const _scopeAction = (key) => (key.split(':')[1] || '').toLowerCase();
@@ -5127,6 +5128,11 @@ async function initUnifiedIntegrations() {
     };
     const origin = window.location.origin || '';
     const setupForToken = (token) => cfg.buildSetup(origin, token);
+    const retiredScopeNotice = (token) => {
+      const retired = Array.isArray(token.retired_scopes) ? token.retired_scopes : [];
+      if (!retired.length) return '';
+      return `<div id="uf-codex-retired-scopes" style="font-size:11px;line-height:1.4;margin-bottom:7px;padding:6px 8px;border-radius:4px;background:rgba(255,184,0,0.08);color:var(--fg-muted,#888);">Retired permissions (${retired.map(esc).join(', ')}) are inactive and will be removed the next time permissions are changed.</div>`;
+    };
 
     // Inline editor for the existing token the user clicked into (current).
     // Shows the rename input, the prefix/last-used, and scope toggles that
@@ -5139,6 +5145,7 @@ async function initUnifiedIntegrations() {
           <span style="font-size:10px;opacity:0.55;">${esc(current.token_prefix || 'token')}...${current.last_used_at ? ` · Last used ${new Date(current.last_used_at).toLocaleDateString()}` : ' · Never used'}</span>
         </div>
         <div style="font-size:11px;font-weight:600;opacity:0.62;margin-bottom:4px;">Permissions</div>
+        ${retiredScopeNotice(current)}
         ${scopeToggles(current)}
         <div id="uf-codex-existing-msg" style="font-size:11px;min-height:14px;margin-top:4px;"></div>
       </div>` : '';
@@ -5246,6 +5253,7 @@ async function initUnifiedIntegrations() {
             });
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.detail || 'Failed');
+            if (Array.isArray(d.retired_scopes) && d.retired_scopes.length === 0) el('uf-codex-retired-scopes')?.remove();
             if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; setTimeout(() => { msg.textContent = ''; }, 1200); }
             notifyIntegrationsChanged();
           } catch (err) {

@@ -2525,8 +2525,6 @@ const _TOKEN_SCOPES = [
   { key: 'calendar:write',    label: 'Calendar write',    detail: 'Create and update calendar events' },
   { key: 'memory:read',       label: 'Memory read',       detail: 'Read memory when enabled' },
   { key: 'memory:write',      label: 'Memory write',      detail: 'Write memory when enabled' },
-  { key: 'cookbook:read',     label: 'Cookbook read',     detail: 'List cookbook tasks + tail their tmux output' },
-  { key: 'cookbook:launch',   label: 'Cookbook launch',   detail: 'Launch and stop cookbook serve tasks' },
 ];
 
 function _renderTokenScopeRows(t) {
@@ -2545,6 +2543,12 @@ function _renderTokenScopeRows(t) {
         <label class="admin-switch" style="margin-left:auto;flex-shrink:0;"><input type="checkbox" class="adm-tok-scope" data-token-id="${esc(t.id)}" data-scope="${esc(s.key)}" ${have.has(s.key) ? 'checked' : ''}><span class="admin-slider"></span></label>
       </label>`;
   }).join('');
+}
+
+function _renderRetiredTokenScopes(t) {
+  const retired = Array.isArray(t.retired_scopes) ? t.retired_scopes : [];
+  if (!retired.length) return '';
+  return `<div data-adm-tok-retired="${esc(t.id)}" style="font-size:11px;line-height:1.4;margin-bottom:7px;padding:6px 8px;border-radius:4px;background:rgba(255,184,0,0.08);color:var(--fg-muted,#888);">Retired permissions (${retired.map(esc).join(', ')}) are inactive and will be removed the next time permissions are changed.</div>`;
 }
 
 async function loadTokens() {
@@ -2567,6 +2571,7 @@ async function loadTokens() {
           <button class="admin-btn-delete" data-adm-del-token="${esc(t.id)}">Revoke</button>
         </div>
         <div data-adm-tok-perm="${esc(t.id)}" style="display:none;margin-top:8px;padding:8px 4px 0;border-top:1px solid var(--border);">
+          ${_renderRetiredTokenScopes(t)}
           ${_renderTokenScopeRows(t)}
           <div class="adm-tok-scope-msg" data-token-id="${esc(t.id)}" style="font-size:11px;min-height:14px;margin-top:4px;"></div>
         </div>
@@ -2626,6 +2631,9 @@ async function loadTokens() {
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.detail || 'Failed');
+          if (Array.isArray(d.retired_scopes) && d.retired_scopes.length === 0) {
+            list.querySelector(`[data-adm-tok-retired="${tokenId}"]`)?.remove();
+          }
           if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; setTimeout(() => { msg.textContent = ''; }, 1200); }
         } catch (err) {
           cb.checked = !cb.checked;

@@ -8,26 +8,13 @@ from fastapi import APIRouter, HTTPException, Request, Form
 
 from core.database import get_db_session, ApiToken
 from core.middleware import require_admin
+from src.api_token_capabilities import ALL_API_TOKEN_SCOPES
 from src.auth_helpers import get_current_user
 
 MAX_NAME_LEN = 100
 DEFAULT_SCOPES = "chat"
-ALLOWED_SCOPES = {
-    "chat",
-    "todos:read",
-    "todos:write",
-    "documents:read",
-    "documents:write",
-    "email:read",
-    "email:draft",
-    "email:send",
-    "calendar:read",
-    "calendar:write",
-    "memory:read",
-    "memory:write",
-    "cookbook:read",
-    "cookbook:launch",
-}
+ALLOWED_SCOPES = ALL_API_TOKEN_SCOPES
+RETIRED_API_TOKEN_SCOPES = frozenset({"cookbook:read", "cookbook:launch"})
 TOKEN_PROFILES = {
     "chat": ["chat"],
     "codex_todos": ["todos:read", "todos:write"],
@@ -36,7 +23,13 @@ TOKEN_PROFILES = {
 }
 
 
-def _normalize_scopes(scopes: str | list[str] | None = None, profile: str | None = None) -> list[str]:
+def _normalize_scopes(
+    scopes: str | list[str] | None = None,
+    profile: str | None = None,
+    *,
+    drop_retired: bool = False,
+    require_active: bool = False,
+) -> list[str]:
     profile = profile if isinstance(profile, str) else None
     profile_key = (profile or "").strip()
     if profile_key:
@@ -48,10 +41,12 @@ def _normalize_scopes(scopes: str | list[str] | None = None, profile: str | None
     elif isinstance(scopes, str) and scopes:
         requested = [s.strip() for s in scopes.replace(" ", ",").split(",") if s.strip()]
     else:
-        requested = [DEFAULT_SCOPES]
+        requested = [] if require_active else [DEFAULT_SCOPES]
 
     normalized = []
     for scope in requested:
+        if drop_retired and scope in RETIRED_API_TOKEN_SCOPES:
+            continue
         if scope not in ALLOWED_SCOPES:
             raise HTTPException(400, f"Unknown token scope: {scope}")
         if scope not in normalized:
@@ -68,9 +63,27 @@ def _normalize_scopes(scopes: str | list[str] | None = None, profile: str | None
     ensure_before("calendar:write", "calendar:read")
     ensure_before("memory:write", "memory:read")
     ensure_before("email:draft", "email:read")
-    ensure_before("cookbook:launch", "cookbook:read")
 
-    return normalized or [DEFAULT_SCOPES]
+    if normalized:
+        return normalized
+    if require_active:
+        raise HTTPException(400, "At least one active token scope is required")
+    return [DEFAULT_SCOPES]
+
+
+def _display_scopes(stored_scopes: str | None) -> tuple[list[str], list[str]]:
+    values = [
+        scope.strip()
+        for scope in (stored_scopes or DEFAULT_SCOPES).split(",")
+        if scope.strip()
+    ]
+    active: list[str] = []
+    retired: list[str] = []
+    for scope in values:
+        target = retired if scope in RETIRED_API_TOKEN_SCOPES else active
+        if scope not in target:
+            target.append(scope)
+    return active, retired
 
 
 def setup_api_token_routes() -> APIRouter:
@@ -81,19 +94,21 @@ def setup_api_token_routes() -> APIRouter:
         require_admin(request)
         with get_db_session() as db:
             tokens = db.query(ApiToken).all()
-            return [
-                {
-                    "id": t.id,
-                    "name": t.name,
-                    "owner": getattr(t, "owner", None),
-                    "token_prefix": t.token_prefix,
-                    "scopes": [s.strip() for s in (getattr(t, "scopes", "") or DEFAULT_SCOPES).split(",") if s.strip()],
-                    "is_active": t.is_active,
-                    "last_used_at": t.last_used_at.isoformat() if t.last_used_at else None,
-                    "created_at": t.created_at.isoformat() if t.created_at else None,
-                }
-                for t in tokens
-            ]
+            result = []
+            for token in tokens:
+                active_scopes, retired_scopes = _display_scopes(getattr(token, "scopes", ""))
+                result.append({
+                    "id": token.id,
+                    "name": token.name,
+                    "owner": getattr(token, "owner", None),
+                    "token_prefix": token.token_prefix,
+                    "scopes": active_scopes,
+                    "retired_scopes": retired_scopes,
+                    "is_active": token.is_active,
+                    "last_used_at": token.last_used_at.isoformat() if token.last_used_at else None,
+                    "created_at": token.created_at.isoformat() if token.created_at else None,
+                })
+            return result
 
     def _invalidate_cache(request: Request):
         """Tell the auth middleware its cached token map is stale."""
@@ -175,19 +190,20 @@ def setup_api_token_routes() -> APIRouter:
             # not silently reset the token to the default scope — that dropped
             # every previously granted scope.
             if "scopes" in payload:
-                token.scopes = ",".join(_normalize_scopes(payload.get("scopes")))
+                token.scopes = ",".join(_normalize_scopes(
+                    payload.get("scopes"),
+                    drop_retired=True,
+                    require_active=True,
+                ))
             db.add(token)
-            current_scopes = [
-                s.strip()
-                for s in (getattr(token, "scopes", "") or DEFAULT_SCOPES).split(",")
-                if s.strip()
-            ]
+            current_scopes, retired_scopes = _display_scopes(getattr(token, "scopes", ""))
             response = {
                 "id": token_id,
                 "name": getattr(token, "name", ""),
                 "owner": getattr(token, "owner", None),
                 "token_prefix": getattr(token, "token_prefix", ""),
                 "scopes": current_scopes,
+                "retired_scopes": retired_scopes,
             }
         _invalidate_cache(request)
         return response
