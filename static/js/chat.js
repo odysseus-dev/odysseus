@@ -4177,7 +4177,10 @@ import { loadPanel } from './panels.js';
             const item = document.createElement('div');
             item.className = 'rag-source-item';
             const _esc = uiModule.esc;
-            item.innerHTML = `<strong>${_esc(src.filename)}</strong> <span class="rag-similarity">${(src.similarity * 100).toFixed(1)}%</span><div class="rag-snippet">${_esc(src.snippet)}</div>`;
+            // Provenance chips (project/org) render only when tagged (#5666).
+            const _tags = [src.project, src.org].filter(Boolean)
+              .map(t => `<span class="rag-source-tag">${_esc(t)}</span>`).join('');
+            item.innerHTML = `<strong>${_esc(src.filename)}</strong> <span class="rag-similarity">${(src.similarity * 100).toFixed(1)}%</span>${_tags}<div class="rag-snippet">${_esc(src.snippet)}</div>`;
             details.appendChild(item);
           });
           holder.querySelector('.body').appendChild(details);
