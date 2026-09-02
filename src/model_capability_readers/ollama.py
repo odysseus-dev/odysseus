@@ -8,11 +8,13 @@ from typing import Any
 from src import model_capabilities as mc
 from src.model_capability_readers.base import (
     ModelCapabilityRecord,
+    RuntimeContextAllocationRecord,
     VENDOR_OLLAMA,
     as_list,
     as_mapping,
     build_capability,
     compact_str,
+    identity_str,
     int_limit,
     merge_unique,
     model_id_from,
@@ -21,6 +23,9 @@ from src.model_capability_readers.base import (
 
 
 vendor = VENDOR_OLLAMA
+
+
+OLLAMA_PS_SHAPE_ID = "ollama.ps.v1"
 
 
 _CAPABILITY_MAP = {
@@ -59,17 +64,11 @@ def _family_from_ollama_capabilities(values: Any) -> str:
 
 
 def _parameters_mapping(value: Any) -> Mapping[str, Any]:
-    if isinstance(value, Mapping):
-        return value
-    text = compact_str(value)
-    if not text:
-        return {}
-    parsed: dict[str, str] = {}
-    for line in text.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2:
-            parsed[parts[0]] = parts[1]
-    return parsed
+    # `/api/show` currently serializes this field as Modelfile text.  Do not
+    # recover capability truth by reparsing that late text; prefer the native
+    # structured `model_info.*.context_length` shape.  Mapping support remains
+    # for compatible servers that already return structured parameters.
+    return value if isinstance(value, Mapping) else {}
 
 
 def _modalities_for_family(family: str, capabilities: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -115,6 +114,65 @@ def _limits_from_show(raw: Mapping[str, Any]) -> dict[str, Any]:
     return limits
 
 
+def _runtime_model_key(value: Any) -> str:
+    model_id = identity_str(value).casefold()
+    return model_id.removesuffix(":latest")
+
+
+def runtime_context_from_ps_payload(
+    model_id: str,
+    payload: Mapping[str, Any],
+    *,
+    endpoint_id: Any = "",
+    base_url: Any = "",
+) -> RuntimeContextAllocationRecord | None:
+    """Normalize one loaded model's allocation from Ollama ``GET /api/ps``.
+
+    Exact identity is preferred, with only Ollama's implicit ``:latest`` alias
+    normalized. Conflicting matching rows fail closed instead of choosing an
+    arbitrary allocation.
+    """
+
+    requested_id = identity_str(model_id)
+    requested_key = _runtime_model_key(requested_id)
+    if not requested_key:
+        return None
+
+    matches: list[tuple[int, Mapping[str, Any]]] = []
+    for item in as_list(as_mapping(payload).get("models")):
+        if not isinstance(item, Mapping):
+            continue
+        identities = tuple(
+            identity
+            for identity in (identity_str(item.get("model")), identity_str(item.get("name")))
+            if identity
+        )
+        if not any(_runtime_model_key(identity) == requested_key for identity in identities):
+            continue
+        context_tokens = int_limit(item.get("context_length"))
+        if context_tokens is not None:
+            matches.append((context_tokens, item))
+
+    allocations = {context_tokens for context_tokens, _item in matches}
+    if len(allocations) != 1:
+        return None
+
+    context_tokens, raw = matches[0]
+    return RuntimeContextAllocationRecord(
+        vendor=VENDOR_OLLAMA,
+        model_id=requested_id,
+        stable_model_id=stable_model_id_for(
+            VENDOR_OLLAMA,
+            requested_id,
+            endpoint_id=endpoint_id,
+            base_url=base_url,
+        ),
+        allocated_context_tokens=context_tokens,
+        runtime_shape_id=OLLAMA_PS_SHAPE_ID,
+        raw=raw,
+    )
+
+
 def record_from_show_payload(
     model_id: str,
     payload: Mapping[str, Any],
@@ -122,7 +180,7 @@ def record_from_show_payload(
     endpoint_id: Any = "",
     base_url: Any = "",
 ) -> ModelCapabilityRecord | None:
-    model_id = compact_str(model_id) or model_id_from(payload, "model", "name")
+    model_id = identity_str(model_id) or model_id_from(payload, "model", "name")
     if not model_id:
         return None
     capability_values = payload.get("capabilities")
