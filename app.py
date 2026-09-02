@@ -787,6 +787,9 @@ set_task_scheduler(task_scheduler)
 from routes.task.task_routes import setup_task_routes
 app.include_router(setup_task_routes(task_scheduler))
 
+from routes.notification_routes import setup_notification_routes
+app.include_router(setup_notification_routes())
+
 from routes.assistant_routes import setup_assistant_routes
 app.include_router(setup_assistant_routes(task_scheduler))
 
