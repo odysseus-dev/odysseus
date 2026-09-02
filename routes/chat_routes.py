@@ -956,7 +956,7 @@ def setup_chat_routes(
         ).strip()
         # Issue #3229: API callers send JSON, not FormData.  Read from the
         # JSON body as fallback so callers who send {"allow_bash": true}
-        # actually get bash enabled.
+        # actually get shell tools enabled.
         allow_bash = form_data.get("allow_bash") or (body or {}).get("allow_bash")
         allow_web_search = form_data.get("allow_web_search") or (body or {}).get("allow_web_search")
         use_rag = form_data.get("use_rag")
@@ -1192,7 +1192,7 @@ def setup_chat_routes(
                 # Restore only the coarse request toggle needed by the exact
                 # sealed action. Current privilege, global-disable, incognito,
                 # compare, and tool-policy gates still run.
-                if pending_tool_approval.tool_name == "bash":
+                if pending_tool_approval.tool_name in {"bash", "powershell"}:
                     allow_bash = "true"
                 if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
                     allow_web_search = "true"
@@ -1442,13 +1442,13 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
-        # Only disable bash when the caller *explicitly* set it to a falsy
+        # Only disable shell tools when the caller *explicitly* set it to a falsy
         # value. When unset (None), defer to per-user privilege checks below.
         # Web search is per-turn opt-in: either the chat pre-search setting
         # (`use_web=true`) or agent web toggle (`allow_web_search=true`) must
         # explicitly enable it.
         if allow_bash is not None and str(allow_bash).lower() != "true":
-            disabled_tools.add("bash")
+            disabled_tools.update({"bash", "powershell"})
         _explicit_web_intent = _explicit_web_intent or bool(_tool_intent and _tool_intent.category == "web")
         if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
             disabled_tools.update(WEB_TOOL_NAMES)
@@ -1457,7 +1457,7 @@ def setup_chat_routes(
             # tools or shell fallbacks. It can only use web_search/web_fetch
             # when the request's explicit web setting enabled them.
             disabled_tools.update({
-                "bash", "python",
+                "bash", "powershell", "python",
                 "search_chats", "manage_skills", "manage_memory",
                 "read_file", "write_file", "edit_file",
                 "create_document", "edit_document", "update_document",
@@ -1508,7 +1508,7 @@ def setup_chat_routes(
             _privs = request.app.state.auth_manager.get_privileges(_user)
         if _privs:
             if not _privs.get("can_use_bash", True):
-                disabled_tools.update({"bash", "python", "read_file", "write_file"})
+                disabled_tools.update({"bash", "powershell", "python", "read_file", "write_file"})
             if not _privs.get("can_use_browser", True):
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
             if not _privs.get("can_use_documents", True):
@@ -1535,7 +1535,7 @@ def setup_chat_routes(
         # (and looks broken when the shell is disabled).
         if auto_escalated and not _workspace_agent_intent:
             disabled_tools.update({
-                "bash", "python", "read_file", "write_file",
+                "bash", "powershell", "python", "read_file", "write_file",
             })
             if not _allow_browser_for_web_turn:
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
@@ -1554,9 +1554,9 @@ def setup_chat_routes(
                 "generate_image", "ui_control",
             }
             disabled_tools.update(_compare_strip)
-            # In chat mode compare, disable ALL agent tools (no bash, python, file ops)
+            # In chat mode compare, disable ALL agent tools (no shell, python, file ops)
             if chat_mode == 'chat':
-                disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
+                disabled_tools.update({"bash", "powershell", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
 
         # Plan mode: investigate read-only, propose a plan, don't mutate. Block
         # every tool not on the read-only allowlist. (stream_agent_loop enforces

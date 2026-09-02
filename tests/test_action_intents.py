@@ -63,6 +63,8 @@ def test_workspace_agent_requests_promote_to_shell_workspace():
         "debug the server logs",
         "run terminal-bench on this task",
         "inspect the traceback and patch the code",
+        "run Get-Command i in PowerShell",
+        "use pwsh to check the PATH",
     ]
     for prompt in prompts:
         intent = classify_tool_intent(prompt)

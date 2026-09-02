@@ -533,7 +533,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               currentToolBlock = null;
             } else {
               // Agent thread node — matches main chat style
-              const _toolLabels = { bash: 'Terminal', python: 'Python', web_search: 'Web Search', read_file: 'Read File', write_file: 'Write File' };
+              const _toolLabels = { bash: 'Terminal', powershell: 'PowerShell', python: 'Python', web_search: 'Web Search', read_file: 'Read File', write_file: 'Write File' };
               const toolLabel = _toolLabels[toolName.toLowerCase()] || toolName;
               const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${escapeHtml(cmd)}</pre>` : '';
               const node = document.createElement('div');
@@ -589,7 +589,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               if (currentToolBlock._waveInterval) { clearInterval(currentToolBlock._waveInterval); currentToolBlock._waveInterval = null; }
               const ok = (json.exit_code === 0 || json.exit_code == null);
               const cmd = json.command || '';
-              const _toolLabels2 = { bash: 'Terminal', python: 'Python', web_search: 'Web Search', read_file: 'Read File', write_file: 'Write File' };
+              const _toolLabels2 = { bash: 'Terminal', powershell: 'PowerShell', python: 'Python', web_search: 'Web Search', read_file: 'Read File', write_file: 'Write File' };
               const tLabel = _toolLabels2[(json.tool || '').toLowerCase()] || json.tool || '';
               let outHtml = '';
               if (json.output && json.output.trim()) {

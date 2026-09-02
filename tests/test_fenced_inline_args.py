@@ -45,6 +45,11 @@ def test_plain_bash_fence_still_parses():
     assert [(b.tool_type, b.content) for b in blocks] == [("bash", "echo hello")]
 
 
+def test_plain_powershell_fence_parses():
+    blocks = parse_tool_blocks('```powershell\nGet-Command i\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [("powershell", "Get-Command i")]
+
+
 def test_python3_language_hint_is_not_a_python_tool_call():
     # ```python3 must not prefix-match the "python" fence tag — without the
     # (?![\w-]) boundary it parsed as tool "python" with content "3\nprint(...)"
@@ -71,6 +76,11 @@ def test_markdown_info_string_is_not_executable_bash():
     assert blocks == [], blocks
 
 
+def test_markdown_info_string_is_not_executable_powershell():
+    blocks = parse_tool_blocks('```powershell title="setup"\nGet-Command i\n```')
+    assert blocks == [], blocks
+
+
 def test_empty_email_fence_is_an_executable_call():
     # ```list_email_accounts``` with no body is a real shape local models emit
     # for no-arg tools — it must dispatch (with empty args), not vanish.
@@ -80,7 +90,7 @@ def test_empty_email_fence_is_an_executable_call():
 
 def test_empty_non_email_fence_still_skipped():
     # Empty bash/python/other fences stay inert: empty content is nothing to run.
-    for tag in ("bash", "python", "manage_memory"):
+    for tag in ("bash", "powershell", "python", "manage_memory"):
         assert parse_tool_blocks(f'```{tag}\n```') == []
 
 
@@ -103,6 +113,11 @@ def test_brace_metadata_on_bash_is_not_executable():
     # language. Code tags (bash/python) never take same-line args — even a
     # brace-shaped info string must stay display text.
     blocks = parse_tool_blocks('```bash {title="setup"}\necho hi\n```')
+    assert blocks == [], blocks
+
+
+def test_brace_metadata_on_powershell_is_not_executable():
+    blocks = parse_tool_blocks('```powershell {title="setup"}\nGet-Command i\n```')
     assert blocks == [], blocks
 
 

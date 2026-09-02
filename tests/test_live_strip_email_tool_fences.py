@@ -11,7 +11,7 @@ fence lingering as a raw code block in the live bubble until reload. The fix
 makes ``TOOL_TAGS`` the single source: ``chatRenderer.js`` no longer hard-codes a
 tool list at all. It fetches the backend's authoritative set once from
 ``GET /api/tools`` (which serves ``sorted(TOOL_TAGS)``) and builds
-``EXEC_FENCE_RE`` from it at load, minus ``bash``/``python`` (legitimate code
+    ``EXEC_FENCE_RE`` from it at load, minus ``bash``/``powershell``/``python`` (legitimate code
 examples a user may have asked the model to show). There is no second list to
 drift.
 
@@ -29,7 +29,7 @@ _ROUTES_SRC = Path("routes/model_routes.py")
 
 # Deliberately NOT stripped: legitimate code-example languages, not tool
 # invocations. Must match the carve-out in chatRenderer.js.
-_NON_STRIPPED = {"bash", "python"}
+_NON_STRIPPED = {"bash", "powershell", "python"}
 
 
 def _tool_tags() -> set[str]:
@@ -44,7 +44,7 @@ def _tool_tags() -> set[str]:
 
 def _exec_fence_regex() -> re.Pattern:
     """Rebuild EXEC_FENCE_RE's behavior from the same source the live regex now
-    derives from: the backend TOOL_TAGS (served via /api/tools) minus bash/python."""
+    derives from: the backend TOOL_TAGS (served via /api/tools) minus shell code fences."""
     tags = _tool_tags() - _NON_STRIPPED
     assert tags, "TOOL_TAGS is empty"
     return re.compile(
@@ -104,8 +104,8 @@ def test_preserves_existing_web_search_stripping():
     assert _strip_live_exec_fences(fence).strip() == ""
 
 
-def test_does_not_strip_bash_or_python_code_examples():
-    """bash/python fences are deliberately excluded — they are legitimate code
+def test_does_not_strip_shell_or_python_code_examples():
+    """Shell/Python fences are deliberately excluded — they are legitimate code
     examples a user may have asked the model to show, not tool invocations."""
     for lang in sorted(_NON_STRIPPED):
         example = f"```{lang}\nls -la\n```"
@@ -140,9 +140,9 @@ def test_frontend_keeps_no_hardcoded_tool_list():
         "chatRenderer.js must validate inline JSON before stripping same-line "
         "tool fences so Markdown metadata stays visible."
     )
-    # The bash/python carve-out must survive the move to the runtime list.
+    # The shell/Python carve-out must survive the move to the runtime list.
     m = re.search(r"EXEC_FENCE_NON_TOOL\s*=\s*new Set\(\[(?P<body>.*?)\]\)", source, re.DOTALL)
-    assert m, "bash/python carve-out (EXEC_FENCE_NON_TOOL) not found in chatRenderer.js"
+    assert m, "shell/Python carve-out (EXEC_FENCE_NON_TOOL) not found in chatRenderer.js"
     carve_out = set(re.findall(r"['\"]([a-z_]+)['\"]", m.group("body")))
     assert carve_out == _NON_STRIPPED, (
         f"EXEC_FENCE_NON_TOOL must carve out exactly {sorted(_NON_STRIPPED)}, "

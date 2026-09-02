@@ -1881,7 +1881,7 @@ import { loadPanel } from './panels.js';
 	      const isPlanMode = !!toggleState.plan_mode && !(el('research-toggle') && el('research-toggle').checked);
 	      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
       const isIncognito = isIncognitoForSend;
-	      const workspaceAgentIntent = !isIncognito && /\b(fix|debug|implement|change|update|refactor|patch|review|test|run|execute|start|launch|build|lint|typecheck|benchmark|eval|terminal[- ]bench|tbench|repo|repository|codebase|project|app|server|api|frontend|backend|bug|issue|pr|file|folder|directory|source|logs?|trace|stacktrace|traceback|docker|container|tmux|terminal|shell|git|branch|commit|diff|pytest|process|port|endpoint|computer|machine|laptop|device|system)\b/i.test(String(msg || ''));
+	      const workspaceAgentIntent = !isIncognito && /\b(fix|debug|implement|change|update|refactor|patch|review|test|run|execute|start|launch|build|lint|typecheck|benchmark|eval|terminal[- ]bench|tbench|repo|repository|codebase|project|app|server|api|frontend|backend|bug|issue|pr|file|folder|directory|source|logs?|trace|stacktrace|traceback|docker|container|tmux|terminal|shell|powershell|pwsh|git|branch|commit|diff|pytest|process|port|endpoint|computer|machine|laptop|device|system)\b/i.test(String(msg || ''));
 	      if (isPlanMode || _pendingApprovedPlan) {
 	        isAgentMode = true;
 	      }
@@ -2255,6 +2255,7 @@ import { loadPanel } from './panels.js';
       const _toolLabels = {
         'web_search': 'Searching',
         'bash': 'Running',
+        'powershell': 'Running',
         'python': 'Running',
         'read_document': 'Reading',
         'edit_file': 'Editing',
@@ -3005,7 +3006,7 @@ import { loadPanel } from './panels.js';
                   if (_thinkMatch && _thinkLen < 20) {
                     const _afterClose = normalizedRoundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
-                    const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
+                    const _hasToolCall = /```(?:bash|powershell|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
                     const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
                     const _falseCloseStart = thinkingStartTime || Date.now();
                     if (_afterClose && !_hasToolCall && !_hasOrphanClose && (Date.now() - _falseCloseStart) < 500) {
@@ -3590,7 +3591,7 @@ import { loadPanel } from './panels.js';
                 uiModule.scrollHistory();
 
               } else if (json.type === 'tool_progress') {
-                // Long-running subprocess (bash, python) is still in
+                // Long-running subprocess (bash, powershell, python) is still in
                 // flight — refresh the running tool card with the
                 // elapsed-time + tail of its stdout/stderr so the
                 // user doesn't stare at a blind "Running…" spinner.
