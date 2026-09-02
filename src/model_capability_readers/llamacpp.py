@@ -22,6 +22,7 @@ from src.model_capability_readers.base import (
     build_capability,
     compact_str,
     deterministic_controls_from_supported_parameters,
+    identity_str,
     int_limit,
     merge_unique,
     model_id_from,
@@ -53,10 +54,10 @@ def _server_model_entries(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any]
 
 def _model_id_from_props(payload: Mapping[str, Any]) -> str:
     payload = as_mapping(payload)
-    model_alias = compact_str(payload.get("model_alias"))
+    model_alias = identity_str(payload.get("model_alias"))
     if model_alias:
         return model_alias
-    model_path = compact_str(payload.get("model_path"))
+    model_path = identity_str(payload.get("model_path"))
     if model_path:
         return PurePosixPath(model_path).name
     return ""
