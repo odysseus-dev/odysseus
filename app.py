@@ -883,9 +883,6 @@ app.include_router(setup_vault_routes())
 from routes.contacts.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
-from companion import setup_companion_routes
-app.include_router(setup_companion_routes())
-
 # ========= ROUTES (kept in app.py) =========
 
 @app.get("/")
