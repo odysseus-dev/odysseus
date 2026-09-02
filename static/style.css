@@ -32246,6 +32246,11 @@ body.doc-find-active mark.doc-find-mark.current {
   top: 0;
 }
 .email-tags-more:hover { opacity: 0.92; }
+.email-tags-expanded .email-tags-more {
+  min-width: 16px;
+  justify-content: center;
+}
+.email-tags-expanded .email-tags-more-count { display: none; }
 .email-tags-expanded .email-tags-more svg { transform: rotate(180deg); }
 .email-tags-toggle-inline {
   position: absolute;
@@ -32296,6 +32301,102 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-tag-clickable:hover {
   filter: brightness(1.12);
+}
+.email-label-pill {
+  --email-label-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--email-label-color) 18%, transparent);
+  color: var(--email-label-color);
+  display: inline-flex !important;
+  align-items: center;
+  gap: 3px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.email-label-dot,
+.email-filter-label-dot {
+  --email-label-color: var(--accent, var(--red));
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--email-label-color);
+  display: inline-block;
+  flex-shrink: 0;
+}
+.email-filter-label-dot {
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+.email-labels-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  padding: 0 !important;
+  color: var(--muted, var(--fg));
+}
+.email-labels-manage-btn:hover,
+.email-labels-manage-btn.active {
+  color: var(--accent, var(--red));
+}
+.email-label-manager-menu {
+  max-width: min(280px, calc(100vw - 16px));
+}
+.email-label-manager-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 6px;
+}
+.email-label-manager-filter {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  text-align: left;
+  font: inherit;
+}
+.email-label-manager-filter span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-label-manager-icon {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.62;
+}
+.email-label-manager-filter:hover,
+.email-label-manager-icon:hover {
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  opacity: 1;
+}
+.email-label-manager-icon.danger:hover {
+  color: var(--red);
+}
+.email-label-empty {
+  padding: 8px 9px;
+  font-size: 11px;
+  opacity: 0.62;
 }
 .email-tag-work { background: rgba(96, 165, 250, 0.22); color: #60a5fa; }
 .email-tag-personal { background: rgba(74, 222, 128, 0.22); color: #4ade80; }

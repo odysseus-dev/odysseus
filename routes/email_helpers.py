@@ -832,6 +832,51 @@ def _init_scheduled_db():
         # Best-effort — log via the module logger if available
         import logging as _lg
         _lg.getLogger(__name__).warning(f"email_tags owner-migration skipped: {_mig_e}")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_label_definitions (
+            owner TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            slug TEXT NOT NULL,
+            name TEXT NOT NULL,
+            color TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner, account_id, slug)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_label_definitions_owner_account_active
+        ON email_label_definitions(owner, account_id, active)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_label_assignments (
+            owner TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            folder TEXT NOT NULL,
+            message_key TEXT NOT NULL,
+            message_id TEXT DEFAULT '',
+            uid TEXT DEFAULT '',
+            label_slug TEXT NOT NULL,
+            subject TEXT DEFAULT '',
+            sender TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (owner, account_id, message_key, label_slug)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_label_assignments_filter
+        ON email_label_assignments(owner, account_id, folder, label_slug)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_label_assignments_message_key
+        ON email_label_assignments(owner, account_id, message_key)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_label_assignments_message_id
+        ON email_label_assignments(owner, account_id, folder, message_id)
+    """)
     _ensure_owner_scoped_email_cache_table(conn, "email_calendar_extractions", """
         CREATE TABLE IF NOT EXISTS email_calendar_extractions (
             message_id TEXT,
