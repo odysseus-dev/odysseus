@@ -9,6 +9,7 @@ from src.model_capability_readers.base import (
     VENDOR_OLLAMA,
     VENDOR_OPENAI,
     VENDOR_OPENROUTER,
+    VENDOR_UNKNOWN,
     detect_vendor,
     stable_model_id_for,
 )
@@ -18,16 +19,16 @@ def surfaces(record):
     return set(mc.display_surfaces_for(record.capability))
 
 
-def test_detect_vendor_uses_endpoint_kind_then_host_and_common_local_ports():
+def test_detect_vendor_uses_endpoint_kind_and_host_but_not_ambiguous_local_ports():
     assert detect_vendor("https://example.test/v1", endpoint_kind="ollama") == VENDOR_OLLAMA
     assert detect_vendor("http://127.0.0.1:8080", endpoint_kind="llama_cpp") == VENDOR_LLAMACPP
     assert detect_vendor("https://openrouter.ai/api/v1") == VENDOR_OPENROUTER
     assert detect_vendor("https://api.openai.com/v1") == VENDOR_OPENAI
     assert detect_vendor("https://generativelanguage.googleapis.com/v1beta/openai") == VENDOR_GOOGLE
-    assert detect_vendor("http://127.0.0.1:11434") == VENDOR_OLLAMA
-    assert detect_vendor("http://127.0.0.1:1234") == VENDOR_LMSTUDIO
-    assert detect_vendor("http://127.0.0.1:8080") == VENDOR_GENERIC_OPENAI
-    assert detect_vendor("http://localhost:7000/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("http://127.0.0.1:11434") == VENDOR_UNKNOWN
+    assert detect_vendor("http://127.0.0.1:1234") == VENDOR_UNKNOWN
+    assert detect_vendor("http://127.0.0.1:8080") == VENDOR_UNKNOWN
+    assert detect_vendor("http://localhost:7000/v1") == VENDOR_UNKNOWN
 
 
 def test_detect_vendor_requires_a_dns_label_boundary():
@@ -354,7 +355,9 @@ def test_ollama_reader_maps_show_capabilities_and_tags_are_unknown():
         "nomic-embed-text:latest",
         {"capabilities": ["embedding"]},
     )
-    tags = ollama.records_from_tags_payload({"models": [{"name": "qwen3:latest"}]})
+    tags = ollama.records_from_tags_payload(
+        {"models": [{"name": "qwen3:latest", "details": {"family": "qwen3"}}]}
+    )
 
     assert vision is not None
     assert vision.capability.family == mc.FAMILY_CHAT
@@ -390,7 +393,9 @@ def test_ollama_reader_uses_show_shape_without_architecture_name_matching():
     assert record.capability.modalities.input == (mc.MODALITY_TEXT,)
     assert record.capability.modalities.output == (mc.MODALITY_TEXT,)
     assert record.capability.capabilities == (mc.CAP_REASONING, mc.CAP_TOOL_CALL)
-    assert dict(record.capability.limits) == {"context_tokens": 8192}
+    # Serialized Modelfile text is not reparsed for capability truth.  The
+    # structured native `model_info.*.context_length` field wins.
+    assert dict(record.capability.limits) == {"context_tokens": 32768}
     assert surfaces(record) == {"chat"}
 
 
