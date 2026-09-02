@@ -353,6 +353,12 @@ async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
     active_document = object()
     active_email = {"uid": "email-1"}
     policy = object()
+    provenance_state = {
+        "external_untrusted_context_seen": True,
+        "workspace_untrusted_context_seen": True,
+        "odysseus_untrusted_context_seen": False,
+        "private_data_context_seen": True,
+    }
 
     events = []
     async for evt in teacher_escalation.run_teacher_inline(
@@ -367,6 +373,8 @@ async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
         tool_policy=policy,
         active_document=active_document,
         active_email=active_email,
+        security_mode="sandbox",
+        provenance_state=provenance_state,
     ):
         events.append(evt)
 
@@ -376,6 +384,8 @@ async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
     assert captured["tool_policy"] is policy
     assert captured["active_document"] is active_document
     assert captured["active_email"] == active_email
+    assert captured["security_mode"] == "sandbox"
+    assert captured["provenance_state"] == provenance_state
     assert any("opaque-id" in event for event in events)
     assert not any("skill_saved" in event for event in events)
 

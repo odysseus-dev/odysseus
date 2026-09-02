@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.agent_run_policy import parse_agent_run_mode
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_DECISION,
     DENY_APPROVAL_DECISION,
@@ -24,7 +25,11 @@ from src.tool_approval_scopes import (
     ToolApprovalScope,
     scope_for_decision,
 )
-from src.tool_capabilities import ToolCapabilities, capabilities_for_action
+from src.tool_capabilities import (
+    ToolCapabilities,
+    ToolRunSecurityContext,
+    capabilities_for_action,
+)
 
 
 DEFAULT_APPROVAL_TTL_SECONDS = 10 * 60
@@ -112,11 +117,13 @@ def _binding_payload(
     document_id: Any,
     document_version: Any,
     document_digest: Any,
-    external_untrusted_context_seen: bool,
     selected_tools: Any,
     continuation_query: Any,
+    provenance: tuple[str, ...],
     effects: tuple[str, ...],
     result_integrity: str,
+    result_sensitivity: str,
+    security_mode: Any = "sandbox",
 ) -> dict[str, Any]:
     return {
         "owner": _normalized_owner(owner),
@@ -130,13 +137,15 @@ def _binding_payload(
             int(document_version) if document_version is not None else None
         ),
         "document_digest": str(document_digest or "").strip().lower(),
-        "external_untrusted_context_seen": bool(external_untrusted_context_seen),
         "selected_tools": list(
             _normalized_selected_tools(selected_tools, required_tool=tool_name)
         ),
         "continuation_query": _normalized_continuation_query(continuation_query),
+        "provenance": list(provenance),
         "effects": list(effects),
         "result_integrity": str(result_integrity),
+        "result_sensitivity": str(result_sensitivity),
+        "security_mode": parse_agent_run_mode(security_mode).value,
     }
 
 
@@ -152,9 +161,10 @@ class PendingToolApproval:
     document_id: str
     document_version: int | None
     document_digest: str
-    external_untrusted_context_seen: bool
+    provenance: tuple[str, ...]
     effects: tuple[str, ...]
     result_integrity: str
+    result_sensitivity: str
     digest: str
     created_at: float
     expires_at: float
@@ -162,6 +172,11 @@ class PendingToolApproval:
     # exposed in the browser payload.
     selected_tools: tuple[str, ...] = ()
     continuation_query: str = ""
+    security_mode: str = "sandbox"
+
+    @property
+    def external_untrusted_context_seen(self) -> bool:
+        return "external_untrusted" in self.provenance
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
@@ -242,16 +257,23 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
+        security_mode: Any,
+        security_context: ToolRunSecurityContext,
     ) -> bool:
         if self._claimed:
             return False
         capabilities = capabilities_for_action(tool_name, content)
         effects = tuple(sorted(effect.value for effect in capabilities.effects))
         result_integrity = capabilities.result_integrity.value
+        result_sensitivity = capabilities.result_sensitivity.value
         if (
             effects != self.pending.effects
             or result_integrity != self.pending.result_integrity
+            or result_sensitivity != self.pending.result_sensitivity
         ):
+            return False
+        current_provenance = security_context.to_provenance().labels()
+        if current_provenance != self.pending.provenance:
             return False
         expected = _binding_payload(
             owner=owner,
@@ -263,13 +285,13 @@ class ExactToolApproval:
             document_id=self.pending.document_id,
             document_version=self.pending.document_version,
             document_digest=self.pending.document_digest,
-            external_untrusted_context_seen=(
-                self.pending.external_untrusted_context_seen
-            ),
             selected_tools=self.pending.selected_tools,
             continuation_query=self.pending.continuation_query,
+            provenance=current_provenance,
             effects=effects,
             result_integrity=result_integrity,
+            result_sensitivity=result_sensitivity,
+            security_mode=security_mode,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -281,6 +303,8 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
+        security_mode: Any,
+        security_context: ToolRunSecurityContext,
     ) -> bool:
         with self._lock:
             return self._matches_unlocked(
@@ -289,6 +313,8 @@ class ExactToolApproval:
                 tool_name=tool_name,
                 content=content,
                 workspace=workspace,
+                security_mode=security_mode,
+                security_context=security_context,
             )
 
     def claim(
@@ -299,6 +325,8 @@ class ExactToolApproval:
         tool_name: Any,
         content: Any,
         workspace: Any,
+        security_mode: Any,
+        security_context: ToolRunSecurityContext,
     ) -> bool:
         with self._lock:
             if not self._matches_unlocked(
@@ -307,6 +335,8 @@ class ExactToolApproval:
                 tool_name=tool_name,
                 content=content,
                 workspace=workspace,
+                security_mode=security_mode,
+                security_context=security_context,
             ):
                 return False
             self._claimed = True
@@ -350,12 +380,21 @@ class ToolApprovalStore:
         document_digest: Any = None,
         selected_tools: Any = None,
         continuation_query: Any = None,
-        external_untrusted_context_seen: bool,
+        external_untrusted_context_seen: bool = False,
         capabilities: ToolCapabilities,
+        security_mode: Any = "sandbox",
+        security_context: ToolRunSecurityContext | None = None,
     ) -> PendingToolApproval:
         now = time.time()
         effects = tuple(sorted(effect.value for effect in capabilities.effects))
         result_integrity = capabilities.result_integrity.value
+        result_sensitivity = capabilities.result_sensitivity.value
+        if security_context is None:
+            security_context = ToolRunSecurityContext(
+                external_untrusted_context_seen=external_untrusted_context_seen
+            )
+        elif external_untrusted_context_seen:
+            security_context.external_untrusted_context_seen = True
         payload = _binding_payload(
             owner=owner,
             session_id=session_id,
@@ -366,11 +405,13 @@ class ToolApprovalStore:
             document_id=document_id,
             document_version=document_version,
             document_digest=document_digest,
-            external_untrusted_context_seen=external_untrusted_context_seen,
             selected_tools=selected_tools,
             continuation_query=continuation_query,
+            provenance=security_context.to_provenance().labels(),
             effects=effects,
             result_integrity=result_integrity,
+            result_sensitivity=result_sensitivity,
+            security_mode=security_mode,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -383,16 +424,16 @@ class ToolApprovalStore:
             document_id=payload["document_id"],
             document_version=payload["document_version"],
             document_digest=payload["document_digest"],
-            external_untrusted_context_seen=payload[
-                "external_untrusted_context_seen"
-            ],
+            provenance=tuple(payload["provenance"]),
             effects=effects,
             result_integrity=result_integrity,
+            result_sensitivity=result_sensitivity,
             digest=_canonical_digest(payload),
             created_at=now,
             expires_at=now + self._ttl_seconds,
             selected_tools=tuple(payload["selected_tools"]),
             continuation_query=payload["continuation_query"],
+            security_mode=payload["security_mode"],
         )
         with self._lock:
             self._purge_expired_locked(now)

@@ -630,6 +630,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 # edit/delete-by-id on the original conversation.
                 meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
                 new_session.add_message(ChatMessage(msg.role, msg.content, meta))
+            from core.database import (
+                get_session_agent_provenance,
+                merge_session_agent_provenance,
+            )
+            merge_session_agent_provenance(
+                new_id,
+                get_session_agent_provenance(session_id),
+            )
             try:
                 from src.event_bus import fire_event
                 fire_event("session_created", getattr(source, 'owner', None))

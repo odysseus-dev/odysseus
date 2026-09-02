@@ -9,6 +9,7 @@ APP_VERSION = "1.0.3"
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
 DATA_DIR = os.getenv("ODYSSEUS_DATA_DIR", get_default_data_dir())
 
 # Data file paths
@@ -44,6 +45,7 @@ EMOJI_CACHE_DIR = os.path.join(DATA_DIR, "emoji_cache")
 RAG_DIR = os.path.join(DATA_DIR, "rag")
 CHROMA_DIR = os.path.join(DATA_DIR, "chroma")
 BG_JOBS_DIR = os.path.join(DATA_DIR, "bg_jobs")
+AGENT_WORKSPACE_DIR = os.path.join(DATA_DIR, "agent_workspace")
 DEEP_RESEARCH_DIR = os.path.join(DATA_DIR, "deep_research")
 MCP_OAUTH_DIR = os.path.join(DATA_DIR, "mcp_oauth")
 GENERATED_IMAGES_DIR = os.path.join(DATA_DIR, "generated_images")

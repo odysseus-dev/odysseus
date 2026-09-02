@@ -246,10 +246,10 @@
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
   <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
-  <link rel="modulepreload" href="/static/app.js?v=20260815toolapproval4">
-  <link rel="modulepreload" href="/static/js/chat.js?v=20260815toolapproval4">
+  <link rel="modulepreload" href="/static/app.js?v=20260825agentmodes1">
+  <link rel="modulepreload" href="/static/js/chat.js?v=20260825agentmodes1">
   <link rel="modulepreload" href="/static/js/ui.js">
-  <link rel="modulepreload" href="/static/js/sessions.js">
+  <link rel="modulepreload" href="/static/js/sessions.js?v=20260825agentmodes1">
   <link rel="modulepreload" href="/static/js/markdown.js">
 </head>
 <body>
@@ -1195,6 +1195,23 @@
           </button>
         </div>
         <div class="chat-input-right">
+          <span
+            id="agent-provenance-indicator"
+            class="tool-indicator"
+            hidden
+            aria-live="polite"
+            style="font-size:11px;padding:4px 7px;white-space:nowrap;"
+          ></span>
+          <select
+            id="agent-security-mode"
+            class="styled-select"
+            title="Agent security mode. Sandbox is the default."
+            aria-label="Agent security mode"
+            style="width:auto;min-width:104px;height:32px;padding:0 24px 0 9px;font-size:12px;"
+          >
+            <option value="sandbox" selected>Sandbox</option>
+            <option value="full_access">Full access</option>
+          </select>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
@@ -2557,7 +2574,7 @@
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
-<script type="module" src="/static/js/sessions.js"></script>
+<script type="module" src="/static/js/sessions.js?v=20260825agentmodes1"></script>
 <script type="module" src="/static/js/memory.js?v=20260722memoryloading1"></script>
 <script type="module" src="/static/js/skills.js"></script>
 <script type="module" src="/static/js/tourHints.js"></script>
@@ -2575,7 +2592,7 @@
 <script type="module" src="/static/js/chatRenderer.js?v=20260819approvalcontrol1"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js?v=20260819approvalcontrol1"></script>
-  <script type="module" src="/static/js/chat.js?v=20260819approvalcontrol1"></script>
+  <script type="module" src="/static/js/chat.js?v=20260825agentmodes1"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>
@@ -2583,8 +2600,8 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js?v=20260815toolapproval4"></script>  <!-- app.js must be LAST -->
-  <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
+<script type="module" src="/static/app.js?v=20260825agentmodes1"></script>  <!-- app.js must be LAST -->
+  <script type="module" src="/static/js/init.js?v=20260817agentmodes1"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
 </body>

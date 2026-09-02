@@ -51,7 +51,7 @@ def _run_loop(monkeypatch, round_text, max_rounds=2):
         "http://x/v1", "m",
         [{"role": "user", "content": "do a long multi-step task"}],
         max_rounds=max_rounds,
-        relevant_tools={"bash"},
+        relevant_tools={"bash", "web_search"},
     )
     return _types(_collect(gen))
 

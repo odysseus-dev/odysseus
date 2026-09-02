@@ -18,6 +18,11 @@ from src.context_compactor import maybe_compact, trim_for_context
 from src.model_context import estimate_tokens, get_context_length
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
+from src.provenance import (
+    ContextSensitivity,
+    ProvenanceOrigin,
+    provenance_from_messages,
+)
 from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
@@ -704,6 +709,18 @@ async def build_chat_context(
     if incognito or not allow_tool_preprocessing or is_research_spinoff or casual_low_signal:
         use_rag_val = False
 
+    # Agent mode has side-effecting tools, so ambient memory and personal-doc
+    # retrieval must not silently add account data to model context. The model
+    # can request an explicit manage_memory/manage_documents read, whose result
+    # receives provenance labels before later actions. Directly selected
+    # resources (an opened editor document, email, or upload) are explicit
+    # context. Enabled skills/integrations are handled by the agent prompt as
+    # durable user configuration and receive the same provenance treatment.
+    if agent_mode:
+        mem_enabled = False
+        skills_enabled = False
+        use_rag_val = False
+
     # If pre-fetched search context was provided (compare mode), skip live web search
     skip_web = bool(search_context) or not allow_tool_preprocessing or casual_low_signal
 
@@ -732,7 +749,12 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None or is_research_spinoff or casual_low_signal:
+    if (
+        use_rag is not None
+        or is_research_spinoff
+        or casual_low_signal
+        or agent_mode
+    ):
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
@@ -741,11 +763,21 @@ async def build_chat_context(
 
     # Inject pre-fetched search context (compare mode)
     if search_context and allow_tool_preprocessing and not casual_low_signal:
-        preface.append(untrusted_context_message("prefetched search context", search_context))
+        preface.append(untrusted_context_message(
+            "prefetched search context",
+            search_context,
+            origin=ProvenanceOrigin.EXTERNAL,
+            sensitivity=ContextSensitivity.PUBLIC,
+        ))
 
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:
-        preface.append(untrusted_context_message("youtube transcript", transcript))
+        preface.append(untrusted_context_message(
+            "youtube transcript",
+            transcript,
+            origin=ProvenanceOrigin.EXTERNAL,
+            sensitivity=ContextSensitivity.PUBLIC,
+        ))
 
     # Normalize model ID. Prefer cached endpoint models so group chat does not
     # re-hit slow local /models endpoints on every participant turn.
@@ -761,6 +793,22 @@ async def build_chat_context(
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
     messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+    if not incognito:
+        try:
+            from core.database import merge_session_agent_provenance
+            observed = provenance_from_messages(messages)
+            merge_session_agent_provenance(session_id, observed)
+            if hasattr(sess, "agent_provenance"):
+                current = getattr(sess, "agent_provenance", None) or {}
+                for key, value in observed.to_dict().items():
+                    current[key] = bool(current.get(key) or value)
+                sess.agent_provenance = current
+        except Exception:
+            logger.warning(
+                "Could not persist context provenance for session %s",
+                session_id,
+                exc_info=True,
+            )
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the

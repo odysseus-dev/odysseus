@@ -38,12 +38,17 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
     )
 
     assert grant is not None
+    security_context = ToolRunSecurityContext(
+        external_untrusted_context_seen=True
+    )
     assert not grant.claim(
         owner="alice",
         session_id="session-1",
         tool_name="bash",
         content="printf modified",
         workspace=None,
+        security_mode="sandbox",
+        security_context=security_context,
     )
     assert grant.claim(
         owner="ALICE",
@@ -51,6 +56,8 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         tool_name="bash",
         content="printf exact",
         workspace=None,
+        security_mode="sandbox",
+        security_context=security_context,
     )
     assert not grant.claim(
         owner="alice",
@@ -58,6 +65,8 @@ def test_approval_is_bound_to_exact_action_and_claimed_once():
         tool_name="bash",
         content="printf exact",
         workspace=None,
+        security_mode="sandbox",
+        security_context=security_context,
     )
 
 

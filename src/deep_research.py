@@ -18,6 +18,7 @@ from src.research_utils import strip_thinking, is_low_quality
 
 from src.goal_based_extractor import EXTRACTOR_SYSTEM
 from src.prompt_security import untrusted_context_message
+from src.provenance import ContextSensitivity, ProvenanceOrigin
 
 logger = logging.getLogger(__name__)
 
@@ -636,7 +637,12 @@ class DeepResearcher:
             response = await self._llm(
                 [
                     {"role": "user", "content": EXTRACTOR_SYSTEM.format(goal=question)},
-                    untrusted_context_message("webpage", content),
+                    untrusted_context_message(
+                        "webpage",
+                        content,
+                        origin=ProvenanceOrigin.EXTERNAL,
+                        sensitivity=ContextSensitivity.PUBLIC,
+                    ),
                 ],
                 temperature=0.2,
                 max_tokens=2048,

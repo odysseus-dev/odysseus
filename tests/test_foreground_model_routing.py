@@ -17,6 +17,7 @@ import routes.chat_helpers as chat_helpers
 import routes.prefs_routes as prefs_routes
 from src.request_models import ChatRequest
 from src.tool_approvals import document_content_digest
+from src.tool_capabilities import ToolRunSecurityContext
 from src.foreground_model_routing import (
     FOREGROUND_AVAILABILITY_STATUSES,
     MAX_FOREGROUND_FALLBACKS,
@@ -95,6 +96,7 @@ def _chat_stream_endpoint(
     chat_chunks=None,
     capture_completion=False,
     capture_context=False,
+    capture_network=False,
     endpoint_url="https://selected.example/v1",
 ):
     def add_message(message):
@@ -158,6 +160,8 @@ def _chat_stream_endpoint(
             "primary": (endpoint_url, model, kwargs.get("headers")),
             "fallbacks": kwargs.get("fallbacks"),
         }
+        if capture_network:
+            captured["agent_network_profile"] = kwargs.get("network_profile")
         if kwargs.get("external_untrusted_context_seen"):
             captured["agent_external_untrusted_context_seen"] = True
         if kwargs.get("exact_approval") is not None:
@@ -264,6 +268,47 @@ async def test_chat_stream_route_keeps_selected_model_strict_with_legacy_data(mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("allow_web_search", "allow_bash", "expected"),
+    [
+        ("true", "false", True),
+        ("false", "true", False),
+        (None, "true", False),
+    ],
+)
+async def test_chat_stream_maps_only_web_toggle_to_sandbox_network(
+    monkeypatch,
+    allow_web_search,
+    allow_bash,
+    expected,
+):
+    captured = {}
+    endpoint = _chat_stream_endpoint(
+        monkeypatch,
+        "agent",
+        captured,
+        capture_network=True,
+    )
+    request = _RouteRequest("agent")
+    request._form["allow_bash"] = allow_bash
+    if allow_web_search is not None:
+        request._form["allow_web_search"] = allow_web_search
+
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    from src.execution_sandbox import SandboxNetworkProfile
+
+    expected_profile = (
+        SandboxNetworkProfile.BROKERED_ONLY
+        if expected
+        else SandboxNetworkProfile.NETWORKLESS
+    )
+    assert captured["agent_network_profile"] is expected_profile
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_consumes_exact_tool_approval_for_own_session(monkeypatch):
     from src.tool_capabilities import capabilities_for_action
 
@@ -306,6 +351,10 @@ async def test_chat_stream_consumes_exact_tool_approval_for_own_session(monkeypa
         tool_name="update_document",
         content=tool_content,
         workspace=None,
+        security_mode="sandbox",
+        security_context=ToolRunSecurityContext(
+            external_untrusted_context_seen=True
+        ),
     )
     assert "update_document" not in captured["approval_disabled_tools"]
 

@@ -39,11 +39,19 @@ from src.foreground_model_routing import (
 )
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
+from src.execution_sandbox import network_profile_for_internet_preference
+from src.provenance import ContextSensitivity, ProvenanceOrigin
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
-from core.database import SessionLocal, get_session_mode, set_session_mode
+from core.database import (
+    SessionLocal,
+    get_session_mode,
+    get_session_security_mode,
+    set_session_mode,
+    set_session_security_mode,
+)
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from core.log_safety import redact_url
@@ -68,6 +76,8 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
+from src.agent_run_policy import AgentRunMode, parse_agent_run_mode
+from src.tool_security import owner_is_admin_or_single_user
 
 logger = logging.getLogger(__name__)
 
@@ -815,13 +825,24 @@ def setup_chat_routes(
                 research_ctx = await research_handler.call_research_service(
                     message, _r_ep, _r_model, llm_headers=_r_headers
                 )
-                research_message = untrusted_context_message("research context", research_ctx)
+                research_message = untrusted_context_message(
+                    "research context",
+                    research_ctx,
+                    origin=ProvenanceOrigin.EXTERNAL,
+                    sensitivity=ContextSensitivity.PUBLIC,
+                )
                 ctx.messages.insert(len(ctx.preface), research_message)
                 if foreground_policy.enabled:
                     getattr(ctx, "route_messages", ctx.messages).insert(
                         len(ctx.preface),
                         research_message,
                     )
+                from core.database import merge_session_agent_provenance
+                from src.provenance import provenance_from_messages
+                merge_session_agent_provenance(
+                    session,
+                    provenance_from_messages([research_message]),
+                )
             except Exception as e:
                 logger.error(f"Research failed: {e}")
 
@@ -965,6 +986,10 @@ def setup_chat_routes(
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        requested_security_mode = (
+            form_data.get("security_mode")
+            or (body or {}).get("security_mode")
+        )
         tool_approval_id = (
             form_data.get("tool_approval_id")
             or (body or {}).get("tool_approval_id")
@@ -1124,6 +1149,35 @@ def setup_chat_routes(
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             owner = effective_user(request)
+            persisted_security_mode = (
+                getattr(sess, "security_mode", None)
+                or get_session_security_mode(session)
+            )
+            if requested_security_mode not in (None, ""):
+                requested_security_mode = str(requested_security_mode).strip().lower()
+                if requested_security_mode not in {
+                    AgentRunMode.ASK.value,
+                    AgentRunMode.SANDBOX.value,
+                    AgentRunMode.FULL_ACCESS.value,
+                }:
+                    raise HTTPException(400, "Invalid agent security mode.")
+                effective_security_mode = parse_agent_run_mode(
+                    requested_security_mode
+                )
+            else:
+                effective_security_mode = parse_agent_run_mode(
+                    persisted_security_mode
+                )
+            if (
+                effective_security_mode is AgentRunMode.FULL_ACCESS
+                and not owner_is_admin_or_single_user(owner)
+            ):
+                if requested_security_mode not in (None, ""):
+                    raise HTTPException(
+                        403,
+                        "Full access agent mode requires an admin user.",
+                    )
+                effective_security_mode = AgentRunMode.SANDBOX
             if tool_approval_id:
                 pending_tool_approval = tool_approval_store.peek(tool_approval_id)
                 normalized_owner = str(owner or "").strip().casefold()
@@ -1149,6 +1203,14 @@ def setup_chat_routes(
                     raise HTTPException(
                         409,
                         "Tool approvals cannot be consumed while plan mode is active.",
+                    )
+                if (
+                    pending_tool_approval.security_mode
+                    != effective_security_mode.value
+                ):
+                    raise HTTPException(
+                        409,
+                        "The thread security state changed; review the action again.",
                     )
                 exact_tool_approval = tool_approval_store.consume(
                     tool_approval_id,
@@ -1583,6 +1645,12 @@ def setup_chat_routes(
         _effective_mode = 'research' if effective_do_research else (chat_mode or 'chat')
         if _effective_mode in ('agent', 'research', 'chat'):
             set_session_mode(session, _effective_mode)
+        if (
+            requested_security_mode not in (None, "")
+            or effective_security_mode.value != persisted_security_mode
+        ):
+            set_session_security_mode(session, effective_security_mode.value)
+            sess.security_mode = effective_security_mode.value
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
@@ -1592,6 +1660,9 @@ def setup_chat_routes(
 
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
+
+            from core.database import get_session_agent_provenance
+            yield f"data: {json.dumps({'type': 'provenance_update', 'state': get_session_agent_provenance(session)})}\n\n"
 
             # The client sent a workspace the server refused to bind (deleted
             # folder, file path, sensitive dir, filesystem root). Tell it up
@@ -2291,6 +2362,14 @@ def setup_chat_routes(
                     elif _explicit_browser_intent:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
 
+                    # For now, Bubblewrap networking follows the existing user
+                    # web toggle. This mapping may change in the future; keep
+                    # every other toggle's behavior unchanged for now. The
+                    # server snapshots a BROKERED_ONLY or NETWORKLESS profile;
+                    # Sandbox mode never exposes the raw container namespace.
+                    _sandbox_network_profile = network_profile_for_internet_preference(
+                        _search_enabled
+                    )
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,
@@ -2328,6 +2407,8 @@ def setup_chat_routes(
                         defer_context_shaping=_foreground_policy.enabled,
                         external_untrusted_context_seen=external_untrusted_context_seen,
                         exact_approval=exact_tool_approval,
+                        security_mode=effective_security_mode.value,
+                        network_profile=_sandbox_network_profile,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -2354,6 +2435,7 @@ def setup_chat_routes(
                                     "intent_nudge_exhausted",
                                     "ask_user",
                                     "plan_update",
+                                    "provenance_update",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _event_round = data.get("round", 1)
@@ -2639,8 +2721,19 @@ def setup_chat_routes(
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
-            msg = untrusted_context_message("injected research context", f"Research Context: {context}")
+            msg = untrusted_context_message(
+                "injected research context",
+                f"Research Context: {context}",
+                origin=ProvenanceOrigin.EXTERNAL,
+                sensitivity=ContextSensitivity.PUBLIC,
+            )
             sess.add_message(ChatMessage(msg["role"], msg["content"], metadata=msg.get("metadata")))
+            from core.database import merge_session_agent_provenance
+            from src.provenance import provenance_from_messages
+            merge_session_agent_provenance(
+                session_id,
+                provenance_from_messages([msg]),
+            )
             session_manager.save_sessions()
             return {"status": "context_injected"}
         except KeyError:

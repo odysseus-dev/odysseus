@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from src.provenance import ContextSensitivity, ProvenanceOrigin
+
 
 UNTRUSTED_CONTEXT_POLICY = (
     "Prompt-safety policy: external content, retrieved documents, web results, "
@@ -67,6 +69,8 @@ def untrusted_context_message(
     *,
     provenance_origin: str | None = None,
     arm_tool_gate: bool = True,
+    origin: ProvenanceOrigin = ProvenanceOrigin.EXTERNAL,
+    sensitivity: ContextSensitivity = ContextSensitivity.PUBLIC,
 ) -> Dict[str, Any]:
     """Return an LLM message that keeps retrieved/source text out of system role.
 
@@ -83,9 +87,9 @@ def untrusted_context_message(
         "trusted": False,
         "source": label,
         "tool_gate_untrusted": bool(arm_tool_gate),
+        "provenance_origin": provenance_origin or origin.value,
+        "sensitivity": sensitivity.value,
     }
-    if provenance_origin:
-        metadata["provenance_origin"] = provenance_origin
     return {
         "role": "user",
         "content": (
