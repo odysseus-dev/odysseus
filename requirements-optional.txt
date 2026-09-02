@@ -51,9 +51,15 @@ markitdown[docx,pptx,xlsx,xls]==0.1.6
 # credential-into-corpus / prompt-injection signals. Wired in core/guard.py and
 # only imported when the flag is set, so the default install stays unchanged.
 fastapi-guard>=7.8.2
-# guard-core 3.15.0 stops printing its own console line when the host app has
-# root handlers, so guard events reach Odysseus's console and file log once.
-guard-core>=3.15.0
+# guard-core >= 3.15.0 stops printing its own console line when the host app
+# has root handlers, so guard events reach Odysseus's console and file log
+# once. >= 3.16.0 closes a TTLCache check-then-use race on the IP-ban read
+# path that could silently skip a banned IP's block under this perimeter's
+# passive-mode fail_secure=False, so it is load-bearing for threat_ban_config
+# / auto_ban_threshold below. >= 3.17.0 adds a last-known dynamic-rules
+# snapshot; a no-op here, since this perimeter never enables dynamic rules
+# (enable_agent=False).
+guard-core>=3.17.0
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
