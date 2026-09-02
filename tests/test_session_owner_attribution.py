@@ -51,7 +51,7 @@ def _set_module_and_parent_attr(dotted_name, module):
 # this file cannot poison later tests via `import core.<...>` /
 # `import routes.session_routes`.
 _TEMP_STUBS = ("core.database", "core.models")
-_MANAGED = _TEMP_STUBS + ("core.session_manager", "routes.session_routes")
+_MANAGED = _TEMP_STUBS + ("core.session_manager", "routes.session_routes", "routes.session.session_routes")
 with preserve_import_state(*_MANAGED):
     for _name in _TEMP_STUBS:
         _set_module_and_parent_attr(_name, MagicMock(name=_name))
@@ -60,6 +60,7 @@ with preserve_import_state(*_MANAGED):
     # binding reachable behind them.
     clear_module("core.session_manager")
     clear_module("routes.session_routes")
+    clear_module("routes.session.session_routes")
     importlib.import_module("core.session_manager")
     import routes.session_routes as SR  # noqa: E402
 

@@ -9,7 +9,7 @@ def _src(path: str) -> str:
 
 
 def test_registered_manual_compaction_uses_session_owner_for_utility_endpoint():
-    session_src = _src("routes/session_routes.py")
+    session_src = _src("routes/session/session_routes.py")
 
     assert 'owner = getattr(session, "owner", None) or effective_user(request)' in session_src
     assert 'resolve_endpoint("utility", owner=owner)' in session_src
