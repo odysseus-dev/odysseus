@@ -101,7 +101,8 @@ def test_background_poll_recovers_done_for_completed_download():
 def test_dependency_install_payload_keeps_env_path_for_refresh():
     source = _read("static/js/cookbook.js")
 
-    assert "env_path: targetEnvPath || ''" in source
+    assert "env_path: target.envPath || ''" in source
+    assert "envPath: targetEnvPath" in source
 
 
 def test_local_dependency_probe_refreshes_user_site_visibility():
