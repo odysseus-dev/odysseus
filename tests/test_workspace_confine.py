@@ -21,6 +21,7 @@ from src.tool_execution import (
     NO_TOOL_SECURITY_CONTEXT,
     _AGENT_WORKDIR,
     _active_workspace,
+    _workspace_shell_write_block_reason,
     _resolve_search_root,
     _resolve_tool_path,
     _resolve_tool_path_in_workspace,
@@ -264,6 +265,97 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
     for pat in (".env", "**/id_rsa", "**/authorized_keys"):
         _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": pat})), owner="a", workspace=ws)
         assert r["exit_code"] == 0 and "No files" in r["output"]
+
+
+@pytest.mark.parametrize("command", [
+    "awk '$3 > 100 {print $1}' data.csv",
+    "cat data.json | jq '.items[] | select(.size > 5)'",
+    'echo "use > to redirect"',
+    "ls -la > /dev/null 2>&1",
+    "grep -rn 'a -> b' src/",
+    'python -c "print(1 > 0)"',
+    "git log --oneline | head -20",
+    "diff <(sort a.txt) <(sort b.txt)",
+    "sh -c 'git status --short'",
+    "bash -lc 'git log --oneline -5'",
+    "env grep -n needle file.txt",
+    "command cat file.txt",
+    "command -v cp",
+])
+def test_workspace_shell_guard_allows_read_only_redirect_syntax(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command) is None
+    finally:
+        _active_workspace.reset(token)
+
+
+@pytest.mark.parametrize("command", [
+    "grep -E 'mv|cp' log.txt",
+    "awk '/mv|cp/' file",
+    'echo "a;cp b"',
+])
+def test_workspace_shell_guard_allows_quoted_mutation_words(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command) is None
+    finally:
+        _active_workspace.reset(token)
+
+
+@pytest.mark.parametrize("command", [
+    "cp secret.txt out.txt",
+    "touch note.txt",
+    "tee out.txt",
+    "echo ok && cp a b",
+    "(cp secret.txt out.txt)",
+    "$(mv a.txt b.txt)",
+    "`cp a b`",
+    "{ cp a b; }",
+    "sed -i 's/a/b/' file",
+    "perl -pi -e 's/a/b/' file",
+    "awk -i inplace '{print}' file",
+    "sh -c 'cp secret.txt out.txt'",
+    "bash -lc 'touch note.txt'",
+    "env cp secret.txt out.txt",
+    "command mv a.txt b.txt",
+    "nohup tee out.txt",
+    "env sh -c 'cp secret.txt out.txt'",
+    "env -S 'cp secret.txt out.txt'",
+])
+def test_workspace_shell_guard_blocks_tokenized_mutation_commands(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command)
+    finally:
+        _active_workspace.reset(token)
+
+
+@pytest.mark.parametrize("command", [
+    "printf 'x' > note.txt",
+    "printf 'x' >> note.txt",
+    "printf 'x' 1> note.txt",
+    "printf 'x' 2> error.log",
+    "printf 'x' &> out.log",
+    "sh -c \"printf 'x' > note.txt\"",
+    "bash -lc \"printf 'x' >> note.txt\"",
+    "env sh -c \"printf 'x' > note.txt\"",
+])
+def test_workspace_shell_guard_blocks_workspace_redirect_targets(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command)
+    finally:
+        _active_workspace.reset(token)
+
+
+def test_workspace_shell_guard_blocks_absolute_workspace_redirect_target(ws):
+    target = os.path.join(ws, "absolute-note.txt")
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", f"printf 'x' > {target}")
+    finally:
+        _active_workspace.reset(token)
 
 
 @pytest.mark.asyncio

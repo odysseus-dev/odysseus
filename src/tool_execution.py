@@ -15,9 +15,10 @@ import logging
 import os
 import pathlib
 import re
+import shlex
 import sys
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 
 
@@ -355,6 +356,29 @@ _MCP_TOOL_MAP = {
 _EMAIL_MCP_OWNER_ARG = "_odysseus_owner"
 
 
+def _native_mcp_visibility_block(
+    tool: str,
+    advertised_native_tool_names: Optional[set[str]],
+    *aliases: str,
+) -> Optional[Tuple[str, Dict]]:
+    """Defense in depth at the MCP boundary for native model proposals."""
+    if advertised_native_tool_names is None:
+        return None
+    allowed_candidates = {tool, *(alias for alias in aliases if alias)}
+    if not allowed_candidates.isdisjoint(advertised_native_tool_names):
+        return None
+    logger.warning("Unadvertised native MCP dispatch blocked: tool=%r", tool)
+    return (
+        f"{tool}: BLOCKED",
+        {
+            "error": f"Native tool '{tool}' was not advertised for this model round.",
+            "exit_code": 1,
+            "blocked": True,
+            "policy": "native_tool_visibility",
+        },
+    )
+
+
 def _parse_qualified_mcp_args(tool: str, content: str) -> tuple[Dict, Optional[str]]:
     raw = (content or "").strip()
     if not raw:
@@ -515,6 +539,38 @@ def _promote_image_fields(result: Dict) -> None:
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
+_WORKSPACE_SHELL_MUTATION_CMD_FALLBACK_RE = re.compile(
+    r"(^|[;&|]\s*)(cp|copy|copy-item|mv|move|rename|ren|touch|tee)\b|"
+    r"(^|[;&|]\s*)(sed\s+-i|perl\s+-pi|awk\s+-i)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WORKSPACE_SHELL_MUTATION_COMMANDS = {
+    "cp",
+    "copy",
+    "copy-item",
+    "mv",
+    "move",
+    "rename",
+    "ren",
+    "touch",
+    "tee",
+}
+_WORKSPACE_SHELL_IN_PLACE_COMMANDS = {"awk", "perl", "sed"}
+_WORKSPACE_SHELL_COMMAND_POSITION_WORDS = {"then", "do", "else", "elif"}
+_WORKSPACE_SHELL_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_WORKSPACE_SHELL_INTERPRETERS = {"bash", "dash", "fish", "ksh", "sh", "zsh"}
+_WORKSPACE_SHELL_LAUNCHERS = {"command", "env", "exec", "nohup"}
+_WORKSPACE_SHELL_PUNCTUATION = set("(){};<>|&")
+_WORKSPACE_SHELL_HEREDOC_TOKENS = {"<<", "<<-"}
+_WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS = {">", ">>", ">|", "&>", "&>>", ">&", ">>&"}
+_WORKSPACE_SHELL_OUTPUT_REDIRECT_RE = re.compile(
+    r"^(?P<fd>\d*)?(?P<op>&>>|>>&|>>|>\||&>|>&|>)(?P<target>.*)$"
+)
+_WORKSPACE_SHELL_FD_TARGET_RE = re.compile(r"^&?\d+$|^&?-$")
+_WORKSPACE_SHELL_DEV_FD_RE = re.compile(r"^/(?:dev/fd|proc/self/fd)/\d+$")
+_WORKSPACE_SHELL_SINK_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", os.devnull.lower()}
+_WORKSPACE_SHELL_LAUNCHER_QUERY_ONLY = -1
+_WORKSPACE_SHELL_LAUNCHER_AMBIGUOUS = -2
 
 
 def _split_bg_marker(content: str):
@@ -528,6 +584,309 @@ def _split_bg_marker(content: str):
         del lines[i]
         return True, "\n".join(lines).strip()
     return False, content
+
+
+def _workspace_shell_tokens(command: str) -> Optional[List[str]]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _workspace_shell_is_punctuation_token(token: str) -> bool:
+    return bool(token) and all(char in _WORKSPACE_SHELL_PUNCTUATION for char in token)
+
+
+def _workspace_shell_starts_command_position(token: str) -> bool:
+    if not _workspace_shell_is_punctuation_token(token):
+        return token.lower() in _WORKSPACE_SHELL_COMMAND_POSITION_WORDS
+    if ">" in token or "<" in token:
+        return False
+    return any(char in token for char in ";&|({")
+
+
+def _workspace_shell_command_name(token: str) -> str:
+    command = token.strip("`").replace("\\", "/").rstrip("/")
+    return command.rsplit("/", 1)[-1].lower()
+
+
+def _workspace_shell_perl_in_place_option(option: str) -> bool:
+    if not option.startswith("-") or option == "--":
+        return False
+    flags = option[1:]
+    return (
+        option.startswith("-i")
+        or option.startswith("-pi")
+        or ("p" in flags and "i" in flags)
+    )
+
+
+def _workspace_shell_in_place_option(command: str, option: str) -> bool:
+    option = option.lower()
+    if command == "perl":
+        return _workspace_shell_perl_in_place_option(option)
+    if command in {"awk", "sed"}:
+        return (
+            option == "--in-place"
+            or option.startswith("--in-place=")
+            or option.startswith("-i")
+        )
+    return False
+
+
+def _workspace_shell_launcher_command_index(tokens: List[str], index: int) -> Optional[int]:
+    """Return the command hidden behind env/command/exec/nohup."""
+    command = _workspace_shell_command_name(tokens[index])
+    if command not in _WORKSPACE_SHELL_LAUNCHERS:
+        return index
+    i = index + 1
+    while i < len(tokens):
+        token = tokens[i]
+        if _workspace_shell_starts_command_position(token):
+            return None
+        if token == "--":
+            i += 1
+            break
+        if command == "env" and _WORKSPACE_SHELL_ASSIGNMENT_RE.match(token):
+            i += 1
+            continue
+        if token.startswith("-"):
+            if command == "command" and token in {"-v", "-V"}:
+                return _WORKSPACE_SHELL_LAUNCHER_QUERY_ONLY
+            if command == "env" and (
+                token in {"-S", "--split-string"}
+                or token.startswith("-S")
+                or token.startswith("--split-string=")
+            ):
+                # env parses this string into another argv; without emulating
+                # that parser exactly, treating it as executable is unsafe.
+                return _WORKSPACE_SHELL_LAUNCHER_AMBIGUOUS
+            # These options consume a following argument before the command.
+            if command == "env" and token in {
+                "-C", "--chdir", "-u", "--unset",
+            }:
+                i += 2
+            elif command == "exec" and token == "-a":
+                i += 2
+            else:
+                i += 1
+            continue
+        return i
+    return i if i < len(tokens) else _WORKSPACE_SHELL_LAUNCHER_QUERY_ONLY
+
+
+def _workspace_shell_interpreter_payload(tokens: List[str], index: int) -> Optional[str]:
+    command = _workspace_shell_command_name(tokens[index])
+    if command not in _WORKSPACE_SHELL_INTERPRETERS:
+        return None
+    i = index + 1
+    while i < len(tokens):
+        token = tokens[i]
+        if _workspace_shell_starts_command_position(token):
+            break
+        if token in {"-c", "--command"}:
+            return tokens[i + 1] if i + 1 < len(tokens) else ""
+        if token.startswith("--command="):
+            return token.split("=", 1)[1]
+        if token.startswith("-") and "c" in token[1:]:
+            return tokens[i + 1] if i + 1 < len(tokens) else ""
+        i += 1
+    return None
+
+
+def _workspace_shell_unwrap_command(
+    tokens: List[str],
+    index: int,
+) -> tuple[Optional[int], Optional[str]]:
+    """Unwrap launchers and return either a command index or shell -c payload."""
+    current = index
+    for _ in range(8):
+        if current is None or current >= len(tokens):
+            return None, None
+        command = _workspace_shell_command_name(tokens[current])
+        if command in _WORKSPACE_SHELL_INTERPRETERS:
+            return current, _workspace_shell_interpreter_payload(tokens, current)
+        if command not in _WORKSPACE_SHELL_LAUNCHERS:
+            return current, None
+        nested = _workspace_shell_launcher_command_index(tokens, current)
+        if nested == _WORKSPACE_SHELL_LAUNCHER_QUERY_ONLY:
+            return current, None
+        if nested == _WORKSPACE_SHELL_LAUNCHER_AMBIGUOUS:
+            return None, None
+        if nested is None or nested == current:
+            return None, None
+        current = nested
+    # Excessive wrapper nesting is ambiguous and not needed for diagnostics.
+    return None, None
+
+
+def _workspace_shell_command_is_mutating(
+    tokens: List[str],
+    index: int,
+    depth: int = 0,
+) -> bool:
+    effective_index, shell_payload = _workspace_shell_unwrap_command(tokens, index)
+    if shell_payload is not None:
+        if depth >= 8:
+            return True
+        return _workspace_shell_has_mutation_command(shell_payload, depth + 1)
+    if effective_index is None:
+        return True
+    command = _workspace_shell_command_name(tokens[effective_index])
+    if command in _WORKSPACE_SHELL_MUTATION_COMMANDS:
+        return True
+    if command not in _WORKSPACE_SHELL_IN_PLACE_COMMANDS:
+        return False
+
+    for token in tokens[effective_index + 1 :]:
+        if _workspace_shell_starts_command_position(token):
+            break
+        if token == "--":
+            break
+        if _workspace_shell_in_place_option(command, token):
+            return True
+    return False
+
+
+def _workspace_shell_has_mutation_command(command: str, depth: int = 0) -> bool:
+    if depth > 8:
+        return True
+    tokens = _workspace_shell_tokens(command)
+    if tokens is None:
+        return bool(_WORKSPACE_SHELL_MUTATION_CMD_FALLBACK_RE.search(command))
+
+    expect_command = True
+    for index, token in enumerate(tokens):
+        if _workspace_shell_starts_command_position(token):
+            expect_command = True
+            continue
+        if not expect_command:
+            continue
+        if _WORKSPACE_SHELL_ASSIGNMENT_RE.match(token):
+            continue
+        if _workspace_shell_command_is_mutating(tokens, index, depth):
+            return True
+        expect_command = False
+    return False
+
+
+def _workspace_shell_redirect_target_is_safe(target: str, workspace: str) -> bool:
+    target = (target or "").strip()
+    if not target:
+        return False
+    if _WORKSPACE_SHELL_FD_TARGET_RE.match(target):
+        return True
+
+    lowered = target.lower()
+    if lowered in _WORKSPACE_SHELL_SINK_TARGETS:
+        return True
+    if _WORKSPACE_SHELL_DEV_FD_RE.match(target):
+        return True
+
+    expanded = os.path.expandvars(os.path.expanduser(target))
+    if not os.path.isabs(expanded):
+        return False
+
+    try:
+        workspace_real = os.path.realpath(workspace)
+        target_real = os.path.realpath(expanded)
+        return os.path.commonpath([workspace_real, target_real]) != workspace_real
+    except (OSError, ValueError):
+        return False
+
+
+def _workspace_shell_redirects_to_workspace(
+    command: str,
+    workspace: str,
+    depth: int = 0,
+) -> bool:
+    if depth > 8:
+        return True
+    tokens = _workspace_shell_tokens(command)
+    if tokens is None:
+        # If tokenization cannot determine quoting, keep the old safety posture
+        # for literal redirects while avoiding quoted/comparison false positives
+        # in valid shell.
+        return bool(re.search(r"(^|[\s;&|])(?:\d*)>{1,2}\S*", command) or "<<" in command)
+
+    # Redirections inside a quoted shell -c payload are invisible to the
+    # outer token stream, including through transparent launchers such as env.
+    expect_command = True
+    for index, token in enumerate(tokens):
+        if _workspace_shell_starts_command_position(token):
+            expect_command = True
+            continue
+        if not expect_command:
+            continue
+        if _WORKSPACE_SHELL_ASSIGNMENT_RE.match(token):
+            continue
+        effective_index, shell_payload = _workspace_shell_unwrap_command(tokens, index)
+        if effective_index is None and shell_payload is None:
+            return True
+        if shell_payload is not None and _workspace_shell_redirects_to_workspace(
+            shell_payload,
+            workspace,
+            depth + 1,
+        ):
+            return True
+        expect_command = False
+
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _WORKSPACE_SHELL_HEREDOC_TOKENS or token.startswith("<<"):
+            return True
+
+        if token.isdigit() and i + 1 < len(tokens):
+            next_token = tokens[i + 1]
+            if next_token in _WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS:
+                target = tokens[i + 2] if i + 2 < len(tokens) else ""
+                if not _workspace_shell_redirect_target_is_safe(target, workspace):
+                    return True
+                i += 3
+                continue
+
+        if token in _WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS:
+            target = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if not _workspace_shell_redirect_target_is_safe(target, workspace):
+                return True
+            i += 2
+            continue
+
+        match = _WORKSPACE_SHELL_OUTPUT_REDIRECT_RE.match(token)
+        if match:
+            target = match.group("target")
+            if match.group("op") == ">&" and not target:
+                target = tokens[i + 1] if i + 1 < len(tokens) else ""
+                i += 1
+            if not _workspace_shell_redirect_target_is_safe(target, workspace):
+                return True
+        i += 1
+
+    return False
+
+
+def _workspace_shell_write_block_reason(tool: str, content: str) -> Optional[str]:
+    workspace = get_active_workspace()
+    if tool != "bash" or not workspace:
+        return None
+    _, command = _split_bg_marker(content or "")
+    if not command.strip():
+        return None
+    if not (
+        _workspace_shell_has_mutation_command(command)
+        or _workspace_shell_redirects_to_workspace(command, workspace)
+    ):
+        return None
+    return (
+        "Workspace file changes must use `write_file` for creates/full rewrites "
+        "or `edit_file` for targeted edits. Shell is still available for read-only "
+        "diagnostics, but redirection/heredocs/tee/cp/mv/touch/in-place edits are "
+        "blocked while a workspace is active."
+    )
 
 
 async def _direct_fallback(
@@ -604,6 +963,7 @@ async def execute_tool_block(
         | _MissingToolSecurityContext
     ) = _MISSING_TOOL_SECURITY_CONTEXT,
     exact_approval: Optional[ExactToolApproval] = None,
+    advertised_native_tool_names: Optional[set[str]] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -733,6 +1093,7 @@ async def execute_tool_block(
                 if approval_claimed
                 else None
             ),
+            advertised_native_tool_names=advertised_native_tool_names,
         )
         if isinstance(security_context, ToolRunSecurityContext):
             security_context.observe_tool_result(
@@ -755,6 +1116,7 @@ async def _execute_tool_block_impl(
     approved_document_id: Optional[str] = None,
     approved_document_version: Optional[int] = None,
     approved_document_digest: Optional[str] = None,
+    advertised_native_tool_names: Optional[set[str]] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -862,6 +1224,12 @@ async def _execute_tool_block_impl(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
+    workspace_shell_block = _workspace_shell_write_block_reason(tool, content)
+    if workspace_shell_block:
+        desc = f"{tool}: BLOCKED"
+        result = {"error": workspace_shell_block, "exit_code": 1}
+        logger.info("Workspace shell write blocked for tool=%s", tool)
+        return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
@@ -896,6 +1264,15 @@ async def _execute_tool_block_impl(
     if tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
+        server_id, mcp_tool_name = _MCP_TOOL_MAP[tool]
+        qualified = f"mcp__{server_id}__{mcp_tool_name}"
+        visibility_block = _native_mcp_visibility_block(
+            tool,
+            advertised_native_tool_names,
+            qualified,
+        )
+        if visibility_block:
+            return visibility_block
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
     elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
@@ -1049,6 +1426,13 @@ async def _execute_tool_block_impl(
         mcp = get_mcp_manager()
         qualified = f"mcp__email__{tool}"
         desc = f"email: {tool}"
+        visibility_block = _native_mcp_visibility_block(
+            tool,
+            advertised_native_tool_names,
+            qualified,
+        )
+        if visibility_block:
+            return visibility_block
         if mcp:
             _raw = content.strip()
             args = {}
@@ -1089,6 +1473,12 @@ async def _execute_tool_block_impl(
             result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
+        visibility_block = _native_mcp_visibility_block(
+            tool,
+            advertised_native_tool_names,
+        )
+        if visibility_block:
+            return visibility_block
         mcp = get_mcp_manager()
         if mcp:
             desc = f"mcp: {tool}"

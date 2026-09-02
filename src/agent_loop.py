@@ -1040,6 +1040,19 @@ def _agent_route_tool_mode(
     except Exception as exc:
         logger.debug("endpoint supports_tools lookup failed: %s", exc)
 
+    try:
+        from src.chatgpt_subscription import (
+            is_chatgpt_subscription_base as _is_chatgpt_subscription_base,
+        )
+
+        if (
+            endpoint_supports is None
+            and _is_chatgpt_subscription_base(endpoint_url or "")
+        ):
+            endpoint_supports = True
+    except Exception:
+        pass
+
     model_supports_tools = any(kw in model_lc for kw in (
         "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
@@ -2944,6 +2957,7 @@ def _resolve_tool_blocks(
     round_num: int,
     is_api_model: bool = False,
     allow_fenced_for_api: bool = False,
+    allowed_native_tool_names: Optional[Set[str]] = None,
 ):
     """Choose native function calls or fenced code block parsing. Returns (tool_blocks, used_native)."""
     used_native = False
@@ -2953,6 +2967,16 @@ def _resolve_tool_blocks(
         for tc in native_tool_calls:
             tc_name = tc.get("name", "")
             tc_args = tc.get("arguments", "{}")
+            if (
+                allowed_native_tool_names is not None
+                and tc_name not in allowed_native_tool_names
+            ):
+                logger.warning(
+                    "Agent round %s rejected unadvertised native tool call: %r",
+                    round_num,
+                    tc_name,
+                )
+                continue
             block = function_call_to_tool_block(tc_name, tc_args)
             if block:
                 tool_blocks.append(block)
@@ -5236,12 +5260,22 @@ async def stream_agent_loop(
             if _ody_doc_finetune_mode
             else round_response
         )
+        _answering_route_state = _candidate_request_states.get(candidate_index) or {}
+        _answering_tool_schemas = _answering_route_state.get("tools")
+        if _answering_tool_schemas is None:
+            _answering_tool_schemas = all_tool_schemas
+        _round_allowed_native_tool_names = frozenset(
+            schema.get("function", {}).get("name") or schema.get("name")
+            for schema in (_answering_tool_schemas or [])
+            if schema.get("function", {}).get("name") or schema.get("name")
+        )
         tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
             _normalized_doc_round,
             native_tool_calls,
             round_num,
             is_api_model=(_is_api_model and not guide_only),
             allow_fenced_for_api=_ody_doc_finetune_mode,
+            allowed_native_tool_names=_round_allowed_native_tool_names,
         )
         if _ody_doc_stream_create_mode and tool_blocks:
             create_idx = next(
@@ -5790,6 +5824,11 @@ async def stream_agent_loop(
                             progress_cb=_push_progress,
                             workspace=workspace,
                             security_context=run_security,
+                            advertised_native_tool_names=(
+                                _round_allowed_native_tool_names
+                                if used_native
+                                else None
+                            ),
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
