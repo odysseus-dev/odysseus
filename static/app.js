@@ -53,6 +53,7 @@ import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { getSettings } from './js/appConfig.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { modelCapabilityForContext, modelControlCapabilities, normalizeModelControlValue } from './js/modelControls.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -217,6 +218,10 @@ try {
   if (cachedDefaultChat && cachedDefaultChat.endpoint_url && cachedDefaultChat.model) {
     _defaultChat = cachedDefaultChat;
     window.__odysseusDefaultChat = cachedDefaultChat;
+    window.__odysseusModelControlDefaults = {
+      reasoning_effort: cachedDefaultChat.default_reasoning_effort || 'auto',
+      verbosity: cachedDefaultChat.default_verbosity || 'auto',
+    };
   }
 } catch (_) {}
 async function _refreshDefaultChat() {
@@ -226,6 +231,10 @@ async function _refreshDefaultChat() {
       _defaultChat = d;
       try {
         window.__odysseusDefaultChat = d;
+        window.__odysseusModelControlDefaults = {
+          reasoning_effort: d.default_reasoning_effort || 'auto',
+          verbosity: d.default_verbosity || 'auto',
+        };
         localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(d));
       } catch (_) {}
       return d;
@@ -256,7 +265,11 @@ async function _createDirectChatFromPreferredModel() {
 
   const dc = await _refreshDefaultChat();
   if (dc) {
-    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+      source: 'default',
+      reasoning_effort: dc.default_reasoning_effort || '',
+      verbosity: dc.default_verbosity || '',
+    });
     return true;
   }
 
@@ -378,6 +391,7 @@ function initializeEventListeners() {
     document.querySelectorAll(
       '.skill-kebab-menu, .note-reminder-menu, .task-dropdown, .doclib-card-dropdown, .email-card-dropdown, .msg-overflow-menu'
     ).forEach(m => { if (m !== except) m.remove(); });
+    document.dispatchEvent(new CustomEvent('model-control-close-all'));
   };
   // Window-opening / nav controls (rail buttons, sidebar tool rows + session
   // rows, section headers) count as "other actions" — dismiss popups when one
@@ -1966,6 +1980,358 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+
+  // Per-chat model controls. Auto is the default and is omitted from requests.
+  (function initModelControls() {
+    const controls = [
+      {
+        key: 'reasoning_effort',
+        name: 'Reasoning',
+        btnId: 'reasoning-control-btn',
+        menuId: 'reasoning-control-menu',
+        labelId: 'reasoning-control-label',
+        labels: {
+          auto: 'Auto',
+          off: 'Off',
+          on: 'On',
+          minimal: 'Min',
+          low: 'Low',
+          medium: 'Med',
+          high: 'High',
+          xhigh: 'XHigh',
+          max: 'Max',
+        },
+      },
+      {
+        key: 'verbosity',
+        name: 'Verbosity',
+        btnId: 'verbosity-control-btn',
+        menuId: 'verbosity-control-menu',
+        labelId: 'verbosity-control-label',
+        labels: {
+          auto: 'Auto',
+          low: 'Low',
+          medium: 'Med',
+          high: 'High',
+        },
+      },
+    ];
+
+    const controlLabel = (config, value) => {
+      if (config.labels[value]) return config.labels[value];
+      return String(value || 'auto').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    };
+    let modelControlDefaults = {
+      reasoning_effort: 'auto',
+      verbosity: 'auto',
+    };
+    function setModelControlDefaults(values = {}) {
+      modelControlDefaults = {
+        reasoning_effort: normalizeModelControlValue(
+          values.reasoning_effort || values.default_reasoning_effort || 'auto',
+        ),
+        verbosity: normalizeModelControlValue(
+          values.verbosity || values.default_verbosity || 'auto',
+        ),
+      };
+      try { window.__odysseusModelControlDefaults = { ...modelControlDefaults }; } catch (_) {}
+    }
+
+    async function refreshModelControlDefaults() {
+      try {
+        const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+        if (!res.ok) return { ...modelControlDefaults };
+        const settings = await res.json();
+        if (settings) setModelControlDefaults(settings);
+      } catch (_) {}
+      return { ...modelControlDefaults };
+    }
+
+    function currentModelContext(override = null) {
+      const sid = sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+      const sessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
+      const meta = sid ? sessions.find(s => s.id === sid) : null;
+      const pending = sessionModule && sessionModule.getPendingChat ? sessionModule.getPendingChat() : null;
+      const model = (override && override.model) || (meta && meta.model) || (pending && pending.modelId) || '';
+      const endpointId = (override && override.endpointId) || (meta && meta.endpoint_id) || (pending && pending.endpointId) || '';
+      const endpointUrl = (override && override.endpointUrl) || (meta && meta.endpoint_url) || (pending && pending.url) || '';
+      const modelCapability = (override && override.modelCapability) || modelCapabilityForContext(
+        modelsModule && modelsModule.getCachedItems ? modelsModule.getCachedItems() : [],
+        { model, endpointId, endpointUrl },
+      );
+      return {
+        sessionId: sid,
+        meta,
+        model,
+        endpointId,
+        endpointUrl,
+        modelCapability,
+      };
+    }
+
+    function capabilitiesFor(key, override = null) {
+      const ctx = currentModelContext(override);
+      const capability = modelControlCapabilities(key, ctx);
+      return { ...capability, allowed: new Set(capability.allowed) };
+    }
+
+    async function persistSessionControls(values, sessionId = null) {
+      const sid = sessionId || (sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null);
+      if (!sid) return;
+      const fd = new FormData();
+      Object.entries(values || {}).forEach(([key, value]) => {
+        if (value !== undefined) fd.append(key, value || 'auto');
+      });
+      try {
+        const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'PATCH', body: fd });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json().catch(() => ({}));
+        const sessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
+        const meta = sessions.find(s => s.id === sid);
+        if (meta) {
+          meta.reasoning_effort = payload.reasoning_effort || null;
+          meta.verbosity = payload.verbosity || null;
+        }
+      } catch (err) {
+        console.warn('Failed to save model control setting:', err);
+        if (uiModule && uiModule.showToast) uiModule.showToast('Could not save model setting');
+      }
+    }
+
+    function positionMenu(btn, menu) {
+      const r = btn.getBoundingClientRect();
+      const naturalHeight = menu.scrollHeight || 0;
+      const naturalWidth = menu.offsetWidth || 118;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - naturalWidth - 8));
+      const top = Math.max(8, r.top - naturalHeight - 8);
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+
+    const registry = {};
+
+    function refreshCapabilities(override = null) {
+      Object.values(registry).forEach(api => api.refreshCapability(override));
+    }
+
+    function resolveControlForContext(key, value, contextOverride = null) {
+      const config = controls.find(item => item.key === key);
+      if (!config) return 'auto';
+      const capability = capabilitiesFor(key, contextOverride);
+      const normalized = normalizeModelControlValue(value);
+      return capability.allowed.has(normalized) ? normalized : 'auto';
+    }
+
+    function resolveDefaultsForContext(contextOverride = null) {
+      return {
+        reasoning_effort: resolveControlForContext(
+          'reasoning_effort',
+          modelControlDefaults.reasoning_effort,
+          contextOverride,
+        ),
+        verbosity: resolveControlForContext(
+          'verbosity',
+          modelControlDefaults.verbosity,
+          contextOverride,
+        ),
+      };
+    }
+
+    async function applyDefaultsForContext(contextOverride = null, options = {}) {
+      if (options.refresh !== false) {
+        await refreshModelControlDefaults();
+      }
+      const resolved = resolveDefaultsForContext(contextOverride);
+      if (registry.reasoning_effort) {
+        registry.reasoning_effort.setValue(resolved.reasoning_effort, {
+          persist: false,
+          contextOverride,
+          sessionId: options.sessionId || null,
+        });
+      }
+      if (registry.verbosity) {
+        registry.verbosity.setValue(resolved.verbosity, {
+          persist: false,
+          contextOverride,
+          sessionId: options.sessionId || null,
+        });
+      }
+      refreshCapabilities(contextOverride);
+      if (options.persist !== false) {
+        await persistSessionControls(resolved, options.sessionId || null);
+      }
+      return resolved;
+    }
+
+    controls.forEach(config => {
+      const btn = el(config.btnId);
+      const menu = el(config.menuId);
+      const label = el(config.labelId);
+      if (!btn || !menu || !label) return;
+      const ownerWrap = menu.parentElement;
+      const wrapper = btn.closest('.model-control-wrapper');
+      let options = Array.from(menu.querySelectorAll('.model-control-option'));
+      let currentValue = 'auto';
+
+      function bindOption(opt) {
+        opt.addEventListener('pointerdown', e => e.preventDefault());
+        opt.addEventListener('click', e => {
+          e.stopPropagation();
+          if (opt.disabled) return;
+          setValue(opt.dataset.value);
+          closeMenu();
+        });
+      }
+
+      function addProviderOptions(capability) {
+        capability.allowed.forEach(value => {
+          if (options.some(opt => opt.dataset.value === value)) return;
+          const display = controlLabel(config, value);
+          config.labels[value] = display;
+          const option = document.createElement('button');
+          option.type = 'button';
+          option.className = 'model-control-option';
+          option.dataset.value = value;
+          option.textContent = display;
+          bindOption(option);
+          menu.appendChild(option);
+          options.push(option);
+        });
+      }
+
+      function setValue(value, optionsArg = {}) {
+        const capability = capabilitiesFor(config.key, optionsArg.contextOverride || null);
+        let normalized = normalizeModelControlValue(value);
+        if (!capability.allowed.has(normalized)) normalized = 'auto';
+        currentValue = normalized;
+        const state = loadToggleState();
+        state[config.key] = normalized;
+        saveToggleState(state);
+        label.textContent = controlLabel(config, normalized);
+        const active = normalized !== 'auto';
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+        btn.title = `${config.name}: ${controlLabel(config, normalized)}`;
+        options.forEach(opt => {
+          opt.classList.toggle('active', opt.dataset.value === normalized);
+        });
+        if (optionsArg.persist !== false) {
+          persistSessionControls({ [config.key]: normalized }, optionsArg.sessionId || null);
+        }
+      }
+
+      function refreshCapability(override = null) {
+        const capability = capabilitiesFor(config.key, override);
+        addProviderOptions(capability);
+        const disabled = !capability.supported;
+        if (wrapper) wrapper.classList.toggle('disabled', disabled);
+        btn.disabled = disabled;
+        btn.title = disabled
+          ? capability.reason
+          : `${config.name}: ${controlLabel(config, currentValue)}`;
+        options.forEach(opt => {
+          const allowed = capability.allowed.has(opt.dataset.value);
+          opt.disabled = !allowed;
+          opt.classList.toggle('disabled', !allowed);
+          opt.title = allowed ? '' : capability.reason;
+        });
+        if (!capability.allowed.has(currentValue)) {
+          setValue('auto', { persist: false, contextOverride: override });
+        }
+      }
+
+      function closeMenu() {
+        if (menu.classList.contains('hidden')) return;
+        menu.classList.add('hidden');
+        btn.classList.remove('expanded');
+        btn.setAttribute('aria-expanded', 'false');
+        if (ownerWrap && menu.parentElement !== ownerWrap) {
+          ownerWrap.appendChild(menu);
+        }
+      }
+
+      function openMenu() {
+        document.dispatchEvent(new CustomEvent('model-control-close-all', { detail: { except: config.menuId } }));
+        menu.classList.remove('hidden');
+        document.body.appendChild(menu);
+        btn.classList.add('expanded');
+        btn.setAttribute('aria-expanded', 'true');
+        positionMenu(btn, menu);
+      }
+
+      btn.addEventListener('pointerdown', e => e.preventDefault());
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (btn.disabled) return;
+        if (menu.classList.contains('hidden')) openMenu();
+        else closeMenu();
+      });
+      options.forEach(bindOption);
+      document.addEventListener('model-control-close-all', e => {
+        if (e.detail && e.detail.except === config.menuId) return;
+        closeMenu();
+      });
+      document.addEventListener('click', e => {
+        if (menu.contains(e.target) || btn.contains(e.target)) return;
+        closeMenu();
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeMenu();
+      });
+      window.addEventListener('resize', () => {
+        if (!menu.classList.contains('hidden')) positionMenu(btn, menu);
+      });
+
+      const state = loadToggleState();
+      registry[config.key] = { setValue, refreshCapability };
+      setValue(state[config.key] || 'auto', { persist: false });
+    });
+
+    refreshCapabilities();
+    setModelControlDefaults(window.__odysseusModelControlDefaults || window.__odysseusDefaultChat || {});
+
+    window.odysseusModelControls = {
+      applySession(meta = {}) {
+        refreshCapabilities();
+        if (registry.reasoning_effort) {
+          registry.reasoning_effort.setValue(meta.reasoning_effort || 'auto', { persist: false });
+        }
+        if (registry.verbosity) {
+          registry.verbosity.setValue(meta.verbosity || 'auto', { persist: false });
+        }
+      },
+      getDefaults() {
+        return { ...modelControlDefaults };
+      },
+      resolveDefaultsForContext,
+      applyDefaultsForContext,
+      setDefaults(values = {}) {
+        setModelControlDefaults(values);
+      },
+      refreshDefaults: refreshModelControlDefaults,
+      refreshCapabilities,
+    };
+
+    fetch('/api/auth/settings', { credentials: 'same-origin' })
+      .then(res => res.ok ? res.json() : null)
+      .then(settings => {
+        if (settings) setModelControlDefaults(settings);
+      })
+      .catch(() => {});
+
+    document.addEventListener('odysseus:model-picked', e => {
+      const detail = (e && e.detail) || {};
+      refreshCapabilities({
+        model: detail.mid,
+        endpointId: detail.endpointId,
+        endpointUrl: detail.url,
+        modelCapability: detail.modelCapability || null,
+      });
+      setTimeout(() => refreshCapabilities(), 250);
+    });
+    document.addEventListener('odysseus:model-catalog-updated', () => refreshCapabilities());
+  })();
+
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)

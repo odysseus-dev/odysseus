@@ -220,6 +220,8 @@ class Session(TimestampMixin, Base):
     total_input_tokens = Column(Integer, default=0)
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
+    reasoning_effort = Column(String, nullable=True)
+    verbosity = Column(String, nullable=True)
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
 
     # Relationship to chat messages
@@ -248,6 +250,8 @@ class Session(TimestampMixin, Base):
             'folder': self.folder,
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
+            'reasoning_effort': self.reasoning_effort,
+            'verbosity': self.verbosity,
             'crew_member_id': self.crew_member_id,
         }
 
@@ -528,6 +532,7 @@ class ModelEndpoint(TimestampMixin, Base):
     is_enabled = Column(Boolean, default=True)
     hidden_models = Column(Text, nullable=True)    # JSON list of model IDs that failed probing
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
+    cached_model_capabilities = Column(Text, nullable=True)  # Canonical provider evidence for cached models
     pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
     # auto = classify by URL; local = self-hosted server; api/proxy = external
@@ -1181,6 +1186,28 @@ def _migrate_add_cached_models_column():
         except Exception:
             pass
 
+
+def _migrate_add_cached_model_capabilities_column():
+    """Add the canonical cached model-capability records column if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(model_endpoints)").fetchall()]
+        if columns and "cached_model_capabilities" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN cached_model_capabilities TEXT")
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"cached_model_capabilities migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 def _migrate_add_pinned_models_column():
     """Add pinned_models column to model_endpoints if it doesn't exist."""
     import sqlite3
@@ -1253,6 +1280,35 @@ def _migrate_add_mode_column():
             logging.getLogger(__name__).info("Migrated: added 'mode' column to sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"Migration check for mode failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_session_model_control_columns():
+    """Add per-session model control columns if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        changed = False
+        if "reasoning_effort" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT")
+            changed = True
+        if "verbosity" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN verbosity TEXT")
+            changed = True
+        if changed:
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added session model control columns")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"session model control migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -2102,6 +2158,7 @@ def init_db():
                 )
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
+    _migrate_add_cached_model_capabilities_column()
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
@@ -2116,6 +2173,7 @@ def init_db():
     _migrate_add_folder_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()
+    _migrate_add_session_model_control_columns()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_gallery_caption_column()
     _migrate_add_api_token_scopes_column()

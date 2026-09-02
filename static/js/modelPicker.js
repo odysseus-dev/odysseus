@@ -272,6 +272,25 @@ function _initModelPickerDropdown() {
     } catch (_) { /* leave stale data; picker still works */ }
   }
 
+  async function _applyModelControlDefaults(m, persist, sessionId) {
+    if (!m || !window.odysseusModelControls || typeof window.odysseusModelControls.applyDefaultsForContext !== 'function') {
+      return;
+    }
+    try {
+      await window.odysseusModelControls.applyDefaultsForContext(
+        {
+          model: m.mid || '',
+          endpointId: m.endpointId || '',
+          endpointUrl: m.url || '',
+          modelCapability: m.modelCapability || null,
+        },
+        { persist: !!persist, sessionId: sessionId || null },
+      );
+    } catch (e) {
+      console.warn('Model picker: failed to apply model control defaults', e);
+    }
+  }
+
   function _getAllModels() {
     const items = (window.modelsModule && window.modelsModule.getCachedItems) ? window.modelsModule.getCachedItems() : [];
     const result = [];
@@ -287,6 +306,9 @@ function _initModelPickerDropdown() {
       const epOffline = !!item.offline;
       const allModels = (item.models || []).concat(item.models_extra || []);
       const allDisplay = (item.models_display || []).concat(item.models_extra_display || []);
+      const capabilityByModel = new Map(
+        (item.model_capabilities || []).map(record => [record.model_id, record]),
+      );
       // Mark local endpoints whose live probe failed.
       const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
       const isLocalDead = !!(probeResult && probeResult.alive === false);
@@ -308,6 +330,7 @@ function _initModelPickerDropdown() {
           display: (allDisplay[i] || mid).split('/').pop(),
           url: item.url,
           endpointId: item.endpoint_id,
+          modelCapability: capabilityByModel.get(mid) || null,
           epName: item.endpoint_name || '',
           category: item.category || '',
           providerText: [
@@ -683,6 +706,7 @@ async function _pick(m) {
     if (!currentSessionId && _pendingChat) {
       // Already have a deferred session — just update the model
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId, source: 'manual' });
+      await _applyModelControlDefaults(m, false);
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
       uiModule.showToast(`Using ${m.display}`);
@@ -692,6 +716,7 @@ async function _pick(m) {
       // No session yet — create one with this model
       try {
         await _deps.createDirectChat(m.url, m.mid, m.endpointId);
+        await _applyModelControlDefaults(m, false);
       } catch (e) {
         uiModule.showError('Failed to start chat: ' + e);
         finishSwitch();
@@ -714,6 +739,7 @@ async function _pick(m) {
           finishSwitch();
           return;
         }
+        await _applyModelControlDefaults(m, true, currentSessionId);
         // Header stays as session name — model info shown in picker only
       } catch (e) {
         uiModule.showError('Failed to set model: ' + e);

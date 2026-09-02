@@ -1154,6 +1154,39 @@
               <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
             </svg>
           </button>
+          <div class="model-control-wrapper" id="reasoning-control">
+            <button type="button" class="input-icon-btn model-control-btn" title="Reasoning effort" id="reasoning-control-btn" aria-label="Reasoning effort" aria-haspopup="true" aria-expanded="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12c.6.5 1 1.2 1 2h6c0-.8.4-1.5 1-2a7 7 0 0 0-4-12z"/>
+              </svg>
+              <span class="model-control-label" id="reasoning-control-label">Auto</span>
+            </button>
+            <div id="reasoning-control-menu" class="model-control-menu hidden">
+              <button type="button" class="model-control-option" data-value="auto">Auto</button>
+              <button type="button" class="model-control-option" data-value="off">Off</button>
+              <button type="button" class="model-control-option" data-value="on">On</button>
+              <button type="button" class="model-control-option" data-value="minimal">Minimal</button>
+              <button type="button" class="model-control-option" data-value="low">Low</button>
+              <button type="button" class="model-control-option" data-value="medium">Medium</button>
+              <button type="button" class="model-control-option" data-value="high">High</button>
+              <button type="button" class="model-control-option" data-value="xhigh">Extra high</button>
+              <button type="button" class="model-control-option" data-value="max">Max</button>
+            </div>
+          </div>
+          <div class="model-control-wrapper" id="verbosity-control">
+            <button type="button" class="input-icon-btn model-control-btn" title="Verbosity" id="verbosity-control-btn" aria-label="Verbosity" aria-haspopup="true" aria-expanded="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M4 7h16"/><path d="M4 12h12"/><path d="M4 17h8"/>
+              </svg>
+              <span class="model-control-label" id="verbosity-control-label">Auto</span>
+            </button>
+            <div id="verbosity-control-menu" class="model-control-menu hidden">
+              <button type="button" class="model-control-option" data-value="auto">Auto</button>
+              <button type="button" class="model-control-option" data-value="low">Low</button>
+              <button type="button" class="model-control-option" data-value="medium">Medium</button>
+              <button type="button" class="model-control-option" data-value="high">High</button>
+            </div>
+          </div>
           <!-- Workspace indicator (hidden until a folder is set) -->
           <button type="button" class="input-icon-btn tool-indicator" title="Workspace - click to clear" id="workspace-indicator-btn" aria-label="Clear workspace" style="display:none;">
             <svg class="workspace-indicator-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
@@ -1543,6 +1576,25 @@
                 <select id="set-defaultModelSelect" class="settings-select"></select>
               </div>
               <div id="set-defaultChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12c.6.5 1 1.2 1 2h6c0-.8.4-1.5 1-2a7 7 0 0 0-4-12z"/></svg>Model Response Defaults</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Default controls for newly created chat sessions. Existing chats keep their saved settings.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Reasoning</label>
+                <select id="set-defaultReasoningSelect" class="settings-select" disabled>
+                  <option value="">Auto</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Verbosity</label>
+                <select id="set-defaultVerbositySelect" class="settings-select" disabled>
+                  <option value="">Auto</option>
+                </select>
+              </div>
+              <div id="set-defaultControlsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">

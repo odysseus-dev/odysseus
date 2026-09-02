@@ -88,7 +88,12 @@ Route code owns filtering for its domain. `src.auth_helpers.owner_filter()` is t
 
 ## Secrets And Local Stores
 
-`ModelEndpoint` includes cached/hidden/pinned model lists, endpoint kind, refresh mode/interval/timeout, model type, supports-tools, owner, optional `provider_auth_id`, provider metadata, and encrypted API key columns. New endpoint columns need matching startup migration helpers.
+`ModelEndpoint` includes cached/hidden/pinned model lists, cached canonical
+provider capability records, endpoint kind, refresh mode/interval/timeout,
+model type, supports-tools, owner, optional `provider_auth_id`, provider
+metadata, and encrypted API key columns. Capability records contain no raw
+provider payload or credential material. New endpoint columns need matching
+startup migration helpers.
 
 `ProviderAuthSession` rows hold OAuth/device-flow credential state for providers such as ChatGPT Subscription. Endpoints can reference those rows through `provider_auth_id`; deletion/cleanup must preserve auth rows still referenced by another endpoint and remove orphaned provider-auth rows only after the last endpoint reference is gone.
 
