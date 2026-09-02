@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 _REQUIRED_NATIVE_TOOL_ARGS = {
+    "powershell": ("command",),
     "web_search": ("query", "queries"),
     "web_fetch": ("url",),
     "read_file": ("path",),
@@ -41,6 +42,20 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The shell command to execute"}
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "powershell",
+            "description": "Run a Windows PowerShell command on the server. Use for explicit PowerShell/PS/pwsh requests, Windows PATH commands, registry, services, WMI/CIM, and commands such as `i` that resolve in PowerShell. Do NOT create or edit files via PowerShell redirects/Out-File/Set-Content -- use the dedicated file tools.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The PowerShell command to execute"}
                 },
                 "required": ["command"]
             }
@@ -475,7 +490,7 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
                                "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
-                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
+                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). The shell/bash toggle controls both bash and powershell availability. For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
                     "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
                     "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
@@ -831,7 +846,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "enable_tool", "list_tools"]},
                     "key": {"type": "string", "description": "Setting key (for get/set/delete)"},
                     "value": {"description": "Setting value (for set) — can be string, number, boolean, or object"},
-                    "tool": {"type": "string", "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
+                    "tool": {"type": "string", "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash', 'powershell', or 'web_search'."}
                 },
                 "required": ["action"]
             }
@@ -1413,7 +1428,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return None
 
     # Convert structured args back to the text format each tool expects
-    if tool_type == "bash":
+    if tool_type in ("bash", "powershell"):
         content = args.get("command", "")
     elif tool_type == "python":
         content = args.get("code", "")

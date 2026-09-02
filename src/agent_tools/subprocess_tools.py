@@ -6,11 +6,12 @@ import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
-from core.platform_compat import IS_WINDOWS, find_bash
+from core.platform_compat import IS_WINDOWS, find_bash, which_tool
 from src.constants import MAX_OUTPUT_CHARS
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
+DEFAULT_POWERSHELL_TIMEOUT = 60 * 60
 
 PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
@@ -36,6 +37,24 @@ async def _create_bash_subprocess(command: str, **kwargs):
             )
         return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
     return await asyncio.create_subprocess_shell(command, **kwargs)
+
+
+def _powershell_executable() -> str:
+    return which_tool("pwsh") or which_tool("powershell") or "powershell.exe"
+
+
+async def _create_powershell_subprocess(command: str, **kwargs):
+    """Start a non-interactive PowerShell process on native Windows."""
+    if not IS_WINDOWS:
+        raise RuntimeError("PowerShell is only available on Windows hosts")
+    return await asyncio.create_subprocess_exec(
+        _powershell_executable(),
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        command,
+        **kwargs,
+    )
 
 
 def _tmux_session_name(session_id: Optional[str]) -> str:
@@ -355,6 +374,48 @@ class BashTool:
             output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
         output = _truncate(output, MAX_OUTPUT_CHARS)
         return {"output": output or "(no output)", "exit_code": rc or 0}
+
+
+class PowerShellTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import agent_cwd, _truncate
+        if isinstance(content, dict):
+            content = str(content.get("command") or content.get("cmd") or content.get("code") or "")
+        if not content.strip():
+            return {"error": "powershell: empty command", "exit_code": 1}
+
+        try:
+            proc = await _create_powershell_subprocess(
+                content,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=ctx.get("subproc_env"),
+                cwd=agent_cwd(),
+            )
+        except RuntimeError as e:
+            return {"error": f"powershell: {e}", "exit_code": 1}
+        except Exception as e:
+            return {"error": f"powershell: {e}", "exit_code": 1}
+
+        stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+            proc,
+            timeout=DEFAULT_POWERSHELL_TIMEOUT,
+            progress_cb=ctx.get("progress_cb"),
+        )
+        if timed_out:
+            return {
+                "error": f"powershell: timed out after {DEFAULT_POWERSHELL_TIMEOUT}s - process killed",
+                "exit_code": 124,
+                "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+            }
+        output = stdout.rstrip()
+        err = stderr.rstrip()
+        if err:
+            output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
+        output = _truncate(output, MAX_OUTPUT_CHARS)
+        return {"output": output or "(no output)", "exit_code": rc or 0}
+
 
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:

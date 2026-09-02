@@ -375,7 +375,7 @@ _API_AGENT_RULES = """\
 - YOU DECLARE WHEN THE JOB IS DONE — not a timer. Keep taking concrete steps while the task still needs them; don't quit early just because you've made a few calls. Three ways to end a turn: (1) DONE — before declaring it, verify every concrete deliverable the user asked for actually exists or succeeded; then stop calling tools and write the final answer (that IS your "done" signal); (2) BLOCKED — you can't proceed (missing capability, permission denied, unobtainable data), so state plainly what's blocking you and stop; (3) keep going with the single most useful next step. Never trail off mid-task without (1) or (2), and never repeat a call you already ran.
 - Calendar: call `manage_calendar` with `action=list_calendars` FIRST before create/update/delete operations.
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate. `manage_tasks` is for RECURRING background AI jobs, NOT for one-off user reminders.
-- "Disable/turn off/enable/turn on <tool>" (shell, search, research, browser, documents, incognito, etc.) → call `ui_control` with `toggle <name> <on|off>`. Aliases accepted: shell→bash, search→web, deepresearch→research, documents→document_editor. NEVER record this as a memory — the user wants the toggle flipped, not a note about preferring it.
+- "Disable/turn off/enable/turn on <tool>" (shell, search, research, browser, documents, incognito, etc.) → call `ui_control` with `toggle <name> <on|off>`. Aliases accepted: shell→bash/powershell access, search→web, deepresearch→research, documents→document_editor. NEVER record this as a memory — the user wants the toggle flipped, not a note about preferring it.
 - "Research X" / "do research on X" / "look into Y" / "deep dive on Z" → call `trigger_research` with `topic`. This starts a live job that appears in the Deep Research sidebar (streams progress + final report). **Do NOT use `web_search` for these** — saw the agent do a plain web_search for "do research on X" when the user wanted the deep-research job. "research X" is a deep-research request, not a quick lookup. (web_search is only for a single quick fact mid-task.) Do NOT POST /api/research/start via app_api either — blocked. After starting, tell the user it's running in the Deep Research sidebar. Only if the user explicitly wants it inline/quick should you fall back to web_search.
 - "Open/show <panel>" (documents, library, gallery, email, inbox, sessions, brain/memories, skills, settings, notes, cookbook) → call `ui_control` with `open_panel <name>`. Panel aliases: library/doc/docs/document→documents, images→gallery, mail/inbox/emails→email, chats/history→sessions, memory/memories→brain, preferences→settings, models/serve/serving→cookbook. CRITICAL: "open memory/memories/brain" / "open skills" / "open notes" / "open documents" / "open cookbook" means OPEN THE PANEL — call `ui_control`, NOT a manage/list tool. The "manage_*" tools list contents in chat; `ui_control open_panel` opens the visual modal the user is asking for.
 - "Write/draft a reply saying X" for an open/read email → call `ui_control` with `action="open_email_reply"`, the email `uid`/`folder`, `mode="reply"`, and `body` containing the drafted reply. This opens the same email compose document as clicking Reply and DOES NOT send. Do NOT call `reply_to_email` unless the user explicitly says to send immediately.
@@ -532,7 +532,7 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "apply_patch", "todowrite", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
+    "files": {"bash", "powershell", "python", "read_file", "write_file", "edit_file", "apply_patch", "todowrite", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
@@ -570,6 +570,13 @@ pip install openai-whisper
 ```
 SANDBOX LIMITS: stdin/stdout are pipes, so there is NO interactive terminal — `input()`, `curses`, `termios`, `pygame`, and `tkinter` will all fail. Don't try to RUN interactive terminal games or GUI apps here — verify syntax (`python -c "import py_compile; py_compile.compile('x.py')"`) and tell the user to run it themselves in their own terminal. For anything the USER should play/use interactively (games, UIs, demos), prefer a single self-contained HTML file with `<canvas>` + inline JS — save it via `create_document` with language="html" and tell the user to hit the Run / Preview button (▶) in the document editor toolbar; it renders inline in a sandboxed iframe so the game is playable right there. Works from any machine that can reach the Odysseus UI — no need to copy files out.
 NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats real newlines and `\\n` arrives as literal backslash-n, which Python parses as a line-continuation error on line 1. To run multi-line code, either use the dedicated `python` tool block above, or save to a file first with a quoted HEREDOC (`cat > /tmp/x.py << 'EOF' ... EOF`) and then `python /tmp/x.py`.""",
+
+    "powershell": """\
+```powershell
+<PowerShell command>
+```
+Run Windows PowerShell commands. Use when the user explicitly asks for PowerShell/PS/pwsh, for Windows PATH commands, registry, services, WMI/CIM, or commands that Git Bash cannot resolve.
+Same execution limits as bash: no interactive terminal, no GUI, no stdin prompts. Prefer dedicated tools for file reads/searches/writes/edits whenever they fit the job.""",
 
     "python": """\
 ```python
@@ -1423,7 +1430,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("notes_calendar_tasks")
     _code_write_intent = has(
         r"\b(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
-        r"ruby|php|swift|kotlin|bash|shell|html|css|sql)\b",
+        r"ruby|php|swift|kotlin|bash|powershell|pwsh|shell|html|css|sql)\b",
         r"\b(?:code|script|program|game|function|class|module|app)\b",
     )
     if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
@@ -1444,16 +1451,16 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("ui")
     if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
         domains.add("sessions")
-    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash)\b"):
+    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|powershell|pwsh)\b"):
         domains.add("files")
     if has(
         r"\b(run|execute|test|debug|fix|save|create|edit|read|open)\b.{0,40}\b("
         r"python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
-        r"ruby|php|swift|kotlin|bash|shell|html|css|sql|code|script|program|game"
+        r"ruby|php|swift|kotlin|bash|powershell|pwsh|shell|html|css|sql|code|script|program|game"
         r")\b",
         r"\b("
         r"python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
-        r"ruby|php|swift|kotlin|bash|shell|html|css|sql"
+        r"ruby|php|swift|kotlin|bash|powershell|pwsh|shell|html|css|sql"
         r")\b.{0,40}\b(file|script|program|app)\b",
     ):
         domains.add("files")
@@ -3258,7 +3265,7 @@ def _usage_bucket_summary(usage_buckets: list) -> dict:
 # read-only / Q&A turns are not.
 _VERIFIER_EFFECTFUL_TOOLS = {
     "create_document", "update_document", "edit_document",
-    "bash", "python", "write_file",
+    "bash", "powershell", "python", "write_file",
 }
 _VERIFIER_MAX_ROUNDS = 2  # cap re-verify cycles per turn — never loop forever
 
@@ -3362,7 +3369,7 @@ PLAN_MODE_DIRECTIVE = (
     "anything — that would be a lie.\n"
     "\n"
     "ABSOLUTE RULE — DO NOT MUTATE ANYTHING. Every write/state-changing tool, "
-    "including the shell (`bash`/`python`), is disabled this turn and will be "
+    "including the shell (`bash`/`powershell`/`python`), is disabled this turn and will be "
     "rejected — only read-only tools remain available. Use the read-only tools "
     "listed below (read files, search code, browse the project, web lookups) to "
     "ground the plan. If the task is 'write a file', your plan is to DESCRIBE "
@@ -4167,6 +4174,7 @@ async def stream_agent_loop(
         _doc_irrelevant_file_tools = {
             "append_file",
             "bash",
+            "powershell",
             "edit_file",
             "glob",
             "grep",
@@ -5595,7 +5603,7 @@ async def stream_agent_loop(
             # answer from what it has, or state plainly what's blocking it.
             # The force-answer handler above salvages (grace synthesis) or
             # apologizes honestly if it still writes nothing.
-            _off = [t for t in ("web_search", "bash")
+            _off = [t for t in ("web_search", "bash", "powershell")
                     if disabled_tools and t in disabled_tools]
             _off_note = (f" ({', '.join(_off)} is currently disabled — say so if "
                          f"you needed it.)" if _off else "")
@@ -5770,8 +5778,8 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "full_command": full_command, "round": round_num})}\n\n'
                 )
 
-                # Streaming progress for long-running tools (bash, python).
-                # The bash/python branches inside _direct_fallback emit
+                # Streaming progress for long-running tools (bash, powershell, python).
+                # The subprocess branches inside _direct_fallback emit
                 # periodic {elapsed_s, tail} payloads via this callback;
                 # we forward each one as a `tool_progress` SSE event so
                 # the UI can render live elapsed-time + tail-of-output.
@@ -5813,7 +5821,7 @@ async def stream_agent_loop(
                     # above, GeneratorExit is thrown in right here and the
                     # `await _tool_task` on the line above never runs — the
                     # task (and any subprocess execute_tool_block spawned for
-                    # bash/python tools) would otherwise keep running
+                    # bash/powershell/python tools) would otherwise keep running
                     # orphaned with nothing left to await or cancel it.
                     if not _tool_task.done():
                         _tool_task.cancel()
@@ -5964,13 +5972,13 @@ async def stream_agent_loop(
                 elif action == "update":
                     output_text = f'Document updated: "{title}" (v{ver})'
             elif "stdout" in result:
-                # On a bash/python timeout the result carries error + (often
+                # On a subprocess timeout the result carries error + (often
                 # empty) stdout/stderr; fall back to the error so the "timed
                 # out" reason reaches the UI instead of a blank result.
                 raw = result["stdout"] or result["stderr"] or result.get("error", "")
                 output_text = _truncate(raw)
             elif "output" in result:
-                # bash / python canonical result: {"output": ..., "exit_code": ...}
+                # subprocess canonical result: {"output": ..., "exit_code": ...}
                 raw = result["output"] or ""
                 output_text = _truncate(raw)
             elif "response" in result:
