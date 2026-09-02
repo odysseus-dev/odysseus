@@ -1542,6 +1542,28 @@
                 <span class="adm-model-logo" id="set-defaultModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-defaultModelSelect" class="settings-select"></select>
               </div>
+              <div class="settings-foreground-fallback-block">
+                <div class="settings-foreground-fallback-toggle">
+                  <span>Allow fallback when the selected model is unavailable</span>
+                  <label class="admin-switch" title="Allow availability-only foreground model fallback">
+                    <input type="checkbox" id="set-foregroundFallbackToggle" aria-label="Allow fallback when the selected model is unavailable" disabled>
+                    <span class="admin-slider"></span>
+                  </label>
+                </div>
+                <div class="admin-toggle-sub settings-foreground-fallback-help">Only availability failures—connection or read timeouts, rate limits, and documented upstream outages—try the ordered list. Authentication, authorization, request, unsupported-model, and configuration errors are shown directly.</div>
+                <div id="set-foregroundFallbackState" class="settings-foreground-fallback-state" aria-live="polite">Loading fallback settings…</div>
+                <div id="set-foregroundFallbackEditor" class="settings-foreground-fallback-editor" hidden aria-hidden="true">
+                  <div class="settings-row settings-foreground-fallback-order">
+                    <label class="settings-label">Fallback order</label>
+                    <div class="settings-foreground-fallback-list">
+                      <div id="set-foregroundFallbacks" class="settings-fallbacks"></div>
+                      <button type="button" class="settings-fallback-add" id="set-foregroundAddFallback" title="Add a concrete endpoint and model to the fallback order">+ Add fallback</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="set-foregroundFallbackMsg" class="settings-foreground-fallback-message" aria-live="polite"></div>
+                <button type="button" class="settings-fallback-add settings-foreground-fallback-retry" id="set-foregroundFallbackRetry" hidden>Retry loading fallback settings</button>
+              </div>
               <div id="set-defaultChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>

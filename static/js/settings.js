@@ -27,6 +27,18 @@ import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { invalidateSettings } from './appConfig.js';
+import {
+  captureFallbackWidgetFocus,
+  cleanForegroundFallbackCandidates,
+  createForegroundPreferenceSaveQueue,
+  MAX_FOREGROUND_FALLBACKS,
+  moveForegroundFallbackCandidate,
+  nextForegroundFallbackCandidate,
+  normalizeForegroundFallbackModelCatalog,
+  normalizeForegroundFallbackPrefs,
+  restoreFallbackWidgetFocus,
+  summarizeForegroundFallbackCandidateEligibility,
+} from './foregroundFallbackSettings.js';
 
 let initialized = false;
 let modalEl = null;
@@ -143,12 +155,23 @@ function initOpacityToggle() {
    ═══════════════════════════════════════════ */
 
 const _aiEndpointRefreshers = new Set();
+const _foregroundFallbackEndpointRefreshers = new Set();
 let _aiEndpointRefreshInFlight = null;
 
 async function _fetchModelEndpoints() {
   const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+  if (!epRes.ok) throw new Error('HTTP ' + epRes.status);
   const endpoints = await epRes.json();
   return Array.isArray(endpoints) ? endpoints : [];
+}
+
+async function _fetchForegroundFallbackEndpoints() {
+  const response = await fetch(
+    '/api/models?background=false&foreground_fallback=true',
+    { credentials: 'same-origin' }
+  );
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  return normalizeForegroundFallbackModelCatalog(await response.json());
 }
 
 function _endpointLabel(ep) {
@@ -248,6 +271,10 @@ function _registerAiEndpointRefresh(fn) {
   _aiEndpointRefreshers.add(fn);
 }
 
+function _registerForegroundFallbackEndpointRefresh(fn) {
+  _foregroundFallbackEndpointRefreshers.add(fn);
+}
+
 export async function refreshAiModelEndpoints() {
   if (_aiEndpointRefreshInFlight) return _aiEndpointRefreshInFlight;
   _aiEndpointRefreshInFlight = (async function() {
@@ -258,6 +285,17 @@ export async function refreshAiModelEndpoints() {
       });
     } catch (e) {
       console.warn('[settings] failed to refresh model endpoints', e);
+    }
+    try {
+      const endpoints = await _fetchForegroundFallbackEndpoints();
+      _foregroundFallbackEndpointRefreshers.forEach(function(fn) {
+        try { fn(endpoints, null); } catch (e) { console.warn('[settings] foreground fallback endpoint refresh handler failed', e); }
+      });
+    } catch (e) {
+      console.warn('[settings] failed to refresh foreground fallback endpoints', e);
+      _foregroundFallbackEndpointRefreshers.forEach(function(fn) {
+        try { fn(null, e); } catch (handlerError) { console.warn('[settings] foreground fallback endpoint refresh handler failed', handlerError); }
+      });
     } finally {
       _aiEndpointRefreshInFlight = null;
     }
@@ -276,11 +314,61 @@ function _bindFallbackWidget(opts) {
   var endpointsRef = opts.endpoints;       // mutable list reference
   var modelsFilter = opts.modelsFilter || function() { return true; };
   var settingKey = opts.settingKey;
-  var current = opts.initial || [];        // [{endpoint_id, model}]
+  var maxItems = Number.isInteger(opts.maxItems) ? opts.maxItems : null;
+  var current = opts.cleanCandidates
+    ? cleanForegroundFallbackCandidates(
+        opts.initial || [],
+        maxItems === null ? MAX_FOREGROUND_FALLBACKS : maxItems
+      )
+    : (opts.initial || []).slice();
+  var allowReorder = opts.allowReorder === true;
+  var controlsDisabled = opts.disabled === true;
+  var saveQueue = Promise.resolve();
 
-  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {} };
+  if (!fbContainer || !addBtn) return {
+    setEndpoints: function() {},
+    setInitial: function() {},
+    setDisabled: function() {},
+  };
 
   function enabledEps() { return (endpointsRef() || []).filter(function(e) { return e.is_enabled; }); }
+  function selectableEps() {
+    if (!opts.requireModel) return enabledEps();
+    return enabledEps().filter(function(ep) {
+      return Array.isArray(ep.models) && ep.models.some(function(model) {
+        return modelsFilter(model, ep);
+      });
+    });
+  }
+  function firstSelectableEndpoint() {
+    return selectableEps()[0];
+  }
+
+  function firstUnusedCandidate() {
+    return nextForegroundFallbackCandidate(
+      selectableEps().map(function(ep) {
+        return {
+          id: ep.id,
+          is_enabled: ep.is_enabled,
+          models: sortModelIds(ep.models).filter(function(model) {
+            return modelsFilter(model, ep);
+          }),
+        };
+      }),
+      current
+    );
+  }
+
+  function currentForSave() {
+    return opts.cleanCandidates
+      ? cleanForegroundFallbackCandidates(
+          current,
+          maxItems === null ? MAX_FOREGROUND_FALLBACKS : maxItems
+        )
+      : current.filter(function(item) {
+          return item && item.endpoint_id && item.model;
+        });
+  }
 
   function fillModels(selectEl, epId, selected) {
     while (selectEl.options.length) selectEl.remove(0);
@@ -294,19 +382,52 @@ function _bindFallbackWidget(opts) {
         selectEl.appendChild(o);
       });
     }
+    if (
+      opts.preserveUnavailable
+      && selected
+      && !Array.from(selectEl.options).some(function(o) { return o.value === selected; })
+    ) {
+      var unavailable = document.createElement('option');
+      unavailable.value = selected;
+      unavailable.textContent = selected.split('/').pop() + ' (unavailable)';
+      unavailable.disabled = true;
+      selectEl.appendChild(unavailable);
+    }
     if (selected) selectEl.value = selected;
   }
 
-  async function save() {
-    var clean = current.filter(function(f) { return f.endpoint_id && f.model; });
-    var body = {};
-    body[settingKey] = clean;
-    try {
-      await _postSettings(body);
-    } catch (e) { console.warn('[fallback] save failed for ' + settingKey, e); }
+  async function persist() {
+    var clean = currentForSave();
+    if (typeof opts.saveList === 'function') {
+      await opts.saveList(clean);
+    } else {
+      var body = {};
+      body[settingKey] = clean;
+      var response = await _postSettings(body);
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+    }
+    if (typeof opts.onSaved === 'function') opts.onSaved(clean);
+  }
+
+  function save() {
+    saveQueue = saveQueue
+      .catch(function() {})
+      .then(persist)
+      .catch(function(error) {
+        if (typeof opts.onError === 'function') opts.onError(error);
+        else console.warn('[fallback] save failed for ' + settingKey, error);
+      });
+    return saveQueue;
   }
 
   function render() {
+    var focusState = captureFallbackWidgetFocus(fbContainer, document.activeElement);
+    if (opts.cleanCandidates) {
+      current = cleanForegroundFallbackCandidates(
+        current,
+        maxItems === null ? MAX_FOREGROUND_FALLBACKS : maxItems
+      );
+    }
     fbContainer.innerHTML = '';
     current.forEach(function(fb, idx) {
       var row = document.createElement('div');
@@ -318,17 +439,34 @@ function _bindFallbackWidget(opts) {
 
       var epS = document.createElement('select');
       epS.className = 'settings-select';
-      enabledEps().forEach(function(ep) {
+      epS.dataset.fallbackFocus = 'endpoint';
+      epS.disabled = controlsDisabled;
+      epS.setAttribute('aria-label', 'Fallback ' + (idx + 1) + ' endpoint');
+      selectableEps().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
         o.textContent = ep.name + (ep.online ? '' : ' (offline)');
         epS.appendChild(o);
       });
-      var first = enabledEps()[0];
+      if (
+        opts.preserveUnavailable
+        && fb.endpoint_id
+        && !Array.from(epS.options).some(function(o) { return o.value === fb.endpoint_id; })
+      ) {
+        var unavailable = document.createElement('option');
+        unavailable.value = fb.endpoint_id;
+        unavailable.textContent = 'Unavailable endpoint';
+        unavailable.disabled = true;
+        epS.appendChild(unavailable);
+      }
+      var first = firstSelectableEndpoint();
       epS.value = fb.endpoint_id || (first ? first.id : '');
 
       var mS = document.createElement('select');
       mS.className = 'settings-select';
+      mS.dataset.fallbackFocus = 'model';
+      mS.disabled = controlsDisabled;
+      mS.setAttribute('aria-label', 'Fallback ' + (idx + 1) + ' model');
       fillModels(mS, epS.value, fb.model);
 
       fb.endpoint_id = epS.value;
@@ -338,14 +476,22 @@ function _bindFallbackWidget(opts) {
         fb.endpoint_id = epS.value;
         fillModels(mS, epS.value, '');
         fb.model = mS.value;
+        if (opts.cleanCandidates) render();
         save();
       });
-      mS.addEventListener('change', function() { fb.model = mS.value; save(); });
+      mS.addEventListener('change', function() {
+        fb.model = mS.value;
+        if (opts.cleanCandidates) render();
+        save();
+      });
 
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
+      rm.dataset.fallbackFocus = 'remove';
+      rm.disabled = controlsDisabled;
       rm.title = 'Remove fallback';
+      rm.setAttribute('aria-label', 'Remove fallback ' + (idx + 1));
       rm.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
       rm.addEventListener('click', function() {
         current.splice(idx, 1);
@@ -356,14 +502,81 @@ function _bindFallbackWidget(opts) {
       row.appendChild(num);
       row.appendChild(epS);
       row.appendChild(mS);
-      row.appendChild(rm);
+      if (allowReorder) {
+        var actions = document.createElement('span');
+        actions.className = 'settings-fallback-actions';
+        [
+          {
+            offset: -1,
+            title: 'Move fallback up',
+            path: '<path d="M6 15l6-6 6 6"/>',
+          },
+          {
+            offset: 1,
+            title: 'Move fallback down',
+            path: '<path d="M6 9l6 6 6-6"/>',
+          },
+        ].forEach(function(action) {
+          var move = document.createElement('button');
+          move.type = 'button';
+          move.className = 'settings-fallback-remove settings-fallback-move';
+          var destination = idx + action.offset;
+          var inBounds = destination >= 0 && destination < current.length;
+          var accessibleTitle = inBounds
+            ? action.title + ' ' + (idx + 1) + ' to position ' + (destination + 1)
+            : action.title + ' ' + (idx + 1)
+              + (action.offset < 0 ? ' (already first)' : ' (already last)');
+          move.title = accessibleTitle;
+          move.setAttribute('aria-label', accessibleTitle);
+          move.dataset.moveOffset = String(action.offset);
+          move.dataset.fallbackFocus = action.offset < 0 ? 'move-up' : 'move-down';
+          move.disabled = controlsDisabled || !inBounds;
+          move.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + action.path + '</svg>';
+          move.addEventListener('click', function() {
+            var from = idx;
+            var to = idx + action.offset;
+            current = moveForegroundFallbackCandidate(current, idx, action.offset);
+            render();
+            var movedRow = fbContainer.children[to];
+            if (movedRow) {
+              var focusTarget = movedRow.querySelector(
+                '.settings-fallback-move[data-move-offset="' + action.offset + '"]:not(:disabled)'
+              ) || movedRow.querySelector('.settings-fallback-move:not(:disabled)')
+                || movedRow.querySelector('select');
+              if (focusTarget) focusTarget.focus();
+            }
+            if (typeof opts.onReordered === 'function') {
+              opts.onReordered({ from: from, to: to, total: current.length });
+            }
+            save();
+          });
+          actions.appendChild(move);
+        });
+        actions.appendChild(rm);
+        row.appendChild(actions);
+      } else {
+        row.appendChild(rm);
+      }
       fbContainer.appendChild(row);
     });
+    var unusedCandidate = firstUnusedCandidate();
+    if (opts.manageAddDisabled) {
+      addBtn.disabled = controlsDisabled || !unusedCandidate
+        || (maxItems !== null && current.length >= maxItems);
+    }
+    if (typeof opts.onRender === 'function') {
+      opts.onRender(currentForSave());
+    }
+    restoreFallbackWidgetFocus(fbContainer, addBtn, focusState);
   }
 
   addBtn.addEventListener('click', function() {
-    var first = enabledEps()[0];
-    current.push({ endpoint_id: first ? first.id : '', model: '' });
+    var unusedCandidate = firstUnusedCandidate();
+    if (
+      (opts.manageAddDisabled && !unusedCandidate)
+      || (maxItems !== null && current.length >= maxItems)
+    ) return;
+    current.push(unusedCandidate || { endpoint_id: '', model: '' });
     render();
     save();
   });
@@ -371,8 +584,21 @@ function _bindFallbackWidget(opts) {
   render();
 
   return {
-    setInitial: function(list) { current = (list || []).slice(); render(); },
+    setInitial: function(list) {
+      current = opts.cleanCandidates
+        ? cleanForegroundFallbackCandidates(
+            list,
+            maxItems === null ? MAX_FOREGROUND_FALLBACKS : maxItems
+          )
+        : (list || []).slice();
+      render();
+    },
     refresh: render,
+    getCurrent: currentForSave,
+    setDisabled: function(disabled) {
+      controlsDisabled = disabled === true;
+      render();
+    },
   };
 }
 
@@ -381,7 +607,141 @@ async function initDefaultChat() {
   var epSel = el('set-defaultEpSelect');
   var modelSel = el('set-defaultModelSelect');
   var msg = el('set-defaultChatMsg');
+  var fallbackToggle = el('set-foregroundFallbackToggle');
+  var fallbackEditor = el('set-foregroundFallbackEditor');
+  var fallbackState = el('set-foregroundFallbackState');
+  var fallbackMsg = el('set-foregroundFallbackMsg');
+  var fallbackRetry = el('set-foregroundFallbackRetry');
   var _endpoints = [];
+  var _foregroundFallbackEndpoints = [];
+  var fallbackWidget = null;
+  var fallbackPrefsLoaded = false;
+  var fallbackCatalogLoaded = false;
+
+  if (fallbackToggle) fallbackToggle.disabled = true;
+  if (fallbackState) fallbackState.textContent = 'Loading fallback settings…';
+
+  function showFallbackMessage(message, failed) {
+    if (!fallbackMsg) return;
+    fallbackMsg.textContent = message;
+    fallbackMsg.style.color = failed ? 'var(--red)' : 'var(--fg)';
+    if (!failed && message) {
+      setTimeout(function() {
+        if (fallbackMsg.textContent === message) fallbackMsg.textContent = '';
+      }, 1800);
+    }
+  }
+
+  var fallbackPreferenceWriter = createForegroundPreferenceSaveQueue(
+    async function(key, value) {
+      var response = await fetch('/api/prefs/' + key, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: value }),
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+    },
+    function() {
+      fallbackPrefsLoaded = false;
+      if (fallbackToggle) fallbackToggle.disabled = true;
+      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(true);
+      syncFallbackRetry();
+      applyFallbackVisibility();
+    }
+  );
+
+  function saveForegroundPref(key, value) {
+    return fallbackPreferenceWriter.save(key, value);
+  }
+
+  function applyFallbackVisibility() {
+    if (!fallbackToggle || !fallbackEditor) return;
+    if (!fallbackPrefsLoaded) {
+      fallbackEditor.hidden = true;
+      fallbackEditor.setAttribute('aria-hidden', 'true');
+      if (fallbackState) {
+        fallbackState.textContent = 'Fallback preferences are unavailable. Retry before changing this policy.';
+      }
+      return;
+    }
+    var enabled = fallbackToggle.checked === true;
+    fallbackEditor.hidden = !enabled;
+    fallbackEditor.setAttribute('aria-hidden', enabled ? 'false' : 'true');
+    if (!fallbackState) return;
+    var candidates = fallbackWidget ? fallbackWidget.getCurrent() : [];
+    var count = candidates.length;
+    var eligibility = fallbackCatalogLoaded
+      ? summarizeForegroundFallbackCandidateEligibility(
+          candidates,
+          _foregroundFallbackEndpoints
+        )
+      : null;
+    var stateText = enabled
+      ? (
+          !count
+            ? 'No fallback candidates configured; the selected model remains strict.'
+            : eligibility && eligibility.eligible === 0 && eligibility.unknown === 0
+              ? count + (count === 1 ? ' fallback candidate is configured' : ' fallback candidates are configured')
+                + ', but none is currently eligible; the selected model remains strict.'
+              : eligibility && eligibility.eligible === 0
+                ? count + (count === 1 ? ' fallback candidate is configured' : ' fallback candidates are configured')
+                  + ', but eligibility cannot be verified from the current model catalog; saved routes may still be attempted.'
+              : eligibility && (eligibility.eligible < count)
+                ? count + (count === 1 ? ' fallback candidate is configured; ' : ' fallback candidates are configured; ')
+                  + eligibility.eligible + (eligibility.eligible === 1 ? ' is currently eligible' : ' are currently eligible')
+                  + (eligibility.unknown
+                    ? ', and ' + eligibility.unknown + ' cannot be verified.'
+                    : '.')
+                : count + (count === 1 ? ' fallback candidate configured.' : ' fallback candidates configured.')
+      )
+      : 'The selected foreground model remains strict.';
+    if (!fallbackCatalogLoaded) {
+      stateText += ' Model choices are unavailable; retry to refresh the eligible endpoint list.';
+    }
+    fallbackState.textContent = stateText;
+  }
+
+  function syncFallbackRetry() {
+    if (!fallbackRetry) return;
+    var shouldHide = fallbackPrefsLoaded && fallbackCatalogLoaded;
+    if (
+      shouldHide
+      && document.activeElement === fallbackRetry
+      && fallbackToggle
+      && typeof fallbackToggle.focus === 'function'
+    ) {
+      fallbackToggle.focus();
+    }
+    fallbackRetry.hidden = shouldHide;
+  }
+
+  async function loadForegroundPolicy() {
+    try {
+      var response = await fetch('/api/prefs', { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return normalizeForegroundFallbackPrefs(await response.json());
+    } catch (error) {
+      console.warn('Failed to load foreground fallback preferences', error);
+      showFallbackMessage('Failed to load fallback preferences', true);
+      return null;
+    }
+  }
+
+  async function loadForegroundEndpointCatalog() {
+    try {
+      _foregroundFallbackEndpoints = await _fetchForegroundFallbackEndpoints();
+      fallbackCatalogLoaded = true;
+      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(false);
+      return true;
+    } catch (error) {
+      console.warn('Failed to load foreground fallback model choices', error);
+      fallbackCatalogLoaded = false;
+      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(true);
+      showFallbackMessage('Failed to load fallback model choices', true);
+      return false;
+    }
+  }
 
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
@@ -394,6 +754,8 @@ async function initDefaultChat() {
     _fillEndpointSelect(epSel, _endpoints, epSel.value, false);
   } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
 
+  await loadForegroundEndpointCatalog();
+
   function refreshModels(selectedModel) { fillModels(modelSel, epSel.value, selectedModel); }
   function refreshEndpointOptions(selectedEndpoint, selectedModel) {
     _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
@@ -402,10 +764,98 @@ async function initDefaultChat() {
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     var settings = await res.json();
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
   } catch (e) { console.warn('Failed to load default chat settings', e); }
+
+  var foregroundPolicy = await loadForegroundPolicy();
+  fallbackPrefsLoaded = foregroundPolicy !== null;
+
+  if (fallbackToggle) {
+    fallbackToggle.checked = foregroundPolicy ? foregroundPolicy.enabled : false;
+    fallbackToggle.disabled = !fallbackPrefsLoaded;
+  }
+  fallbackWidget = _bindFallbackWidget({
+    containerId: 'set-foregroundFallbacks',
+    addBtnId: 'set-foregroundAddFallback',
+    endpoints: function() { return _foregroundFallbackEndpoints; },
+    initial: foregroundPolicy ? foregroundPolicy.candidates : [],
+    cleanCandidates: true,
+    requireModel: true,
+    manageAddDisabled: true,
+    allowReorder: true,
+    maxItems: MAX_FOREGROUND_FALLBACKS,
+    preserveUnavailable: true,
+    saveList: function(list) {
+      return saveForegroundPref('foreground_model_fallbacks', list);
+    },
+    onSaved: function() {
+      showFallbackMessage('Fallback order saved', false);
+    },
+    onError: function(error) {
+      console.warn('Failed to save foreground fallback list', error);
+      showFallbackMessage('Failed to save fallback order', true);
+    },
+    onReordered: function(event) {
+      showFallbackMessage(
+        'Fallback moved to position ' + (event.to + 1) + ' of ' + event.total,
+        false
+      );
+    },
+    onRender: applyFallbackVisibility,
+  });
+  fallbackWidget.setDisabled(!fallbackCatalogLoaded);
+  applyFallbackVisibility();
+  syncFallbackRetry();
+
+  if (fallbackRetry) {
+    fallbackRetry.addEventListener('click', async function() {
+      fallbackRetry.disabled = true;
+      showFallbackMessage('Loading fallback settings…', false);
+      if (!fallbackCatalogLoaded) await loadForegroundEndpointCatalog();
+      if (!fallbackPrefsLoaded) {
+        var loadedPolicy = await loadForegroundPolicy();
+        if (loadedPolicy !== null) {
+          foregroundPolicy = loadedPolicy;
+          fallbackPrefsLoaded = true;
+          fallbackPreferenceWriter.reset();
+          fallbackWidget.setInitial(loadedPolicy.candidates);
+          if (fallbackToggle) {
+            fallbackToggle.checked = loadedPolicy.enabled;
+            fallbackToggle.disabled = false;
+          }
+        }
+      }
+      fallbackRetry.disabled = false;
+      syncFallbackRetry();
+      applyFallbackVisibility();
+      if (fallbackPrefsLoaded && fallbackCatalogLoaded) {
+        showFallbackMessage('Fallback settings loaded', false);
+      }
+    });
+  }
+
+  if (fallbackToggle) {
+    fallbackToggle.addEventListener('change', async function() {
+      if (!fallbackPrefsLoaded) return;
+      var requested = fallbackToggle.checked === true;
+      fallbackToggle.disabled = true;
+      applyFallbackVisibility();
+      try {
+        await saveForegroundPref('foreground_fallback_enabled', requested);
+        showFallbackMessage(requested ? 'Fallback enabled' : 'Strict mode saved', false);
+      } catch (error) {
+        console.warn('Failed to save foreground fallback preference', error);
+        fallbackToggle.checked = !requested;
+        applyFallbackVisibility();
+        showFallbackMessage('Failed to save fallback preference', true);
+      } finally {
+        fallbackToggle.disabled = !fallbackPrefsLoaded;
+      }
+    });
+  }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
   modelSel.addEventListener('change', saveDefault);
@@ -424,6 +874,29 @@ async function initDefaultChat() {
   _registerAiEndpointRefresh(function(endpoints) {
     _endpoints = endpoints;
     refreshEndpointOptions(epSel.value, modelSel.value);
+  });
+  _registerForegroundFallbackEndpointRefresh(function(endpoints, error) {
+    if (error) {
+      var fallbackList = el('set-foregroundFallbacks');
+      var focusWasInList = Boolean(
+        fallbackList
+        && document.activeElement
+        && fallbackList.contains(document.activeElement)
+      );
+      fallbackCatalogLoaded = false;
+      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(true);
+      syncFallbackRetry();
+      if (focusWasInList && fallbackRetry && typeof fallbackRetry.focus === 'function') {
+        fallbackRetry.focus();
+      }
+      applyFallbackVisibility();
+      showFallbackMessage('Failed to refresh fallback model choices', true);
+      return;
+    }
+    _foregroundFallbackEndpoints = endpoints;
+    fallbackCatalogLoaded = true;
+    if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(false);
+    syncFallbackRetry();
   });
 }
 
