@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from core.database import Base
 from core.database import ChatMessage as DbChatMessage
+from core.database import GroupChatState
 from core.database import Session as DbSession
 from src.session_search import SessionSearchResult, search_session_messages
 
@@ -223,6 +224,32 @@ def test_session_search_excludes_archived_by_default():
         results = search_session_messages("archive filter target", owner="alice", db=db)
 
         assert [r.message_id for r in results] == ["m-active"]
+    finally:
+        db.close()
+
+
+def test_session_search_hides_group_participant_sessions():
+    db = _db(with_fts=True)
+    try:
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        _add_session(db, "parent", owner="alice", name="[GRP] Athena, Mistral")
+        _add_session(db, "child", owner="alice", name="[GRP] Athena")
+        db.commit()
+        db.add(
+            GroupChatState(
+                parent_session_id="parent",
+                owner="alice",
+                mode="parallel",
+                state={"participantSessions": ["child"]},
+            )
+        )
+        _add_message(db, "parent", "m-parent", "assistant", "group visible target", base)
+        _add_message(db, "child", "m-child", "assistant", "group hidden target", base + timedelta(minutes=1))
+        db.commit()
+
+        results = search_session_messages("group target", owner="alice", db=db)
+
+        assert [r.message_id for r in results] == ["m-parent"]
     finally:
         db.close()
 

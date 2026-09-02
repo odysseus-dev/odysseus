@@ -10,8 +10,8 @@ import logging
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import effective_user, _auth_disabled, owner_filter
+from core.database import Session as DbSession, GroupChatState, SessionLocal, Document, GalleryImage, utcnow_naive
+from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
 from src.upload_handler import reserve_message_upload_references
@@ -173,6 +173,241 @@ def _persist_session_headers(session_id: str, headers: dict | None) -> None:
         db.close()
 
 
+_GROUP_CHAT_MODES = {"parallel", "round-robin"}
+_GROUP_CHAT_MAX_PARTICIPANTS = 8
+
+
+def _group_state_str(value, max_len: int = 4096) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text[:max_len]
+
+
+def _normalize_group_character(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    normalized = {}
+    character_id = _group_state_str(value.get("characterId"), 256)
+    character_name = _group_state_str(value.get("characterName"), 1024)
+    character_prompt = _group_state_str(value.get("characterPrompt"), 50000)
+    if character_id:
+        normalized["characterId"] = character_id
+    if character_name:
+        normalized["characterName"] = character_name
+    if character_prompt:
+        normalized["characterPrompt"] = character_prompt
+    return normalized or None
+
+
+def _normalize_group_model(value) -> dict:
+    if not isinstance(value, dict):
+        raise HTTPException(400, "Invalid group model")
+    mid = _group_state_str(value.get("mid"), 1024)
+    url = _group_state_str(value.get("url"), 2048)
+    if not mid or not url:
+        raise HTTPException(400, "Group model is missing its model id or endpoint URL")
+
+    normalized = {
+        "mid": mid,
+        "url": url,
+        "display": _group_state_str(value.get("display") or mid, 1024),
+    }
+    endpoint_id = _group_state_str(value.get("endpointId"), 256)
+    endpoint_name = _group_state_str(value.get("epName"), 1024)
+    group_name = _group_state_str(value.get("_groupName"), 1024)
+    character = _normalize_group_character(value.get("character"))
+    if endpoint_id:
+        normalized["endpointId"] = endpoint_id
+    if endpoint_name:
+        normalized["epName"] = endpoint_name
+    if group_name:
+        normalized["_groupName"] = group_name
+    if character:
+        normalized["character"] = character
+    return normalized
+
+
+def _normalize_group_state(raw_state, parent_session_id: str) -> dict:
+    if isinstance(raw_state, dict) and isinstance(raw_state.get("group_state"), dict):
+        raw_state = raw_state["group_state"]
+    if not isinstance(raw_state, dict):
+        raise HTTPException(400, "Invalid group chat state")
+
+    mode = raw_state.get("mode")
+    if mode not in _GROUP_CHAT_MODES:
+        mode = "parallel"
+
+    raw_models = raw_state.get("models")
+    if not isinstance(raw_models, list):
+        raise HTTPException(400, "Group chat state is missing models")
+    models = [
+        _normalize_group_model(model)
+        for model in raw_models[:_GROUP_CHAT_MAX_PARTICIPANTS]
+    ]
+    if len(models) < 2:
+        raise HTTPException(400, "Group chat state must include at least two models")
+
+    raw_participants = raw_state.get("participantSessions", [])
+    if not isinstance(raw_participants, list):
+        raise HTTPException(400, "Invalid group participant session list")
+    participant_sessions = []
+    for value in raw_participants[:len(models)]:
+        participant_sessions.append(_group_state_str(value, 256) if value else None)
+    while len(participant_sessions) < len(models):
+        participant_sessions.append(None)
+
+    try:
+        round_robin_idx = max(0, int(raw_state.get("roundRobinIdx", 0)))
+    except (TypeError, ValueError):
+        round_robin_idx = 0
+
+    return {
+        "active": True,
+        "mode": mode,
+        "models": models,
+        "participantSessions": participant_sessions,
+        "parentSessionId": parent_session_id,
+        "roundRobinIdx": round_robin_idx,
+    }
+
+
+def _group_participant_ids_from_state(state) -> set[str]:
+    if not isinstance(state, dict):
+        return set()
+    raw_participants = state.get("participantSessions")
+    if not isinstance(raw_participants, list):
+        return set()
+    return {str(session_id) for session_id in raw_participants if session_id}
+
+
+def _group_state_query_for_user(db, user):
+    q = db.query(GroupChatState.parent_session_id, GroupChatState.state)
+    return owner_filter(q, GroupChatState, user)
+
+
+def _group_session_links_for_user(db, user) -> tuple[set[str], set[str]]:
+    parent_ids: set[str] = set()
+    participant_ids: set[str] = set()
+    for parent_id, state in _group_state_query_for_user(db, user).all():
+        if parent_id:
+            parent_ids.add(parent_id)
+        participant_ids.update(_group_participant_ids_from_state(state))
+    return parent_ids, participant_ids
+
+
+def _group_participant_label(model: dict | None, idx: int) -> str:
+    if not isinstance(model, dict):
+        return f"Participant {idx + 1}"
+    character = model.get("character")
+    if not isinstance(character, dict):
+        character = {}
+    for value in (
+        model.get("_groupName"),
+        character.get("characterName"),
+        model.get("display"),
+        model.get("mid"),
+    ):
+        text = _group_state_str(value, 1024)
+        if text:
+            return text
+    return f"Participant {idx + 1}"
+
+
+def _group_participants_for_user(db, user) -> dict[str, list[dict]]:
+    participants_by_parent: dict[str, list[dict]] = {}
+    for parent_id, state in _group_state_query_for_user(db, user).all():
+        if not parent_id or not isinstance(state, dict):
+            continue
+        raw_participants = state.get("participantSessions")
+        if not isinstance(raw_participants, list):
+            continue
+        models = state.get("models")
+        if not isinstance(models, list):
+            models = []
+
+        participants = []
+        for idx, session_id in enumerate(raw_participants):
+            if not session_id:
+                continue
+            model = models[idx] if idx < len(models) and isinstance(models[idx], dict) else {}
+            participants.append({
+                "id": str(session_id),
+                "index": idx,
+                "name": _group_participant_label(model, idx),
+                "model": _group_state_str(model.get("display") or model.get("mid"), 1024),
+                "model_id": _group_state_str(model.get("mid"), 1024),
+                "endpoint_url": _group_state_str(model.get("url"), 2048),
+                "endpoint_id": _group_state_str(model.get("endpointId"), 1024),
+            })
+        if participants:
+            participants_by_parent[str(parent_id)] = participants
+    return participants_by_parent
+
+
+def _group_parent_for_participant(db, session_id: str, user) -> str | None:
+    for parent_id, state in _group_state_query_for_user(db, user).all():
+        if session_id in _group_participant_ids_from_state(state):
+            return parent_id
+    return None
+
+
+def _reject_group_participant_direct_action(db, session_id: str, user, action: str) -> None:
+    if _group_parent_for_participant(db, session_id, user):
+        raise HTTPException(403, f"{action} the parent group chat instead")
+
+
+def _set_group_participant_folders(db, participant_ids: set[str], folder: str | None, user) -> None:
+    if not participant_ids:
+        return
+    q = db.query(DbSession).filter(DbSession.id.in_(participant_ids))
+    q = owner_filter(q, DbSession, user)
+    now = utcnow_naive()
+    for participant in q.all():
+        participant.folder = folder
+        participant.updated_at = now
+
+
+def _sync_group_participant_folder(db, parent_session_id: str, folder: str | None, user) -> None:
+    row = db.query(GroupChatState.state).filter(GroupChatState.parent_session_id == parent_session_id).first()
+    if row is None:
+        return
+    _set_group_participant_folders(db, _group_participant_ids_from_state(row.state), folder, user)
+
+
+def _delete_session_with_group_children(session_manager, session_id: str, user) -> bool:
+    db = SessionLocal()
+    target_ids: list[str] = []
+    image_paths = []
+    try:
+        q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
+        q = owner_filter(q, GroupChatState, user)
+        group_state = q.first()
+        participant_ids = (
+            sorted(_group_participant_ids_from_state(group_state.state))
+            if group_state
+            else []
+        )
+        target_ids = list(dict.fromkeys([*participant_ids, session_id]))
+
+        for target_id in target_ids:
+            if not session_manager._stage_session_deletion(db, target_id, image_paths):
+                raise RuntimeError(f"Session deletion target not found: {target_id}")
+
+        if group_state:
+            db.delete(group_state)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed atomic deletion of session group rooted at %s", session_id)
+        raise
+    finally:
+        db.close()
+
+    session_manager._finalize_session_deletions(target_ids, image_paths)
+    return True
+
+
 _HIDDEN_SYSTEM_SESSION_NAMES = {
     "[Task] Chat Sessions Tidy",
     "[Task] Documents Tidy",
@@ -269,6 +504,8 @@ def setup_session_routes(
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
+            group_parent_ids, group_participant_ids = _group_session_links_for_user(db, user)
+            group_participants_map = _group_participants_for_user(db, user)
             q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
             q = owner_filter(q, DbSession, user)
             rows = q.all()
@@ -319,9 +556,12 @@ def setup_session_routes(
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
+                     "message_count": msg_count_map.get(s.id, 0),
+                     "is_group_parent": s.id in group_parent_ids,
+                     "group_participants": group_participants_map.get(s.id, [])}
                     for s in user_sessions.values()
                     if not s.archived
+                    and s.id not in group_participant_ids
                     and (s.name or "").strip() not in ("Nobody", "Incognito")
                     and (s.name or "").strip() not in _HIDDEN_SYSTEM_SESSION_NAMES]
 
@@ -478,12 +718,24 @@ def setup_session_routes(
         if folder is not None:
             db = SessionLocal()
             try:
+                user = effective_user(request)
+                parent_id = _group_parent_for_participant(db, sid, user)
+                if parent_id:
+                    raise HTTPException(403, "Move the parent group chat instead")
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
-                    db_session.folder = folder if folder else None
+                    folder_value = folder if folder else None
+                    db_session.folder = folder_value
                     db_session.updated_at = utcnow_naive()
+                    _sync_group_participant_folder(db, sid, folder_value, user)
                     db.commit()
-                    result["folder"] = folder if folder else None
+                    result["folder"] = folder_value
+            except HTTPException:
+                db.rollback()
+                raise
+            except Exception:
+                db.rollback()
+                raise
             finally:
                 db.close()
         # Switch model/endpoint mid-session
@@ -568,6 +820,74 @@ def setup_session_routes(
         session_manager.save_sessions()
         return {"ok": True, "count": len(messages)}
 
+    @router.put("/session/{sid}/group_state")
+    async def save_group_state(request: Request, sid: str):
+        """Persist the group-chat participant/model state for the parent session."""
+        _verify_session_owner(request, sid)
+        state = _normalize_group_state(await request.json(), sid)
+        user = effective_user(request)
+        participant_ids = {
+            participant_id
+            for participant_id in state["participantSessions"]
+            if participant_id
+        }
+
+        db = SessionLocal()
+        try:
+            if participant_ids:
+                rows = db.query(DbSession.id, DbSession.owner).filter(DbSession.id.in_(participant_ids)).all()
+                owner_by_id = {row.id: row.owner for row in rows}
+                if set(owner_by_id) != participant_ids:
+                    raise HTTPException(400, "Group participant session not found")
+                if user and any(owner not in (user, None) for owner in owner_by_id.values()):
+                    raise HTTPException(404, "Group participant session not found")
+
+            group_state = db.query(GroupChatState).filter(GroupChatState.parent_session_id == sid).first()
+            if group_state is None:
+                group_state = GroupChatState(parent_session_id=sid)
+                db.add(group_state)
+            group_state.owner = user
+            group_state.mode = state["mode"]
+            group_state.state = state
+            group_state.updated_at = utcnow_naive()
+            parent_folder = db.query(DbSession.folder).filter(DbSession.id == sid).first()
+            _set_group_participant_folders(
+                db,
+                participant_ids,
+                parent_folder.folder if parent_folder else None,
+                user,
+            )
+            db.commit()
+            return {"ok": True, "group_state": state}
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @router.get("/session/{sid}/group_state")
+    def get_group_state(request: Request, sid: str):
+        """Return persisted group-chat state for a parent session, if one exists."""
+        _verify_session_owner(request, sid)
+        user = effective_user(request)
+        db = SessionLocal()
+        try:
+            group_state = db.query(GroupChatState).filter(GroupChatState.parent_session_id == sid).first()
+            if group_state is None:
+                return {"ok": False, "group_state": None}
+            if user and group_state.owner and group_state.owner != user:
+                raise HTTPException(404, "Group chat state not found")
+            try:
+                state = _normalize_group_state(group_state.state, sid)
+            except HTTPException:
+                return {"ok": False, "group_state": None}
+            return {"ok": True, "group_state": state}
+        finally:
+            db.close()
+
     @router.post("/session/{sid}/delete")
     def delete_session_beacon(request: Request, sid: str):
         """Delete session via POST (for navigator.sendBeacon on page close)."""
@@ -586,17 +906,19 @@ def setup_session_routes(
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
+                user = effective_user(request)
                 
                 # Enforce "starred" protection consistent with single-session delete
                 db = SessionLocal()
                 try:
+                    _reject_group_participant_direct_action(db, sid, user, "Delete")
                     db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
                     if db_sess and db_sess.is_important:
                         continue
                 finally:
                     db.close()
 
-                if session_manager.delete_session(sid):
+                if _delete_session_with_group_children(session_manager, sid, user):
                     deleted_count += 1
             except Exception:
                 pass
@@ -607,9 +929,11 @@ def setup_session_routes(
         """Permanently delete a session and all its messages."""
         _verify_session_owner(request, sid, session_manager)
         try:
+            user = effective_user(request)
             # Block deletion of starred/favorited sessions
             db = SessionLocal()
             try:
+                _reject_group_participant_direct_action(db, sid, user, "Delete")
                 db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_sess and db_sess.is_important:
                     raise HTTPException(
@@ -620,7 +944,7 @@ def setup_session_routes(
                 db.close()
 
             # Delete the session and all its messages
-            if session_manager.delete_session(sid):
+            if _delete_session_with_group_children(session_manager, sid, user):
                 return {"status": "deleted"}
             else:
                 raise HTTPException(404, "Session not found")
@@ -698,8 +1022,10 @@ def setup_session_routes(
             session_manager.get_session(sid)
             
             # Archive the session
+            user = effective_user(request)
             db = SessionLocal()
             try:
+                _reject_group_participant_direct_action(db, sid, user, "Archive")
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.archived = True
@@ -731,8 +1057,10 @@ def setup_session_routes(
     def unarchive_session(request: Request, sid: str):
         """Restore an archived session back to the active session list."""
         _verify_session_owner(request, sid)
+        user = effective_user(request)
         db = SessionLocal()
         try:
+            _reject_group_participant_direct_action(db, sid, user, "Restore")
             db_session = db.query(DbSession).filter(DbSession.id == sid).first()
             if not db_session:
                 raise HTTPException(404, f"Session {sid} not found")
@@ -767,6 +1095,9 @@ def setup_session_routes(
             if not user:
                 raise HTTPException(403, "Authentication required")
             q = q.filter(DbSession.owner == user)
+            _, group_participant_ids = _group_session_links_for_user(db, user)
+            if group_participant_ids:
+                q = q.filter(~DbSession.id.in_(group_participant_ids))
             if search:
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
@@ -1060,6 +1391,8 @@ def setup_session_routes(
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
+        group_parent_ids: set[str] = set()
+        group_participant_ids: set[str] = set()
         # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
         _THROWAWAY_NAMES = {
             "test", "testing", "asdf", "asd", "hello", "hi", "hey",
@@ -1077,6 +1410,8 @@ def setup_session_routes(
             elif not single_user_mode:
                 rows_q = rows_q.filter(DbSession.owner == user)
             rows = rows_q.limit(2000).all()
+            group_parent_ids, group_participant_ids = _group_session_links_for_user(db, user)
+            protected_group_ids = group_parent_ids | group_participant_ids
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1089,6 +1424,8 @@ def setup_session_routes(
             )
             cleanup_now = utcnow_naive()
             for row in rows:
+                if row.id in protected_group_ids:
+                    continue
                 # Never delete important sessions
                 if getattr(row, 'is_important', False):
                     continue
@@ -1166,6 +1503,8 @@ def setup_session_routes(
         all_candidates = []
         for s in user_sessions.values():
             if s.archived or s.name == "Incognito":
+                continue
+            if s.id in group_participant_ids:
                 continue
             if folder_map.get(s.id):
                 # Already in a folder — skip on this pass.
@@ -1305,6 +1644,7 @@ def setup_session_routes(
                 if db_session:
                     db_session.folder = folder_name
                     db_session.updated_at = utcnow_naive()
+                    _sync_group_participant_folder(db, sid, folder_name, user)
                     updated += 1
             db.commit()
         except Exception as e:

@@ -587,39 +587,15 @@ class SessionManager:
     def delete_session(self, session_id: str) -> bool:
         """Permanently delete a session and all its messages."""
         db = SessionLocal()
+        image_paths = []
         try:
-            try:
-                from src.session_image_cleanup import cleanup_session_images
-                cleanup_session_images(session_id, db=db)
-            except Exception as e:
-                logger.warning(f"Image cleanup failed while deleting session {session_id}: {e}")
-
-            # Detach documents so they survive as orphans in the library
-            db.query(DbDocument).filter(DbDocument.session_id == session_id).update(
-                {DbDocument.session_id: None}, synchronize_session=False
-            )
-
-            # Delete messages
-            db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
-
-            # Delete session
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db.delete(db_session)
-
-            # Drop the in-memory copy even when there is no DB row. A "ghost"
-            # session lives only here (never persisted, or its row was removed
-            # out-of-band); without this it can never be cleared and keeps
-            # 404ing on every operation (issue #1044).
-            removed_in_memory = self.sessions.pop(session_id, None) is not None
-
-            if db_session or removed_in_memory:
-                # Commit the document-detach / message-delete above (a no-op when
-                # the ghost had no rows) together with the session delete.
-                db.commit()
-                logger.info(f"Deleted session {session_id}")
-                return True
-            return False
+            deleted = self._stage_session_deletion(db, session_id, image_paths)
+            if not deleted:
+                return False
+            db.commit()
+            self._finalize_session_deletions([session_id], image_paths)
+            logger.info(f"Deleted session {session_id}")
+            return True
 
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
@@ -627,6 +603,41 @@ class SessionManager:
             return False
         finally:
             db.close()
+
+    def _stage_session_deletion(self, db, session_id: str, image_paths: list) -> bool:
+        """Stage one session deletion in a caller-owned transaction.
+
+        This method does not commit, evict in-memory state, or unlink files.
+        Errors intentionally propagate so callers deleting related sessions can
+        roll the entire unit of work back.
+        """
+        from src.session_image_cleanup import prepare_session_image_cleanup
+
+        _, pending_paths = prepare_session_image_cleanup(session_id, db)
+        image_paths.extend(pending_paths)
+
+        db.query(DbDocument).filter(DbDocument.session_id == session_id).update(
+            {DbDocument.session_id: None}, synchronize_session=False
+        )
+        db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete(
+            synchronize_session=False
+        )
+
+        db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if db_session:
+            db.delete(db_session)
+
+        # A ghost session may exist only in memory. Keep it there until commit
+        # succeeds, but still report it as a deletable target.
+        return bool(db_session or session_id in self.sessions)
+
+    def _finalize_session_deletions(self, session_ids, image_paths: list) -> None:
+        """Apply non-transactional cleanup after the DB commit succeeds."""
+        from src.session_image_cleanup import unlink_session_image_paths
+
+        for session_id in session_ids:
+            self.sessions.pop(session_id, None)
+        unlink_session_image_paths(image_paths, ",".join(str(sid) for sid in session_ids))
 
     # ------------------------------------------------------------------
     # Session updates

@@ -40,10 +40,11 @@ from src.foreground_model_routing import (
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import effective_user, get_current_user
+from src.auth_helpers import effective_user, get_current_user, owner_filter
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
+from core.database import GroupChatState
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from core.log_safety import redact_url
@@ -75,6 +76,112 @@ logger = logging.getLogger(__name__)
 _active_streams: Dict[str, dict] = {}
 
 
+def _group_value(value: Any, max_len: int = 1024) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    return value.strip()[:max_len]
+
+
+def _group_participant_label(model: dict | None, idx: int) -> str:
+    if not isinstance(model, dict):
+        return f"Participant {idx + 1}"
+    character = model.get("character")
+    if not isinstance(character, dict):
+        character = {}
+    for value in (
+        model.get("_groupName"),
+        character.get("characterName"),
+        model.get("display"),
+        model.get("mid"),
+    ):
+        text = _group_value(value)
+        if text:
+            return text
+    return f"Participant {idx + 1}"
+
+
+def _group_child_whisper_context(session_id: str, owner: str | None) -> dict | None:
+    """Return parent metadata when a direct chat targets a group child session."""
+    if not session_id:
+        return None
+    target_id = str(session_id)
+    db = SessionLocal()
+    try:
+        q = db.query(GroupChatState)
+        q = owner_filter(q, GroupChatState, owner)
+        for row in q.all():
+            state = row.state if isinstance(row.state, dict) else {}
+            participant_ids = state.get("participantSessions")
+            if not isinstance(participant_ids, list):
+                continue
+            models = state.get("models")
+            if not isinstance(models, list):
+                models = []
+            for idx, participant_id in enumerate(participant_ids):
+                if not participant_id or str(participant_id) != target_id:
+                    continue
+                model = models[idx] if idx < len(models) and isinstance(models[idx], dict) else {}
+                return {
+                    "parent_session_id": row.parent_session_id,
+                    "participant_session_id": target_id,
+                    "participant_index": idx,
+                    "participant_name": _group_participant_label(model, idx),
+                    "participant_model": _group_value(model.get("mid") or model.get("display")),
+                }
+    finally:
+        db.close()
+    return None
+
+
+def _group_parent_add_message(session_manager, ctx: dict | None, role: str, content: Any, metadata: dict | None) -> None:
+    if not ctx or not ctx.get("parent_session_id"):
+        return
+    try:
+        parent = session_manager.get_session(ctx["parent_session_id"])
+    except KeyError:
+        return
+    parent.add_message(ChatMessage(role, content, metadata=metadata))
+    session_manager.save_sessions()
+
+
+def _mirror_group_child_user_message(session_manager, ctx: dict | None, content: Any) -> None:
+    if not ctx:
+        return
+    _group_parent_add_message(
+        session_manager,
+        ctx,
+        "user",
+        content,
+        {
+            "group_whisper": True,
+            "whisper_to": ctx["participant_name"],
+            "whisper_to_session": ctx["participant_session_id"],
+            "whisper_to_model": ctx.get("participant_model", ""),
+        },
+    )
+
+
+def _mirror_group_child_assistant_message(
+    session_manager,
+    ctx: dict | None,
+    full_response: str,
+    model: str,
+    metrics: dict | None,
+) -> None:
+    if not ctx or not full_response:
+        return
+    metadata = dict(metrics) if metrics else {}
+    metadata.update({
+        "group_model": ctx["participant_name"],
+        "model": model,
+        "group_whisper": True,
+        "whisper_from": ctx["participant_name"],
+        "whisper_from_session": ctx["participant_session_id"],
+    })
+    content, metadata = clean_thinking_for_save(full_response, metadata)
+    _group_parent_add_message(session_manager, ctx, "assistant", content, metadata)
 def _stream_failure_status(chunk: str) -> Optional[int]:
     """Extract a provider status without retaining provider-supplied detail."""
 
@@ -804,6 +911,22 @@ def setup_chat_routes(
             defer_context_shaping=foreground_policy.enabled,
         )
 
+        # Direct sends to a hidden group participant are whispers. Mirror the
+        # visible user turn into the parent transcript, just like the streaming
+        # route does. Internal group orchestration already writes to the parent
+        # and must opt out to avoid duplicate turns.
+        group_child_whisper = (
+            None
+            if chat_request.group_internal
+            else _group_child_whisper_context(session, ctx.user)
+        )
+        if group_child_whisper:
+            _mirror_group_child_user_message(
+                session_manager,
+                group_child_whisper,
+                ctx.preprocessed.user_content,
+            )
+
         # Research injection
         research_blocked_by_policy = (
             tool_policy.blocks("trigger_research")
@@ -898,6 +1021,14 @@ def setup_chat_routes(
             },
         )
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
+        if group_child_whisper:
+            _mirror_group_child_assistant_message(
+                session_manager,
+                group_child_whisper,
+                reply,
+                sess.model,
+                None,
+            )
 
         from core.database import update_session_last_accessed
         update_session_last_accessed(session)
@@ -963,6 +1094,7 @@ def setup_chat_routes(
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
+        group_internal = str(form_data.get("group_internal", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
         tool_approval_id = (
@@ -1504,6 +1636,17 @@ def setup_chat_routes(
         # Enforce per-user privileges
         _privs = {}
         _user = ctx.user
+        group_child_whisper = None if group_internal else _group_child_whisper_context(session, _user)
+        if group_child_whisper and not incognito and not compare_mode:
+            try:
+                mirrored_user_content = message
+                if sess.history:
+                    last_msg = sess.history[-1]
+                    if getattr(last_msg, "role", None) == "user":
+                        mirrored_user_content = getattr(last_msg, "content", message)
+                _mirror_group_child_user_message(session_manager, group_child_whisper, mirrored_user_content)
+            except Exception:
+                logger.exception("Failed to mirror group child user message for session %s", session)
         if _user and hasattr(request.app.state, 'auth_manager') and request.app.state.auth_manager:
             _privs = request.app.state.auth_manager.get_privileges(_user)
         if _privs:
@@ -2218,6 +2361,17 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                if group_child_whisper and not incognito and not compare_mode:
+                                    try:
+                                        _mirror_group_child_assistant_message(
+                                            session_manager,
+                                            group_child_whisper,
+                                            full_response,
+                                            last_metrics.get("model") if last_metrics else sess.model,
+                                            last_metrics,
+                                        )
+                                    except Exception:
+                                        logger.exception("Failed to mirror group child assistant message for session %s", session)
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -2485,6 +2639,17 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                if group_child_whisper and not incognito and not compare_mode:
+                                    try:
+                                        _mirror_group_child_assistant_message(
+                                            session_manager,
+                                            group_child_whisper,
+                                            full_response,
+                                            last_metrics.get("model") if last_metrics else sess.model,
+                                            last_metrics,
+                                        )
+                                    except Exception:
+                                        logger.exception("Failed to mirror group child assistant message for session %s", session)
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, _response_to_save,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
