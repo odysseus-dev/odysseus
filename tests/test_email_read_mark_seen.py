@@ -149,6 +149,26 @@ async def test_cached_read_awaits_one_seen_store_without_refetch(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_unicode_folder_uses_modified_utf7_for_fetch_and_cached_seen_store(monkeypatch, tmp_path):
+    email_routes, connections, _ = _install_fakes(monkeypatch, tmp_path)
+    router = email_routes.setup_email_routes()
+    read_email = _route_endpoint(router, "/api/email/read/{uid}", "GET")
+
+    await read_email(
+        "42", folder="Résumé", account_id="acct-a", mark_seen=False, full=False, owner="alice"
+    )
+    await read_email(
+        "42", folder="Résumé", account_id="acct-a", mark_seen=True, full=False, owner="alice"
+    )
+
+    expected_mailbox = '"R&AOk-sum&AOk-"'
+    assert connections[0].selects == [(expected_mailbox, True)]
+    assert connections[1].selects == [(expected_mailbox, False)]
+    assert [command[0] for command in connections[0].commands] == ["FETCH"]
+    assert [command[0] for command in connections[1].commands] == ["STORE"]
+
+
+@pytest.mark.asyncio
 async def test_seen_store_failure_returns_the_body_and_reports_the_failure(monkeypatch, tmp_path):
     """A failed STORE must not cost the reader the message.
 

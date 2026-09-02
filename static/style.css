@@ -37635,12 +37635,18 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 }
 /* Select moved into the dropdown row — dock it to the right and match the
    selects' vertical nudge (.memory-sort-select has top:3px). */
+.memory-category-filters .email-folder-create-btn,
+.memory-category-filters .email-folder-rename-btn,
+.memory-category-filters .email-folder-delete-btn,
 .memory-category-filters .email-filter-select-btn,
 .memory-category-filters .email-filter-refresh-btn {
   position: relative;
   top: 3px;
   flex-shrink: 0;
 }
+.memory-category-filters .email-folder-create-btn,
+.memory-category-filters .email-folder-rename-btn,
+.memory-category-filters .email-folder-delete-btn,
 .memory-category-filters .email-filter-refresh-btn {
   display: inline-flex;
   align-items: center;

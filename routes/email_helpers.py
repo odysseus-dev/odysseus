@@ -14,6 +14,7 @@ and `email_pollers.py` (the background loops):
 
 import os
 import base64
+import binascii
 import time
 import imaplib
 import smtplib
@@ -510,6 +511,81 @@ def _q(name: str) -> str:
     confuse `SELECT` / `COPY`. imaplib already rejects CRLF, but quoting also
     handles `[Gmail]/Sent Mail`-style names that need wrapping anyway."""
     return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _imap_modified_utf7_encode(name: str) -> str:
+    """Encode an IMAP mailbox name using RFC 3501 modified UTF-7."""
+    result: list[str] = []
+    pending: list[str] = []
+
+    def flush_pending() -> None:
+        if not pending:
+            return
+        raw = "".join(pending).encode("utf-16-be")
+        encoded = base64.b64encode(raw).decode("ascii").rstrip("=").replace("/", ",")
+        result.append(f"&{encoded}-")
+        pending.clear()
+
+    for char in str(name or ""):
+        if " " <= char <= "~" and char != "&":
+            flush_pending()
+            result.append(char)
+        elif char == "&":
+            flush_pending()
+            result.append("&-")
+        else:
+            pending.append(char)
+    flush_pending()
+    return "".join(result)
+
+
+def _imap_modified_utf7_decode(name: str) -> str:
+    """Decode an RFC 3501 modified UTF-7 mailbox name.
+
+    Malformed encoded runs are preserved verbatim so one broken LIST entry
+    cannot make the entire folder list disappear.
+    """
+    value = str(name or "")
+    result: list[str] = []
+    offset = 0
+    while offset < len(value):
+        amp = value.find("&", offset)
+        if amp < 0:
+            result.append(value[offset:])
+            break
+        result.append(value[offset:amp])
+        end = value.find("-", amp + 1)
+        if end < 0:
+            result.append(value[amp:])
+            break
+        token = value[amp + 1 : end]
+        if not token:
+            result.append("&")
+        else:
+            try:
+                modified_b64 = token.replace(",", "/")
+                padding = "=" * (-len(modified_b64) % 4)
+                raw = base64.b64decode(modified_b64 + padding, validate=True)
+                if len(raw) % 2:
+                    raise ValueError("modified UTF-7 payload has an odd byte count")
+                result.append(raw.decode("utf-16-be"))
+            except (binascii.Error, UnicodeDecodeError, ValueError):
+                result.append(value[amp : end + 1])
+        offset = end + 1
+    return "".join(result)
+
+
+def _imap_utf8_accepted(conn) -> bool:
+    """Return whether UTF8=ACCEPT was negotiated, not merely advertised."""
+    return bool(getattr(conn, "utf8_enabled", False))
+
+
+def _imap_mailbox_arg(conn, name: str) -> str:
+    """Quote a mailbox for an IMAP command using the negotiated wire format."""
+    mailbox = str(name or "")
+    if not _imap_utf8_accepted(conn):
+        mailbox = _imap_modified_utf7_encode(mailbox)
+    return _q(mailbox)
 
 
 def _attach_compose_uploads(outer: MIMEMultipart, tokens) -> None:
@@ -1426,13 +1502,13 @@ def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str
     c = None
     try:
         c = _imap_connect(account_id, owner=owner)
-        c.select(_q(src))
+        c.select(_imap_mailbox_arg(c, src))
         # Callers pass a real IMAP UID (from conn.uid("SEARCH", ...)). copy()
         # and store() operate on message SEQUENCE NUMBERS, so addressing them
         # with a UID moved/deleted the wrong message (or silently no-oped when
         # the UID exceeded the message count). Use the UID commands, matching
         # the move/delete path in email_routes.py.
-        status, _ = c.uid("COPY", uid, _q(dest))
+        status, _ = c.uid("COPY", uid, _imap_mailbox_arg(c, dest))
         if status != "OK":
             return False
         c.uid("STORE", uid, "+FLAGS", "\\Deleted")
@@ -1706,7 +1782,7 @@ def _fetch_sender_thread_context(sender_addr: str,
             if len(blocks) >= limit:
                 break
             try:
-                st_sel, _ = conn.select(_q(folder), readonly=True)
+                st_sel, _ = conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 if st_sel != "OK":
                     continue
             except Exception:
@@ -1883,7 +1959,7 @@ def _pre_retrieve_context(
             ctx_conn = _imap_connect(account_id, owner=owner)
             for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
                 try:
-                    st_sel, _sd = ctx_conn.select(_q(folder), readonly=True)
+                    st_sel, _sd = ctx_conn.select(_imap_mailbox_arg(ctx_conn, folder), readonly=True)
                     if st_sel != "OK":
                         continue
                 except Exception:

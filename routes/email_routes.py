@@ -45,8 +45,10 @@ from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTE
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
+    _imap_mailbox_arg, _imap_modified_utf7_decode, _imap_utf8_accepted,
+    _attach_compose_uploads, _cleanup_compose_uploads,
     _account_visible_to_owner,
-    _q, _attach_compose_uploads, _cleanup_compose_uploads,
+    _q,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
@@ -437,23 +439,324 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
         logger.debug("email_received event detection skipped", exc_info=True)
 
 
-def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not match:
+def _folder_name_from_list_line(line, *, utf8_accepted: bool = False) -> str | None:
+    encoding = "utf-8" if utf8_accepted else "ascii"
+    decoded = line.decode(encoding, errors="replace") if isinstance(line, bytes) else str(line)
+    decoded = decoded.rstrip()
+    if not decoded:
         return None
-    return match.group(1) or match.group(2)
+    if decoded.endswith('"'):
+        escaped = False
+        for idx in range(len(decoded) - 2, -1, -1):
+            ch = decoded[idx]
+            if ch == '"' and not escaped:
+                value = decoded[idx + 1 : -1]
+                value = value.replace(r"\\", "\\").replace(r"\"", '"')
+                return value if utf8_accepted else _imap_modified_utf7_decode(value)
+            escaped = ch == "\\" and not escaped
+            if ch != "\\":
+                escaped = False
+    parts = decoded.split()
+    if not parts:
+        return None
+    return parts[-1] if utf8_accepted else _imap_modified_utf7_decode(parts[-1])
+
+
+def _imap_status_ok(status) -> bool:
+    if isinstance(status, bytes):
+        status = status.decode(errors="replace")
+    return str(status).strip().upper() == "OK"
 
 
 def _list_imap_folders(conn) -> tuple[list, list[str]]:
     try:
         status, folders = conn.list()
-        if status != "OK" or not folders:
+        if not _imap_status_ok(status) or not folders:
             return [], []
-        names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
+        utf8_accepted = _imap_utf8_accepted(conn)
+        names = [
+            name
+            for name in (
+                _folder_name_from_list_line(f, utf8_accepted=utf8_accepted)
+                for f in folders
+            )
+            if name
+        ]
         return folders, names
     except Exception:
         return [], []
+
+
+_INVALID_NEW_FOLDER_RE = re.compile(r"[\x00\r\n]")
+
+
+def _validate_new_mail_folder_name(value) -> tuple[str | None, str | None]:
+    folder = str(value or "").strip()
+    if not folder:
+        return None, "Folder name is required"
+    if folder.casefold() == "__scheduled__":
+        return None, "Folder name is reserved"
+    if len(folder) > 255:
+        return None, "Folder name is too long"
+    if _INVALID_NEW_FOLDER_RE.search(folder):
+        return None, "Folder name contains invalid characters"
+    return folder, None
+
+
+def _imap_response_text(data) -> str:
+    parts = []
+    for item in data or []:
+        if isinstance(item, bytes):
+            parts.append(item.decode(errors="replace"))
+        elif item is not None:
+            parts.append(str(item))
+    return " ".join(parts).strip()
+
+
+def _email_folder_role_from_name(name: str) -> str:
+    lower = (name or "").strip().lower()
+    if not lower:
+        return ""
+    if lower == "__scheduled__":
+        return "scheduled"
+    tokens = [token for token in re.split(r"[^a-z0-9]+", lower) if token]
+    text = " ".join(tokens)
+    token_set = set(tokens)
+    if text == "inbox":
+        return "inbox"
+    if "sent" in token_set:
+        return "sent"
+    if "starred" in token_set or "flagged" in token_set:
+        return "starred"
+    if "draft" in token_set or "drafts" in token_set:
+        return "drafts"
+    if text == "all mail" or "archive" in token_set or "archives" in token_set:
+        return "archive"
+    if "spam" in token_set or "junk" in token_set:
+        return "junk"
+    if "trash" in token_set or "bin" in token_set or "deleted" in token_set:
+        return "trash"
+    return ""
+
+
+def _email_folder_role_from_list_line(line) -> str:
+    decoded = line.decode(errors="replace") if isinstance(line, bytes) else str(line)
+    lower = decoded.lower()
+    if "\\noselect" in lower:
+        return "system"
+    if "\\sent" in lower:
+        return "sent"
+    if "\\draft" in lower:
+        return "drafts"
+    if "\\trash" in lower:
+        return "trash"
+    if "\\junk" in lower:
+        return "junk"
+    if "\\archive" in lower or "\\all" in lower:
+        return "archive"
+    if "\\flagged" in lower:
+        return "starred"
+    return ""
+
+
+def _protected_email_folder_error(role: str, action: str = "managed") -> str:
+    if role == "scheduled":
+        return "Scheduled is a virtual folder"
+    if role == "inbox":
+        return f"INBOX cannot be {action}"
+    return f"Only custom folders can be {action}"
+
+
+def _resolve_manageable_imap_folder(conn, folder_name: str, action: str = "managed") -> tuple[str | None, str | None]:
+    folder, err = _validate_new_mail_folder_name(folder_name)
+    if err:
+        return None, err
+
+    requested = folder.casefold()
+    folders, names = _list_imap_folders(conn)
+    matched = None
+    matched_line = None
+    utf8_accepted = _imap_utf8_accepted(conn)
+    for raw in folders:
+        name = _folder_name_from_list_line(raw, utf8_accepted=utf8_accepted)
+        if name and name.casefold() == requested:
+            matched = name
+            matched_line = raw
+            break
+    if matched is None:
+        for name in names:
+            if name.casefold() == requested:
+                matched = name
+                break
+    if matched is None:
+        return None, "Folder not found"
+
+    role = _email_folder_role_from_name(matched)
+    if not role and matched_line is not None:
+        role = _email_folder_role_from_list_line(matched_line)
+    if role:
+        return None, _protected_email_folder_error(role, action)
+    return matched, None
+
+
+def _parse_imap_message_count(data) -> int | None:
+    for item in data or []:
+        if isinstance(item, bytes):
+            text = item.decode(errors="replace")
+        elif item is None:
+            continue
+        else:
+            text = str(item)
+        match = re.search(r"\bMESSAGES\s+(\d+)\b", text, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        stripped = text.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
+
+
+def _mail_folder_message_count(conn, folder_name: str) -> int | None:
+    try:
+        status, data = conn.status(_imap_mailbox_arg(conn, folder_name), "(MESSAGES)")
+        if _imap_status_ok(status):
+            count = _parse_imap_message_count(data)
+            if count is not None:
+                return count
+    except Exception:
+        logger.debug("Failed to STATUS email folder %r before delete", folder_name, exc_info=True)
+
+    selected = False
+    try:
+        status, data = conn.select(_imap_mailbox_arg(conn, folder_name), readonly=True)
+        if _imap_status_ok(status):
+            selected = True
+            return _parse_imap_message_count(data)
+    except Exception:
+        logger.debug("Failed to SELECT email folder %r before delete", folder_name, exc_info=True)
+    finally:
+        if selected:
+            try:
+                conn.close()
+            except Exception:
+                logger.debug("Failed to close email folder %r after delete count", folder_name, exc_info=True)
+    return None
+
+
+def _create_imap_folder(conn, folder_name: str) -> tuple[bool, str]:
+    folder, err = _validate_new_mail_folder_name(folder_name)
+    if err:
+        return False, err
+    if _email_folder_role_from_name(folder):
+        return False, "Folder name is reserved"
+
+    _, names = _list_imap_folders(conn)
+    existing = {name.casefold() for name in names}
+    if folder.casefold() in existing:
+        return False, "Folder already exists"
+
+    folder_arg = _imap_mailbox_arg(conn, folder)
+    status, data = conn.create(folder_arg)
+    if not _imap_status_ok(status):
+        msg = _imap_response_text(data)
+        if "exist" in msg.lower():
+            return False, "Folder already exists"
+        return False, msg or "Failed to create folder"
+
+    try:
+        conn.subscribe(folder_arg)
+    except Exception:
+        logger.debug("Failed to subscribe newly created email folder %r", folder, exc_info=True)
+
+    return True, folder
+
+
+def _rename_imap_folder(conn, folder_name: str, new_folder_name: str) -> tuple[bool, dict]:
+    folder, err = _resolve_manageable_imap_folder(conn, folder_name, action="renamed")
+    if err:
+        return False, {"error": err}
+
+    new_folder, err = _validate_new_mail_folder_name(new_folder_name)
+    if err:
+        return False, {"error": err}
+    if _email_folder_role_from_name(new_folder):
+        return False, {"error": "Folder name is reserved"}
+    if new_folder == folder:
+        return False, {"error": "Folder name is unchanged"}
+
+    _, names = _list_imap_folders(conn)
+    existing = {name.casefold() for name in names if name.casefold() != folder.casefold()}
+    if new_folder.casefold() in existing:
+        return False, {"error": "Folder already exists"}
+
+    new_folder_arg = _imap_mailbox_arg(conn, new_folder)
+    status, data = conn.rename(_imap_mailbox_arg(conn, folder), new_folder_arg)
+    if not _imap_status_ok(status):
+        msg = _imap_response_text(data)
+        if "exist" in msg.lower():
+            return False, {"error": "Folder already exists"}
+        return False, {"error": msg or "Failed to rename folder"}
+
+    try:
+        conn.subscribe(new_folder_arg)
+    except Exception:
+        logger.debug("Failed to subscribe renamed email folder %r", new_folder, exc_info=True)
+
+    return True, {"old_folder": folder, "folder": new_folder}
+
+
+def _delete_imap_folder(
+    conn,
+    folder_name: str,
+    confirm_delete: bool = False,
+    confirm_nonempty: bool = False,
+) -> tuple[bool, dict]:
+    folder, err = _resolve_manageable_imap_folder(conn, folder_name, action="deleted")
+    if err:
+        return False, {"error": err}
+
+    count = _mail_folder_message_count(conn, folder)
+    if not confirm_delete:
+        return False, {
+            "error": "Folder deletion requires explicit confirmation",
+            "folder": folder,
+            "message_count": count,
+            "needs_confirmation": True,
+            "confirmation_kind": "delete",
+        }
+    if (count is None or count > 0) and not confirm_nonempty:
+        return False, {
+            "error": "Folder is not empty",
+            "folder": folder,
+            "message_count": count,
+            "needs_confirmation": True,
+            "confirmation_kind": "nonempty",
+        }
+
+    # IMAP has no conditional DELETE primitive. Recheck immediately before the
+    # command and fail closed if an initially empty mailbox received a message.
+    # The remaining gap is covered by the explicit destructive confirmation
+    # required above; confirmed non-empty deletion is intentionally allowed.
+    latest_count = _mail_folder_message_count(conn, folder)
+    if (latest_count is None or latest_count > 0) and not confirm_nonempty:
+        return False, {
+            "error": "Folder is not empty",
+            "folder": folder,
+            "message_count": latest_count,
+            "needs_confirmation": True,
+            "confirmation_kind": "nonempty",
+        }
+    count = latest_count
+
+    status, data = conn.delete(_imap_mailbox_arg(conn, folder))
+    if not _imap_status_ok(status):
+        return False, {
+            "error": _imap_response_text(data) or "Failed to delete folder",
+            "folder": folder,
+            "message_count": count,
+        }
+
+    return True, {"folder": folder, "message_count": count}
 
 
 def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
@@ -466,10 +769,11 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
         "archive": ("\\Archive", "\\All"),
         "junk": ("\\Junk",),
     }.get(role, ())
+    utf8_accepted = _imap_utf8_accepted(conn)
     for f in folders:
         decoded = f.decode() if isinstance(f, bytes) else str(f)
         if any(flag in decoded for flag in role_flags):
-            name = _folder_name_from_list_line(f)
+            name = _folder_name_from_list_line(f, utf8_accepted=utf8_accepted)
             if name:
                 return name
     candidates = {
@@ -1343,10 +1647,10 @@ def _move_email_message(conn, uid: str, dest: str, role: str = "") -> bool:
     # UID as a sequence number is correct, so fail safe when the UID is absent.
     if not _uid_exists(conn, uid):
         return False
-    status, _ = conn.uid("MOVE", _uid_bytes(uid), _q(dest))
+    status, _ = conn.uid("MOVE", _uid_bytes(uid), _imap_mailbox_arg(conn, dest))
     if status == "OK":
         return True
-    status, _ = conn.uid("COPY", _uid_bytes(uid), _q(dest))
+    status, _ = conn.uid("COPY", _uid_bytes(uid), _imap_mailbox_arg(conn, dest))
     if status != "OK":
         return False
     status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
@@ -1632,6 +1936,17 @@ def setup_email_routes():
             for k in list(_FOLDER_CACHE.keys())[:-16]:
                 _FOLDER_CACHE.pop(k, None)
 
+    def _invalidate_folder_cache(account_id=None, owner=None):
+        if account_id is None and owner is None:
+            _FOLDER_CACHE.clear()
+            return
+        for k in list(_FOLDER_CACHE.keys()):
+            k_acct = k[0] if len(k) > 0 else ""
+            k_owner = k[1] if len(k) > 1 else ""
+            if (account_id is None or k_acct == (account_id or "")) and \
+               (owner is None or k_owner == (owner or "")):
+                _FOLDER_CACHE.pop(k, None)
+
     def _invalidate_list_cache(account_id=None, folder=None):
         """Drop list cache entries that the caller's mutation may have stale-ed.
 
@@ -1858,7 +2173,7 @@ def setup_email_routes():
         try:
             conn, _reused_conn = _pooled_connect(account_id, owner=owner)
             conn_ok = True
-            select_status, _ = conn.select(_q(folder), readonly=True)
+            select_status, _ = conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
             if select_status != "OK":
                 return {"emails": [], "total": 0, "folder": folder, "error": f"Folder not found: {folder}"}
 
@@ -2284,7 +2599,7 @@ def setup_email_routes():
         related: list[dict] = []
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 # Search newest referenced messages first; cap work so opening
                 # a long thread stays bounded.
                 for mid in reversed(wanted_ids[-10:]):
@@ -2529,7 +2844,7 @@ def setup_email_routes():
         spam_cache = _unsubscribe_spam_cache(owner, account_id, folder)
         candidates: list[dict] = []
         with _imap(account_id, owner=owner) as conn:
-            st, _ = conn.select(_q(folder), readonly=True)
+            st, _ = conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
             if st != "OK":
                 return {"success": False, "error": f"Folder not found: {folder}", "candidates": []}
             st, data = _imap_uid_search(conn, "ALL")
@@ -2619,7 +2934,7 @@ def setup_email_routes():
             _assert_owns_account(account_id, owner)
         try:
             with _imap(account_id, owner=owner) as conn:
-                st, _ = conn.select(_q(folder), readonly=True)
+                st, _ = conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 if st != "OK":
                     return {"success": False, "error": f"Folder not found: {folder}"}
                 st, msg_data = _imap_uid_fetch(conn, uid, "(UID RFC822.HEADER)")
@@ -2655,7 +2970,7 @@ def setup_email_routes():
             if move_to_spam:
                 try:
                     with _imap(account_id, owner=owner) as conn:
-                        conn.select(_q(folder))
+                        conn.select(_imap_mailbox_arg(conn, folder))
                         moved = _move_email_message(conn, uid, "Junk", role="junk")
                     if moved:
                         _email_index_delete(owner, account_id, folder, uid)
@@ -2703,7 +3018,7 @@ def setup_email_routes():
         failed = 0
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 for uid in uids:
                     try:
                         if _move_email_message(conn, uid, target, role=role):
@@ -2829,7 +3144,7 @@ def setup_email_routes():
                                     break
                     except Exception:
                         pass
-                conn.select(_q(effective_folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, effective_folder), readonly=True)
 
                 search_cmd = _email_imap_search_criteria(q)
 
@@ -2952,7 +3267,7 @@ def setup_email_routes():
                 # response. Prefetch/read-only callers retain BODY.PEEK and a
                 # read-only mailbox selection.
                 try:
-                    conn.select(_q(folder), readonly=not mark_seen)
+                    conn.select(_imap_mailbox_arg(conn, folder), readonly=not mark_seen)
                 except Exception as select_exc:
                     if not mark_seen:
                         raise
@@ -2963,7 +3278,7 @@ def setup_email_routes():
                         f"read-write SELECT rejected for {folder!r}; "
                         f"serving read-only without \\Seen: {select_exc}"
                     )
-                    conn.select(_q(folder), readonly=True)
+                    conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                     mark_seen_failed = True
                 _t_select = _t.monotonic() - _t0
                 fetch_query = "(BODY.PEEK[])" if full else f"(BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.{preview_bytes}>)"
@@ -3161,7 +3476,7 @@ def setup_email_routes():
         """Synchronously mark a cached email seen and report success."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=False)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=False)
                 status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
                 if status != "OK":
                     return False
@@ -3284,7 +3599,7 @@ def setup_email_routes():
             return {"attachments": cached, "uid": uid, "sync": {"source": "attachment_metadata_cache"}}
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"attachments": [], "error": "Email not found"}
@@ -3302,7 +3617,7 @@ def setup_email_routes():
         """Download a specific attachment by email UID and attachment index. Saves to local disk and returns the file."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"error": "Email not found"}
@@ -3329,7 +3644,7 @@ def setup_email_routes():
         """Download all visible attachments for an email as a zip archive."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 raise HTTPException(status_code=404, detail="Email not found")
@@ -3391,7 +3706,7 @@ def setup_email_routes():
             raise HTTPException(status_code=400, detail="Missing image Content-ID")
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 raise HTTPException(status_code=404, detail="Email not found")
@@ -3442,7 +3757,7 @@ def setup_email_routes():
         """
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"error": "Email not found"}
@@ -3712,7 +4027,7 @@ def setup_email_routes():
         """Extract attachment to local disk and return the path (for AI to read via read_file)."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"error": "Email not found"}
@@ -3734,7 +4049,7 @@ def setup_email_routes():
         """Mark an email as unread (clear \\Seen flag)."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _store_email_flag(conn, uid, "\\Seen", add=False):
                     return {"success": False, "error": "Email not found"}
             _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", False)
@@ -3751,7 +4066,7 @@ def setup_email_routes():
         Pass `on=true` to favorite, `on=false` to unfavorite."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _store_email_flag(conn, uid, "\\Flagged", add=bool(on)):
                     return {"success": False, "error": "Email not found"}
             _email_index_update_flags(owner, account_id, folder, uid, "\\Flagged", bool(on))
@@ -3766,7 +4081,7 @@ def setup_email_routes():
         """Mark an email as read (set \\Seen flag)."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _store_email_flag(conn, uid, "\\Seen", add=True):
                     return {"success": False, "error": "Email not found"}
             _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
@@ -3783,7 +4098,7 @@ def setup_email_routes():
         """Move email to Archive folder."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _move_email_message(conn, uid, "Archive", role="archive"):
                     return {"success": False, "error": "Email not found"}
             _email_index_delete(owner, account_id, folder, uid)
@@ -3798,7 +4113,7 @@ def setup_email_routes():
         """Move email to Trash."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _move_email_message(conn, uid, "Trash", role="trash"):
                     return {"success": False, "error": "Email not found"}
             _email_index_delete(owner, account_id, folder, uid)
@@ -3813,7 +4128,7 @@ def setup_email_routes():
         """Permanently delete an email (no Trash)."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _store_email_flag(conn, uid, "\\Deleted", add=True):
                     return {"success": False, "error": "Email not found"}
                 conn.expunge()
@@ -3860,7 +4175,7 @@ def setup_email_routes():
                         continue
                     seen.add(folder_name)
                     try:
-                        st, _ = conn.select(_q(folder_name))
+                        st, _ = conn.select(_imap_mailbox_arg(conn, folder_name))
                         if st != "OK":
                             continue
                         folders_checked.append(folder_name)
@@ -3884,7 +4199,7 @@ def setup_email_routes():
                             if permanent:
                                 conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
                             else:
-                                copy_st, _ = conn.uid("COPY", uid, _q("Trash"))
+                                copy_st, _ = conn.uid("COPY", uid, _imap_mailbox_arg(conn, "Trash"))
                                 if copy_st == "OK":
                                     conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
                                 else:
@@ -3904,7 +4219,7 @@ def setup_email_routes():
         """Move an email to another folder."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _move_email_message(conn, uid, dest):
                     return {"success": False, "error": f"Failed to move to {dest}"}
             _email_index_delete(owner, account_id, folder, uid)
@@ -3912,6 +4227,20 @@ def setup_email_routes():
             return {"success": True}
         except Exception as e:
             logger.error(f"Failed to move email {uid} to {dest}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.get("/folders/status")
+    async def folder_status(folder: str = Query(...), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Return deletion metadata for a user-managed IMAP folder."""
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                resolved, err = _resolve_manageable_imap_folder(conn, folder)
+                if err:
+                    return {"success": False, "error": err}
+                count = _mail_folder_message_count(conn, resolved)
+            return {"success": True, "folder": resolved, "message_count": count}
+        except Exception as e:
+            logger.error(f"folder_status failed for {folder!r}: {e}")
             return {"success": False, "error": "Mail operation failed"}
 
     @router.get("/folders")
@@ -3923,6 +4252,10 @@ def setup_email_routes():
         """List IMAP folders."""
         if _fixture_email_enabled():
             return {"folders": ["INBOX", "Archive", "Sent"], "sync": {"source": "fixture"}}
+        try:
+            cached_only_enabled = bool(int(cached_only or 0))
+        except (TypeError, ValueError):
+            cached_only_enabled = False
         cached = _folder_cache_get(account_id, owner)
         if cached is not None:
             payload = dict(cached)
@@ -3930,7 +4263,7 @@ def setup_email_routes():
             sync_meta["source"] = "folder_cache"
             payload["sync"] = sync_meta
             return payload
-        if cached_only:
+        if cached_only_enabled:
             stale = _folder_cache_get_stale(account_id, owner)
             if stale:
                 payload = dict(stale)
@@ -3945,14 +4278,7 @@ def setup_email_routes():
 
         def _list_folders_sync():
             with _imap(account_id, owner=owner) as conn:
-                status, folders = conn.list()
-            result = []
-            for f in folders or []:
-                decoded = f.decode() if isinstance(f, bytes) else f
-                match = re.search(r'"([^"]*)"$|(\S+)$', decoded)
-                if match:
-                    name = match.group(1) or match.group(2)
-                    result.append(name)
+                status, result = _list_imap_folders(conn)
             return {
                 "folders": result,
                 "sync": {
@@ -3985,12 +4311,80 @@ def setup_email_routes():
             logger.error(f"list_folders failed: {e}")
             return {"folders": [], "error": "Mail operation failed"}
 
+    @router.post("/folders")
+    async def create_folder(payload: dict, account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Create a user-requested IMAP folder."""
+        folder, err = _validate_new_mail_folder_name((payload or {}).get("folder") or (payload or {}).get("name"))
+        if err:
+            return {"success": False, "error": err}
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _create_imap_folder(conn, folder)
+                if not ok:
+                    return {"success": False, "error": result}
+                _, names = _list_imap_folders(conn)
+            if result not in names:
+                names.append(result)
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, "folder": result, "folders": names}
+        except Exception as e:
+            logger.error(f"create_folder failed for {folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.patch("/folders")
+    async def rename_folder(payload: dict, account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Rename a user-managed IMAP folder."""
+        folder = (payload or {}).get("folder") or (payload or {}).get("old_name")
+        new_folder = (payload or {}).get("new_folder") or (payload or {}).get("new_name") or (payload or {}).get("name")
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _rename_imap_folder(conn, folder, new_folder)
+                if not ok:
+                    return {"success": False, **result}
+                _, names = _list_imap_folders(conn)
+            if result["folder"] not in names:
+                names.append(result["folder"])
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, **result, "folders": names}
+        except Exception as e:
+            logger.error(f"rename_folder failed for {folder!r} -> {new_folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.delete("/folders")
+    async def delete_folder(
+        folder: str = Query(...),
+        confirm_delete: bool = Query(False),
+        confirm_nonempty: bool = Query(False),
+        account_id: str | None = Query(None),
+        owner: str = Depends(require_owner),
+    ):
+        """Delete a user-managed IMAP folder."""
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _delete_imap_folder(
+                    conn,
+                    folder,
+                    confirm_delete=confirm_delete,
+                    confirm_nonempty=confirm_nonempty,
+                )
+                if not ok:
+                    return {"success": False, **result}
+                _, names = _list_imap_folders(conn)
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, **result, "folders": names}
+        except Exception as e:
+            logger.error(f"delete_folder failed for {folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
     @router.post("/mark-answered/{uid}")
     async def mark_answered(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Mark an email as answered (set \\Answered flag)."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _store_email_flag(conn, uid, "\\Answered", add=True):
                     return {"success": False, "error": "Email not found"}
             _email_index_update_flags(owner, account_id, folder, uid, "\\Answered", True)
@@ -4006,7 +4400,7 @@ def setup_email_routes():
         """Clear the \\Answered flag from an email."""
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
+                conn.select(_imap_mailbox_arg(conn, folder))
                 if not _store_email_flag(conn, uid, "\\Answered", add=False):
                     return {"success": False, "error": "Email not found"}
             _email_index_update_flags(owner, account_id, folder, uid, "\\Answered", False)
@@ -4203,7 +4597,7 @@ def setup_email_routes():
         """
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"success": False, "error": "Email not found"}
@@ -4475,7 +4869,7 @@ def setup_email_routes():
                 matches = {}
                 for folder in ["Sent", "INBOX", "Drafts"]:
                     try:
-                        st, _ = conn.select(_q(folder), readonly=True)
+                        st, _ = conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                         if st != "OK":
                             continue
                         st, data = conn.search(None, "ALL")
@@ -4639,7 +5033,7 @@ def setup_email_routes():
                                 sent_uid = m.group(1).decode("ascii", errors="ignore")
                         if not sent_uid:
                             try:
-                                st_sel, _ = imap.select(_q(sent_folder), readonly=True)
+                                st_sel, _ = imap.select(_imap_mailbox_arg(imap, sent_folder), readonly=True)
                                 if st_sel == "OK":
                                     mid = (_message_id or "").strip().lstrip("<").rstrip(">").replace('"', '\\"')
                                     st_uid, uid_data = imap.uid("SEARCH", None, f'HEADER Message-ID "{mid}"')
@@ -4651,7 +5045,7 @@ def setup_email_routes():
                         # disappears from "undone" filters.
                         if _source_uid:
                             try:
-                                st, _sel = imap.select(_q(_source_folder), readonly=False)
+                                st, _sel = imap.select(_imap_mailbox_arg(imap, _source_folder), readonly=False)
                                 if st == "OK" and _store_email_flag(imap, _source_uid, "\\Answered", add=True):
                                     _email_index_update_flags(owner, _account_id, _source_folder, _source_uid, "\\Answered", True)
                                     _clear_done_response_tags(owner, _account_id, _source_folder, _source_uid)
@@ -4677,7 +5071,7 @@ def setup_email_routes():
                                 )
                                 for folder_name in dict.fromkeys(folder_candidates):
                                     try:
-                                        st, _sel = imap.select(_q(folder_name), readonly=False)
+                                        st, _sel = imap.select(_imap_mailbox_arg(imap, folder_name), readonly=False)
                                         if st != "OK":
                                             continue
                                         st2, sd = imap.search(None, f'HEADER Message-ID "{mid}"')
@@ -4789,7 +5183,7 @@ def setup_email_routes():
         def _gather_samples() -> tuple[list[str], str | None]:
             try:
                 with _imap(account_id, owner=owner) as imap:
-                    imap.select(_q(_detect_sent_folder(imap)), readonly=True)
+                    imap.select(_imap_mailbox_arg(imap, _detect_sent_folder(imap)), readonly=True)
                     status, data = imap.search(None, "ALL")
                     if status != "OK" or not data[0]:
                         return [], "No sent emails found"
@@ -4909,7 +5303,7 @@ def setup_email_routes():
                 try:
                     def _fetch_atts():
                         with _imap(account_id, owner=owner) as conn:
-                            conn.select(_q(folder), readonly=True)
+                            conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                             status, msg_data = _imap_uid_fetch(conn, str(uid), "(BODY.PEEK[])")
                             if status != "OK" or not msg_data or not msg_data[0]:
                                 return ""
