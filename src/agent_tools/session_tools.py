@@ -441,6 +441,7 @@ async def manage_session(content: str, session_id: Optional[str] = None, owner: 
                 model=source.model,
                 rag=False,
                 owner=owner,
+                project_id=getattr(source, "project_id", None),
             )
             # Copy messages
             history = source.get_context_messages()

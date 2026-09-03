@@ -32,6 +32,7 @@ class SessionCreateRequest(BaseModel):
     endpoint_url: str = Field(..., description="LLM endpoint URL")
     model: Optional[str] = Field(default="", description="Model ID")
     rag: Optional[bool] = Field(default=False, description="Enable RAG")
+    project_id: Optional[str] = Field(default=None, description="Project ID")
 
 
 class MemoryAddRequest(BaseModel):
@@ -126,6 +127,20 @@ class SessionResponse(BaseModel):
     model: str = Field(..., description="Model being used")
     rag: bool = Field(default=False, description="RAG enabled")
     archived: bool = Field(default=False, description="Whether session is archived")
+    project_id: Optional[str] = Field(default=None, description="Associated project ID")
+
+
+class ProjectResponse(BaseModel):
+    id: str = Field(..., description="Project ID")
+    name: str = Field(..., description="Project name")
+    description: str = Field(default="", description="Project description")
+    instructions: str = Field(default="", description="Project instructions")
+    brief: str = Field(default="", description="Rolling project brief")
+    archived: bool = Field(default=False, description="Whether project is archived")
+    is_pinned: bool = Field(default=False, description="Whether project is pinned")
+    created_at: Optional[str] = Field(default=None, description="Created timestamp")
+    updated_at: Optional[str] = Field(default=None, description="Updated timestamp")
+    session_count: int = Field(default=0, description="Number of active sessions")
 
 
 class MemoryResponse(BaseModel):

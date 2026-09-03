@@ -39,6 +39,7 @@ Timestamp defaults use `utcnow_naive()` so existing naive `DateTime` columns sta
 Current model families include:
 
 - chat sessions, messages, and `chat_messages_fts` transcript-search state/triggers;
+- projects and `sessions.project_id` chat membership;
 - documents and document versions;
 - gallery albums/images, editor drafts, signatures, generated-media metadata;
 - email accounts, model endpoints, MCP servers, comparisons;
@@ -52,6 +53,9 @@ lines in `chat_messages.content`, while structured references remain in message
 metadata. Provider data URLs used by the live turn are not duplicated into the
 durable transcript. The FTS migration recreates insert/update triggers to omit
 inline media and scrubs legacy indexed rows that still contain data URLs.
+Projects persist owner-scoped workspace metadata (`name`, `description`,
+`instructions`, `brief`, archive/pin flags), and sessions can point at one
+project. Project archive does not delete sessions.
 
 Current calendar/task persistence includes CalDAV remote identity columns (`CalendarCal.remote_href`, `CalendarCal.remote_etag`, `CalendarEvent.remote_href`, `CalendarEvent.remote_etag`), `CalendarEvent.caldav_sync_pending` for retryable writeback state, and `ScheduledTask.character_id` for built-in task persona selection.
 
@@ -81,6 +85,9 @@ Owner-claiming is partly automatic and partly manual. `core.database._migrate_as
 ## Ownership And Access
 
 Owner columns are security-relevant. Current owner-bearing domains include sessions, documents, gallery images/albums, editor drafts, model endpoints, signatures, API tokens, user tools/tool data, comparisons, crew members, scheduled tasks/task runs, memories, notes, calendars/events, email accounts, and integrations. Webhooks are admin-global today and do not have an owner column.
+Projects are owner-bearing and use the same route-level filtering discipline as
+sessions; session membership updates must verify both the chat and project in
+the caller's owner scope.
 
 Route code owns filtering for its domain. `src.auth_helpers.owner_filter()` is the common helper where available; gallery, documents, calendar, email, skills, and other surfaces also use local filters. Null-owner compatibility is domain-specific: shared endpoints may include null owners, while strict gates and disk stores may reject them. Do not rely on frontend filtering for access control.
 

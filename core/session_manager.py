@@ -150,6 +150,7 @@ class SessionManager:
             history=[],
             owner=getattr(db_session, "owner", None),
             is_important=getattr(db_session, "is_important", False) or False,
+            project_id=getattr(db_session, "project_id", None),
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -208,6 +209,7 @@ class SessionManager:
             history=history,
             owner=getattr(db_session, 'owner', None),
             is_important=getattr(db_session, 'is_important', False) or False,
+            project_id=getattr(db_session, "project_id", None),
         )
 
         # The rows just loaded are the whole transcript, so they — not the
@@ -485,6 +487,7 @@ class SessionManager:
             session.archived = db_session.archived
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
+            session.project_id = getattr(db_session, "project_id", None)
             session.message_count = (
                 db.query(DbChatMessage)
                 .filter(DbChatMessage.session_id == session_id)
@@ -545,7 +548,8 @@ class SessionManager:
         endpoint_url: str,
         model: str,
         rag: bool = False,
-        owner: str = None
+        owner: str = None,
+        project_id: str = None,
     ) -> Session:
         """Create a new session and save to database."""
         db = SessionLocal()
@@ -558,6 +562,7 @@ class SessionManager:
                 rag=rag,
                 headers={},
                 owner=owner,
+                project_id=project_id or None,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -572,6 +577,7 @@ class SessionManager:
                 rag=rag,
                 headers={},
                 owner=owner,
+                project_id=project_id or None,
             )
 
             self.sessions[session_id] = session
@@ -709,7 +715,7 @@ class SessionManager:
     def save_sessions(self):
         """No-op for DB compatibility."""
 
-    def ensure_task_session(self, session_id: str, name: str, endpoint_url: str, model: str, owner: str = None, task: object = None) -> Session:
+    def ensure_task_session(self, session_id: str, name: str, endpoint_url: str, model: str, owner: str = None, task: object = None, project_id: str = None) -> Session:
         """Create a task session if it doesn't exist, or return the existing one.
 
         Unlike create_session, this checks the cache first and does NOT
@@ -719,7 +725,7 @@ class SessionManager:
         if session_id in self.sessions:
             return self.sessions[session_id]
 
-        session = self.create_session(session_id, name, endpoint_url, model, owner=owner)
+        session = self.create_session(session_id, name, endpoint_url, model, owner=owner, project_id=project_id)
         if task is not None:
             task.session_id = session_id
         return session

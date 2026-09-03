@@ -618,6 +618,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 model=source.model,
                 rag=False,
                 owner=getattr(source, 'owner', None),
+                project_id=getattr(source, 'project_id', None),
             )
 
             # Copy messages up to keep_count

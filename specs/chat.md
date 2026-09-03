@@ -9,6 +9,7 @@ This spec covers current chat behavior in:
 - `routes/chat_routes.py` and `routes/chat_helpers.py`;
 - `routes/session_routes.py` and canonical `routes/history/history_routes.py`,
   with `routes/history_routes.py` as a compatibility shim;
+- `routes/project_routes.py` and `src/project_context.py` for project-backed chat context;
 - `src/chat_helpers.py`;
 - `src/agent_runs.py`;
 - `src/chat_handler.py` and `src/chat_processor.py`;
@@ -61,6 +62,9 @@ Fallback candidates receive route-neutral context shaping. Only compaction perfo
 ## Context Preface
 
 `routes.chat_helpers.build_chat_context()` owns the shared route pipeline: preset extraction, preprocessing, user-message persistence, incognito/no-memory/RAG/skills flags, prefetched compare search, YouTube transcript context, research-spinoff grounding, model normalization, and compaction.
+It also injects project context for chats attached to a visible project: stable
+project metadata/instructions plus untrusted rolling brief and sibling-chat
+snippets.
 
 `src.chat_processor.ChatProcessor.build_context_preface()` owns source preface construction. It can add memory, RAG, web search, URL page content, and skills index context before the model call.
 
@@ -132,6 +136,8 @@ Incognito disables memory, skill, and chat-history tools and skips assistant DB 
 ## Search Boundary
 
 `GET /api/search` in `routes/chat_routes.py` is chat-message search for the UI and slash commands. Web search routes are owned by canonical `routes/search/search_routes.py`; chat and agent web context call through `src.search`, compatibility shims, and search content fetchers. Do not confuse chat-history search with external web retrieval.
+`project_id` can scope chat-message search to one project through
+`sessions.project_id`.
 
 ## Degraded And Compatibility Behavior
 

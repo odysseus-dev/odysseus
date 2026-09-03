@@ -49,6 +49,7 @@ Current untrusted context sources include:
 - YouTube transcripts/comments;
 - RAG/personal document chunks;
 - memories and skills;
+- project briefs and sibling-chat excerpts;
 - notes and active editor documents;
 - emails and attachments;
 - tool output from external/user-controlled data.
@@ -96,6 +97,8 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 
 ## Current Call Sites Include
 
+- `src.project_context.build_project_context_messages()` for project metadata,
+  rolling briefs, and project-scoped sibling chat snippets;
 - `ChatProcessor.build_context_preface()` for memory, RAG, web search, URL content, and skills index;
 - `ChatHandler.preprocess_message()` and the canonical `services.youtube.youtube_handler` import path for YouTube fetch/format, then `routes/chat_helpers.py` for wrapping prefetched search/Youtube context;
 - `routes/chat_routes.py` research context injection;
