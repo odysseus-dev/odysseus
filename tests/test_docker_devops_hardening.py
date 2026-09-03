@@ -122,12 +122,13 @@ def test_docker_entrypoint_repairs_cache_parent_without_recursive_walk():
     cache_parent_repair = script.index(
         'chown "$PUID:$PGID" /app/.cache 2>/dev/null || true'
     )
-    mounted_cache_repair = script.index(
-        "for dir in /app/data /app/logs /app/.ssh /app/.cache/huggingface /app/.local"
+    mounted_cache_root_repair = script.index(
+        'chown "$PUID:$PGID" /app/.cache/huggingface 2>/dev/null || true'
     )
 
-    assert app_repair < cache_parent_repair < mounted_cache_repair
+    assert app_repair < cache_parent_repair < mounted_cache_root_repair
     assert 'repair_tree_ownership "/app/.cache"' not in script
+    assert 'repair_bind_mount_ownership "/app/.cache/huggingface"' not in script
 
 
 def test_dockerignore_excludes_secrets_editor_backups():

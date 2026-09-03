@@ -101,7 +101,11 @@ repair_app_tree_ownership
 # such as /app/.cache/vllm and /app/.cache/flashinfer can be created without
 # recursively walking the mounted model cache.
 chown "$PUID:$PGID" /app/.cache 2>/dev/null || true
-for dir in /app/data /app/logs /app/.ssh /app/.cache/huggingface /app/.local; do
+# The Hugging Face cache can contain hundreds of gigabytes and is a nested
+# mount with its own ownership contract. Repair its mount root so new cache
+# entries are writable, but never traverse or rewrite existing model files.
+chown "$PUID:$PGID" /app/.cache/huggingface 2>/dev/null || true
+for dir in /app/data /app/logs /app/.ssh /app/.local; do
     repair_bind_mount_ownership "$dir"
 done
 
