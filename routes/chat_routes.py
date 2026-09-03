@@ -1027,7 +1027,7 @@ def setup_chat_routes(
         auto_escalated = False
         _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
         _workspace_agent_intent = False
-        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
+        if chat_mode == "chat" and not compare_mode and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
             _workspace_agent_intent = _tool_intent.category in {"shell", "workspace"}
@@ -1038,11 +1038,11 @@ def setup_chat_routes(
                 _tool_intent.category,
                 _tool_intent.reason,
             )
-        elif chat_mode == "chat" and _search_enabled:
+        elif chat_mode == "chat" and not compare_mode and _search_enabled:
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: search enabled")
-        elif chat_mode == "chat" and _explicit_web_intent:
+        elif chat_mode == "chat" and not compare_mode and _explicit_web_intent:
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: explicit web intent")
@@ -1229,6 +1229,7 @@ def setup_chat_routes(
                 raise HTTPException(400, "Selected model endpoint is not configured")
             if (
                 chat_mode == "chat"
+                and not compare_mode
                 and isinstance(message, str)
                 and (not _tool_intent or not _tool_intent.needs_tools)
                 and _is_contextual_web_followup(message, sess)
@@ -1244,7 +1245,7 @@ def setup_chat_routes(
                 )
             if isinstance(message, str) and _is_contextual_browser_followup(message, sess):
                 _explicit_browser_intent = True
-                if chat_mode == "chat":
+                if chat_mode == "chat" and not compare_mode:
                     chat_mode = "agent"
                     auto_escalated = True
                     _workspace_agent_intent = False
@@ -1253,11 +1254,12 @@ def setup_chat_routes(
                 _auto_workspace, _ = _resolve_workspace_from_message_path(request, message)
                 if _auto_workspace:
                     workspace = _auto_workspace
-                    chat_mode = "agent"
-                    auto_escalated = True
-                    _workspace_agent_intent = True
-                    allow_bash = "true"
-                    logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
+                    if not (compare_mode and chat_mode == "chat"):
+                        chat_mode = "agent"
+                        auto_escalated = True
+                        _workspace_agent_intent = True
+                        allow_bash = "true"
+                        logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
