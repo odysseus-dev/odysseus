@@ -1,0 +1,5 @@
+services:
+  agent-mesh:
+    image: odysseus-agent-mesh@sha256:7d9ea11f32e5fe273e2d83665c650d9998c3592f0f13946769b4aa0593769e48
+    pull_policy: never
+    build: !reset null
