@@ -108,6 +108,7 @@ def test_manage_session_fork_reaches_uuid(monkeypatch):
         name = "Orig"
         endpoint_url = "http://x"
         model = "m"
+        project_id = "project-1"
 
         def get_context_messages(self):
             return []
@@ -126,6 +127,7 @@ def test_manage_session_fork_reaches_uuid(monkeypatch):
     assert res.get("action") == "fork"
     assert isinstance(res.get("session_id"), str) and res["session_id"]
     assert created.get("name") == "Fork: Orig"  # uuid-minted new session was created
+    assert created.get("project_id") == "project-1"
 
 
 def test_no_session_manager_is_handled(monkeypatch):

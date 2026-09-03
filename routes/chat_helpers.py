@@ -18,6 +18,7 @@ from src.context_compactor import maybe_compact, trim_for_context
 from src.model_context import estimate_tokens, get_context_length
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
+from src.project_context import build_project_context_messages
 from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
@@ -735,6 +736,14 @@ async def build_chat_context(
     if use_rag is not None or is_research_spinoff or casual_low_signal:
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
+
+    if not incognito and allow_tool_preprocessing and not casual_low_signal:
+        preface.extend(build_project_context_messages(
+            session_id,
+            _ctx_msg,
+            owner=user,
+            include_related_snippets=not is_research_spinoff,
+        ))
 
     # Capture used memories immediately
     used_memories = getattr(chat_processor, '_last_used_memories', [])

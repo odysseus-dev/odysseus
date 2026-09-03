@@ -1676,9 +1676,43 @@ body.bg-pattern-sparkles {
     }
     .session-folder-header:hover .folder-delete-btn { opacity: 0.5; }
     .folder-delete-btn:hover { opacity: 1 !important; color: var(--color-error); }
+    .folder-delete-btn:focus-visible { opacity: 1; }
+    @media (hover: none), (pointer: coarse), (max-width: 768px) {
+      .project-folder-header .project-header-btn { opacity: 0.65; }
+    }
     .session-folder-content { padding-left: 4px; }
     .session-folder-content .list-item { border-bottom: 1px solid color-mix(in srgb, var(--fg) 7%, transparent); }
     .session-folder-content .list-item:last-child { border-bottom: none; }
+    .project-folder-header .project-header-btn {
+      width: 18px;
+      min-width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      line-height: 1;
+    }
+    .project-folder-header .folder-toggle,
+    .project-folder-header .project-header-btn {
+      align-items: center;
+      justify-content: center;
+    }
+    .project-folder-header .folder-toggle { display: inline-flex; }
+    .project-folder-header .project-header-btn svg { display: block; }
+    .project-folder-header .project-header-btn:hover { color: var(--fg); }
+    .project-folder-header .project-archive-btn:hover { color: var(--color-error); }
+    .project-create-btn {
+      text-align: left;
+      padding-left: 20px;
+      color: var(--accent-primary, var(--accent));
+    }
+    .project-empty {
+      font-size: 11px;
+      opacity: 0.55;
+      padding: 6px 8px 8px 20px;
+      text-align: left;
+    }
     .session-show-more-btn {
       display: block;
       width: 100%;

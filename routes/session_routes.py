@@ -5,12 +5,13 @@ import json
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, Form, HTTPException, Response, Request
+from sqlalchemy import and_
 import logging
 
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, Project, utcnow_naive
 from src.auth_helpers import effective_user, _auth_disabled, owner_filter
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
@@ -121,6 +122,19 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
         if ghost is not None and (not user or getattr(ghost, "owner", None) == user):
             return
     raise HTTPException(404, f"Session {session_id} not found")
+
+
+def _verify_project_for_session(db, project_id: str | None, user: str | None) -> str | None:
+    """Return a usable project id, or reject cross-owner/missing projects."""
+    clean_id = (project_id or "").strip()
+    if not clean_id:
+        return None
+    q = db.query(Project).filter(Project.id == clean_id, Project.archived == False)
+    q = owner_filter(q, Project, user)
+    project = q.first()
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return project.id
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +283,22 @@ def setup_session_routes(
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
+            project_map = {}
+            project_join = DbSession.project_id == Project.id
+            if user is not None:
+                project_join = and_(project_join, Project.owner == user)
+            q = (
+                db.query(
+                    DbSession.id, DbSession.folder, DbSession.total_input_tokens,
+                    DbSession.total_output_tokens, DbSession.is_important,
+                    DbSession.created_at, DbSession.updated_at,
+                    DbSession.last_message_at, DbSession.mode,
+                    DbSession.message_count, DbSession.project_id,
+                    Project.name.label("project_name"),
+                )
+                .outerjoin(Project, project_join)
+                .filter(DbSession.archived == False)
+            )
             q = owner_filter(q, DbSession, user)
             rows = q.all()
             for row in rows:
@@ -287,6 +316,13 @@ def setup_session_routes(
                 )
                 mode_map[row.id] = row.mode
                 msg_count_map[row.id] = row.message_count or 0
+                project_map[row.id] = {
+                    "project_id": row.project_id,
+                    "project_name": row.project_name,
+                } if row.project_id and row.project_name else {
+                    "project_id": row.project_id,
+                    "project_name": None,
+                }
             # Sessions with active documents that have content
             from sqlalchemy import func
             doc_session_ids = set(
@@ -319,6 +355,8 @@ def setup_session_routes(
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
+                     "project_id": project_map.get(s.id, {}).get("project_id"),
+                     "project_name": project_map.get(s.id, {}).get("project_name"),
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
                     if not s.archived
@@ -337,6 +375,7 @@ def setup_session_routes(
         skip_validation: str = Form(None),
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
+        project_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
@@ -425,6 +464,11 @@ def setup_session_routes(
         
         sid = str(uuid.uuid4())
         user = effective_user(request)
+        create_db = SessionLocal()
+        try:
+            verified_project_id = _verify_project_for_session(create_db, project_id, user)
+        finally:
+            create_db.close()
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",
@@ -432,6 +476,7 @@ def setup_session_routes(
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
+            project_id=verified_project_id,
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
@@ -456,12 +501,13 @@ def setup_session_routes(
             name=session.name,
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
-            archived=False
+            archived=False,
+            project_id=verified_project_id,
         )    
     @router.patch("/session/{sid}")
     def rename_session(
         request: Request, sid: str,
-        name: str = Form(None), folder: str = Form(None),
+        name: str = Form(None), folder: str = Form(None), project_id: str = Form(None),
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
     ):
@@ -484,6 +530,21 @@ def setup_session_routes(
                     db_session.updated_at = utcnow_naive()
                     db.commit()
                     result["folder"] = folder if folder else None
+            finally:
+                db.close()
+        if project_id is not None:
+            user = effective_user(request)
+            db = SessionLocal()
+            try:
+                verified_project_id = _verify_project_for_session(db, project_id, user)
+                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                if db_session:
+                    db_session.project_id = verified_project_id
+                    db_session.updated_at = utcnow_naive()
+                    db.commit()
+                    if sid in session_manager.sessions:
+                        session_manager.sessions[sid].project_id = verified_project_id
+                    result["project_id"] = verified_project_id
             finally:
                 db.close()
         # Switch model/endpoint mid-session

@@ -12,6 +12,7 @@ import spinnerModule from './spinner.js';
 const API_BASE = window.location.origin;
 
 let sessions = [];
+let projects = [];
 let currentSessionId = null;
 let _sessionNavToken = 0;
 let _skipAutoSelect = false;
@@ -344,6 +345,7 @@ export function initDependencies() {}
 // ── Folder state persistence ──
 const FOLDER_STATE_KEY = 'odysseus-folder-state';
 const FOLDER_ORDER_KEY = 'odysseus-folder-order';
+const PROJECT_STATE_KEY = 'odysseus-project-state';
 
 function loadFolderState() {
   return Storage.getJSON(FOLDER_STATE_KEY, {});
@@ -356,6 +358,105 @@ function loadFolderOrder() {
 }
 function saveFolderOrder(order) {
   Storage.setJSON(FOLDER_ORDER_KEY, order);
+}
+function loadProjectState() {
+  return Storage.getJSON(PROJECT_STATE_KEY, {});
+}
+function saveProjectState(state) {
+  Storage.setJSON(PROJECT_STATE_KEY, state);
+}
+
+function _normalizeProjectsList(fetched) {
+  if (!Array.isArray(fetched)) return [];
+  const seen = new Set();
+  const unique = [];
+  for (const project of fetched) {
+    if (!project || project.id == null) continue;
+    const id = String(project.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push({ ...project, id });
+  }
+  return unique;
+}
+
+function _projectById(projectId) {
+  const id = String(projectId || '');
+  return projects.find(p => String(p.id) === id) || null;
+}
+
+async function loadProjects() {
+  try {
+    const res = await fetch(`${API_BASE}/api/projects`);
+    if (!res.ok) throw new Error(`Project request failed (${res.status})`);
+    projects = _normalizeProjectsList(await res.json());
+  } catch (e) {
+    console.warn('Failed to load projects:', e);
+    projects = [];
+  }
+  return projects;
+}
+
+async function createProject({ name = '', description = '', instructions = '' } = {}) {
+  const cleanName = (name || '').trim() || (await styledPrompt('Name this project:', {
+    title: 'New project',
+    placeholder: 'e.g. Odysseus release',
+    confirmText: 'Create',
+  }));
+  if (!cleanName || !cleanName.trim()) return null;
+  const fd = new FormData();
+  fd.append('name', cleanName.trim());
+  if (description) fd.append('description', description);
+  if (instructions) fd.append('instructions', instructions);
+  const res = await fetch(`${API_BASE}/api/projects`, { method: 'POST', body: fd });
+  if (!res.ok) {
+    uiModule.showError(`Project create failed (${res.status})`);
+    return null;
+  }
+  const project = await res.json();
+  await loadProjects();
+  renderSessionList();
+  return project;
+}
+
+async function updateProject(projectId, fields = {}) {
+  const fd = new FormData();
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) fd.append(key, value);
+  });
+  const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectId)}`, {
+    method: 'PATCH',
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`Project update failed (${res.status})`);
+  const updated = await res.json();
+  const idx = projects.findIndex(p => String(p.id) === String(projectId));
+  if (idx >= 0) projects[idx] = updated;
+  else projects.push(updated);
+  return updated;
+}
+
+async function moveToProject(sessionId, projectId) {
+  const fd = new FormData();
+  fd.append('project_id', projectId || '');
+  const res = await fetch(`${API_BASE}/api/session/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    body: fd,
+  });
+  if (!res.ok) {
+    uiModule.showError(`Move failed (${res.status})`);
+    return false;
+  }
+  const payload = await res.json().catch(() => ({}));
+  const s = sessions.find(x => String(x.id) === String(sessionId));
+  if (s) {
+    s.project_id = payload.project_id || null;
+    const project = _projectById(s.project_id);
+    s.project_name = project ? project.name : null;
+  }
+  await loadProjects();
+  renderSessionList();
+  return true;
 }
 
 /** Get all unique folder names from current sessions. */
@@ -486,6 +587,85 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   document.addEventListener('click', () => { sub.style.display = 'none'; });
   document.body.appendChild(sub);
 
+  return moveItem;
+}
+
+/** Build the "Move to project" submenu for a session dropdown. */
+function buildProjectSubmenu(sessionId, currentProjectId, dropdown) {
+  const moveItem = document.createElement('div');
+  moveItem.className = 'dropdown-item-compact';
+  moveItem.style.position = 'relative';
+  const _projectIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18"/><path d="M5 7v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+  moveItem.innerHTML = '<span class="dropdown-icon">' + _projectIcon + '</span><span>Move to project</span>';
+
+  const sub = document.createElement('div');
+  sub.className = 'dropdown session-folder-submenu project-submenu';
+
+  const noneOpt = document.createElement('div');
+  noneOpt.className = 'dropdown-item-compact';
+  if (!currentProjectId) noneOpt.style.opacity = '0.5';
+  noneOpt.textContent = '(No project)';
+  noneOpt.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await moveToProject(sessionId, '');
+    dropdown.style.display = 'none';
+    sub.style.display = 'none';
+  });
+  sub.appendChild(noneOpt);
+
+  projects.forEach(project => {
+    const opt = document.createElement('div');
+    opt.className = 'dropdown-item-compact';
+    if (String(project.id) === String(currentProjectId || '')) opt.style.opacity = '0.5';
+    opt.textContent = project.name || 'Untitled project';
+    opt.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await moveToProject(sessionId, project.id);
+      setSortMode('project');
+      dropdown.style.display = 'none';
+      sub.style.display = 'none';
+    });
+    sub.appendChild(opt);
+  });
+
+  const newOpt = document.createElement('div');
+  newOpt.className = 'dropdown-item-compact';
+  newOpt.style.color = 'var(--accent-primary)';
+  newOpt.textContent = '+ New Project';
+  newOpt.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const project = await createProject();
+    if (!project) return;
+    await moveToProject(sessionId, project.id);
+    setSortMode('project');
+    dropdown.style.display = 'none';
+    sub.style.display = 'none';
+  });
+  sub.appendChild(newOpt);
+
+  moveItem.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (sub.style.display === 'block') {
+      sub.style.display = 'none';
+      return;
+    }
+    const rect = moveItem.getBoundingClientRect();
+    sub.style.top = '-9999px';
+    sub.style.display = 'block';
+    const subRect = sub.getBoundingClientRect();
+    sub.style.left = rect.right + 2 + 'px';
+    sub.style.width = '';
+    sub.style.top = (rect.top + subRect.height > window.innerHeight)
+      ? Math.max(2, window.innerHeight - subRect.height - 4) + 'px'
+      : rect.top + 'px';
+    if (rect.right + 2 + subRect.width > window.innerWidth - 8) {
+      sub.style.left = Math.max(8, rect.left - subRect.width - 2) + 'px';
+    }
+  });
+
+  sub.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => { sub.style.display = 'none'; });
+  document.body.appendChild(sub);
   return moveItem;
 }
 
@@ -782,7 +962,9 @@ function createSessionItem(s) {
 
   // Copy & Move to folder
   const folderItem = buildFolderSubmenu(s.id, s.folder, dropdown);
+  const projectItem = buildProjectSubmenu(s.id, s.project_id, dropdown);
   dropdown.appendChild(copyItem);
+  dropdown.appendChild(projectItem);
   dropdown.appendChild(folderItem);
 
   // Separator before destructive actions
@@ -1066,6 +1248,183 @@ function _appendFavoriteSessionItems(frag, items) {
   }
 }
 
+async function _startProjectChat(projectId) {
+  const dc = await _getPreferredDefaultChat();
+  if (!dc || !dc.endpoint_url || !dc.model) {
+    uiModule.showToast('Choose a chat model first');
+    return;
+  }
+  createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+    source: 'default',
+    projectId,
+  });
+}
+
+async function _editProject(project) {
+  if (!project) return;
+  const name = await styledPrompt('Project name:', {
+    title: 'Edit project',
+    defaultValue: project.name || '',
+    confirmText: 'Next',
+    maxLength: 200,
+  });
+  if (!name || !name.trim()) return;
+  const instructions = await styledPrompt('Instructions added to chats in this project:', {
+    title: 'Project instructions',
+    defaultValue: project.instructions || '',
+    confirmText: 'Save',
+    maxLength: 3000,
+  });
+  if (instructions === null) return;
+  try {
+    await updateProject(project.id, { name: name.trim(), instructions: instructions.trim() });
+    uiModule.showToast('Project updated');
+    await loadProjects();
+    renderSessionList();
+  } catch (e) {
+    console.error('Project update failed:', e);
+    uiModule.showError('Project update failed');
+  }
+}
+
+async function _refreshProjectBrief(project) {
+  if (!project) return;
+  uiModule.showToast('Refreshing project brief...');
+  try {
+    const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(project.id)}/brief/refresh`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadProjects();
+    uiModule.showToast('Project brief refreshed');
+  } catch (e) {
+    console.error('Project brief refresh failed:', e);
+    uiModule.showError('Project brief refresh failed');
+  }
+}
+
+async function _archiveProject(project) {
+  if (!project) return;
+  if (!await uiModule.styledConfirm(`Archive project "${project.name}"? Chats stay in your history.`, { confirmText: 'Archive' })) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(project.id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadProjects();
+    await loadSessions();
+    uiModule.showToast('Project archived');
+  } catch (e) {
+    console.error('Project archive failed:', e);
+    uiModule.showError('Project archive failed');
+  }
+}
+
+function _renderProjectGroup(frag, project, projectSessions) {
+  const projectIcons = {
+    chevronRight: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>',
+    chevronDown: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+    add: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+    edit: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+    refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"/><path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14"/></svg>',
+    archive: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>',
+  };
+  const projectState = loadProjectState();
+  const collapsed = projectState[project.id] === false;
+  const group = document.createElement('div');
+  group.className = 'session-folder project-folder';
+  group.dataset.projectId = project.id;
+
+  const header = document.createElement('div');
+  header.className = 'session-folder-header project-folder-header';
+  header.dataset.projectId = project.id;
+
+  const toggle = document.createElement('span');
+  toggle.className = 'folder-toggle';
+  toggle.innerHTML = collapsed ? projectIcons.chevronRight : projectIcons.chevronDown;
+  header.appendChild(toggle);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'folder-name project-name';
+  nameSpan.textContent = project.name || 'Untitled project';
+  nameSpan.title = project.description || project.instructions || project.name || '';
+  header.appendChild(nameSpan);
+
+  const countSpan = document.createElement('span');
+  countSpan.className = 'folder-count';
+  countSpan.textContent = `(${projectSessions.length})`;
+  header.appendChild(countSpan);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'folder-delete-btn project-header-btn';
+  addBtn.type = 'button';
+  addBtn.innerHTML = projectIcons.add;
+  addBtn.title = 'New chat in project';
+  addBtn.setAttribute('aria-label', `New chat in ${project.name || 'project'}`);
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _startProjectChat(project.id);
+  });
+  header.appendChild(addBtn);
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'folder-delete-btn project-header-btn';
+  editBtn.type = 'button';
+  editBtn.innerHTML = projectIcons.edit;
+  editBtn.title = 'Edit project';
+  editBtn.setAttribute('aria-label', `Edit ${project.name || 'project'}`);
+  editBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _editProject(project);
+  });
+  header.appendChild(editBtn);
+
+  const briefBtn = document.createElement('button');
+  briefBtn.className = 'folder-delete-btn project-header-btn';
+  briefBtn.type = 'button';
+  briefBtn.innerHTML = projectIcons.refresh;
+  briefBtn.title = 'Refresh project brief';
+  briefBtn.setAttribute('aria-label', `Refresh brief for ${project.name || 'project'}`);
+  briefBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _refreshProjectBrief(project);
+  });
+  header.appendChild(briefBtn);
+
+  const archiveBtn = document.createElement('button');
+  archiveBtn.className = 'folder-delete-btn project-header-btn project-archive-btn';
+  archiveBtn.type = 'button';
+  archiveBtn.innerHTML = projectIcons.archive;
+  archiveBtn.title = 'Archive project';
+  archiveBtn.setAttribute('aria-label', `Archive ${project.name || 'project'}`);
+  archiveBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _archiveProject(project);
+  });
+  header.appendChild(archiveBtn);
+
+  header.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.target.closest('.project-header-btn')) return;
+    const state = loadProjectState();
+    state[project.id] = state[project.id] === false ? true : false;
+    saveProjectState(state);
+    renderSessionList();
+  });
+
+  group.appendChild(header);
+  if (!collapsed) {
+    const content = document.createElement('div');
+    content.className = 'session-folder-content project-folder-content';
+    if (projectSessions.length) {
+      projectSessions.forEach(s => content.appendChild(createSessionItem(s)));
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'doclib-empty project-empty';
+      empty.textContent = 'No chats yet';
+      content.appendChild(empty);
+    }
+    group.appendChild(content);
+  }
+  frag.appendChild(group);
+}
+
 let _renderRAF = null;
 export function renderSessionList() {
   // Debounce rapid re-renders within the same frame
@@ -1102,9 +1461,55 @@ function _renderSessionListImpl() {
   }
 
   // Clean up any previous session dropdowns and folder submenus from body
-  document.querySelectorAll('.session-dropdown, .folder-submenu').forEach(d => d.remove());
+  document.querySelectorAll('.session-dropdown, .session-folder-submenu, .folder-submenu').forEach(d => d.remove());
 
   const _frag = document.createDocumentFragment();
+
+  if (_sortMode === 'project') {
+    const newProjectBtn = document.createElement('button');
+    newProjectBtn.className = 'session-show-more-btn project-create-btn';
+    newProjectBtn.textContent = '+ New project';
+    newProjectBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      createProject().then(project => {
+        if (project) setSortMode('project');
+      });
+    });
+    _frag.appendChild(newProjectBtn);
+
+    const activeProjects = projects.filter(p => !p.archived);
+    const byProject = {};
+    const unprojected = [];
+    orderedSessions.forEach(s => {
+      if (s.project_id && activeProjects.some(p => String(p.id) === String(s.project_id))) {
+        if (!byProject[s.project_id]) byProject[s.project_id] = [];
+        byProject[s.project_id].push(s);
+      } else {
+        unprojected.push(s);
+      }
+    });
+    const sortByActivity = (arr) => arr.sort((a, b) => {
+      const av = a.last_message_at || a.updated_at || a.created_at || '';
+      const bv = b.last_message_at || b.updated_at || b.created_at || '';
+      return bv.localeCompare(av);
+    });
+    activeProjects.sort((a, b) => {
+      if (!!b.is_pinned !== !!a.is_pinned) return b.is_pinned ? 1 : -1;
+      return (b.updated_at || '').localeCompare(a.updated_at || '');
+    });
+    activeProjects.forEach(project => {
+      const items = sortByActivity(byProject[project.id] || []);
+      _renderProjectGroup(_frag, project, items);
+    });
+    if (unprojected.length) {
+      _appendSessionItemsWithDateHeaders(_frag, sortByActivity(unprojected));
+    }
+
+    list.innerHTML = '';
+    list.appendChild(_frag);
+    _postRenderSessionList(list);
+    return;
+  }
 
   // ── Flat sort modes: ignore folders, show one ordered list. ──
   // Folders are only shown when _sortMode === 'group' (or null/empty
@@ -1699,10 +2104,12 @@ export async function loadSessions() {
       throw new Error('Session request returned an invalid response');
     }
     sessions = _normalizeSessionsList(fetched);
+    await loadProjects();
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
-    if (sessions.length === 0) {
+    const hasVisibleProjects = projects.some(project => !project.archived);
+    if (sessions.length === 0 && !hasVisibleProjects) {
       sessionsSection.classList.add('hidden');
     } else {
       sessionsSection.classList.remove('hidden');
@@ -1794,7 +2201,7 @@ export async function loadSessions() {
       // Same session — just refresh the header name in case it was auto-generated
       const s = sessions.find(x => x.id === targetId);
       const metaEl = document.getElementById('current-meta');
-      if (metaEl && s) metaEl.textContent = s.name;
+      if (metaEl && s) metaEl.textContent = s.project_name ? `${s.name} - ${s.project_name}` : s.name;
     }
 
     // No session selected — still enable input so slash commands (e.g. /setup) work
@@ -1937,7 +2344,9 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
 
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
-      currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+      currentMetaEl.textContent = meta
+        ? (meta.project_name ? `${meta.name} - ${meta.project_name}` : meta.name)
+        : 'Odysseus Chat';
     }
     // Update model picker visibility
     updateModelPicker();
@@ -2168,7 +2577,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
 }
 
 // Pending session — stored locally until the first message is sent
-let _pendingChat = null; // { url, modelId, endpointId }
+let _pendingChat = null; // { url, modelId, endpointId, projectId }
 let _pendingMaterializePromise = null;
 
 async function _getPreferredDefaultChat() {
@@ -2220,7 +2629,7 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
-  _pendingChat = { url, modelId, endpointId, source: incomingSource };
+  _pendingChat = { url, modelId, endpointId, source: incomingSource, projectId: opts.projectId || null };
   _pendingMaterializePromise = null;
   _skipAutoSelect = true;
   _suppressNextSessionLoading = true;
@@ -2258,7 +2667,8 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   // Update current-meta header
   const metaEl = document.getElementById('current-meta');
   if (metaEl) {
-    metaEl.textContent = 'New Chat';
+    const project = _projectById(_pendingChat.projectId);
+    metaEl.textContent = project ? `New Chat - ${project.name}` : 'New Chat';
   }
 
   // Enable input
@@ -2292,6 +2702,9 @@ export async function materializePendingSession() {
     }
     if (pending.endpointId) {
       fd.append('endpoint_id', pending.endpointId);
+    }
+    if (pending.projectId) {
+      fd.append('project_id', pending.projectId);
     }
 
     let res;
@@ -3650,11 +4063,14 @@ export function setSessionHasDocs(sessionId, hasDocs) {
   }
 }
 
+export function getProjects() { return projects; }
+
 // Export all functions to window for use in main app
 const sessionModule = {
   initDependencies,
   renderSessionList,
   loadSessions,
+  loadProjects,
   selectSession,
   createDirectChat,
   materializePendingSession,
@@ -3679,6 +4095,7 @@ const sessionModule = {
   openArchive,
   closeArchive,
   setSessionHasDocs,
+  getProjects,
   getSortMode,
   setSortMode,
   deleteCurrentSessionFromTopMenu
