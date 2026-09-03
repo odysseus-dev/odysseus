@@ -87,10 +87,12 @@ def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
 
     descendants = _posix_descendant_pids(pid)
     own_group = os.getpgrp()
-    try:
-        root_group = os.getpgid(pid)
-    except OSError:
-        root_group = None
+    root_group = getattr(proc, "_odysseus_pgid", None)
+    if root_group is None:
+        try:
+            root_group = os.getpgid(pid)
+        except OSError:
+            root_group = None
 
     detached_groups: set[int] = set()
     for child_pid in descendants:
@@ -124,6 +126,19 @@ def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
             os.kill(child_pid, signal.SIGKILL)
         except (OSError, ProcessLookupError):
             pass
+
+
+def _kill_remembered_proc_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the isolated POSIX group after its leader has already exited."""
+    if IS_WINDOWS:
+        return
+    group = getattr(proc, "_odysseus_pgid", None)
+    if group is None or group == os.getpgrp():
+        return
+    try:
+        os.killpg(group, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
 
 
 async def _await_subprocess_creation(create_coro):
@@ -162,9 +177,16 @@ async def _create_bash_subprocess(command: str, **kwargs):
             asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
         )
     kwargs.setdefault("start_new_session", True)
-    return await _await_subprocess_creation(
+    proc = await _await_subprocess_creation(
         asyncio.create_subprocess_shell(command, **kwargs)
     )
+    # Keep the isolated group ID after the leader exits. Background children
+    # can retain stdout/stderr and outlive ``proc.wait()``.
+    try:
+        proc._odysseus_pgid = proc.pid
+    except AttributeError:
+        pass
+    return proc
 
 
 def _tmux_session_name(session_id: Optional[str]) -> str:
@@ -498,7 +520,18 @@ async def _run_subprocess_streaming(
 
     timed_out = False
     try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
+        # ``Process.wait()`` may wait for inherited output pipes to close even
+        # after the direct child exits. Poll returncode so an orphaned
+        # background child cannot consume the entire command timeout.
+        deadline = time.monotonic() + timeout
+        while proc.returncode is None:
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError
+            await asyncio.sleep(min(0.05, max(0, deadline - time.monotonic())))
+        # A successful shell may leave ordinary children behind even when they
+        # redirect inherited output. Kill its remembered isolated group promptly
+        # without scanning by an exited PID, and preserve the shell return code.
+        _kill_remembered_proc_group(proc)
     except asyncio.TimeoutError:
         timed_out = True
         _kill_proc_tree(proc)
@@ -524,11 +557,16 @@ async def _run_subprocess_streaming(
                 await prog_task
             except (asyncio.CancelledError, Exception):
                 pass
-        for t in (rd_out, rd_err):
-            try:
-                await asyncio.wait_for(t, timeout=1)
-            except Exception:
-                pass
+        readers = asyncio.gather(rd_out, rd_err, return_exceptions=True)
+        try:
+            await asyncio.wait_for(asyncio.shield(readers), timeout=1)
+        except asyncio.TimeoutError:
+            # The direct process exited, but a background child still owns an
+            # inherited output pipe. Clean up its remembered process group.
+            _kill_proc_tree(proc)
+            for t in (rd_out, rd_err):
+                t.cancel()
+            await readers
 
     return (
         "\n".join(stdout_full),
@@ -614,6 +652,11 @@ class PythonTool:
                 **({"start_new_session": True} if not IS_WINDOWS else {}),
             )
         )
+        if not IS_WINDOWS:
+            try:
+                proc._odysseus_pgid = proc.pid
+            except AttributeError:
+                pass
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
             timeout=DEFAULT_PYTHON_TIMEOUT,

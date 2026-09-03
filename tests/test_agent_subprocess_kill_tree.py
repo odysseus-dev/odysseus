@@ -59,6 +59,49 @@ def test_cancel_kills_backgrounded_grandchild():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+def test_parent_exit_does_not_orphan_backgrounded_child():
+    async def _run():
+        marker = _marker_path()
+        script = f"while :; do touch {shlex.quote(marker)}; sleep .1; done &"
+        proc = await _create_bash_subprocess(
+            script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, _, rc, timed_out = await _run_subprocess_streaming(proc, timeout=30)
+        assert (rc, timed_out) == (0, False)
+        if os.path.exists(marker):
+            os.unlink(marker)
+        await asyncio.sleep(0.7)
+        survived = os.path.exists(marker)
+        if survived:
+            os.unlink(marker)
+        assert survived is False
+
+    asyncio.run(_run())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+def test_parent_exit_cleans_child_with_redirected_output():
+    async def _run():
+        marker = _marker_path()
+        script = (
+            f"(sleep .4; touch {shlex.quote(marker)}) "
+            ">/dev/null 2>&1 &"
+        )
+        proc = await _create_bash_subprocess(
+            script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, _, rc, timed_out = await _run_subprocess_streaming(proc, timeout=30)
+        assert (rc, timed_out) == (0, False)
+        await asyncio.sleep(0.7)
+        survived = os.path.exists(marker)
+        if survived:
+            os.unlink(marker)
+        assert survived is False
+
+    asyncio.run(_run())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
 @pytest.mark.skipif(shutil.which("setsid") is None, reason="setsid unavailable")
 def test_cancel_kills_descendant_that_detaches_session():
     marker = _marker_path()
