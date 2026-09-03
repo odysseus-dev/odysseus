@@ -1317,6 +1317,14 @@ async function _archiveProject(project) {
 }
 
 function _renderProjectGroup(frag, project, projectSessions) {
+  const projectIcons = {
+    chevronRight: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>',
+    chevronDown: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+    add: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+    edit: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+    refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"/><path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14"/></svg>',
+    archive: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>',
+  };
   const projectState = loadProjectState();
   const collapsed = projectState[project.id] === false;
   const group = document.createElement('div');
@@ -1329,7 +1337,7 @@ function _renderProjectGroup(frag, project, projectSessions) {
 
   const toggle = document.createElement('span');
   toggle.className = 'folder-toggle';
-  toggle.textContent = collapsed ? '\u25B6' : '\u25BC';
+  toggle.innerHTML = collapsed ? projectIcons.chevronRight : projectIcons.chevronDown;
   header.appendChild(toggle);
 
   const nameSpan = document.createElement('span');
@@ -1346,7 +1354,7 @@ function _renderProjectGroup(frag, project, projectSessions) {
   const addBtn = document.createElement('button');
   addBtn.className = 'folder-delete-btn project-header-btn';
   addBtn.type = 'button';
-  addBtn.textContent = '+';
+  addBtn.innerHTML = projectIcons.add;
   addBtn.title = 'New chat in project';
   addBtn.setAttribute('aria-label', `New chat in ${project.name || 'project'}`);
   addBtn.addEventListener('click', (e) => {
@@ -1358,7 +1366,7 @@ function _renderProjectGroup(frag, project, projectSessions) {
   const editBtn = document.createElement('button');
   editBtn.className = 'folder-delete-btn project-header-btn';
   editBtn.type = 'button';
-  editBtn.textContent = '\u270E';
+  editBtn.innerHTML = projectIcons.edit;
   editBtn.title = 'Edit project';
   editBtn.setAttribute('aria-label', `Edit ${project.name || 'project'}`);
   editBtn.addEventListener('click', (e) => {
@@ -1370,7 +1378,7 @@ function _renderProjectGroup(frag, project, projectSessions) {
   const briefBtn = document.createElement('button');
   briefBtn.className = 'folder-delete-btn project-header-btn';
   briefBtn.type = 'button';
-  briefBtn.textContent = '\u21BB';
+  briefBtn.innerHTML = projectIcons.refresh;
   briefBtn.title = 'Refresh project brief';
   briefBtn.setAttribute('aria-label', `Refresh brief for ${project.name || 'project'}`);
   briefBtn.addEventListener('click', (e) => {
@@ -1380,9 +1388,9 @@ function _renderProjectGroup(frag, project, projectSessions) {
   header.appendChild(briefBtn);
 
   const archiveBtn = document.createElement('button');
-  archiveBtn.className = 'folder-delete-btn project-header-btn';
+  archiveBtn.className = 'folder-delete-btn project-header-btn project-archive-btn';
   archiveBtn.type = 'button';
-  archiveBtn.textContent = '\u00D7';
+  archiveBtn.innerHTML = projectIcons.archive;
   archiveBtn.title = 'Archive project';
   archiveBtn.setAttribute('aria-label', `Archive ${project.name || 'project'}`);
   archiveBtn.addEventListener('click', (e) => {

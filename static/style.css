@@ -1693,6 +1693,15 @@ body.bg-pattern-sparkles {
       font-size: 12px;
       line-height: 1;
     }
+    .project-folder-header .folder-toggle,
+    .project-folder-header .project-header-btn {
+      align-items: center;
+      justify-content: center;
+    }
+    .project-folder-header .folder-toggle { display: inline-flex; }
+    .project-folder-header .project-header-btn svg { display: block; }
+    .project-folder-header .project-header-btn:hover { color: var(--fg); }
+    .project-folder-header .project-archive-btn:hover { color: var(--color-error); }
     .project-create-btn {
       text-align: left;
       padding-left: 20px;
