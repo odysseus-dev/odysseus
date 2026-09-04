@@ -57,6 +57,17 @@ def test_bundle_uses_native_executable_for_macos_privacy_identity():
     assert 'codesign --force --deep --sign - "$APP"' in script
 
 
+def test_native_launcher_triggers_protected_folder_consent_before_shell_child():
+    script = _build_script()
+    native_probe = "NSData *configData = [NSData dataWithContentsOfFile:pyvenvConfig"
+    child_launch = "[self.launcherTask launchAndReturnError:&error]"
+
+    assert 'Contents/Resources/install-dir' in script
+    assert native_probe in script
+    assert "enable Documents Folder" in script
+    assert script.index(native_probe) < script.index(child_launch)
+
+
 def test_native_launcher_has_menu_bar_status_and_exit_action():
     script = _build_script()
     plist = _generated_info_plist()

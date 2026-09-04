@@ -187,6 +187,7 @@ sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" -e "s|__PORT__|$PORT|g" \
     "$APP/Contents/Resources/$APP_NAME-launcher.tmpl" > "$APP/Contents/Resources/$APP_NAME-launcher"
 rm -f "$APP/Contents/Resources/$APP_NAME-launcher.tmpl"
 chmod +x "$APP/Contents/Resources/$APP_NAME-launcher"
+printf '%s\n' "$INSTALL_DIR" > "$APP/Contents/Resources/install-dir"
 
 # A native menu-bar parent gives TCC/Files & Folders the app's bundle identity.
 # It stays alive while the shell launcher runs; Exit Odysseus terminates the
@@ -208,6 +209,34 @@ cat > "$NATIVE_SRC" <<'NATIVE_LAUNCHER'
     [[NSProcessInfo processInfo]
         disableAutomaticTermination:@"Odysseus server is running"];
     [[NSProcessInfo processInfo] disableSuddenTermination];
+
+    NSString *resources = [[NSBundle mainBundle] resourcePath];
+    NSString *installDirFile = [resources stringByAppendingPathComponent:@"install-dir"];
+    NSError *pathError = nil;
+    NSString *installDir = [NSString stringWithContentsOfFile:installDirFile
+                                                     encoding:NSUTF8StringEncoding
+                                                        error:&pathError];
+    installDir = [installDir stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *pyvenvConfig = [installDir stringByAppendingPathComponent:@"venv/pyvenv.cfg"];
+    NSError *accessError = nil;
+    NSData *configData = [NSData dataWithContentsOfFile:pyvenvConfig
+                                                options:NSDataReadingMappedIfSafe
+                                                  error:&accessError];
+    if (pathError != nil || installDir.length == 0 || configData == nil) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp activateIgnoringOtherApps:YES];
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Odysseus cannot access its Python environment";
+        alert.informativeText = [NSString stringWithFormat:
+            @"Odysseus needs permission to read %@. Open System Settings > "
+             "Privacy & Security > Files & Folders, enable Documents Folder "
+             "for Odysseus, then reopen the app.", pyvenvConfig];
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        [NSApp terminate:nil];
+        return;
+    }
 
     self.statusItem = [[NSStatusBar systemStatusBar]
         statusItemWithLength:NSSquareStatusItemLength];
