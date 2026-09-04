@@ -41,9 +41,16 @@ def _gallery_filename_is_video(filename: str) -> bool:
     return ext in _GALLERY_VIDEO_EXTS
 
 
-async def _resolve_vision_candidates(model_override: str, owner: Optional[str]) -> list:
+async def _resolve_vision_candidates(
+    model_override: str, owner: Optional[str], session_id: Optional[str] = None,
+) -> list:
     """Resolve the vision model chain (override or Settings → AI Defaults →
     Vision, plus its configured fallbacks) off the event loop.
+
+    ``session_id`` is the chat session a gallery image was originally
+    uploaded/captioned from (GalleryImage.session_id), when known — passed
+    through so auto-detect (no vision_model configured) can prefer that
+    session's own model over the app-wide default; see _resolve_vl_model.
 
     Model discovery for OpenAI-compatible/native-Ollama endpoints makes a
     blocking HTTP probe (`_resolve_model` in `src/ai_interaction.py`); doing
@@ -63,7 +70,7 @@ async def _resolve_vision_candidates(model_override: str, owner: Optional[str]) 
             raise ValueError("Vision is disabled — enable it in Settings → AI Defaults → Vision")
         configured = (model_override or "").strip() or vl_settings.get("vision_model", "")
         try:
-            primary = _resolve_vl_model(configured, owner=owner)
+            primary = _resolve_vl_model(configured, owner=owner, session_id=session_id)
         except ValueError:
             raise ValueError("No vision model configured — set one in Settings → AI Defaults → Vision")
         if not primary[0]:
@@ -91,6 +98,7 @@ async def _call_vision_model(
     model_override: str = "",
     max_tokens: int = VISION_MAX_TOKENS,
     temperature: float = 0.2,
+    session_id: Optional[str] = None,
 ) -> tuple:
     """Describe/tag an image through the app's provider-aware LLM transport.
 
@@ -107,7 +115,7 @@ async def _call_vision_model(
     from src.llm_core import llm_call_async
     from src.text_helpers import strip_think
 
-    candidates = await _resolve_vision_candidates(model_override, owner)
+    candidates = await _resolve_vision_candidates(model_override, owner, session_id)
 
     ext = image_path.suffix.lower()
     mime_map = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
@@ -2439,6 +2447,7 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 caption, model_name = await _call_vision_model(
                     img_path, VISION_DESCRIBE_PROMPT, user, model_override=(model or ""),
+                    session_id=img.session_id,
                 )
             except ValueError as vision_err:
                 # Deliberately not caught as `e` — this file's own hardening
@@ -2483,7 +2492,9 @@ def setup_gallery_routes() -> APIRouter:
                 "Return only the tags."
             )
             try:
-                content, _model_name = await _call_vision_model(img_path, tag_prompt, user)
+                content, _model_name = await _call_vision_model(
+                    img_path, tag_prompt, user, session_id=img.session_id,
+                )
             except ValueError as vision_err:
                 # See the matching comment in ocr_image above.
                 return {"error": str(vision_err)}

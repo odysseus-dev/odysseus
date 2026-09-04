@@ -58,7 +58,7 @@ async def test_resolve_vision_candidates_includes_configured_fallbacks(monkeypat
     fallback = ("https://fallback.example/v1/chat/completions", "vision-model-2", {})
 
     monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": "vision-model"})
-    monkeypatch.setattr(dp, "_resolve_vl_model", lambda configured, owner=None: primary)
+    monkeypatch.setattr(dp, "_resolve_vl_model", lambda configured, owner=None, session_id=None: primary)
     monkeypatch.setattr(er, "resolve_vision_fallback_candidates", lambda owner=None: [fallback])
 
     candidates = await gallery_routes._resolve_vision_candidates("", owner="alice")
@@ -84,7 +84,7 @@ async def test_resolve_vision_candidates_rejects_non_vision_override(monkeypatch
 
     primary = ("https://primary.example/v1/chat/completions", "whisper-1", {})
     monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": ""})
-    monkeypatch.setattr(dp, "_resolve_vl_model", lambda configured, owner=None: primary)
+    monkeypatch.setattr(dp, "_resolve_vl_model", lambda configured, owner=None, session_id=None: primary)
     monkeypatch.setattr(er, "resolve_vision_fallback_candidates", lambda owner=None: [])
     monkeypatch.setattr(ch, "model_supports_vision", lambda model, url: False)
 
@@ -104,7 +104,7 @@ async def test_resolve_vision_candidates_default_skips_vision_check(monkeypatch)
 
     primary = ("https://primary.example/v1/chat/completions", "whatever-model", {})
     monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": "whatever-model"})
-    monkeypatch.setattr(dp, "_resolve_vl_model", lambda configured, owner=None: primary)
+    monkeypatch.setattr(dp, "_resolve_vl_model", lambda configured, owner=None, session_id=None: primary)
     monkeypatch.setattr(er, "resolve_vision_fallback_candidates", lambda owner=None: [])
     called = {"n": 0}
     def _boom(model, url):
@@ -117,6 +117,31 @@ async def test_resolve_vision_candidates_default_skips_vision_check(monkeypatch)
     assert called["n"] == 0
 
 
+async def test_resolve_vision_candidates_passes_session_id_through(monkeypatch):
+    # session_id (GalleryImage.session_id — the chat this image was
+    # originally uploaded from, when known) must reach _resolve_vl_model so
+    # its auto-detect can prefer that session's own model over the app-wide
+    # default. See _resolve_vl_model's own docstring/tests for the
+    # session-model-wins behavior itself; this just checks it's threaded
+    # through at all.
+    import src.document_processor as dp
+    import src.endpoint_resolver as er
+
+    primary = ("https://primary.example/v1/chat/completions", "vision-model", {})
+    seen = {}
+
+    def _fake_resolve_vl_model(configured, owner=None, session_id=None):
+        seen["session_id"] = session_id
+        return primary
+
+    monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": ""})
+    monkeypatch.setattr(dp, "_resolve_vl_model", _fake_resolve_vl_model)
+    monkeypatch.setattr(er, "resolve_vision_fallback_candidates", lambda owner=None: [])
+
+    await gallery_routes._resolve_vision_candidates("", owner="alice", session_id="sess-42")
+    assert seen["session_id"] == "sess-42"
+
+
 # ---------------------------------------------------------------------------
 # _call_vision_model
 # ---------------------------------------------------------------------------
@@ -126,7 +151,7 @@ async def test_call_vision_model_falls_back_on_provider_failure(tmp_path, monkey
     primary = ("https://ollama.example", "llava", {})
     fallback = ("https://anthropic.example", "claude-vision", {})
 
-    async def _resolve(model_override, owner):
+    async def _resolve(model_override, owner, session_id=None):
         return [primary, fallback]
     monkeypatch.setattr(gallery_routes, "_resolve_vision_candidates", _resolve)
 
@@ -150,7 +175,7 @@ async def test_call_vision_model_falls_back_on_thinking_only_response(tmp_path, 
     primary = ("https://primary.example", "thinker-model", {})
     fallback = ("https://fallback.example", "plain-model", {})
 
-    async def _resolve(model_override, owner):
+    async def _resolve(model_override, owner, session_id=None):
         return [primary, fallback]
     monkeypatch.setattr(gallery_routes, "_resolve_vision_candidates", _resolve)
 
@@ -170,7 +195,7 @@ async def test_call_vision_model_all_thinking_only_raises_friendly_error(tmp_pat
     img_path = _write_fake_image(tmp_path)
     only = ("https://primary.example", "thinker-model", {})
 
-    async def _resolve(model_override, owner):
+    async def _resolve(model_override, owner, session_id=None):
         return [only]
     monkeypatch.setattr(gallery_routes, "_resolve_vision_candidates", _resolve)
 
@@ -193,7 +218,7 @@ async def test_call_vision_model_all_candidates_fail_raises_generic_error(tmp_pa
         ("https://fallback.example", "model-b", {}),
     ]
 
-    async def _resolve(model_override, owner):
+    async def _resolve(model_override, owner, session_id=None):
         return candidates
     monkeypatch.setattr(gallery_routes, "_resolve_vision_candidates", _resolve)
 

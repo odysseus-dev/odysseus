@@ -47,7 +47,7 @@ def test_auto_detected_vision_model_resolution_passes_owner(monkeypatch):
 def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_resolve_vl_model(configured, owner=None):
+    def fake_resolve_vl_model(configured, owner=None, session_id=None):
         seen["primary"] = (configured, owner)
         return ("http://primary.test/chat/completions", "vision-primary", {"X-Test": "1"})
 
@@ -106,5 +106,5 @@ def test_request_vision_call_sites_pass_owner():
     # chain: route -> _call_vision_model(..., user, ...) ->
     # _resolve_vision_candidates(model_override, owner) -> here) rather than
     # calling _resolve_vl_model directly inline, unlike the other sites above.
-    assert "_resolve_vl_model(configured, owner=owner)" in gallery_source
+    assert "_resolve_vl_model(configured, owner=owner, session_id=session_id)" in gallery_source
     assert "_process_pdf(tmp_path, owner=_owner(request))" in memory_source

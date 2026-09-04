@@ -304,7 +304,7 @@ def _load_vl_settings() -> dict:
         return {}
 
 
-def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
+def _resolve_vl_model(configured: str, owner: str | None = None, session_id: str | None = None) -> tuple:
     """Resolve the vision model to (url, model_id, headers).
 
     Uses admin-configured model if set, otherwise tries auto-detection
@@ -315,14 +315,42 @@ def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
     if configured:
         return _resolve_model(configured, owner=owner)
 
-    # Auto-detect: prefer the configured default chat model when it's
-    # actually vision-capable. Most self-hosted setups run a single
-    # multimodal daily-driver model under a name that won't appear in the
-    # generic hosted-model list below — that list is realistically only
-    # ever configured on instances that also have a hosted-provider
-    # endpoint, so on a local-only setup auto-detect would otherwise never
-    # resolve to anything even though a perfectly good vision model is
-    # already the one in everyday use.
+    # Auto-detect: prefer the model actually loaded in the chat session this
+    # image came from, over the app-wide default. A user can have several
+    # sessions each on a different model; for a gallery image promoted from
+    # a chat upload (GalleryImage.session_id), the session it actually came
+    # from is a more specific, more likely answer than the global default.
+    # `session_id` is trusted only after confirming it belongs to `owner` —
+    # a caller passing an arbitrary id for someone else's session just
+    # silently gets no match here, not an error, since this is a
+    # best-effort auto-detect step, not an access check of its own.
+    try:
+        from src.chat_helpers import model_supports_vision
+        session_model = None
+        if session_id:
+            from core.database import SessionLocal, Session as DbSession
+            db = SessionLocal()
+            try:
+                sess_row = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if sess_row and (not owner or sess_row.owner == owner):
+                    session_model = (sess_row.model or "").strip()
+            finally:
+                db.close()
+        if session_model:
+            url, model_id, headers = _resolve_model(session_model, owner=owner)
+            if model_supports_vision(model_id, url):
+                return url, model_id, headers
+    except (ValueError, Exception):
+        pass
+
+    # Auto-detect: no usable session model — fall back to the configured
+    # default chat model when it's actually vision-capable. Most
+    # self-hosted setups run a single multimodal daily-driver model under a
+    # name that won't appear in the generic hosted-model list below — that
+    # list is realistically only ever configured on instances that also
+    # have a hosted-provider endpoint, so on a local-only setup auto-detect
+    # would otherwise never resolve to anything even though a perfectly
+    # good vision model is already the one in everyday use.
     try:
         from src.settings import load_settings
         from src.chat_helpers import model_supports_vision
