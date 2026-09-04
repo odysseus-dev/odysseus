@@ -20,6 +20,16 @@ PORT="${ODYSSEUS_PORT:-7860}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
+# This app is a launcher for the checkout it was built from; it does not bundle
+# Python or project dependencies. Refuse to package a launcher that can never
+# start, instead of turning a missing venv into a misleading privacy prompt
+# after installation.
+if [ ! -f "$INSTALL_DIR/venv/pyvenv.cfg" ] || [ ! -x "$INSTALL_DIR/venv/bin/uvicorn" ]; then
+  echo "Error: Odysseus is not set up in $INSTALL_DIR." >&2
+  echo "Create the venv and install dependencies before building the macOS app." >&2
+  exit 1
+fi
+
 echo "Building $APP_NAME.app"
 echo "  install dir: $INSTALL_DIR"
 echo "  port:        $PORT"
@@ -223,15 +233,35 @@ cat > "$NATIVE_SRC" <<'NATIVE_LAUNCHER'
     NSData *configData = [NSData dataWithContentsOfFile:pyvenvConfig
                                                 options:NSDataReadingMappedIfSafe
                                                   error:&accessError];
-    if (pathError != nil || installDir.length == 0 || configData == nil) {
+    if (pathError != nil || installDir.length == 0) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         [NSApp activateIgnoringOtherApps:YES];
         NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText = @"Odysseus cannot access its Python environment";
-        alert.informativeText = [NSString stringWithFormat:
-            @"Odysseus needs permission to read %@. Open System Settings > "
-             "Privacy & Security > Files & Folders, enable Documents Folder "
-             "for Odysseus, then reopen the app.", pyvenvConfig];
+        alert.messageText = @"Odysseus could not find its installation folder";
+        alert.informativeText = @"Rebuild Odysseus.app from the checkout you want it to run.";
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        [NSApp terminate:nil];
+        return;
+    }
+    if (configData == nil) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp activateIgnoringOtherApps:YES];
+        NSAlert *alert = [[NSAlert alloc] init];
+        if ([accessError.domain isEqualToString:NSCocoaErrorDomain] &&
+            accessError.code == NSFileReadNoSuchFileError) {
+            alert.messageText = @"Odysseus is not set up in its build checkout";
+            alert.informativeText = [NSString stringWithFormat:
+                @"The Python environment does not exist at %@. Create the venv "
+                 "and install dependencies there, then rebuild Odysseus.app.",
+                 pyvenvConfig];
+        } else {
+            alert.messageText = @"Odysseus cannot access its Python environment";
+            alert.informativeText = [NSString stringWithFormat:
+                @"Odysseus needs permission to read %@. Open System Settings > "
+                 "Privacy & Security > Files & Folders, enable Documents Folder "
+                 "for Odysseus, then reopen the app.", pyvenvConfig];
+        }
         [alert addButtonWithTitle:@"OK"];
         [alert runModal];
         [NSApp terminate:nil];

@@ -36,6 +36,15 @@ def test_bundle_declares_protected_install_folder_access():
         assert plist.get(key), f"generated Info.plist is missing {key}"
 
 
+def test_build_refuses_to_package_a_checkout_without_a_runnable_venv():
+    script = _build_script()
+    validation = 'if [ ! -f "$INSTALL_DIR/venv/pyvenv.cfg" ] || [ ! -x "$INSTALL_DIR/venv/bin/uvicorn" ]; then'
+
+    assert validation in script
+    assert "Create the venv and install dependencies before building" in script
+    assert script.index(validation) < script.index('rm -rf "$APP"')
+
+
 def test_launcher_checks_python_environment_access_before_starting_uvicorn():
     script = _build_script()
     probe = 'if ! /bin/cat "$PYVENV_CFG" >/dev/null 2>&1; then'
@@ -64,6 +73,8 @@ def test_native_launcher_triggers_protected_folder_consent_before_shell_child():
 
     assert 'Contents/Resources/install-dir' in script
     assert native_probe in script
+    assert "NSFileReadNoSuchFileError" in script
+    assert "The Python environment does not exist" in script
     assert "enable Documents Folder" in script
     assert script.index(native_probe) < script.index(child_launch)
 
