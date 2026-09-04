@@ -714,7 +714,8 @@ app.include_router(setup_research_routes(research_handler, session_manager=sessi
 
 # History
 from routes.history.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
+history_router = setup_history_routes(session_manager, upload_handler=upload_handler)
+app.include_router(history_router)
 
 # Search
 from routes.search.search_routes import setup_search_routes
@@ -874,6 +875,7 @@ app.include_router(setup_codex_routes(
     memory_router=memory_router,
     calendar_router=calendar_router,
     document_router=document_router,
+    history_router=history_router,
 ))
 app.include_router(setup_claude_routes())
 
