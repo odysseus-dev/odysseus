@@ -318,6 +318,66 @@ def test_active_mode_never_scans_credentials_or_search_terms():
 
 
 @requires_guard
+def test_blocked_request_log_redacts_credentials():
+    result = _run(
+        """
+        import logging
+
+        from fastapi import FastAPI, APIRouter, Request
+        from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
+        import core.guard as g
+
+        router = APIRouter()
+
+        @router.post("/api/thing")
+        async def thing(request: Request):
+            return {"ok": True}
+
+        app = FastAPI()
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
+        app.state.guard_decorator = g.guard_deco
+        app.include_router(router)
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = lambda record: records.append(record.getMessage())
+        guard_logger = logging.getLogger("guard_core")
+        guard_logger.addHandler(handler)
+        guard_logger.setLevel(logging.WARNING)
+
+        client = TestClient(app, client=("127.0.0.1", 12345))
+        attack = "1' UNION SELECT password FROM users -- "
+        resp = client.post(
+            "/api/thing",
+            json={"weird": attack},
+            headers={
+                "Authorization": "Bearer sekrit-token",
+                "Cookie": "session=sekrit-cookie",
+                "X-Api-Key": "sekrit-key",
+                "X-Auth-Token": "sekrit-integration-token",
+                "X-Odysseus-Internal-Token": "sekrit-internal-token",
+            },
+        )
+        assert resp.status_code == 400, resp.status_code
+        assert records, "no guard_core log records captured"
+        blob = "\\n".join(records)
+        assert "sekrit-token" not in blob, blob
+        assert "sekrit-cookie" not in blob, blob
+        assert "sekrit-key" not in blob, blob
+        assert "sekrit-integration-token" not in blob, blob
+        assert "sekrit-internal-token" not in blob, blob
+        assert "[REDACTED]" in blob, blob
+        print("OK")
+        """,
+        ODYSSEUS_GUARD_ENABLED="true",
+        ODYSSEUS_GUARD_PASSIVE="false",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("OK")
+
+
+@requires_guard
 def test_active_mode_blocks_scanner_user_agents_and_accepts_form_routes():
     result = _run(
         """

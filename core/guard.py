@@ -271,10 +271,22 @@ if GUARD_ENABLED:
             "context", "workspace", "approved_plan", "search_context",
             "target_language", "email_translate_language",
         },
+        # guard-core >= 4.0.0 no longer fully silences a header listed here: it
+        # inherits identity-header logic (skips only the ssrf category, and only
+        # for IP-shaped values) and every other category still scans it. In
+        # practice all six below are still scanned by SQLi/XSS/traversal/etc,
+        # same as an unlisted header. authorization and x-api-key don't need the
+        # entry any more since guard-core's own hardcoded sensitive-header set
+        # redacts them to [REDACTED] in every log line regardless. x-auth-token
+        # and x-odysseus-internal-token carry real secrets (integration API
+        # keys, the internal tool-call token) and aren't in that hardcoded set,
+        # so log_sensitive_headers below adds them explicitly. x-odysseus-owner
+        # and x-tz-offset carry a username and a UTC offset, not secrets.
         excluded_detection_headers={
             "authorization", "x-api-key", "x-auth-token",
             "x-odysseus-internal-token", "x-odysseus-owner", "x-tz-offset",
         },
+        log_sensitive_headers=frozenset({"x-auth-token", "x-odysseus-internal-token"}),
         # Free-text search and mailbox-folder query parameters. A user searching
         # their own history for "DROP TABLE" is not an attack. Path-like params
         # (path, filepath) stay scanned so traversal detection still applies.
