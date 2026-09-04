@@ -315,12 +315,48 @@ def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
     if configured:
         return _resolve_model(configured, owner=owner)
 
-    # Auto-detect: try known vision-capable models in priority order
+    # Auto-detect: prefer the configured default chat model when it's
+    # actually vision-capable. Most self-hosted setups run a single
+    # multimodal daily-driver model under a name that won't appear in the
+    # generic hosted-model list below — that list is realistically only
+    # ever configured on instances that also have a hosted-provider
+    # endpoint, so on a local-only setup auto-detect would otherwise never
+    # resolve to anything even though a perfectly good vision model is
+    # already the one in everyday use.
+    try:
+        from src.settings import load_settings
+        from src.chat_helpers import model_supports_vision
+        default_model = (load_settings().get("default_model") or "").strip()
+        if default_model:
+            url, model_id, headers = _resolve_model(default_model, owner=owner)
+            if model_supports_vision(model_id, url):
+                return url, model_id, headers
+    except (ValueError, Exception):
+        pass
+
+    # Auto-detect: the default model isn't vision-capable (or isn't
+    # configured) — try known vision-capable models in priority order.
+    # Kept roughly in sync with the curated hosted-provider rosters in
+    # routes/model_routes.py (_PROVIDER_CURATED) and the local-model
+    # families _VISION_MODEL_KEYWORDS (src/chat_helpers.py) already
+    # recognizes by name, so a stock pull under one of those names still
+    # resolves even when it isn't the configured default.
     candidates = [
-        "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini",
-        "claude-sonnet-4-5-20250929", "claude-opus-4-20250514",
-        "gemini-2.0-flash", "gemini-2.5-pro",
-        "llava", "pixtral", "qwen2-vl",
+        # hosted
+        "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini",
+        "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini",
+        "claude-sonnet-4-5-20250929", "claude-opus-4-20250514", "claude-sonnet-4-20250514",
+        "gemini-3.1-pro-preview", "gemini-3-flash-preview",
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash",
+        "grok-4",
+        "glm-4.6v", "glm-4.5v", "glm-5v-turbo",
+        # open / local (Ollama/llama.cpp stock tags). gemma4/gemma3 lead
+        # Ollama's own vision-model pull counts as of 2026 — checked
+        # against ollama.com/search?c=vision rather than assumed.
+        "gemma4", "gemma3", "qwen3-vl", "qwen2-vl", "llama3.2-vision", "llama4",
+        "llava", "pixtral", "minicpm-v",
+        "mistral-small3.2", "phi4",
+        "internvl", "cogvlm", "moondream", "bakllava",
     ]
     for candidate in candidates:
         try:
