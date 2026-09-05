@@ -2004,6 +2004,7 @@ import { loadPanel } from './panels.js';
         query: streamQuery,
         startedAt: Date.now(),
         lastActivity: Date.now(),
+        firstOutputAt: null, // Set when the first data event arrives — guards tab-recovery during prefill
         // Resolve the mutable closure at call time: live-thinking helpers are
         // installed after the stream entry is registered.
         cancelViewWork: () => _cancelLiveThinkingWork(),
@@ -2744,6 +2745,8 @@ import { loadPanel } from './panels.js';
         if (_firstVisibleOutputSeen) return;
         _firstVisibleOutputSeen = true;
         clearFirstTokenWaitTimers();
+        const _entry = _activeStreams.get(streamSessionId);
+        if (_entry) _entry.firstOutputAt = Date.now();
       };
 
       while (true) {
@@ -5424,6 +5427,14 @@ import { loadPanel } from './panels.js';
       if (document.visibilityState !== 'visible') return;
       const active = _getForegroundStreamState();
       if (!active) return;
+
+      // No first token yet → the model is still pre-filling. A slow local /
+      // multimodal model can legitimately spend minutes before its first chunk,
+      // and during that window the server sends nothing (no SSE heartbeat on the
+      // main prefill path), so "no activity" is expected — NOT evidence of a
+      // frozen stream. Don't abort it here; a genuinely dead prefill is handled
+      // by the response timeout ('timeout'), not tab-recovery.
+      if (!active.firstOutputAt) return;
 
       // Stream claims to be running — check if reader is actually alive
       const staleSince = Date.now() - (active.lastActivity || _lastReaderActivity);
