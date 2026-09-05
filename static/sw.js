@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v380-shared-config-image-editor-lazy-katex-mermaid';
+const CACHE_NAME = 'odysseus-v381-gallery-lazy';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -59,7 +59,6 @@ const PRECACHE = [
   '/static/js/spinner.js',
   '/static/js/tts-ai.js',
   '/static/js/document.js',
-  '/static/js/gallery.js',
   '/static/js/chatRenderer.js',
   '/static/js/codeRunner.js',
   '/static/js/chatStream.js',
@@ -101,6 +100,8 @@ const PRECACHE = [
 // Lazily-imported panel modules (js/panels.js). Not in index.html by design;
 // precached so the panel still opens with no network.
 const PANEL_PRECACHE = [
+  // Gallery panel.
+  '/static/js/gallery.js',
   // Image editor — galleryEditor.js and its js/editor/ graph.
   '/static/js/galleryEditor.js',
   '/static/js/editor/ai-inpaint.js?v=20260708match1',

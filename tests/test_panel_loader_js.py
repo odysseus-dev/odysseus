@@ -139,6 +139,54 @@ def test_the_image_editor_is_registered():
     assert "editor" in json.loads(_run(js))
 
 
+def test_the_gallery_is_registered():
+    js = textwrap.dedent(
+        f"""
+        const {{ panelNames }} = await import('{_PANELS}');
+        console.log(JSON.stringify(panelNames()));
+        """
+    )
+    assert "gallery" in json.loads(_run(js))
+
+
+# ── The gallery stays off the critical path ───────────────────────────────
+# gallery.js had *two* eager entry points — a <script type="module"> tag in
+# index.html and a static `import` in app.js — and re-adding either one puts
+# 145 KB back on every page load without breaking anything visible. Nothing
+# else would catch that, so pin both.
+
+_INDEX_HTML = _REPO / "static" / "index.html"
+_APP_JS = _REPO / "static" / "app.js"
+
+
+def test_gallery_is_not_eagerly_loaded_by_index_html():
+    tags = re.findall(
+        r"""<script[^>]*type=["']module["'][^>]*src=["']([^"']+)["']""",
+        _INDEX_HTML.read_text(encoding="utf-8"),
+    )
+    eager = [t for t in tags if t.split("?")[0].endswith("/js/gallery.js")]
+    assert not eager, (
+        "gallery.js is loaded eagerly by index.html again — it is meant to load "
+        f"on first open through panels.js: {eager}"
+    )
+
+
+def test_gallery_is_not_statically_imported_by_app_js():
+    static_specs = _STATIC_IMPORT.findall(_APP_JS.read_text(encoding="utf-8"))
+    eager = [s for s in static_specs if s.split("?")[0].endswith("/gallery.js")]
+    assert not eager, (
+        "app.js statically imports gallery.js again, which drags it back onto "
+        f"the critical path: {eager}"
+    )
+
+
+def test_gallery_is_precached_for_offline_use():
+    assert "/static/js/gallery.js" in _panel_precache_entries(), (
+        "gallery.js loads lazily, so without a PANEL_PRECACHE entry the panel "
+        "opens online and dies offline"
+    )
+
+
 # ── Offline coverage ──────────────────────────────────────────────────────
 # A lazily-loaded panel is never fetched during a normal page load, so it only
 # lands in the service-worker cache if sw.js precaches it explicitly. Miss one
