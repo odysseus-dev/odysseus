@@ -114,7 +114,11 @@ services:
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
-      - chromadb-data:/chroma/chroma
+      # The image runs `chroma run /config.yaml`, whose persist_path is "/data".
+      # It declares no VOLUME, so anything written outside a mount lives in the
+      # container's writable layer and dies with it. /chroma/chroma is where
+      # pre-1.0 images kept the store; mounting there now catches nothing.
+      - chromadb-data:/data
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
