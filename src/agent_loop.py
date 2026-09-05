@@ -3984,6 +3984,10 @@ async def stream_agent_loop(
             )
             and not _active_document_relevant
             and not active_email
+            and not (
+                set(_intent.get("domains") or set())
+                & {"notes_calendar_tasks", "email", "contacts", "sessions", "integrations", "ui"}
+            )
         ):
             _relevant_tools = set(_WORKSPACE_TERMINUS_TOOLS)
             logger.info("[tool-rag] Workspace file/terminal request; using Odysseus Terminus toolset")
