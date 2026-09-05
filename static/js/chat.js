@@ -2313,13 +2313,13 @@ import { loadPanel } from './panels.js';
 
       // Auto-show thinking spinner after text stops streaming
       let _textPauseTimer = null;
-      function _scheduleThinkingSpinner() {
+      function _scheduleThinkingSpinner(delayMs = 400) {
         if (_textPauseTimer) clearTimeout(_textPauseTimer);
         _textPauseTimer = setTimeout(() => {
           if (!document.querySelector('.agent-thinking-dots') && isStreaming) {
             _showThinkingSpinner(_thinkingLabel());
           }
-        }, 400);
+        }, delayMs);
       }
       _cancelThinkingTimer = () => {
         if (_textPauseTimer) { clearTimeout(_textPauseTimer); _textPauseTimer = null; }
@@ -3762,9 +3762,11 @@ import { loadPanel } from './panels.js';
                   });
                 }
 
-                // Schedule a thinking spinner between tool rounds (short delay so
-                // agent_step in the same SSE chunk can cancel it before it shows)
-                _scheduleThinkingSpinner();
+                // Put the next assistant activity bubble at the transcript
+                // bottom as soon as a tool settles. If agent_step is already
+                // queued in this SSE batch it cancels this zero-delay task and
+                // creates the normal continuation bubble instead.
+                _scheduleThinkingSpinner(0);
                 uiModule.scrollHistory();
 
               } else if (json.type === 'doc_stream_open') {
