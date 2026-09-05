@@ -912,6 +912,7 @@ _API_HOSTS = frozenset([
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
+    "api.orcarouter.ai",
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])

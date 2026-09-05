@@ -45,5 +45,13 @@ def test_headers_openrouter_adds_attribution():
     assert h["X-OpenRouter-Title"] == "Odysseus"
 
 
+def test_headers_orcarouter_adds_attribution():
+    h = er.build_headers("secret", "https://api.orcarouter.ai/v1")
+    assert h["Authorization"] == "Bearer secret"
+    # OrcaRouter ranks/labels apps via these headers.
+    assert h["HTTP-Referer"].startswith("https://github.com/")
+    assert h["X-OrcaRouter-Title"] == "Odysseus"
+
+
 def test_headers_omit_authorization_when_no_key():
     assert er.build_headers(None, "https://api.openai.com/v1") == {}
