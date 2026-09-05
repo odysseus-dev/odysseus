@@ -168,15 +168,29 @@ async def register_builtin_servers(mcp_manager):
 
     base_dir = get_app_root()
     python = sys.executable
+    frozen = getattr(sys, "frozen", False)
 
-    async def _connect_python_server(server_id: str, script_path: str, name: str):
+    async def _connect_python_server(server_id: str, script: str, script_path: str, name: str):
         try:
+            if frozen:
+                # sys.executable is this app's own bundled exe when frozen — there's
+                # no python.exe shipped alongside it to run script_path directly.
+                # Re-invoke this same exe with a sentinel argv that launcher.py
+                # recognizes: it imports the module and runs its MCP stdio loop
+                # in-process instead of the normal single-instance-mutex + GUI
+                # startup, so the subprocess actually speaks MCP instead of just
+                # detecting "already running" and exiting (which the parent sees
+                # as an immediate "Connection closed").
+                module_name = os.path.splitext(script)[0].replace("/", ".").replace("\\", ".")
+                args = ["--run-mcp-server", module_name]
+            else:
+                args = [script_path]
             ok = await mcp_manager.connect_server(
                 server_id=server_id,
                 name=name,
                 transport="stdio",
                 command=python,
-                args=[script_path],
+                args=args,
                 env=builtin_python_env(base_dir),
             )
             if ok:
@@ -194,7 +208,7 @@ async def register_builtin_servers(mcp_manager):
         if not os.path.exists(script_path):
             logger.warning(f"Built-in MCP server script not found: {script_path}")
             continue
-        _spawn_bg(_connect_python_server(server_id, script_path, name))
+        _spawn_bg(_connect_python_server(server_id, script, script_path, name))
 
     # Register NPX-based servers in the background (they take longer to start)
     npx_path = _find_npx()
