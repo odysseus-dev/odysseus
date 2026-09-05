@@ -193,7 +193,10 @@ _TIMEOUT_EXEMPT_PREFIXES = (
 
 class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        path = request.url.path or ""
+        # Application route path, not request.url.path: the latter still carries a
+        # configured ASGI root_path, so under `--root-path /odysseus` every prefix
+        # below stops matching and the exemptions silently switch off.
+        path = get_application_route_path(request.scope)
         if any(path.startswith(p) for p in _TIMEOUT_EXEMPT_PREFIXES):
             return await call_next(request)
         try:
@@ -209,7 +212,10 @@ class _InteractiveActivityMiddleware(_BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         from src.interactive_gate import should_track_interactive_request, track_interactive_request
 
-        path = request.url.path or ""
+        # Same rule: the gate matches exact paths and prefixes, so a mounted
+        # deployment would read every passive poll as interactive traffic and
+        # stop background tasks on each one.
+        path = get_application_route_path(request.scope)
         if not should_track_interactive_request(path, request.method):
             return await call_next(request)
         async def _stop_background():
@@ -240,7 +246,7 @@ class _SlowRequestLogMiddleware(_BaseHTTPMiddleware):
                 logging.getLogger("app.slow_request").warning(
                     "slow_request method=%s path=%s status=%s elapsed=%.3fs",
                     request.method,
-                    request.url.path,
+                    get_application_route_path(request.scope),
                     status,
                     elapsed,
                 )
