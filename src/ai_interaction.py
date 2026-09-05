@@ -67,6 +67,18 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
     _personal_docs_manager = personal_docs_mgr
 
 
+def _get_live_rag_manager():
+    """Resolve startup-degraded RAG through the shared personal-doc manager."""
+    global _rag_manager
+
+    get_rag = getattr(_personal_docs_manager, "get_rag_manager", None)
+    if callable(get_rag):
+        recovered = get_rag()
+        if recovered is not None:
+            _rag_manager = recovered
+    return _rag_manager
+
+
 # ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------
@@ -574,11 +586,12 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
         if not os.path.isdir(directory):
             return {"error": f"Directory not found: {directory}"}
 
-        if not _rag_manager:
+        rag_manager = _get_live_rag_manager()
+        if not rag_manager:
             return {"error": "RAG manager not available"}
 
         try:
-            result = _rag_manager.index_personal_documents(directory)
+            result = rag_manager.index_personal_documents(directory)
             indexed = result.get("indexed", 0) if isinstance(result, dict) else 0
             return {"action": "add_directory", "directory": directory,
                     "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)"}

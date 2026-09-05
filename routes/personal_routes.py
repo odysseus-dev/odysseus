@@ -160,7 +160,10 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
     def _rag():
         """Get the current RAG manager, retrying init if needed."""
-        return get_rag_manager()
+        recovered = get_rag_manager()
+        if recovered is not None:
+            personal_docs_manager.rag_manager = recovered
+        return recovered
 
     def _resolve_allowed_personal_dir(directory: str) -> str:
         """Resolve a user-supplied personal-docs path under the allowed root."""
