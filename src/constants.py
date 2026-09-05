@@ -112,7 +112,10 @@ PASSWORD_MIN_LENGTH = 8
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0
-
+# Vision/OCR calls need more headroom than a plain caption would suggest:
+# thinking-capable models (Gemma 4, Qwen3-VL Thinking) spend the budget in
+# `reasoning` and return empty `content` if capped too low.
+VISION_MAX_TOKENS = 2000
 
 def internal_api_base() -> str:
     """Base URL for in-process loopback calls to Odysseus's own API.
@@ -131,3 +134,12 @@ def internal_api_base() -> str:
     if override:
         return override.rstrip("/")
     return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}"
+
+# Shared prompt for all vision/OCR description calls (chat attachments and
+# gallery captions) so both paths produce the same two-part shape: a short
+# summary the UI can show collapsed, then the full description.
+VISION_DESCRIBE_PROMPT = (
+    "Describe this image in plain text: a one or two sentence overview, "
+    "a blank line, then everything else you see. Transcribe any readable "
+    "text exactly; don't guess at anything unclear."
+)
