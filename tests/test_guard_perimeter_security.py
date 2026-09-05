@@ -417,3 +417,35 @@ def test_active_mode_blocks_scanner_user_agents_and_accepts_form_routes():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("OK")
+
+
+@requires_guard
+def test_threshold_ban_refused_for_loopback_returns_400_not_403():
+    """guard-core >= 4.0.1: a threshold ban whose target overlaps loopback is
+    refused by the self-DoS guard and reported honestly (400), not answered
+    as a ban (403). TestClient always resolves as 127.0.0.1, so the third
+    /wp-login.php hit crosses the cms_probing/sensitive_file threshold (3)
+    but the ban is refused; every response stays a plain WAF block."""
+    result = _run(
+        """
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from guard import SecurityMiddleware
+        import core.guard as g
+        from routes.honeypot_routes import setup_honeypot_routes
+
+        app = FastAPI()
+        app.add_middleware(SecurityMiddleware, config=g.security_config)
+        app.state.guard_decorator = g.guard_deco
+        setup_honeypot_routes(app)
+
+        client = TestClient(app, client=("127.0.0.1", 12345))
+        codes = [client.get("/wp-login.php").status_code for _ in range(4)]
+        assert all(c == 400 for c in codes), codes
+        print("OK")
+        """,
+        ODYSSEUS_GUARD_ENABLED="true",
+        ODYSSEUS_GUARD_PASSIVE="false",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("OK")

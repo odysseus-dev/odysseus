@@ -58,9 +58,16 @@ fastapi-guard>=8.0.0
 # see tests/test_guard_perimeter_security.py). Separately, its default
 # excluded-header set skips proxy identity headers (x-forwarded-for and
 # friends) from the ssrf category only; every other detection category
-# still scans them.
+# still scans them. >= 4.0.1 fixes a self-DoS guard bug: a threshold ban whose
+# target overlaps loopback or a configured trusted_proxies network (every
+# client, once this perimeter sits behind a reverse proxy with
+# ODYSSEUS_GUARD_TRUSTED_PROXIES unset, since they then all resolve as the
+# proxy's own IP) is now refused and reported honestly as a plain 400 instead
+# of the 403 "IP has been banned" guard-core answered with while nothing was
+# actually banned. That refusal path is live here: enable_ip_banning and
+# enable_rate_limit_auto_ban are both on below.
 # >= 8.0.0 floors guard-core>=4.0.0.
-guard-core>=4.0.0
+guard-core>=4.0.1
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
