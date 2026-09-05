@@ -92,6 +92,28 @@ COPY --from=realesrgan-wheels /wheels/ /tmp/odysseus-wheels/
 RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
     && rm -rf /tmp/odysseus-wheels
 
+RUN pip install --no-cache-dir \
+    nvidia-cuda-nvcc==13.3.73 \
+    nvidia-cuda-runtime==13.3.29 \
+    nvidia-cublas==13.3.0.5 \
+    nvidia-cuda-nvrtc==13.3.33 \
+    nvidia-cuda-cccl==13.3.3.4.1
+
+RUN CUDA_PIP=/usr/local/lib/python3.14/site-packages/nvidia/cu13 \
+    && mkdir -p /usr/local/cuda \
+    && ln -s "${CUDA_PIP}/bin" /usr/local/cuda/bin \
+    && ln -s "${CUDA_PIP}/include" /usr/local/cuda/include \
+    && ln -s "${CUDA_PIP}/lib" /usr/local/cuda/lib \
+    && ln -s "${CUDA_PIP}/lib" /usr/local/cuda/lib64 \
+    && ln -s libcudart.so.13 "${CUDA_PIP}/lib/libcudart.so" \
+    && ln -s libcublas.so.13 "${CUDA_PIP}/lib/libcublas.so" \
+    && ln -s libnvrtc.so.13 "${CUDA_PIP}/lib/libnvrtc.so"
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV CUDAToolkit_ROOT=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib:${LD_LIBRARY_PATH}
+
 # Copy app code
 COPY . .
 
