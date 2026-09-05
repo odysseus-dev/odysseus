@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List, Optional
 
-from fastapi import APIRouter, Request, HTTPException, Form, Query
+from fastapi import APIRouter, Request, HTTPException, Form, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -40,7 +40,13 @@ from src.foreground_model_routing import (
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import effective_user, get_current_user
+from src.auth_helpers import (
+    effective_user,
+    get_current_user,
+    is_delegated_credential,
+    require_api_token_scope,
+    require_chat_api_token_scope,
+)
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -69,6 +75,8 @@ from src.tool_policy import (
 )
 from src.tool_approvals import tool_approval_store
 from core.guard_deco import content_type, suspicious_frequency
+from src.tool_approval_scopes import stamp_chat_session_grant
+from src.tool_security import delegated_credential_blocked_tools
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +96,23 @@ def _stream_failure_status(chunk: str) -> Optional[int]:
     except json.JSONDecodeError:
         return None
     return None
+
+
+def _reject_delegated_tool_approval(request: Request) -> None:
+    """Refuse an approval answered by a bearer API token.
+
+    A tool approval records that a HUMAN authorized one dangerous action. A
+    token is a delegated credential handed to an integration, so when it
+    answers the prompt it triggered, nobody is asked and the gate collapses
+    into an extra round trip. Owner and session already match here: the token
+    is answering on behalf of the account that minted it.
+    """
+    if is_delegated_credential(request):
+        raise HTTPException(
+            403,
+            "Tool approvals require an interactive session. "
+            "API tokens cannot authorize a gated action.",
+        )
 
 
 def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
@@ -114,6 +139,11 @@ def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
             if str(ask_user.get("approval_id") or "") != approval_key:
                 continue
             ask_user["resolved"] = normalized_decision
+            stamp_chat_session_grant(
+                ask_user,
+                getattr(sess, "id", ""),
+                normalized_decision,
+            )
             message_id = metadata.get("_db_id")
             resolved_metadata = {
                 key: value for key, value in metadata.items() if key != "_db_id"
@@ -731,7 +761,10 @@ def setup_chat_routes(
     webhook_manager=None,
     skills_manager=None,
 ) -> APIRouter:
-    router = APIRouter(tags=["chat"])
+    router = APIRouter(
+        tags=["chat"],
+        dependencies=[Depends(require_chat_api_token_scope)],
+    )
 
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
@@ -740,6 +773,7 @@ def setup_chat_routes(
     @suspicious_frequency(0.5, 60, "log")
     @content_type(["application/json"])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, Any]:
+        require_api_token_scope(request, "chat")
         _set_user_time_from_request(request)
 
         message = chat_request.message
@@ -931,6 +965,7 @@ def setup_chat_routes(
     @router.post("/api/chat_stream")
     @suspicious_frequency(0.5, 60, "log")
     async def chat_stream(request: Request) -> StreamingResponse:
+        require_api_token_scope(request, "chat")
         body = None
         try:
             if request.headers.get("content-type", "").startswith("application/json"):
@@ -1129,6 +1164,7 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
             owner = effective_user(request)
             if tool_approval_id:
+                _reject_delegated_tool_approval(request)
                 pending_tool_approval = tool_approval_store.peek(tool_approval_id)
                 normalized_owner = str(owner or "").strip().casefold()
                 if (
@@ -1446,6 +1482,12 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
+        # Minting is admin-only, so every owner-keyed check below answers
+        # "admin" for a token. Cap it at the non-admin policy instead.
+        # stream_agent_loop repeats this from delegated_credential.
+        _delegated_credential = is_delegated_credential(request)
+        if _delegated_credential:
+            disabled_tools.update(delegated_credential_blocked_tools())
         # Only disable bash when the caller *explicitly* set it to a falsy
         # value. When unset (None), defer to per-user privilege checks below.
         # Web search is per-turn opt-in: either the chat pre-search setting
@@ -2331,6 +2373,7 @@ def setup_chat_routes(
                         uploaded_files=ctx.uploaded_files,
                         defer_context_shaping=_foreground_policy.enabled,
                         external_untrusted_context_seen=external_untrusted_context_seen,
+                        delegated_credential=_delegated_credential,
                         exact_approval=exact_tool_approval,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):

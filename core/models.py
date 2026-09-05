@@ -11,6 +11,8 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
     CHAT_SESSION_APPROVAL_DECISION,
+    CHAT_SESSION_APPROVAL_SIGNATURE_FIELD,
+    verify_chat_session_grant,
 )
 
 if TYPE_CHECKING:
@@ -60,6 +62,14 @@ def _history_grants_chat_session_approval(
                 ask_user.get("kind") == "tool_approval"
                 and ask_user.get("resolved") == CHAT_SESSION_APPROVAL_DECISION
                 and str(ask_user.get("session_id") or "") == expected_session
+                # Shape proves nothing here: routes that accept a
+                # caller-supplied metadata blob write into this same history.
+                and verify_chat_session_grant(
+                    ask_user.get(CHAT_SESSION_APPROVAL_SIGNATURE_FIELD),
+                    expected_session,
+                    ask_user.get("approval_id"),
+                    CHAT_SESSION_APPROVAL_DECISION,
+                )
             ):
                 return True
     return False

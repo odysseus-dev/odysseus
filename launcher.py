@@ -14,6 +14,13 @@ import threading
 import time
 import webbrowser
 
+# PyInstaller multiprocessing children re-enter this executable with a private
+# bootstrap argument. Consume it before splash/UI or application imports so a
+# spawn-based worker does not relaunch the full desktop application.
+if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+
 # Define a dummy NullWriter to suppress standard stream crashes (isatty etc.) in GUI mode
 class NullWriter:
     def write(self, text):

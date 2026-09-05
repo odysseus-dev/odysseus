@@ -110,7 +110,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Detect whether this PR only touches documentation files.
+      # Detect whether this PR only touches repository prose outside the Pages site.
       # If so, skip the expensive pytest run while still reporting a passing check.
       - name: Check for docs-only changes
         id: docs-check
@@ -122,9 +122,10 @@ jobs:
             BASE="${{ github.event.before }}"
             HEAD="${{ github.sha }}"
           fi
-          # List all changed files; if every file matches docs/markdown patterns, skip pytest.
+          # Keep website/ and assets/branding/ out of this bypass: pytest owns
+          # regression guards for their published-file and orphan-asset contracts.
           changed=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
-          non_docs=$(echo "$changed" | grep -Ev '^(docs/|.*\.md$|\.github/[^/]+\.md$)' || true)
+          non_docs=$(echo "$changed" | grep -Ev '^(docs/|[^/]+\.md$|\.github/[^/]+\.md$)' || true)
           if [ -z "$non_docs" ]; then
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
             echo "Docs-only change detected — skipping pytest."

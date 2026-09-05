@@ -14,6 +14,8 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'website/**'
+      - 'assets/branding/**'
       - '.github/ISSUE_TEMPLATE/**'
 
 concurrency:
