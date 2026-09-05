@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import re
 import time
 import logging
@@ -65,12 +64,13 @@ from routes.chat_helpers import (
     _allowed_models_for_request,
     _enforce_chat_privileges,
 )
-from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
 from src.image_model_ids import looks_like_image_generation_model
 from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
+    explicit_tool_names_for_turn,
     is_web_search_explicitly_denied,
+    normalize_requested_chat_mode,
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
@@ -284,24 +284,6 @@ def _ensure_current_request_is_latest_user(messages: List[Dict[str, Any]], curre
     return repaired
 
 
-_WEB_FOLLOWUP_RE = re.compile(
-    r"^\s*(?:(?:can|could|would|will)\s+you\s+)?"
-    r"(?:check|try\s+again|look(?:\s+now|\s+it\s+up)?|search(?:\s+now|\s+online|\s+it)?|"
-    r"do\s+it|again|approved|approve(?:d)?|yes|ok(?:ay)?|proceed|go\s+ahead|"
-    r"send(?:\s+it)?|submit(?:\s+it)?|email(?:\s+them|\s+it)?)\??\s*$",
-    re.I,
-)
-_RECENT_WEB_CONTEXT_RE = re.compile(
-    r"\b(?:weather|forecast|rain|raining|hourly|news|headlines|rate|exchange|currency|"
-    r"price|current|latest|search|look\s+up|online)\b",
-    re.I,
-)
-_RECENT_BROWSER_CONTEXT_RE = re.compile(
-    r"\b(?:browser|browse|open\s+(?:the\s+)?(?:site|page|url|link)|click|"
-    r"fill(?:\s+out)?|submit|send\s+(?:the\s+)?form|contact\s+form|web\s*form|"
-    r"form\s+submission|playwright|automation)\b",
-    re.I,
-)
 _BROWSER_MCP_TOOLS = {
     "mcp__builtin_browser__browser_navigate",
     "mcp__builtin_browser__browser_snapshot",
@@ -316,33 +298,6 @@ _BROWSER_MCP_TOOLS = {
     "mcp__builtin_browser__browser_navigate_back",
     "mcp__builtin_browser__browser_close",
 }
-
-
-def _recent_session_text(sess, limit: int = 8, max_chars: int = 2000) -> str:
-    history = getattr(sess, "history", None) or getattr(sess, "_history", None) or []
-    chunks: List[str] = []
-    for msg in history[-limit:]:
-        content = getattr(msg, "content", None)
-        if content is None and isinstance(msg, dict):
-            content = msg.get("content")
-        text = _message_plain_text(content).strip()
-        if text:
-            chunks.append(text)
-    return " ".join(chunks)[-max_chars:]
-
-
-def _is_contextual_web_followup(message: str, sess) -> bool:
-    """Treat short retry/check replies as web lookups when recent context was web."""
-    if not message or not _WEB_FOLLOWUP_RE.search(message):
-        return False
-    return bool(_RECENT_WEB_CONTEXT_RE.search(_recent_session_text(sess)))
-
-
-def _is_contextual_browser_followup(message: str, sess) -> bool:
-    """Treat short retry replies as browser tasks when recent context was forms/browser automation."""
-    if not message or not _WEB_FOLLOWUP_RE.search(message):
-        return False
-    return bool(_RECENT_BROWSER_CONTEXT_RE.search(_recent_session_text(sess, limit=12, max_chars=4000)))
 
 
 def _resolve_request_workspace(request, raw_value) -> tuple:
@@ -370,46 +325,6 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     from src.tool_execution import vet_workspace
     workspace = vet_workspace(requested) or ""
     return workspace, (requested if not workspace else "")
-
-
-_ABS_PATH_RE = re.compile(r"(?<!\S)(~?/[^\"'\s`<>]+)")
-_LOCAL_FILE_TASK_RE = re.compile(
-    r"\b(?:file|folder|directory|path|workspace|repo|project|movie|video|"
-    r"subtitle|subtitles|srt|vtt|ass|download|save|rename|move|copy|extract|"
-    r"convert|ffmpeg|run|execute|open|read|inspect|fix|debug|test|build)\b",
-    re.IGNORECASE,
-)
-
-
-def _resolve_workspace_from_message_path(request, message: str) -> tuple[str, str]:
-    """Auto-bind a workspace only when the user names an explicit safe path.
-
-    This is intentionally deterministic rather than LLM/RAG-driven: RAG can
-    choose the tool family, but filesystem binding must not let a prompt infer
-    or probe arbitrary host paths. For a file path, bind its parent directory.
-    For a directory path, bind that directory.
-    """
-    text = str(message or "")
-    if not text or not _LOCAL_FILE_TASK_RE.search(text):
-        return "", ""
-
-    from src.tool_security import owner_is_admin_or_single_user
-    if not owner_is_admin_or_single_user(get_current_user(request)):
-        return "", ""
-
-    from src.tool_execution import vet_workspace
-
-    for match in _ABS_PATH_RE.finditer(text):
-        raw = match.group(1).rstrip(".,;:)]}")
-        expanded = os.path.realpath(os.path.expanduser(raw))
-        candidates = [expanded]
-        if os.path.isfile(expanded):
-            candidates.insert(0, os.path.dirname(expanded))
-        for candidate in candidates:
-            workspace = vet_workspace(candidate) or ""
-            if workspace:
-                return workspace, ""
-    return "", ""
 
 
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
@@ -989,17 +904,22 @@ def setup_chat_routes(
             or (body or {}).get("selected_endpoint_id")
             or ""
         ).strip()
-        # Issue #3229: API callers send JSON, not FormData.  Read from the
-        # JSON body as fallback so callers who send {"allow_bash": true}
-        # actually get bash enabled.
-        allow_bash = form_data.get("allow_bash") or (body or {}).get("allow_bash")
-        allow_web_search = form_data.get("allow_web_search") or (body or {}).get("allow_web_search")
+        # Issue #3229: API callers send JSON, not FormData. Read from the JSON
+        # body as fallback, while preserving an explicit boolean false.
+        allow_bash = form_data.get("allow_bash")
+        if allow_bash is None and isinstance(body, dict):
+            allow_bash = body.get("allow_bash")
+        allow_web_search = form_data.get("allow_web_search")
+        if allow_web_search is None and isinstance(body, dict):
+            allow_web_search = body.get("allow_web_search")
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
-        chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        chat_mode = normalize_requested_chat_mode(
+            form_data.get("mode") or (body or {}).get("mode") or ""
+        )
         tool_approval_id = (
             form_data.get("tool_approval_id")
             or (body or {}).get("tool_approval_id")
@@ -1028,59 +948,10 @@ def setup_chat_routes(
         approved_plan = ""
         if not plan_mode:
             approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
-        # Did the USER explicitly pick agent mode? (vs. us auto-escalating
-        # below). Skill extraction should only learn from real agent sessions,
-        # not chats we quietly promoted for a notes/calendar intent.
+        # Tool-capable execution is selected by the request, not inferred from
+        # prompt text. This value also decides whether skill extraction may run.
         user_requested_agent = (chat_mode == "agent")
         _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
-        _explicit_web_intent = False
-        _explicit_browser_intent = False
-        if isinstance(message, str):
-            _msg_l = message.lower()
-            _explicit_web_intent = bool(re.search(
-                r"\b(search|look\s*up|lookup|google|browse|web|online|latest|current|today|news|weather|forecast|rate|exchange\s+rate)\b",
-                _msg_l,
-            ))
-            _explicit_browser_intent = bool(re.search(
-                r"\b(browser|browse|open\s+(?:the\s+)?(?:site|page|url|link)|"
-                r"click|fill(?:\s+out)?|submit|send\s+(?:the\s+)?form|"
-                r"contact\s+form|web\s*form|form\s+submission)\b",
-                _msg_l,
-            ))
-        _allow_browser_for_web_turn = bool(
-            _explicit_browser_intent
-            or _explicit_web_intent
-            or _search_enabled
-        )
-        # Intent auto-escalation: if the user is clearly asking the assistant
-        # to create a todo, reminder, or calendar event, promote chat → agent
-        # for this turn so the LLM has access to manage_notes / manage_calendar.
-        # This is a LIGHT promotion — see the disabled_tools block below, which
-        # withholds shell/code/file tools so the model doesn't try to `bash`
-        # its way through a plain chat request (and fail, especially with the
-        # shell disabled).
-        auto_escalated = False
-        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
-        _workspace_agent_intent = False
-        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
-            chat_mode = "agent"
-            auto_escalated = True
-            _workspace_agent_intent = _tool_intent.category in {"shell", "workspace"}
-            if _workspace_agent_intent:
-                allow_bash = "true"
-            logger.info(
-                "chat→agent auto-escalation: category=%s reason=%s",
-                _tool_intent.category,
-                _tool_intent.reason,
-            )
-        elif chat_mode == "chat" and _search_enabled:
-            chat_mode = "agent"
-            auto_escalated = True
-            logger.info("chat→agent auto-escalation: search enabled")
-        elif chat_mode == "chat" and _explicit_web_intent:
-            chat_mode = "agent"
-            auto_escalated = True
-            logger.info("chat→agent auto-escalation: explicit web intent")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -1263,37 +1134,6 @@ def setup_chat_routes(
                 )
             if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
-            if (
-                chat_mode == "chat"
-                and isinstance(message, str)
-                and (not _tool_intent or not _tool_intent.needs_tools)
-                and _is_contextual_web_followup(message, sess)
-            ):
-                _tool_intent = ToolIntent(True, "web", "contextual web lookup follow-up")
-                chat_mode = "agent"
-                auto_escalated = True
-                _workspace_agent_intent = False
-                logger.info(
-                    "chat→agent auto-escalation: category=%s reason=%s",
-                    _tool_intent.category,
-                    _tool_intent.reason,
-                )
-            if isinstance(message, str) and _is_contextual_browser_followup(message, sess):
-                _explicit_browser_intent = True
-                if chat_mode == "chat":
-                    chat_mode = "agent"
-                    auto_escalated = True
-                    _workspace_agent_intent = False
-                    logger.info("chat→agent auto-escalation: contextual browser/form follow-up")
-            if not workspace and isinstance(message, str):
-                _auto_workspace, _ = _resolve_workspace_from_message_path(request, message)
-                if _auto_workspace:
-                    workspace = _auto_workspace
-                    chat_mode = "agent"
-                    auto_escalated = True
-                    _workspace_agent_intent = True
-                    allow_bash = "true"
-                    logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
@@ -1491,26 +1331,8 @@ def setup_chat_routes(
         # explicitly enable it.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
-        _explicit_web_intent = _explicit_web_intent or bool(_tool_intent and _tool_intent.category == "web")
         if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
             disabled_tools.update(WEB_TOOL_NAMES)
-        if _explicit_web_intent:
-            # A direct lookup/search request should not drift into personal
-            # tools or shell fallbacks. It can only use web_search/web_fetch
-            # when the request's explicit web setting enabled them.
-            disabled_tools.update({
-                "bash", "python",
-                "search_chats", "manage_skills", "manage_memory",
-                "read_file", "write_file", "edit_file",
-                "create_document", "edit_document", "update_document",
-                "send_email", "reply_to_email",
-                "manage_notes", "manage_calendar", "manage_tasks",
-                "api_call",
-            })
-            if _search_enabled:
-                disabled_tools.difference_update(WEB_TOOL_NAMES)
-            else:
-                disabled_tools.update(WEB_TOOL_NAMES)
         elif _search_enabled:
             disabled_tools.difference_update(WEB_TOOL_NAMES)
 
@@ -1569,18 +1391,6 @@ def setup_chat_routes(
         _global_disabled = get_setting("disabled_tools", [])
         if _global_disabled and isinstance(_global_disabled, list):
             disabled_tools.update(_global_disabled)
-
-        # Light auto-escalation: the user is in chat mode and just expressed a
-        # notes/calendar/email intent. Grant the relevant managers but withhold
-        # the heavy "do things on the computer" tools — otherwise the model
-        # tries to shell out for a request that never needed it, then fails
-        # (and looks broken when the shell is disabled).
-        if auto_escalated and not _workspace_agent_intent:
-            disabled_tools.update({
-                "bash", "python", "read_file", "write_file",
-            })
-            if not _allow_browser_for_web_turn:
-                disabled_tools.update(_BROWSER_MCP_TOOLS)
 
         # Disable document tools in compare sessions — they break the pane UI
         if sess.name and sess.name.startswith("[CMP]"):
@@ -2325,13 +2135,11 @@ def setup_chat_routes(
                         _max_rounds = _DEFAULT_ROUNDS
                     _max_rounds = max(1, min(_max_rounds, 200))
 
-                    _forced_tools = None
-                    if _search_enabled:
-                        _forced_tools = set(WEB_TOOL_NAMES)
-                        if _explicit_browser_intent:
-                            _forced_tools |= set(_BROWSER_MCP_TOOLS)
-                    elif _explicit_browser_intent:
-                        _forced_tools = set(_BROWSER_MCP_TOOLS)
+                    _explicit_tools = explicit_tool_names_for_turn(
+                        allow_bash=allow_bash,
+                        allow_web_search=allow_web_search,
+                        use_web=use_web,
+                    )
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -2365,7 +2173,7 @@ def setup_chat_routes(
                             and pending_tool_approval.selected_tools
                             else None
                         ),
-                        forced_tools=_forced_tools,
+                        explicit_tools=_explicit_tools,
                         uploaded_files=ctx.uploaded_files,
                         defer_context_shaping=_foreground_policy.enabled,
                         external_untrusted_context_seen=external_untrusted_context_seen,

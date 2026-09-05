@@ -50,6 +50,33 @@ def web_search_enabled_for_turn(allow_web_search: object, use_web: object = None
     return tool_toggle_enabled(allow_web_search) or tool_toggle_enabled(use_web)
 
 
+def normalize_requested_chat_mode(value: object) -> str:
+    """Fail closed to Chat unless the request explicitly selects Agent."""
+
+    return "agent" if str(value or "").strip().lower() == "agent" else "chat"
+
+
+def explicit_tool_names_for_turn(
+    *,
+    allow_bash: object = None,
+    allow_web_search: object = None,
+    use_web: object = None,
+) -> Set[str]:
+    """Return tools explicitly enabled by request controls.
+
+    These names seed schema selection; they do not grant execution authority.
+    The caller still intersects them with privilege/global/turn policy, and the
+    dispatcher reauthorizes the exact call at execution time.
+    """
+
+    selected: Set[str] = set()
+    if tool_toggle_enabled(allow_bash):
+        selected.add("bash")
+    if web_search_enabled_for_turn(allow_web_search, use_web):
+        selected.update(WEB_TOOL_NAMES)
+    return selected
+
+
 _COMMON_TOOL_NAMES = {
     "api_call",
     "app_api",

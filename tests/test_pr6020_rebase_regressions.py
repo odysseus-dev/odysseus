@@ -87,7 +87,7 @@ def _run_probe(messages, *, relevant_tools, **kwargs):
     )
 
 
-def test_odysseus_notes_mode_clamps_and_reenables_all_personal_managers(monkeypatch):
+def test_odysseus_notes_mode_clamps_without_overriding_disabled_managers(monkeypatch):
     prompt_calls, _ = _install_route_probe(monkeypatch)
 
     _run_probe(
@@ -98,9 +98,7 @@ def test_odysseus_notes_mode_clamps_and_reenables_all_personal_managers(monkeypa
 
     route = prompt_calls[0]
     assert route["relevant_tools"] == NOTES_TOOLS
-    assert route["disabled_tools"].isdisjoint(
-        {"manage_notes", "manage_calendar", "manage_tasks"}
-    )
+    assert {"manage_notes", "manage_calendar", "manage_tasks"} <= route["disabled_tools"]
 
 
 def test_odysseus_general_mode_disables_every_tool(monkeypatch):
@@ -219,9 +217,8 @@ def test_non_qwen_fallback_keeps_requested_temperature(monkeypatch):
     assert request["kwargs"]["temperature"] == 1.2
 
 
-def test_qwen_notes_fallback_reenables_personal_managers(monkeypatch):
-    """The answering candidate's notes mode must unblock the managers for
-    execution, not just enable them in its own route schemas."""
+def test_qwen_notes_fallback_preserves_disabled_personal_managers(monkeypatch):
+    """A fallback route cannot turn model compatibility into authority."""
 
     _install_route_probe(monkeypatch)
     stream_round = 0
@@ -279,9 +276,7 @@ def test_qwen_notes_fallback_reenables_personal_managers(monkeypatch):
         )
     )
 
-    assert seen_exec["disabled_tools"].isdisjoint(
-        {"manage_notes", "manage_calendar", "manage_tasks"}
-    )
+    assert seen_exec == {}
 
 
 def test_persisted_mcp_tool_event_keeps_description_and_resolved_name(monkeypatch):

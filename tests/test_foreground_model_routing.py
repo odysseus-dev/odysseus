@@ -2543,7 +2543,7 @@ def test_direct_low_signal_partial_error_emits_terminal_history(
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
     monkeypatch.setattr(
         agent_loop,
-        "_classify_agent_request",
+        "_build_tool_selection_context",
         lambda messages, latest: {
             "low_signal": True,
             "continuation": False,
@@ -2604,7 +2604,7 @@ def test_direct_low_signal_fallback_estimates_winning_route_prompt(
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(
         agent_loop,
-        "_classify_agent_request",
+        "_build_tool_selection_context",
         lambda messages, latest: {
             "low_signal": True,
             "continuation": False,
@@ -2722,7 +2722,7 @@ def test_direct_low_signal_configuration_error_surfaces_without_fake_success(mon
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(
         agent_loop,
-        "_classify_agent_request",
+        "_build_tool_selection_context",
         lambda messages, latest: {
             "low_signal": True,
             "continuation": False,
@@ -2760,7 +2760,7 @@ def test_direct_low_signal_empty_completion_surfaces_without_fake_success(monkey
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(
         agent_loop,
-        "_classify_agent_request",
+        "_build_tool_selection_context",
         lambda messages, latest: {
             "low_signal": True,
             "continuation": False,
@@ -3647,3 +3647,82 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
         for message in round_three_requests[0]["messages"]
     )
     assert any('"delta": "pinned backup answer"' in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_invalid_mode_fails_closed_to_chat(monkeypatch):
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "web", captured)
+
+    response = await endpoint(_RouteRequest("web"))
+    async for _ in response.body_iterator:
+        pass
+
+    assert "chat" in captured
+    assert "agent" not in captured
+
+
+async def _capture_agent_tools(captured, *args, **kwargs):
+    captured["agent_explicit_tools"] = set(kwargs.get("explicit_tools") or ())
+    captured["agent_disabled_tools"] = set(kwargs.get("disabled_tools") or ())
+    yield f'data: {json.dumps({"delta": "done"})}\n\n'
+    yield "data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_passes_explicit_bash_and_web_as_additive_tools(monkeypatch):
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", captured)
+    monkeypatch.setattr(
+        chat_routes,
+        "stream_agent_loop",
+        lambda *args, **kwargs: _capture_agent_tools(captured, *args, **kwargs),
+    )
+    request = _RouteRequest("agent")
+    request._form.update({
+        "message": "Inspect https://example.com, then use Bash.",
+        "allow_bash": "true",
+        "allow_web_search": "true",
+    })
+
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    assert captured["agent_explicit_tools"] == {
+        "bash",
+        "web_search",
+        "web_fetch",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_preserves_json_false_bash_permission(monkeypatch):
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", captured)
+    monkeypatch.setattr(
+        chat_routes,
+        "stream_agent_loop",
+        lambda *args, **kwargs: _capture_agent_tools(captured, *args, **kwargs),
+    )
+    request = _RouteRequest("agent")
+    request.headers = {"content-type": "application/json"}
+    request._form = {}
+    request._body = {
+        "message": "hello",
+        "session": "session-1",
+        "mode": "agent",
+        "allow_bash": False,
+        "allow_web_search": False,
+    }
+
+    async def json_body():
+        return request._body
+
+    request.json = json_body
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    assert "bash" not in captured["agent_explicit_tools"]
+    assert "bash" in captured["agent_disabled_tools"]
