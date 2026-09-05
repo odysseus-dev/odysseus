@@ -54,6 +54,22 @@ downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
+**A native install runs two servers.** `requirements.txt` installs
+`chromadb-client`, which is the HTTP client only — Docker Compose starts the
+ChromaDB service for you, and the native route does not. Without it the app still
+starts and the UI works, but vector RAG and vector memory come up dead
+(`VectorRAG init failed` and `MemoryVectorStore DEGRADED` in the log). Start
+ChromaDB before the app:
+
+```bash
+uv tool install chromadb        # or: pip install chromadb
+chroma run --host 127.0.0.1 --port 8100 --path ./data/chroma
+```
+
+Port 8100 is what the app expects by default. To run more than one native install
+on the same machine, give each its own ChromaDB port and `--path`, and point the
+extra instances at theirs with `CHROMADB_PORT` in `.env`.
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
