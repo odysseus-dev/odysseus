@@ -1151,6 +1151,79 @@ async def _run_extraction_jobs_sequentially(session_id: str, jobs: list, max_wai
             logger.warning("[bg-extract] %s extraction job failed for session %s", name, session_id, exc_info=True)
 
 
+async def _caption_multimodal_image_attachments(
+    attachment_meta: list, endpoint_url: str, model: str, headers: dict | None,
+    owner: str | None, upload_handler,
+) -> None:
+    """Caption freshly-attached images when the main model is multimodal.
+
+    The main model already saw these images as part of its own reply, but
+    that reply answers whatever the user asked, not a usable caption — so
+    this fires one dedicated describe-only call per image (via
+    describe_image_for_caption) to the model/endpoint the caller has
+    confirmed actually answered this turn (see run_post_response_tasks —
+    callers pass None for endpoint_url/model when that cannot be confirmed,
+    e.g. explicit-fallback routing switched candidates, so this never
+    guesses), then syncs the result the same way the text-only VL path
+    does: written to the attachment's own vision cache (so the chat
+    "Caption" button and any resend pick it up) and to the gallery caption.
+
+    Callers must pre-filter attachment_meta to image attachments that don't
+    already carry a "vision" description (set when the text-only VL path
+    ran or a user correction exists) — this only fills the gap left by the
+    multimodal path, it never overwrites an existing one.
+
+    Attachment metadata (id/mime) is read from the caller's already-resolved
+    manifest, but the file *path* is re-resolved here via an owner-checked
+    upload_handler.resolve_upload() call rather than trusting a path carried
+    in from an earlier snapshot — the same owner-check every other file read
+    in this request path goes through.
+
+    The written cache file gets a sidecar ``.autogen`` marker distinguishing
+    it from a genuine user correction (written by PUT /api/upload/{id}/vision)
+    — see _sync_upload_vision_to_gallery's caller in chat_handler.py for why
+    that provenance distinction matters: an unattended, unreviewed model
+    output should never be injected into a later prompt with the same
+    "treat as authoritative" instruction a real user correction gets.
+    """
+    if not endpoint_url or not model or not attachment_meta or not upload_handler:
+        return
+    from src.constants import UPLOAD_DIR
+    from src.document_processor import describe_image_for_caption
+    from src.chat_handler import _sync_upload_vision_to_gallery
+
+    for ref in attachment_meta:
+        att_id = ref.get("id")
+        if not att_id:
+            continue
+        info = upload_handler.resolve_upload(att_id, owner=owner)
+        path = (info or {}).get("path")
+        if not path or not os.path.exists(path):
+            continue
+        mime = ref.get("mime") or (info or {}).get("mime") or ""
+        try:
+            text = await describe_image_for_caption(path, endpoint_url, model, headers, mime=mime)
+        except Exception as e:
+            logger.warning("[multimodal-caption] describe failed for %s: %s", att_id, e)
+            continue
+        text = (text or "").strip()
+        if not text:
+            continue
+        try:
+            cache_dir = os.path.join(UPLOAD_DIR, ".vision")
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = os.path.join(cache_dir, f"{att_id}.txt")
+            with open(cache_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            # Marker only — presence, not content, is what matters. Cleared by
+            # put_vision_text() the moment a human actually reviews/edits it.
+            with open(cache_path + ".autogen", "w", encoding="utf-8") as f:
+                f.write("1")
+        except Exception as e:
+            logger.warning("[multimodal-caption] cache write failed for %s: %s", att_id, e)
+        _sync_upload_vision_to_gallery({"hash": ref.get("checksum_sha256")}, owner, text)
+
+
 def run_post_response_tasks(
     sess,
     session_manager,
@@ -1172,6 +1245,11 @@ def run_post_response_tasks(
     owner: str = None,
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
+    attachment_meta: list | None = None,
+    caption_endpoint_url: str | None = None,
+    caption_model: str | None = None,
+    caption_headers: dict | None = None,
+    upload_handler=None,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
@@ -1188,6 +1266,35 @@ def run_post_response_tasks(
     turn's request too.
     """
     _extraction_jobs: list = []
+
+    # Multimodal-model image captioning — fills the gallery-caption gap for
+    # turns where the main model saw the image directly (no separate VL
+    # call, so nothing captioned it). Only images without a "vision" entry
+    # already qualify; the text-only VL path and user corrections both set
+    # that, so this never overwrites either. Read from attachment_meta (the
+    # metadata preprocess_message actually mutated this turn), never from a
+    # freshly-rebuilt manifest — a fresh resolve has no way to know whether
+    # this turn's processing already found/generated a description, so it
+    # would treat an already-captioned image as fresh and overwrite it
+    # (including a user's own manual correction).
+    #
+    # caption_endpoint_url/model are the caller's confirmed *answering*
+    # route for this turn (None when that cannot be confirmed, e.g.
+    # explicit-fallback routing switched candidates) — never sess.model
+    # directly, since sess.model can be the originally-requested model while
+    # a different one actually produced the response and saw the image.
+    if (
+        allow_background_extraction and not incognito and not compare_mode
+        and attachment_meta and caption_endpoint_url and caption_model and upload_handler
+    ):
+        _img_atts = [
+            r for r in attachment_meta
+            if str(r.get("mime", "")).startswith("image/") and not r.get("vision")
+        ]
+        if _img_atts:
+            _extraction_jobs.append(("image-caption", _caption_multimodal_image_attachments(
+                _img_atts, caption_endpoint_url, caption_model, caption_headers, owner, upload_handler,
+            )))
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
