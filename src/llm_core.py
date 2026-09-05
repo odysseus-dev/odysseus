@@ -1174,6 +1174,73 @@ def _model_disallows_reasoning_effort_with_chat_tools(model: str) -> bool:
     return bool(re.match(r"^(?:openai/)?gpt-5(?:[.\-]\d+)?(?:[-_:].*)?$", m))
 
 
+# ── Poe platform tool collision aliases ──
+# Poe injects its own server-side tools (web_search, python) for certain
+# models. Sending user tools with those same names triggers HTTP 400
+# "Tool names must be unique" even though the client-side list is unique.
+_POE_TOOL_ALIASES = {
+    "web_search": "odysseus_web_search",
+    "python": "odysseus_python",
+}
+_POE_TOOL_ALIASES_REVERSE = {v: k for k, v in _POE_TOOL_ALIASES.items()}
+
+
+def _is_poe_endpoint(url: str) -> bool:
+    return _host_match(url, "poe.com")
+
+
+def _alias_poe_tools(tools: Optional[List[Dict]], url: str) -> Optional[List[Dict]]:
+    """Rename tools that collide with Poe's built-in platform tools."""
+    if not tools or not _is_poe_endpoint(url):
+        return tools
+    out = []
+    for t in tools:
+        fn = t.get("function") or {}
+        alias = _POE_TOOL_ALIASES.get(fn.get("name"))
+        if alias:
+            t = copy.deepcopy(t)
+            t["function"]["name"] = alias
+            logger.info("[poe-alias] renamed tool %s -> %s", fn["name"], alias)
+        out.append(t)
+    return out
+
+
+def _unalias_poe_tool_name(name: str, url: str) -> str:
+    """Map a Poe-aliased tool name back to the real name."""
+    if not _is_poe_endpoint(url):
+        return name
+    return _POE_TOOL_ALIASES_REVERSE.get(name, name)
+
+
+def _alias_poe_messages(messages: List[Dict], url: str) -> List[Dict]:
+    """Rename tool references in message history to match Poe-aliased declarations."""
+    if not messages or not _is_poe_endpoint(url):
+        return messages
+    out = []
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "assistant" and msg.get("tool_calls"):
+            msg = {**msg}
+            new_tcs = []
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function") or {}
+                alias = _POE_TOOL_ALIASES.get(fn.get("name"))
+                if alias:
+                    tc = {**tc, "function": {**fn, "name": alias}}
+                new_tcs.append(tc)
+            msg["tool_calls"] = new_tcs
+            out.append(msg)
+
+        elif role == "tool" and msg.get("name") in _POE_TOOL_ALIASES:
+            out.append({**msg, "name": _POE_TOOL_ALIASES[msg["name"]]})
+
+        else:
+            out.append(msg)
+
+    return out
+
+
 # gpt-oss (harmony) ships BUILT-IN tools named `python` and `browser`, invoked
 # with the raw body as the argument (`to=python` + bare source), while custom
 # functions use `to=functions.NAME` + JSON. A tool we expose under a built-in's
@@ -2642,9 +2709,12 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
-            payload["tools"] = _alias_harmony_tools(tools, model)
+            aliased = _alias_harmony_tools(tools, model)
+            aliased = _alias_poe_tools(aliased, url)
+            payload["tools"] = aliased
         elif tool_choice_none:
             payload["tool_choice"] = "none"
+        payload["messages"] = _alias_poe_messages(payload["messages"], url)
         # Mistral thinking-capable models — send reasoning_effort so Mistral
         # activates thinking mode and returns structured reasoning_content.
         # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
@@ -3308,10 +3378,16 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             if tc.get("extra_content"):
                                                 _tc_acc[idx]["extra_content"] = tc["extra_content"]
                                             if func.get("name"):
-                                                # Map harmony aliases back to real
+                                                # Map harmony and Poe aliases back to real
                                                 # tool names before anything
                                                 # downstream sees them.
-                                                _tc_acc[idx]["name"] = _unalias_harmony_tool_name(func["name"], model)
+                                                real_name = _unalias_harmony_tool_name(
+                                                    func["name"], model
+                                                )
+                                                real_name = _unalias_poe_tool_name(
+                                                    real_name, url
+                                                )
+                                                _tc_acc[idx]["name"] = real_name
                                             if "arguments" in func:
                                                 # Guard against a null arguments delta: `func` can be
                                                 # {"arguments": None} (JSON null), and a raw `+= None`
