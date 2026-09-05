@@ -150,6 +150,7 @@ class SessionManager:
             history=[],
             owner=getattr(db_session, "owner", None),
             is_important=getattr(db_session, "is_important", False) or False,
+            tool_profile=getattr(db_session, "tool_profile", None),
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -208,6 +209,7 @@ class SessionManager:
             history=history,
             owner=getattr(db_session, 'owner', None),
             is_important=getattr(db_session, 'is_important', False) or False,
+            tool_profile=getattr(db_session, 'tool_profile', None),
         )
 
         # The rows just loaded are the whole transcript, so they — not the
@@ -485,6 +487,7 @@ class SessionManager:
             session.archived = db_session.archived
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
+            session.tool_profile = getattr(db_session, "tool_profile", None)
             session.message_count = (
                 db.query(DbChatMessage)
                 .filter(DbChatMessage.session_id == session_id)
@@ -545,7 +548,8 @@ class SessionManager:
         endpoint_url: str,
         model: str,
         rag: bool = False,
-        owner: str = None
+        owner: str = None,
+        tool_profile: str = None,
     ) -> Session:
         """Create a new session and save to database."""
         db = SessionLocal()
@@ -558,6 +562,7 @@ class SessionManager:
                 rag=rag,
                 headers={},
                 owner=owner,
+                tool_profile=tool_profile,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -572,6 +577,7 @@ class SessionManager:
                 rag=rag,
                 headers={},
                 owner=owner,
+                tool_profile=tool_profile,
             )
 
             self.sessions[session_id] = session
