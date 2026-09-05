@@ -29,7 +29,7 @@ _IMPORT_REWRITES = {
     "import { providerLogo } from './providers.js';": (
         "import { providerLogo } from './providers.mjs';"
     ),
-    "import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260722ctxheader1';": (
+    "import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260814sessmodel1';": (
         "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';"
     ),
     "import themeModule from './theme.js';": "import themeModule from './theme.mjs';",

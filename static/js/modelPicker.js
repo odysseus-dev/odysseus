@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
+import { setLastPickedRoute } from './lastPickedRoute.js';
 
 const API_BASE = window.location.origin;
 
@@ -644,13 +645,12 @@ function _initModelPickerDropdown() {
 async function _pick(m) {
     _defaultPendingSeq++;
     try {
-      window.__odysseusLastPickedRoute = {
+      setLastPickedRoute(_deps.getCurrentSessionId && _deps.getCurrentSessionId(), {
         model: m.mid || '',
         endpoint_url: m.url || '',
         endpoint_id: m.endpointId || '',
         display: m.display || m.mid || '',
-        picked_at: Date.now(),
-      };
+      });
     } catch (_) {}
     let switchDone = null;
     const switchPromise = new Promise(resolve => { switchDone = resolve; });
