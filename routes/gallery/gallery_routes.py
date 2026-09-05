@@ -20,7 +20,7 @@ from src.upload_limits import (
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
-from src.constants import GENERATED_IMAGES_DIR
+from src.constants import GENERATED_IMAGES_DIR, VISION_MAX_TOKENS
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery.gallery_helpers import (
@@ -343,6 +343,34 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
         if ir.status_code == 200:
             return base64.b64encode(ir.content).decode()
     return None
+
+
+def _extract_ai_tag_response_text(data: dict, provider: str) -> str:
+    """Pull the visible tag text out of a vision-model chat-completion response.
+
+    Anthropic returns content[0].text. OpenAI-compatible providers return
+    choices[0].message.content — but a thinking-capable model can come back
+    with an empty content and the real answer only in reasoning_content, or
+    as Mistral's structured content list. Mirrors the canonical extraction
+    in llm_call/llm_call_async (src/llm_core.py) rather than a bare
+    content-only read: a bare read is exactly what let a thinking model
+    silently commit ai_tags="" as a reported success (caught in review on
+    PR #5965). Thinking markup is stripped before the caller splits on
+    commas, since Gemma/Qwen wrapper tokens otherwise land in the tag list.
+    """
+    if provider == "anthropic":
+        content = (data.get("content") or [{}])[0].get("text", "")
+    else:
+        msg = data.get("choices", [{}])[0].get("message", {}) or {}
+        raw_content = msg.get("content")
+        if isinstance(raw_content, list):
+            from src.llm_core import _normalize_mistral_content
+            text_part, thinking_part = _normalize_mistral_content(raw_content)
+            content = (thinking_part + "\n\n" + (text_part or "")) if thinking_part else (text_part or msg.get("reasoning_content") or "")
+        else:
+            content = raw_content or msg.get("reasoning_content") or ""
+    from src.text_helpers import strip_think
+    return strip_think(content, prose=True, prompt_echo=True)
 
 
 def setup_gallery_routes() -> APIRouter:
@@ -2298,7 +2326,7 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    _tok_key: 200,
+                    _tok_key: VISION_MAX_TOKENS,
                     "temperature": 0.3,
                 }
                 # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
@@ -2315,11 +2343,11 @@ def setup_gallery_routes() -> APIRouter:
                     logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])
                     return {"error": "Vision model request failed"}
                 data = resp.json()
-                # Anthropic returns content[0].text, OpenAI returns choices[0].message.content
-                if provider == "anthropic":
-                    content = (data.get("content") or [{}])[0].get("text", "")
-                else:
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                content = _extract_ai_tag_response_text(data, provider)
+
+            if not content.strip():
+                logger.warning("ai_tag: %s returned no visible content after stripping thinking markup", model_name)
+                return {"error": "Vision model returned no visible content — it may have spent its whole budget thinking. Try again, or switch to a different vision model in Settings → AI Defaults → Vision."}
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]

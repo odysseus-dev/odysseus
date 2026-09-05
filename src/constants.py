@@ -112,7 +112,10 @@ PASSWORD_MIN_LENGTH = 8
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0
-
+# Vision/OCR calls need more headroom than a plain caption would suggest:
+# thinking-capable models (Gemma 4, Qwen3-VL Thinking) spend the budget in
+# `reasoning` and return empty `content` if capped too low.
+VISION_MAX_TOKENS = 1200
 
 def internal_api_base() -> str:
     """Base URL for in-process loopback calls to Odysseus's own API.
