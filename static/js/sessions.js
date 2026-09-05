@@ -285,10 +285,14 @@ let _sessionListFocused = false;
 function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
   currentSessionId = null;
+  try { window.__odysseusLastSelectedSessionId = ''; } catch (_) {}
   uiModule.el('chat-history').innerHTML = '';
   uiModule.el('current-meta').textContent = 'Odysseus Chat';
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
+  document.querySelectorAll('.list-item.active-session, .session-item.active').forEach(el => {
+    el.classList.remove('active-session', 'active');
+  });
   if (window.chatModule && window.chatModule.showWelcomeScreen) {
     window.chatModule.showWelcomeScreen();
   }
