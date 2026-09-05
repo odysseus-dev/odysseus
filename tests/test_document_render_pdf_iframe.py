@@ -29,10 +29,14 @@ class _FakeURL:
 
 
 class _FakeRequest:
-    def __init__(self, path: str):
+    def __init__(self, path: str, root_path: str = ""):
         self.url = _FakeURL(path)
         self.headers = {}
         self.state = SimpleNamespace()
+        # SecurityHeadersMiddleware classifies from the ASGI scope, the same way
+        # Starlette routes, so the fake has to carry one. Only the two keys
+        # get_route_path reads are needed.
+        self.scope = {"path": path, "root_path": root_path}
 
 
 class _FakeResponse:
