@@ -43,4 +43,4 @@ PyMuPDF
 # magika (onnxruntime), already a core dep via fastembed. We avoid the
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
-markitdown[docx,pptx,xlsx,xls]==0.1.6
+markitdown[docx,pptx,xlsx,xls]==0.1.7

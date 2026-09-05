@@ -3,9 +3,9 @@ uvicorn
 python-multipart
 python-dotenv
 httpx
-httpcore>=1.0,<2.0
-pydantic>=2.13.4
-pydantic-settings>=2.14.1
+httpcore>=1.0.9,<2.0
+pydantic>=2.13.5
+pydantic-settings>=2.15.0
 SQLAlchemy
 pypdf
 beautifulsoup4
@@ -41,7 +41,7 @@ bcrypt
 # Built-in servers use the v1 low-level Server decorator API. MCP SDK v2 is a
 # breaking rewrite, so keep fresh installs on the maintained v1 line until the
 # servers are migrated together.
-mcp<2
+mcp<3
 pyotp
 qrcode[pil]
 croniter
