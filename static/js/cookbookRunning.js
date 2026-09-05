@@ -1056,14 +1056,85 @@ function _winPowerShellCmd(task, ps) {
   return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(command)}`;
 }
 
+// Resolve the serve port for a task. Prefers an authoritative runtime port
+// persisted by the backend, then the supported command forms — `--port`, `-p`,
+// `OLLAMA_HOST=host:port`, and the Ollama default — so `-p` and Ollama serves
+// are verified rather than silently skipped. Returns '' when unknown so callers
+// fail closed instead of reporting an unverifiable stop as clean.
+function _taskServePort(task) {
+  const persisted = task?.payload?.port ?? task?.port;
+  if (persisted != null && /^\d+$/.test(String(persisted))) return String(persisted);
+  const cmd = task?.payload?._cmd || '';
+  let m = cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
+  if (m) return m[1];
+  m = cmd.match(/OLLAMA_HOST=[^\s'"]*?:(\d+)/i);
+  if (m) return m[1];
+  if (/\bollama\s+serve\b/i.test(cmd)) return '11434';
+  return '';
+}
+
+// A distinctive token the genuine server's Win32 command line must contain,
+// used to prove a port listener actually belongs to this task before
+// force-killing it. The model file/name is far more specific than the port,
+// which can be stale, reused, or backend-reassigned. '' means no reliable
+// identity, so the port owner is treated as unproven and not killed.
+function _taskProcessIdentity(task) {
+  const cmd = task?.payload?._cmd || '';
+  let m = cmd.match(/([^\s"'\\/]+\.gguf)/i);
+  if (m) return m[1];
+  m = cmd.match(/--model[=\s]+"?([^"\s]+)"?/);
+  if (m) {
+    const seg = m[1].split(/[\\/]/).pop();
+    if (seg && seg.length >= 4) return seg;
+  }
+  m = cmd.match(/\bollama\s+run\s+([^\s'"]+)/i);
+  if (m) return m[1];
+  return '';
+}
+
+// PowerShell single-quoted string literal (doubles embedded quotes).
+function _psLit(value) {
+  return `'${String(value ?? '').replace(/'/g, "''")}'`;
+}
+
 function _winSessionStopTreePs(task) {
   const host = _taskRemoteHost(task);
-  const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
+  const sessionDir = host ? 'odysseus-sessions' : 'odysseus-tmux';
   const sid = task.sessionId;
-  const stopTree = `function Stop-Tree([int]$Id) { Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }; Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }`;
-  return host
-    ? `${stopTree}; $p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-    : `${stopTree}; $p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+  const pidPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.pid')`;
+  const artifactPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.*')`;
+  // The recorded PID is only a Git Bash wrapper in the launch chain, never
+  // llama-server.exe itself: a native binary started through the bash runner
+  // (or a ~/bin shim that `exec`s it) is reparented into a separate Win32
+  // subtree, so a tree walk from the wrapper PID can miss the live GPU process.
+  // The authoritative signal is the LISTENING serve port — but its owner is
+  // killed only after its command line is proven to belong to this task
+  // (identity match), so a stale task or a reused port can never take down an
+  // unrelated service. A bound port whose owner cannot be proven ours fails
+  // closed and keeps the task so the UI can retry, while a task with no live
+  // process or listener is cleaned up so Remove can clear a dead row.
+  const isServe = task?.type === 'serve';
+  const port = _taskServePort(task);
+  const portLit = /^\d+$/.test(port) ? port : '0';
+  const idLit = _psLit(_taskProcessIdentity(task));
+  const addTree = `$targets = [System.Collections.Generic.List[int]]::new(); function Add-Tree([int]$Id) { if ($Id -le 0) { return }; Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Add-Tree ([int]$_.ProcessId) }; if (-not $targets.Contains($Id)) { $targets.Add($Id) } }`;
+  const ownedFn = `$identity = ${idLit}; function Test-Owned([int]$Id) { if ($Id -le 0 -or $identity -eq '') { return $false }; $cl = (Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $Id) -ErrorAction SilentlyContinue).CommandLine; if ($null -eq $cl) { return $false }; return $cl.ToLower().Contains($identity.ToLower()) }`;
+  const listenersFn = `function Get-Listeners([int]$Prt) { $r = [System.Collections.Generic.List[int]]::new(); if ($Prt -le 0) { return ,$r }; foreach ($o in @(Get-NetTCPConnection -LocalPort $Prt -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique)) { if ([int]$o -gt 0) { $r.Add([int]$o) } }; return ,$r }`;
+  return `${addTree}; ${ownedFn}; ${listenersFn}; `
+    + `$port = ${portLit}; $isServe = ${isServe ? '$true' : '$false'}; `
+    + `$p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Add-Tree ([int]$p) }; `
+    + `$unverified = $false; foreach ($o in @(Get-Listeners $port)) { if (Test-Owned $o) { Add-Tree $o } else { $unverified = $true } }; `
+    + `if ($targets.Count -eq 0) { `
+    +   `if ($unverified) { Write-Error ('Serve port ' + $port + ' bound by an unverified process; refusing to force-kill'); exit 1 }; `
+    +   `if ($isServe -and $port -le 0) { Write-Error 'Serve task has no resolvable port; cannot verify shutdown'; exit 1 }; `
+    +   `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0 `
+    + `}; `
+    + `foreach ($target in @($targets)) { if (Get-Process -Id $target -ErrorAction SilentlyContinue) { & taskkill.exe /PID $target /T /F 2>$null | Out-Null } }; `
+    + `Start-Sleep -Milliseconds 250; `
+    + `$stillOwned = $false; foreach ($o in @(Get-Listeners $port)) { if (Test-Owned $o) { $stillOwned = $true } }; `
+    + `if ($stillOwned) { Write-Error ('Serve port ' + $port + ' still held by a task process after kill'); exit 1 }; `
+    + `$alive = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if ($alive.Count -gt 0) { Write-Error ('Processes still alive: ' + ($alive -join ',')); exit 1 }; `
+    + `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0`;
 }
 
 export function _tmuxGracefulKill(task) {
@@ -1078,13 +1149,54 @@ export function _tmuxGracefulKill(task) {
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
 }
 
+async function _stopTaskSession(task) {
+  let commandOk = false;
+  try {
+    const response = await fetch('/api/shell/exec', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
+    });
+    if (!response.ok) return false;
+    const result = await response.json();
+    commandOk = result?.exit_code === undefined || Number(result.exit_code) === 0;
+  } catch (_) {
+    return false;
+  }
+
+  if (!task?.sessionId) return commandOk;
+
+  let probeKnown = false;
+  let stillAlive = false;
+  try {
+    const probe = await fetch('/api/shell/exec', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
+    });
+    if (probe.ok) {
+      const result = await probe.json();
+      probeKnown = true;
+      // has-session exits 0 while the session PID/process still exists.
+      stillAlive = Number(result?.exit_code ?? 0) === 0;
+    }
+  } catch (_) { /* fall back to the stop command result */ }
+
+  if (stillAlive) return false;
+  // The Windows helper verifies every captured process before returning 0 and
+  // deliberately keeps the PID file on failure. A missing PID file makes the
+  // follow-up probe look dead, so never let that override a failed helper.
+  if (_isWindows(task) && !commandOk) return false;
+  return probeKnown || commandOk;
+}
+
 // Force-kill escalation: SIGKILL the tmux pane's owning PID and any children,
 // then nuke the session. Use AFTER the graceful kill when the process is
 // still detected — vLLM sometimes ignores SIGINT during model init, and a
 // stuck CUDA context can survive `tmux kill-session` alone.
 export function _tmuxForceKill(task) {
   if (_isWindows(task)) {
-    // Windows graceful path already does Stop-Process -Force, so the same
+    // Windows graceful path already does taskkill /T /F, so the same
     // command serves as the "force" variant.
     return _tmuxGracefulKill(task);
   }
@@ -1463,13 +1575,15 @@ async function _retryTask(el, task) {
   if (el && el._abort) el._abort.abort();
   const badge = el?.querySelector('.cookbook-task-status');
   if (badge) { badge.textContent = 'restarting...'; badge.className = 'cookbook-task-status'; }
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-    });
-  } catch {}
+  // Route the kill through the verified stop: never relaunch into a still-bound
+  // port or drop the retry handle when the old process is not confirmed gone.
+  if (!(await _stopTaskSession(task))) {
+    const priorStatus = task.status || 'running';
+    if (badge) { badge.textContent = _statusLabel(priorStatus, task.type); badge.className = `cookbook-task-status cookbook-task-${priorStatus}`; }
+    _updateTask(task.sessionId, { status: priorStatus });
+    uiModule.showToast('Restart aborted: the previous process could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
   if (task.payload) {
     if (task.type === 'serve' && task.payload._cmd) {
       _removeTask(task.sessionId);
@@ -1555,6 +1669,19 @@ function _guardServeRetry(panel, taskEl) {
   return true;
 }
 
+// Reverse _guardServeRetry: re-enable the panel and clear the retry flag so the
+// user can try again after a remediation was aborted (e.g. the previous process
+// could not be confirmed stopped).
+function _unguardServeRetry(panel, taskEl) {
+  if (taskEl) delete taskEl.dataset.retrying;
+  if (!panel) return;
+  panel.querySelectorAll('button').forEach(b => {
+    b.disabled = false;
+    b.style.opacity = '';
+    b.style.pointerEvents = '';
+  });
+}
+
 export async function _serveAutoFix(panel, envVar) {
   const taskEl = panel.closest('.cookbook-task');
   if (!taskEl) return;
@@ -1564,14 +1691,11 @@ export async function _serveAutoFix(panel, envVar) {
   if (!task || !task.payload) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  const killCmd = _tmuxCmd(task, `kill-session -t ${taskId}`);
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: killCmd }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1628,13 +1752,11 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
   if (!task || !task.payload || !task.payload._cmd) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1670,13 +1792,11 @@ export async function _serveAutoRetryRemove(panel, flag) {
   if (!task || !task.payload || !task.payload._cmd) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1703,13 +1823,11 @@ export async function _serveAutoRetry(panel, flag) {
   if (!task || !task.payload || !task.payload._cmd) return;
   if (!_guardServeRetry(panel, taskEl)) return;
 
-  try {
-    await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
-    });
-  } catch {}
+  if (!(await _stopTaskSession(task))) {
+    _unguardServeRetry(panel, taskEl);
+    uiModule.showToast('Retry aborted: the previous server could not be confirmed stopped. The task was kept so you can retry.', 'error');
+    return;
+  }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1924,17 +2042,16 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   const _replaceTaskId = fields?._replaceTaskId || '';
   const _launchAnyway = !!targetMeta?.launchAnyway;
   if (_replaceTaskId) {
-    try {
-      const _old = _loadTasks().find(t => t.sessionId === _replaceTaskId);
-      if (_old && _old.type === 'serve') {
-        await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(_old) }),
-        });
-        _removeTask(_old.sessionId);
+    const _old = _loadTasks().find(t => t.sessionId === _replaceTaskId);
+    if (_old && _old.type === 'serve') {
+      // Verify the old server is actually gone before relaunching — otherwise a
+      // failed cleanup relaunches into a still-bound port and orphans the GPU.
+      if (!(await _stopTaskSession(_old))) {
+        uiModule.showToast('Launch aborted: the existing server could not be confirmed stopped. It was kept to avoid a port collision.', 'error');
+        return;
       }
-    } catch {}
+      _removeTask(_old.sessionId);
+    }
   }
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
@@ -1948,13 +2065,10 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
         if (_t.type !== 'serve' || !_t.payload || !_t.payload._cmd) continue;
         const _tm = _t.payload._cmd.match(/--port[=\s]+(\d+)/) || _t.payload._cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
         if ((_tm ? _tm[1] : '') === _newPort && (_t.remoteHost || '') === _host) {
-          try {
-            await fetch('/api/shell/exec', {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command: _tmuxGracefulKill(_t) }),
-            });
-          } catch {}
+          if (!(await _stopTaskSession(_t))) {
+            uiModule.showToast(`Launch aborted: an existing server on port ${_newPort} could not be confirmed stopped.`, 'error');
+            return;
+          }
           _removeTask(_t.sessionId);
         }
       }
@@ -2875,13 +2989,8 @@ export function _renderRunningTab() {
       if (el._abort) el._abort.abort();
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
-      el.dataset.status = 'stopped';
       _updateTask(task.sessionId, { _userStopped: true });
       const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-      // Drop the model endpoint so the picker stops listing it.
-      if (task.type === 'serve' && task.payload) {
-        _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
-      }
       const ollamaUnload = _ollamaUnloadCommand(task, outputText);
       if (ollamaUnload) {
         try {
@@ -2892,16 +3001,23 @@ export function _renderRunningTab() {
           });
         } catch {}
       }
-      // Gracefully stop (C-c, then kill the session) so it's fully down...
-      try {
-        await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
-      } catch {}
-      // ...then smoothly fade/slide the card out and auto-remove it — no manual
-      // ⋮ → Remove needed.
+      const stopped = await _stopTaskSession(task);
+      if (!stopped) {
+        const priorStatus = task.status || 'running';
+        el.dataset.status = priorStatus;
+        _updateTask(task.sessionId, { _userStopped: false, status: priorStatus });
+        if (badge) {
+          badge.textContent = _statusLabel(priorStatus, task.type);
+          badge.className = `cookbook-task-status cookbook-task-${priorStatus}`;
+        }
+        uiModule.showToast('Stop failed: process exit was not confirmed. The task was kept so you can retry.', 'error');
+        return;
+      }
+      el.dataset.status = 'stopped';
+      if (task.type === 'serve' && task.payload) {
+        _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
+      }
+      // Only remove the card after the process/session is confirmed gone.
       _animateOutThenRemove(el, task.sessionId);
     });
 
@@ -2912,7 +3028,6 @@ export function _renderRunningTab() {
     // row disappeared from the UI.
     el.querySelector('.cookbook-task-action-kill').addEventListener('click', async () => {
       const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-      const isLive = task.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
       const ollamaUnload = _ollamaUnloadCommand(task, outputText);
       if (ollamaUnload) {
         try {
@@ -2923,37 +3038,9 @@ export function _renderRunningTab() {
           });
         } catch (_) { /* unload best-effort */ }
       }
-      let killOk = true;
-      try {
-        const r = await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
-        if (r.ok) {
-          const out = await r.json();
-          // Don't trust exit_code alone — tmux kill returns 0 even when
-          // there was nothing to kill. Verify the session is actually gone.
-          if (task.sessionId && isLive) {
-            try {
-              const probe = await fetch('/api/shell/exec', {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
-              });
-              if (probe.ok) {
-                const pj = await probe.json();
-                // has-session exits 0 when session STILL exists; non-zero = gone.
-                if ((pj.exit_code || 0) === 0) killOk = false;
-              }
-            } catch (_) { /* probe best-effort; trust kill */ }
-          }
-        } else {
-          killOk = false;
-        }
-      } catch (_) { killOk = false; }
+      const killOk = await _stopTaskSession(task);
       if (!killOk) {
-        try { uiModule.showToast('Kill failed — session may still be running. Check `tmux ls` on the server.', 'error'); } catch (_) {}
+        try { uiModule.showToast('Kill failed: process exit was not confirmed. The task was kept so you can retry.', 'error'); } catch (_) {}
         return;  // leave the row so the user can retry
       }
       if (task.type === 'serve' && task.payload) {
@@ -3385,13 +3472,12 @@ async function _reconnectTask(el, task) {
               badge.textContent = _startupStalled ? '0% stall — retrying' : 'stale — restarting';
               badge.className = 'cookbook-task-status cookbook-task-error';
               _showCookbookNotif(true);
-              try {
-                await fetch('/api/shell/exec', {
-                  method: 'POST', credentials: 'same-origin',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-                });
-              } catch {}
+              if (!(await _stopTaskSession(task))) {
+                badge.textContent = 'stale — stop unconfirmed';
+                badge.className = 'cookbook-task-status cookbook-task-error';
+                _showCookbookNotif(true);
+                break;
+              }
               try {
                 // Reuse original payload so the full repo_id (e.g. "Qwen/Qwen3.5-...")
                 // is preserved — rebuilding from task.repo/task.name drops the org prefix.
@@ -3500,13 +3586,11 @@ async function _reconnectTask(el, task) {
                 badge.className = 'cookbook-task-status cookbook-task-running';
                 uiModule.showToast(`Download interrupted — retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY}), resumes where it stopped…`, 6000);
                 const _p = task.payload, _nm = task.name;
-                try {
-                  await fetch('/api/shell/exec', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-                  });
-                } catch {}
+                if (!(await _stopTaskSession(task))) {
+                  badge.textContent = 'interrupted — stop unconfirmed';
+                  badge.className = 'cookbook-task-status cookbook-task-error';
+                  break;
+                }
                 _removeTask(task.sessionId);
                 setTimeout(() => { _retryDownload(_nm, _p); }, 8000);
                 break;

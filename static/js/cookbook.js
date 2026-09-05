@@ -309,9 +309,15 @@ export function _getPlatform(hostOrTask) {
   if (hostOrTask === 'local') return _envState.hostPlatform || '';
   if (!hostOrTask) return _envState.remoteHost ? (_envState.platform || '') : (_envState.hostPlatform || '');
   if (typeof hostOrTask === 'object') {
+    // Persisted tasks carry the platform used at launch. Prefer that value,
+    // especially for local tasks: after a reload the volatile hardware probe
+    // may not have repopulated hostPlatform yet. Falling through here used to
+    // route a Windows detached process through the POSIX tmux stop command,
+    // then the UI removed the card while llama-server kept running.
+    const taskPlatform = hostOrTask.platform || hostOrTask.payload?.platform || '';
     const taskHost = hostOrTask.remoteServerKey || hostOrTask.remoteHost || '';
-    if (!taskHost || taskHost === 'local') return _envState.hostPlatform || '';
-    return hostOrTask.platform || _getPlatform(taskHost);
+    if (!taskHost || taskHost === 'local') return taskPlatform || _envState.hostPlatform || '';
+    return taskPlatform || _getPlatform(taskHost);
   }
   const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
   const srv = selected || _serverByVal(hostOrTask);
