@@ -189,6 +189,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 parsed_args = json.loads(args)
             except json.JSONDecodeError:
                 raise HTTPException(400, "args must be valid JSON, e.g. [\"-y\", \"pkg\"]")
+            if not isinstance(parsed_args, list):
+                raise HTTPException(400, "args must be a JSON array, e.g. [\"-y\", \"pkg\"]")
         else:
             parsed_args = []
         try:

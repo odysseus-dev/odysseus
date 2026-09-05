@@ -100,6 +100,31 @@ def test_add_server_still_accepts_valid_json_args(monkeypatch):
     assert fake_session.added[0].args == json.dumps(["/app/data/jarvis-files"])
 
 
+def test_add_server_rejects_valid_json_args_that_is_not_a_list(monkeypatch):
+    """Valid JSON that is not a list (e.g. args=5) must not reach
+    StdioServerParameters(args=5), which raises an unhandled TypeError when
+    the error formatter later does " ".join([command, *args])."""
+    add_server, manager = _add_server(monkeypatch)
+    monkeypatch.setattr(mcp_routes, "SessionLocal", lambda: (_ for _ in ()).throw(
+        AssertionError("must not reach the DB when args has the wrong shape")))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(add_server(
+            request=None,
+            name="filesystem",
+            transport="stdio",
+            command="mcp-server-filesystem",
+            args="5",
+            env="{}",
+            url=None,
+            oauth_file=None,
+            oauth_config=None,
+        ))
+
+    assert exc.value.status_code == 400
+    manager.connect_server.assert_not_called()
+
+
 def test_add_server_still_defaults_empty_args_to_empty_list(monkeypatch):
     """No behavior change for the common case of an empty Args field."""
     add_server, manager = _add_server(monkeypatch)
