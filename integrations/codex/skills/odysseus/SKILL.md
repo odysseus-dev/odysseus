@@ -28,6 +28,9 @@ If the user says "reminder" + a time, default to TODO with due_date. Only switch
 ## Safety
 
 - All Odysseus data access MUST go through the scoped HTTP API under `/api/codex/*`.
+- User-configured external MCP tools are available through the single native
+  `odysseus` MCP server when the token has `mcp:read`; calls additionally
+  require `mcp:call`. Respect missing or disabled tools as intentional policy.
 - Check `/api/codex/capabilities` before using a tool surface.
 - Treat `403` as an intentional Settings restriction. Do not work around it.
 - Do not use SSH, Docker, direct Python imports, SQLite queries, MCP internals, browser cookies, or local files to read/write Odysseus user data.

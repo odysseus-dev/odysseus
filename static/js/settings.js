@@ -3377,7 +3377,7 @@ const AGENT_CONFIGS = {
     namePrefix: 'codex agent',
     defaultName: 'Codex Agent',
     pluginPath: '/api/codex/plugin.zip',
-    setupDescription: 'Downloads a plugin bundle and registers it.',
+    setupDescription: 'Downloads the plugin and registers one authenticated native MCP bridge.',
     buildSetup: (origin, token) => `export ODYSSEUS_URL=${origin}
 export ODYSSEUS_API_TOKEN='${token}'
 mkdir -p ~/plugins
@@ -3407,6 +3407,7 @@ data["plugins"] = [item for item in plugins if item.get("name") != "odysseus"] +
 p.write_text(json.dumps(data, indent=2) + "\\n")
 PY
 codex plugin add odysseus@personal
+python3 ~/plugins/odysseus/scripts/setup_mcp.py
 python3 ~/plugins/odysseus/scripts/odysseus_api.py capabilities`,
   },
   claude: {
@@ -5088,7 +5089,10 @@ async function initUnifiedIntegrations() {
       { key: 'memory:write', label: 'Memory write', detail: 'Write memory when enabled' },
       { key: 'cookbook:read', label: 'Cookbook', detail: 'List cookbook tasks + tail their tmux output (debug a model serve from outside the UI)' },
       { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Launch and stop cookbook serve tasks. Powerful: runs SSH commands on your configured servers, bounded by the same allowlist the UI uses (vllm/python3/sglang/llama-server/...)' },
-    ];
+    ].concat(kind === 'codex' ? [
+      { key: 'mcp:read', label: 'MCP tools', detail: 'Discover enabled external MCP tools through Odysseus' },
+      { key: 'mcp:call', label: 'MCP call', detail: 'Execute enabled external MCP tools through Odysseus' },
+    ] : []);
     // Strict name-prefix match keeps Codex and Claude tokens in their own forms.
     const agentTokens = (Array.isArray(tokens) ? tokens : []).filter(tok =>
       (tok.name || '').toLowerCase().startsWith(cfg.namePrefix)
@@ -5101,6 +5105,7 @@ async function initUnifiedIntegrations() {
       calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
       memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2a2.5 2.5 0 0 0-2.5 2.5 2.5 2.5 0 0 0-2.5 2.5A2.5 2.5 0 0 0 2 9.5v3A2.5 2.5 0 0 0 4.5 15a2.5 2.5 0 0 0 2.5 2.5A2.5 2.5 0 0 0 9.5 20H10V2z"/><path d="M14.5 2a2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1 2.5 2.5A2.5 2.5 0 0 1 22 9.5v3A2.5 2.5 0 0 1 19.5 15a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 14.5 20H14V2z"/></svg>',
       cookbook: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+      mcp: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>',
     };
     const _scopeNiceLabel = (label) => label.replace(/\s+(write|drafts?|send)$/i, '');
     const _scopeAction = (key) => (key.split(':')[1] || '').toLowerCase();

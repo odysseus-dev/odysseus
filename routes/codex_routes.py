@@ -35,6 +35,8 @@ CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
 CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
+MCP_READ_SCOPES = {"mcp:read", "mcp:call"}
+MCP_CALL_SCOPES = {"mcp:call"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
 
 
@@ -150,6 +152,7 @@ def setup_codex_routes(
     memory_router: APIRouter | None = None,
     calendar_router: APIRouter | None = None,
     document_router: APIRouter | None = None,
+    mcp_manager=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/codex", tags=["codex"])
     email_list_endpoint = _find_endpoint(email_router, "GET", "/api/email/list")
@@ -207,6 +210,13 @@ def setup_codex_routes(
                     "read": scoped(COOKBOOK_READ_SCOPES),
                     "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
                     "actions": ["tasks", "servers", "output", "serve", "stop"],
+                },
+                "mcp": {
+                    "read": scoped(MCP_READ_SCOPES),
+                    "call": scoped(MCP_CALL_SCOPES),
+                    "transport": "streamable_http",
+                    "endpoint": "/api/codex/mcp/",
+                    "available": mcp_manager is not None,
                 },
             },
             "safety": {

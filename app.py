@@ -830,8 +830,10 @@ app.include_router(setup_font_routes())
 from src.mcp_manager import McpManager
 from src.agent_tools import set_mcp_manager
 from routes.mcp.mcp_routes import setup_mcp_routes
+from routes.codex_mcp import CodexMcpBridge
 
 mcp_manager = McpManager()
+codex_mcp_bridge = CodexMcpBridge(mcp_manager)
 set_mcp_manager(mcp_manager)
 app.include_router(setup_mcp_routes(mcp_manager))
 logger.info("MCP routes initialized")
@@ -873,8 +875,10 @@ app.include_router(setup_codex_routes(
     memory_router=memory_router,
     calendar_router=calendar_router,
     document_router=document_router,
+    mcp_manager=mcp_manager,
 ))
 app.include_router(setup_claude_routes())
+app.mount("/api/codex/mcp", codex_mcp_bridge, name="codex-mcp")
 
 from routes.vault.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
@@ -1021,10 +1025,13 @@ async def runtime_info() -> Dict[str, object]:
 async def _lifespan(app):
     """Modern lifespan context manager replacing deprecated @app.on_event."""
     # ── STARTUP ──
-    await _startup_event()
-    yield
-    # ── SHUTDOWN ──
-    await _shutdown_event()
+    async with codex_mcp_bridge.run():
+        await _startup_event()
+        try:
+            yield
+        finally:
+            # ── SHUTDOWN ──
+            await _shutdown_event()
 
 app.router.lifespan_context = _lifespan
 
