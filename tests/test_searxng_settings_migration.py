@@ -98,8 +98,10 @@ def test_fresh_generated_settings_are_left_byte_identical(tmp_path):
     ),
 )
 def test_explicit_top_level_setting_is_not_overridden(tmp_path, key):
+    # A fully-migrated file (use_default_settings already set, search.formats
+    # already present) must be left byte-identical by a second migration run.
     settings = tmp_path / "settings.yml"
-    original = key + b"server:\n  secret_key: retained\n"
+    original = key + b"search:\n  formats:\n    - html\n    - json\nserver:\n  secret_key: retained\n"
     settings.write_bytes(original)
 
     result = _run(settings)
@@ -119,6 +121,7 @@ def test_key_is_inserted_inside_explicit_yaml_document(tmp_path):
     assert settings.read_bytes() == (
         b"\xef\xbb\xbf# header\r\n---\r\nuse_default_settings: true\r\n"
         b"server:\r\n  secret_key: retained\r\n"
+        b"search:\r\n  formats:\r\n    - html\r\n    - json\r\n"
     )
 
 
@@ -130,7 +133,13 @@ def test_indented_root_mapping_keeps_its_existing_indent(tmp_path):
     result = _run(settings)
 
     assert result.returncode == 0, result.stderr
-    assert settings.read_bytes() == b"  use_default_settings: true\n" + original
+    # use_default_settings is prepended; formats is inserted inside search block.
+    assert settings.read_bytes() == (
+        b"  use_default_settings: true\n"
+        b"  server:\n    secret_key: retained\n"
+        b"  search:\n    safe_search: 1\n"
+        b"    formats:\n      - html\n      - json\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -147,14 +156,25 @@ def test_block_mapping_properties_stay_attached_to_the_root(tmp_path, property_l
     result = _run(settings)
 
     assert result.returncode == 0, result.stderr
-    expected = property_line + b"use_default_settings: true\n" + mapping
+    # formats is inserted inside the existing search block, not appended as a
+    # new search key, so safe_search and formats coexist in the same section.
+    expected = (
+        property_line
+        + b"use_default_settings: true\n"
+        + b"server:\n  secret_key: retained\n"
+        + b"search:\n  safe_search: 1\n  formats:\n    - html\n    - json\n"
+    )
     assert settings.read_bytes() == expected
     migrated_data = yaml.safe_load(settings.read_bytes())
     assert migrated_data.pop("use_default_settings") is True
-    assert migrated_data == original_data
+    assert migrated_data["search"]["safe_search"] == 1
+    assert "json" in migrated_data["search"]["formats"]
+    assert "html" in migrated_data["search"]["formats"]
 
 
-def test_flow_mapping_gains_default_inheritance_without_reformatting(tmp_path):
+def test_flow_mapping_gains_default_inheritance_and_formats(tmp_path):
+    # A flow-style root with a flow-style search value gets use_default_settings
+    # inserted AND formats added into the search flow mapping.
     settings = tmp_path / "settings.yml"
     original = b"{server: {secret_key: retained}, search: {safe_search: 1}}\n"
     settings.write_bytes(original)
@@ -162,9 +182,13 @@ def test_flow_mapping_gains_default_inheritance_without_reformatting(tmp_path):
     result = _run(settings)
 
     assert result.returncode == 0, result.stderr
-    assert settings.read_bytes() == (
-        b"{use_default_settings: true, " + original.removeprefix(b"{")
-    )
+    migrated = yaml.safe_load(settings.read_bytes())
+    assert migrated["use_default_settings"] is True
+    assert migrated["search"]["safe_search"] == 1
+    assert "json" in migrated["search"]["formats"]
+    assert "html" in migrated["search"]["formats"]
+    # Verify no structural corruption: original keys preserved.
+    assert migrated["server"]["secret_key"] == "retained"
 
 
 @pytest.mark.parametrize(
@@ -183,6 +207,8 @@ def test_flow_mapping_gains_default_inheritance_without_reformatting(tmp_path):
     ),
 )
 def test_other_flow_mapping_shapes_gain_only_the_root_key(tmp_path, original, expected):
+    # Flow roots without a flow-style search section receive use_default_settings
+    # but cannot safely receive search.formats by text substitution.
     settings = tmp_path / "settings.yml"
     settings.write_bytes(original)
 
@@ -195,10 +221,10 @@ def test_other_flow_mapping_shapes_gain_only_the_root_key(tmp_path, original, ex
 @pytest.mark.parametrize(
     "original",
     (
-        b"{use_default_settings: true, server: {secret_key: retained}}\n",
-        b'{"use_default_settings": {engines: {keep_only: [brave]}}}\n',
-        b"{use_default_settings: true, server: {secret_key: abc#def}}\n",
-        b"{use_default_settings: true, server: {secret_key: 'ab''cd'}}\n",
+        b"{use_default_settings: true, search: {formats: [html, json]}}\n",
+        b'{"use_default_settings": {engines: {keep_only: [brave]}}, search: {formats: [html, json]}}\n',
+        b"{use_default_settings: true, search: {formats: [html, json]}, server: {secret_key: abc#def}}\n",
+        b"{use_default_settings: true, search: {formats: [html, json]}, server: {secret_key: 'ab''cd'}}\n",
     ),
 )
 def test_flow_mapping_with_existing_setting_is_left_untouched(tmp_path, original):
@@ -215,8 +241,11 @@ def test_flow_mapping_with_existing_setting_is_left_untouched(tmp_path, original
     "original",
     (
         b"%YAML 1.1\n---\nuse_default_settings: true\n"
+        b"search:\n  formats:\n    - html\n    - json\n"
         b"server:\n  secret_key: retained\n",
-        b"use_default_settings: true\nserver:\n  secret_key: retained\n...\n",
+        b"use_default_settings: true\n"
+        b"search:\n  formats:\n    - html\n    - json\n"
+        b"server:\n  secret_key: retained\n...\n",
     ),
 )
 def test_valid_document_metadata_with_existing_key_is_left_untouched(
@@ -280,6 +309,7 @@ def test_temporary_file_is_chmodded_before_it_is_chowned(tmp_path, monkeypatch):
     assert stat.S_IMODE(settings.stat().st_mode) == 0o640
     assert settings.read_bytes() == (
         b"use_default_settings: true\nserver:\n  secret_key: retained\n"
+        b"search:\n  formats:\n    - html\n    - json\n"
     )
 
 
@@ -304,6 +334,184 @@ def test_replace_failure_preserves_original_and_removes_temporary_file(
     assert settings.read_bytes() == original
     assert after.st_ino == before.st_ino
     assert list(tmp_path.iterdir()) == [settings]
+
+
+def test_retained_settings_without_formats_gain_json_format(tmp_path):
+    # Regression test for #6066: a retained file that has no search.formats
+    # receives use_default_settings: true but the pinned SearXNG image defaults
+    # to HTML-only, so format=json requests returned HTTP 403. The migration must
+    # also append search.formats with html and json when the key is absent.
+    settings = tmp_path / "settings.yml"
+    retained = (
+        b"server:\n"
+        b'  secret_key: "retained-secret"\n'
+        b"search:\n"
+        b"  safe_search: 1\n"
+    )
+    settings.write_bytes(retained)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated_bytes = settings.read_bytes()
+    # formats is inserted inside the existing search block so safe_search and
+    # formats coexist and are visible to standard yaml.safe_load.
+    migrated = yaml.safe_load(migrated_bytes)
+    assert migrated["use_default_settings"] is True
+    assert migrated["search"]["safe_search"] == 1
+    assert "json" in migrated["search"]["formats"]
+    assert "html" in migrated["search"]["formats"]
+
+    # Idempotent: a second run must not touch the already-migrated file
+    second = _run(settings)
+    assert second.returncode == 0, second.stderr
+    assert settings.read_bytes() == migrated_bytes
+    assert second.stdout == ""
+
+
+def test_explicit_operator_formats_list_is_not_overridden(tmp_path):
+    # An operator who deliberately chose html-only (or any custom list) must not
+    # have that choice silently replaced by the migration.
+    settings = tmp_path / "settings.yml"
+    original = (
+        b"server:\n"
+        b'  secret_key: "retained-secret"\n'
+        b"search:\n"
+        b"  formats:\n"
+        b"    - html\n"
+    )
+    settings.write_bytes(original)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated = yaml.safe_load(settings.read_bytes())
+    assert migrated["use_default_settings"] is True
+    # The operator's formats list must be preserved exactly
+    assert migrated["search"]["formats"] == ["html"]
+
+
+# --- P1 regression: previously migrated settings must get search.formats repaired ---
+
+def test_previously_migrated_settings_without_formats_gain_json_format(tmp_path):
+    # A file already migrated by an earlier version of this script may have
+    # use_default_settings: true but still lack search.formats. The migration
+    # must repair this state rather than exiting early.
+    settings = tmp_path / "settings.yml"
+    already_inherited = (
+        b"use_default_settings: true\n"
+        b"server:\n"
+        b'  secret_key: "retained-secret"\n'
+        b"search:\n"
+        b"  safe_search: 1\n"
+    )
+    settings.write_bytes(already_inherited)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated_bytes = settings.read_bytes()
+    migrated = yaml.safe_load(migrated_bytes)
+    # use_default_settings must be preserved
+    assert migrated["use_default_settings"] is True
+    # search.formats must now be present
+    assert "json" in migrated["search"]["formats"]
+    assert "html" in migrated["search"]["formats"]
+    # existing settings must be unchanged
+    assert migrated["search"]["safe_search"] == 1
+    assert migrated["server"]["secret_key"] == "retained-secret"
+
+    # Second run: fully migrated now, file must not change
+    second = _run(settings)
+    assert second.returncode == 0, second.stderr
+    assert settings.read_bytes() == migrated_bytes
+    assert second.stdout == ""
+
+
+def test_previously_migrated_settings_without_search_section_gain_formats(tmp_path):
+    # use_default_settings present but no search section at all.
+    settings = tmp_path / "settings.yml"
+    original = b"use_default_settings: true\nserver:\n  secret_key: retained\n"
+    settings.write_bytes(original)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated = yaml.safe_load(settings.read_bytes())
+    assert migrated["use_default_settings"] is True
+    assert "json" in migrated["search"]["formats"]
+    assert "html" in migrated["search"]["formats"]
+
+
+# --- P2 regressions ---
+
+def test_flow_style_search_value_in_block_root_does_not_create_duplicate_key(tmp_path):
+    # When search exists but its value is a flow-style mapping (e.g. from a
+    # hand-edited file), the migration must insert formats into the flow value
+    # rather than appending a second root-level search: key that would shadow
+    # the first under standard YAML loaders.
+    settings = tmp_path / "settings.yml"
+    original = b"server:\n  secret_key: retained\nsearch: {safe_search: 1}\n"
+    settings.write_bytes(original)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated_bytes = settings.read_bytes()
+    migrated = yaml.safe_load(migrated_bytes)
+    assert migrated["use_default_settings"] is True
+    # formats must be reachable through the search key -- no duplicate shadowing
+    assert "json" in migrated["search"]["formats"]
+    assert migrated["search"]["safe_search"] == 1
+    # No duplicate root-level search: key (a second one would shadow the first
+    # and safe_search would be lost -- the yaml assertion above already proves
+    # the content survived, so just verify the raw byte structure too).
+    assert migrated_bytes.count(b"\nsearch:") == 1
+
+
+def test_search_formats_inserted_before_yaml_document_end_marker(tmp_path):
+    # When the file ends with YAML '...' document-end marker, the appended
+    # search block must land before it to remain in the same document.
+    settings = tmp_path / "settings.yml"
+    original = b"server:\n  secret_key: retained\n...\n"
+    settings.write_bytes(original)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated_bytes = settings.read_bytes()
+    # Result must be a single valid YAML document
+    migrated = yaml.safe_load(migrated_bytes)
+    assert migrated["use_default_settings"] is True
+    assert "json" in migrated["search"]["formats"]
+    # '...' must still terminate the document
+    assert migrated_bytes.rstrip(b"\r\n").endswith(b"...")
+    # The search block must appear before '...'
+    search_pos = migrated_bytes.find(b"search:")
+    dot_pos = migrated_bytes.rfind(b"...")
+    assert search_pos < dot_pos
+
+
+def test_non_two_space_indented_file_gets_consistent_formats_indent(tmp_path):
+    # A settings file using four-space indentation must receive a formats key
+    # indented to match, not hard-coded at two spaces.
+    settings = tmp_path / "settings.yml"
+    original = b"server:\n    secret_key: retained\nsearch:\n    safe_search: 1\n"
+    settings.write_bytes(original)
+
+    result = _run(settings)
+
+    assert result.returncode == 0, result.stderr
+    migrated_bytes = settings.read_bytes()
+    migrated = yaml.safe_load(migrated_bytes)
+    assert migrated["use_default_settings"] is True
+    assert migrated["search"]["safe_search"] == 1
+    assert "json" in migrated["search"]["formats"]
+    assert "html" in migrated["search"]["formats"]
+    # formats: key must be at four-space indent (matching safe_search)
+    assert b"\n    formats:" in migrated_bytes
+    # sequence items must be at eight-space indent
+    assert b"\n        - html" in migrated_bytes
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES, ids=lambda path: path.name)
