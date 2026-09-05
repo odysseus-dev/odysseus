@@ -16,6 +16,7 @@ import shutil
 from fastapi import APIRouter, HTTPException, Request
 
 from core.middleware import require_admin
+from core.guard_deco import usage_monitor
 from core.database import (
     SessionLocal,
     Session as DbSession,
@@ -69,6 +70,7 @@ def setup_admin_wipe_routes(session_manager):
     router = APIRouter(prefix="/api/admin")
 
     @router.delete("/wipe/{kind}")
+    @usage_monitor(5, 3600, "log")
     def wipe(kind: str, request: Request):
         require_admin(request)
         kind = (kind or "").strip().lower()

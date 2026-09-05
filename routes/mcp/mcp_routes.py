@@ -13,6 +13,7 @@ import httpx
 
 from core.database import McpServer, SessionLocal
 from core.middleware import require_admin
+from core.guard_deco import content_type, usage_monitor
 from src.constants import DATA_DIR, MCP_OAUTH_DIR
 from src.mcp_manager import McpManager
 
@@ -156,6 +157,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             db.close()
 
     @router.post("/servers")
+    @usage_monitor(30, 3600, "log")
+    @content_type(["multipart/form-data", "application/x-www-form-urlencoded"])
     async def add_server(
         request: Request,
         name: str = Form(...),
@@ -285,6 +288,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         }
 
     @router.post("/servers/{server_id}/reconnect")
+    @usage_monitor(30, 3600, "log")
     async def reconnect_server(server_id: str, request: Request):
         """Reconnect to an MCP server."""
         require_admin(request)
@@ -321,6 +325,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             db.close()
 
     @router.patch("/servers/{server_id}")
+    @content_type(["multipart/form-data", "application/x-www-form-urlencoded"])
     async def toggle_server(server_id: str, request: Request, is_enabled: str = Form(...)):
         """Enable or disable an MCP server."""
         require_admin(request)
@@ -354,6 +359,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             db.close()
 
     @router.delete("/servers/{server_id}")
+    @usage_monitor(30, 3600, "log")
     async def delete_server(server_id: str, request: Request):
         """Remove an MCP server."""
         require_admin(request)
@@ -495,6 +501,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
         return await _exchange_and_connect(state, code, request)
 
     @router.post("/oauth/exchange/{server_id}")
+    @content_type(["multipart/form-data", "application/x-www-form-urlencoded"])
+    @usage_monitor(10, 3600, "log")
     async def oauth_exchange(server_id: str, request: Request, callback_url: str = Form(...)):
         """Manual code exchange — user pastes the callback URL from their browser."""
         require_admin(request)

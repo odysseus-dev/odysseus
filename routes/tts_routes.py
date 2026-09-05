@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 import logging
+from core.guard_deco import content_type, suspicious_frequency
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ def setup_tts_routes(tts_service):
             raise HTTPException(status_code=500, detail=str(e))
 
     @router.post("/synthesize")
+    @content_type(["application/json"])
+    @suspicious_frequency(0.5, 60, "log")
     async def synthesize_speech(request: TTSRequest):
         """Synthesize speech from text"""
         try:

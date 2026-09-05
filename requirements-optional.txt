@@ -44,3 +44,35 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Optional security perimeter (opt-in via ODYSSEUS_GUARD_ENABLED). fastapi-guard
+# is a thin FastAPI adapter over guard-core: rate-limit ceilings, WAF/recon
+# detection, honeypot auto-ban, per-route size/content-type caps, and log-only
+# credential-into-corpus / prompt-injection signals. Wired in core/guard.py and
+# only imported when the flag is set, so the default install stays unchanged.
+fastapi-guard>=8.0.0
+# guard-core >= 4.0.0 redacts authorization, proxy-authorization, cookie and
+# x-api-key (plus query-string and body secrets) as [REDACTED] on every guard
+# log line, event and hook payload, closing the leak where 3.17.0 wrote those
+# headers verbatim on every block (proven under TestClient in this perimeter,
+# see tests/test_guard_perimeter_security.py). Separately, its default
+# excluded-header set skips proxy identity headers (x-forwarded-for and
+# friends) from the ssrf category only; every other detection category
+# still scans them. >= 4.0.1 fixes a self-DoS guard bug: a threshold ban whose
+# target overlaps loopback or a configured trusted_proxies network is now
+# refused and reported honestly as a plain 400 instead of the 403 "IP has
+# been banned" guard-core answered with while nothing was actually banned.
+# That refusal fires only when the resolved client is the proxy itself: (a)
+# a same-host proxy forwarding over 127.0.0.1 with trusted_proxies unset, so
+# every client resolves as loopback, or (b) a proxy that IS listed in
+# ODYSSEUS_GUARD_TRUSTED_PROXIES but sends no X-Forwarded-For. A proxy on
+# some other, unlisted non-loopback address is not refused at all: guard-core
+# bans that private IP outright instead, a pre-existing misconfiguration risk
+# 4.0.1 does not change. That refusal path is live here: enable_ip_banning and
+# enable_rate_limit_auto_ban are both on below.
+# >= 8.0.0 floors guard-core>=4.0.0.
+guard-core>=4.0.1
+# GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
+# GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
+# used when country blocking is enabled.
+maxminddb

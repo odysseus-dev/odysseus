@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, Signature
 from src.auth_helpers import get_current_user
+from core.guard_deco import no_waf
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,7 @@ def setup_signature_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/signatures")
+    @no_waf()
     async def create_signature(request: Request, req: SignatureCreate) -> Dict[str, Any]:
         user = get_current_user(request)
         b64 = _normalize_signature_png(req.data)

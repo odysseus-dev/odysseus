@@ -486,6 +486,23 @@ if AUTH_ENABLED:
 else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
 
+# ========= GUARD-CORE PERIMETER (opt-in, default-off) =========
+from core.guard import GUARD_ENABLED as _GUARD_ENABLED
+from core.guard import guard_deco as _guard_deco
+from core.guard import security_config as _guard_cfg
+
+if _GUARD_ENABLED and _guard_deco is not None:
+    from guard import SecurityMiddleware
+    from routes.honeypot_routes import setup_honeypot_routes
+
+    # Added after AuthMiddleware so the perimeter is the OUTERMOST layer: it
+    # sheds floods/scanners before auth does any work, and its behavioural
+    # rules can observe auth 401/403 responses. It performs no auth itself.
+    app.add_middleware(SecurityMiddleware, config=_guard_cfg)
+    app.state.guard_decorator = _guard_deco
+    setup_honeypot_routes(app)
+    logger.info("guard-core perimeter enabled (passive_mode=%s)", _guard_cfg.passive_mode)
+
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
 
