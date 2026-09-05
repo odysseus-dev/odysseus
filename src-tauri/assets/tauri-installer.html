@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Odysseus — Installer</title>
+  </head>
+  <body>
+    <div class="installer-shell">
+      <div class="installer-card">
+        <div class="brand-row">
+          <div class="brand-mark">O</div>
+          <div>
+            <p class="eyebrow">Odysseus Desktop</p>
+            <h1>Installer</h1>
+          </div>
+        </div>
+
+        <div class="status-pill">Ready to install</div>
+
+        <p class="lead">
+          Set up Odysseus on this machine and launch the desktop app with the
+          same dark, focused interface as the rest of the experience.
+        </p>
+
+        <ul class="feature-list">
+          <li>Local-first desktop environment</li>
+          <li>Fast startup and update support</li>
+          <li>Secure app data and settings</li>
+        </ul>
+
+        <div class="cta-row">
+          <button id="install-button" class="primary-action" type="button">
+            Install
+          </button>
+          <button id="learn-more-button" class="secondary-action" type="button">
+            Learn more
+          </button>
+        </div>
+
+        <p class="lead" id="installation-message"></p>
+
+        <div class="meta-row">
+          <span>Version 1.0.0</span>
+          <span>Installation size: ~800 MB</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="info-modal-overlay" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h2>System Requirements</h2>
+        <p class="lead">
+          Odysseus runs in Docker by default. Here's what each OS needs to
+          run it, plus a couple of platform-specific quirks worth knowing
+          about up front.
+        </p>
+
+        <h3>Windows</h3>
+        <ul class="feature-list">
+          <li>Windows 10/11, 64-bit</li>
+          <li>WSL2 enabled — Docker Desktop uses it as the Linux backend</li>
+          <li>Virtualization enabled in BIOS/UEFI (Intel VT-x or AMD-V)</li>
+          <li>Docker Desktop installed and running</li>
+          <li>At least 4 GB RAM allocated to Docker (8 GB+ recommended)</li>
+        </ul>
+
+        <h3>macOS</h3>
+        <ul class="feature-list">
+          <li>Docker Desktop for Mac installed and running</li>
+          <li>Apple Silicon (M-series): Docker can't reach the Metal GPU, so local model serving runs on CPU only inside the container</li>
+          <li>At least 4 GB RAM allocated to Docker</li>
+        </ul>
+
+        <h3>Linux</h3>
+        <ul class="feature-list">
+          <li>Docker Engine plus the Compose plugin</li>
+          <li>Your user added to the docker group (or run with sudo)</li>
+          <li>NVIDIA Container Toolkit or ROCm for GPU passthrough (optional)</li>
+        </ul>
+
+        <p class="lead">
+          All platforms also need Git and about 800 MB of free disk space for
+          the image and container data.
+        </p>
+
+        <div class="cta-row">
+          <button id="modal-close-button" class="primary-action" type="button">
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Access Tauri API globally instead of using 'import'
+      // Note: Use window.__TAURI__.invoke if you are on Tauri v1
+      const invoke = window.__TAURI__.core.invoke;
+
+      const installButton = document.getElementById("install-button");
+      const learnMoreButton = document.getElementById("learn-more-button");
+      const installationMessage = document.getElementById(
+        "installation-message",
+      );
+      const infoModalOverlay = document.getElementById("info-modal-overlay");
+      const modalCloseButton = document.getElementById("modal-close-button");
+
+      installButton?.addEventListener("click", async () => {
+        if (installButton.disabled) return;
+
+        // 1. Update UI to loading state
+        installButton.classList.add("is-installing");
+        installButton.textContent = "Installing…";
+        installationMessage.textContent =
+          "Installing... This may take up to 30 minutes. Do not close this window.";
+        installButton.disabled = true;
+
+        try {
+          // 2. Invoke the Rust command
+          const [message, success] = await invoke(
+            "installation_script",
+          );
+
+          if (success) {
+            installButton.textContent = "Installed";
+            installationMessage.textContent =
+              "Odysseus has been installed successfully! Please restart the app to continue.";
+            installationMessage.style.color = "var(--green)";
+          } else {
+            // Handle failure
+            installButton.classList.remove("is-installing");
+            installButton.textContent = "Install Failed";
+            installationMessage.textContent = `Error: ${message}`;
+            installButton.disabled = false;
+          }
+        } catch (error) {
+          console.error("Error during installation invocation:", error);
+          installButton.classList.remove("is-installing");
+          installButton.textContent = "Install";
+          installationMessage.textContent = `Unexpected error: ${error}`;
+          installButton.disabled = false;
+        }
+      });
+
+      learnMoreButton?.addEventListener("click", () => {
+        infoModalOverlay?.classList.remove("hidden");
+      });
+
+      modalCloseButton?.addEventListener("click", () => {
+        infoModalOverlay?.classList.add("hidden");
+      });
+
+      infoModalOverlay?.addEventListener("click", (event) => {
+        if (event.target === infoModalOverlay) {
+          infoModalOverlay.classList.add("hidden");
+        }
+      });
+    </script>
+  </body>
+</html>

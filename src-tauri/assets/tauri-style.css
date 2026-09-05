@@ -1,0 +1,536 @@
+:root {
+  --bg: #282c34;
+  --panel: #111111;
+  --panel-alt: #1b1d22;
+  --fg: #9cdef2;
+  --border: #355a66;
+  --red: #e06c75;
+  --green: #50fa7b;
+  --red-soft: color-mix(in srgb, var(--red) 18%, transparent);
+  --muted-text: #a7b2bd;
+  --card-shadow: rgba(0, 0, 0, 0.45);
+  --font-family: "Fira Code", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background:
+    radial-gradient(circle at top, rgba(224, 108, 117, 0.12), transparent 28%),
+    radial-gradient(
+      circle at bottom right,
+      rgba(97, 175, 239, 0.08),
+      transparent 22%
+    ),
+    var(--bg);
+  color: var(--fg);
+  font-family: var(--font-family);
+}
+
+p {
+  padding: 0px;
+  margin: 0px;
+  line-height: 12px;
+  font-size: 14px;
+}
+
+.installer-shell {
+  width: min(100%, 860px);
+}
+
+.installer-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(17, 17, 17, 0.97),
+    rgba(15, 17, 19, 0.96)
+  );
+  border: 1px solid rgba(53, 90, 102, 0.9);
+  border-radius: 18px;
+  box-shadow: 0 18px 44px var(--card-shadow);
+  padding: 34px 32px 28px;
+}
+
+.installer-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--red),
+    transparent 35%,
+    var(--fg) 72%,
+    transparent
+  );
+  opacity: 0.7;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(
+    135deg,
+    rgba(224, 108, 117, 0.22),
+    rgba(97, 175, 239, 0.12)
+  );
+  border: 1px solid rgba(224, 108, 117, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  font-weight: 700;
+  color: var(--red);
+  letter-spacing: 0.08em;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-text);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.1rem, 4vw, 3.2rem);
+  line-height: 1.1;
+  color: var(--fg);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 18px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(80, 250, 123, 0.08);
+  border: 1px solid rgba(80, 250, 123, 0.32);
+  color: #bdf7c6;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
+
+.status-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #50fa7b;
+  box-shadow: 0 0 0 4px rgba(80, 250, 123, 0.14);
+}
+
+.lead {
+  margin: 0 0 22px;
+  max-width: 52ch;
+  line-height: 1.7;
+  font-size: 1rem;
+  color: var(--muted-text);
+}
+
+.feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 26px;
+  display: grid;
+  gap: 10px;
+}
+
+.feature-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+  font-size: 0.96rem;
+}
+
+.feature-list li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 4px rgba(224, 108, 117, 0.12);
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: inherit;
+  padding: 0.8rem 1.15rem;
+  border-radius: 6px;
+  min-width: 148px;
+  cursor: pointer;
+  transition:
+    background 0.08s,
+    border-color 0.08s,
+    color 0.08s,
+    opacity 0.08s,
+    transform 0.08s;
+}
+
+button:hover {
+  border-color: var(--fg);
+  background-color: var(--panel);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+.primary-action {
+  background: var(--red);
+  border-color: var(--red);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(224, 108, 117, 0.2);
+}
+
+.primary-action:hover {
+  background: color-mix(in srgb, var(--red) 82%, white);
+  border-color: color-mix(in srgb, var(--red) 82%, white);
+}
+
+.secondary-action {
+  background: rgba(17, 17, 17, 0.25);
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(53, 90, 102, 0.34);
+  color: var(--muted-text);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+}
+
+.is-installing {
+  opacity: 0.9;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 6, 7, 0.8);
+  padding: 28px;
+  z-index: 10;
+  animation: overlay-fade-in 0.2s ease;
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: min(100%, 560px);
+  max-height: 84vh;
+  overflow-y: auto;
+  background: linear-gradient(
+    180deg,
+    rgba(17, 17, 17, 0.98),
+    rgba(15, 17, 19, 0.98)
+  );
+  border: 1px solid rgba(53, 90, 102, 0.9);
+  border-radius: 16px;
+  box-shadow: 0 18px 44px var(--card-shadow);
+  padding: 28px 26px;
+  animation: modal-pop-in 0.24s cubic-bezier(0.2, 0.8, 0.3, 1.1);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) rgba(17, 17, 17, 0.4);
+}
+
+.modal-card::-webkit-scrollbar {
+  width: 10px;
+}
+
+.modal-card::-webkit-scrollbar-track {
+  background: rgba(17, 17, 17, 0.4);
+  border-radius: 8px;
+}
+
+.modal-card::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 8px;
+}
+
+.modal-card::-webkit-scrollbar-thumb:hover {
+  background-color: var(--red);
+}
+
+@keyframes overlay-fade-in {
+  from {
+    background: rgba(5, 6, 7, 0);
+  }
+  to {
+    background: rgba(5, 6, 7, 0.8);
+  }
+}
+
+@keyframes modal-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-card h2 {
+  margin: 0 0 14px;
+  font-size: 1.3rem;
+  color: var(--fg);
+}
+
+.modal-card h3 {
+  margin: 18px 0 10px;
+  font-size: 0.95rem;
+  color: var(--red);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.modal-card .lead {
+  margin-bottom: 14px;
+}
+
+.modal-card .feature-list {
+  margin-bottom: 8px;
+}
+
+.modal-card .cta-row {
+  margin-top: 22px;
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 16px;
+  }
+
+  .installer-card {
+    padding: 24px 20px 20px;
+  }
+
+  .cta-row {
+    flex-direction: column;
+  }
+
+  button {
+    width: 100%;
+  }
+
+  .meta-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.not-found-shell {
+  width: min(100%, 760px);
+}
+
+.not-found-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(17, 17, 17, 0.97),
+    rgba(15, 17, 19, 0.96)
+  );
+  border: 1px solid rgba(53, 90, 102, 0.9);
+  border-radius: 18px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+  padding: 30px 28px 26px;
+}
+
+.not-found-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--red),
+    transparent 35%,
+    var(--fg) 72%,
+    transparent
+  );
+  opacity: 0.7;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(224, 108, 117, 0.08);
+  border: 1px solid rgba(224, 108, 117, 0.32);
+  color: #f9c5cb;
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+
+.badge::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 4px rgba(224, 108, 117, 0.12);
+}
+
+.not-found-shell h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2.1rem, 4vw, 3.1rem);
+  line-height: 1.1;
+  color: var(--fg);
+}
+
+.lead {
+  margin: 0 0 18px;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--muted-text);
+  max-width: 55ch;
+}
+
+.hint-box {
+  margin: 18px 0 24px;
+  padding: 14px 16px;
+  border: 1px solid rgba(53, 90, 102, 0.8);
+  background: rgba(17, 17, 17, 0.5);
+  border-radius: 10px;
+  color: var(--fg);
+  line-height: 1.65;
+}
+
+.hint-box strong {
+  color: var(--red);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .not-found-card {
+    padding: 24px 20px 20px;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .actions button {
+    width: 100%;
+  }
+}
+
+.loader-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 48px;
+  padding-bottom: 48px;
+}
+
+.loader-brand {
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+/* Modifies your existing status pill for the loading state */
+.loading-pill {
+  background: rgba(97, 175, 239, 0.08);
+  border-color: rgba(97, 175, 239, 0.32);
+  color: var(--fg);
+  margin-top: 24px;
+  margin-bottom: 32px;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.loading-pill::before {
+  background: var(--fg);
+  box-shadow: 0 0 0 4px rgba(97, 175, 239, 0.14);
+  animation: pulse-dot 1.5s infinite;
+}
+
+/* Sleek indeterminate progress bar */
+.progress-track {
+  width: 100%;
+  max-width: 280px;
+  height: 4px;
+  background: rgba(53, 90, 102, 0.3); /* Uses your --border color */
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 30%;
+  background: var(--red);
+  border-radius: 4px;
+  animation: scan 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Animations */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+@keyframes scan {
+  0% { left: -30%; width: 30%; background: var(--red); }
+  50% { left: 30%; width: 70%; background: var(--fg); }
+  100% { left: 100%; width: 30%; background: var(--red); }
+}

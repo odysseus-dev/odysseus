@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Odysseus - Booting</title>
+  </head>
+  <body>
+    <div class="installer-shell">
+      <div class="installer-card loader-card">
+        <div class="brand-row loader-brand">
+          <div class="brand-mark">&gt;_</div>
+          <h2 class="eyebrow">System Initialization</h2>
+        </div>
+
+        <h1>Odysseus</h1>
+
+        <div class="status-pill loading-pill">
+          <span id="status-text">Booting Docker daemon...</span>
+        </div>
+
+        <div class="progress-track">
+          <div class="progress-indicator"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const messages = [
+        "Booting Docker daemon...",
+        "Allocating resources...",
+        "Starting background containers...",
+        "Mounting local volumes...",
+        "Initializing database...",
+        "Establishing network bridge...",
+      ];
+
+      const statusElement = document.getElementById("status-text");
+      let currentIndex = 0;
+
+      setInterval(() => {
+        statusElement.style.opacity = "0";
+
+        setTimeout(() => {
+          currentIndex = (currentIndex + 1) % messages.length;
+          statusElement.innerText = messages[currentIndex];
+          statusElement.style.opacity = "1";
+        }, 150);
+      }, 2500);
+    </script>
+  </body>
+</html>
