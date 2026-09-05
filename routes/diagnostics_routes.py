@@ -107,4 +107,85 @@ def setup_diagnostics_routes(
         except Exception as e:
             return {"status": "error", "error": str(e), "query": query}
 
+    @router.get("/api/diagnostics/gpu")
+    async def gpu_status(request: Request) -> Dict[str, Any]:
+        """Report GPU acceleration status for embedding inference."""
+        require_admin(request)
+        import subprocess
+
+        result = {
+            "embedding_provider": "unknown",
+            "available_providers": [],
+            "gpu_detected": False,
+            "gpu_provider": None,
+            "gpu_override": "auto",
+            "gpu_name": None,
+            "gpu_vendor": None,
+            "gpu_memory_total_mb": None,
+            "gpu_memory_used_mb": None,
+            "gpu_utilization_pct": None,
+        }
+        result["gpu_override"] = os.environ.get("EMBEDDING_GPU_PROVIDER", "auto")
+
+        # Check ONNX Runtime providers (vendor-agnostic — any GPU provider)
+        try:
+            import onnxruntime as ort
+            providers = ort.get_available_providers()
+            result["available_providers"] = providers
+
+            try:
+                from src.embeddings import get_embedding_client
+                client = get_embedding_client()
+                if hasattr(client, "_is_gpu"):
+                    result["gpu_provider"] = getattr(client, "_gpu_provider", None)
+                    result["embedding_provider"] = (
+                        f"gpu ({client._gpu_provider})" if client._is_gpu
+                        else "cpu"
+                    )
+                else:
+                    result["embedding_provider"] = f"http ({getattr(client, 'url', 'unknown')})"
+            except Exception as e:
+                result["embedding_provider"] = f"error checking: {e}"
+        except ImportError:
+            result["embedding_provider"] = "onnxruntime not installed"
+        except Exception as e:
+            result["embedding_provider"] = f"error: {e}"
+
+        # Check GPU state via vendor-neutral tools (nvidia-smi / rocm-smi)
+        try:
+            import subprocess
+            smi = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if smi.returncode == 0 and smi.stdout.strip():
+                parts = [p.strip() for p in smi.stdout.strip().split(",")]
+                if len(parts) >= 4:
+                    result["gpu_detected"] = True
+                    result["gpu_name"] = parts[0]
+                    result["gpu_vendor"] = "nvidia"
+                    result["gpu_memory_total_mb"] = int(parts[1])
+                    result["gpu_memory_used_mb"] = int(parts[2])
+                    result["gpu_utilization_pct"] = int(parts[3])
+        except Exception:
+            pass
+        if not result["gpu_detected"]:
+            # AMD: rocm-smi is the vendor tool (ROCm 6.x/7.x). MIGraphX is the
+            # current AMD ORT provider; ROCm EP is legacy (removed in ORT 1.23).
+            try:
+                import subprocess
+                rsmi = subprocess.run(
+                    ["rocm-smi", "--showmeminfo", "vram", "--json"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if rsmi.returncode == 0 and rsmi.stdout.strip():
+                    result["gpu_detected"] = True
+                    result["gpu_vendor"] = "amd"
+                    result["gpu_name"] = "AMD GPU (rocm-smi)"
+            except Exception:
+                pass
+
+        return result
+
     return router
