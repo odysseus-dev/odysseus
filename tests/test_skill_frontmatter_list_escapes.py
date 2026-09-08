@@ -16,8 +16,8 @@ _SPEC.loader.exec_module(_FORMAT)
 
 class FrontmatterListEscapesTests(unittest.TestCase):
     def test_skill_tags_survive_repeated_save_load_cycles(self):
-        tags = ['a "b, c', 'say "hello", then continue', 'next']
-        skill = _FORMAT.Skill(name="demo", tags=tags)
+        tags = ['review "release, notes', 'use "search", then summarize', 'publish']
+        skill = _FORMAT.Skill(name="release-review", tags=tags)
         for _ in range(5):
             skill = _FORMAT.Skill.from_markdown(skill.to_markdown())
             self.assertEqual(skill.tags, tags)
@@ -25,15 +25,15 @@ class FrontmatterListEscapesTests(unittest.TestCase):
     def test_escaped_quotes_preserve_each_list_field(self):
         for field in ("tags", "platforms", "requires_toolsets", "fallback_for_toolsets"):
             with self.subTest(field=field):
-                values = ['a "b, c', 'next']
-                skill = _FORMAT.Skill(name="demo", **{field: values})
+                values = ['review "release, notes', 'publish']
+                skill = _FORMAT.Skill(name="release-review", **{field: values})
                 restored = _FORMAT.Skill.from_markdown(skill.to_markdown())
                 self.assertEqual(getattr(restored, field), values)
 
     def test_backslash_parity_does_not_hide_quotes_or_list_separators(self):
         for count in range(1, 5):
             with self.subTest(backslashes=count):
-                values = ['a ' + '\\' * count + '"b, c', 'path, ' + '\\' * count, 'next']
+                values = ['review ' + '\\' * count + '"release, notes', 'path, ' + '\\' * count, 'publish']
                 text = _FORMAT.emit_frontmatter({"tags": values})
                 parsed, _ = _FORMAT.parse_frontmatter(f"---\n{text}\n---\n")
                 self.assertEqual(parsed["tags"], values)
@@ -44,7 +44,7 @@ class FrontmatterListEscapesTests(unittest.TestCase):
         self.assertEqual(parsed["tags"], ["C:\\", "next"])
 
     def test_nested_lists_preserve_quoted_brackets_and_commas(self):
-        values = [['a "], b', 'next'], 'last']
+        values = [['review "], notes', 'publish'], 'archive']
         text = _FORMAT.emit_frontmatter({"tags": values})
         parsed, _ = _FORMAT.parse_frontmatter(f"---\n{text}\n---\n")
         self.assertEqual(parsed["tags"], values)
