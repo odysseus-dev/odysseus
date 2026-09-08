@@ -362,6 +362,33 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+        self._user_initiated_runs = {}
+
+    def _manual_run_counts(self) -> dict:
+        """task_id -> number of in-flight runs the user triggered by hand.
+
+        A count rather than a set so two overlapping force-runs of the same
+        task don't unmark each other when the first one finishes.
+        """
+        counts = self.__dict__.get("_user_initiated_runs")
+        if counts is None:
+            counts = self.__dict__["_user_initiated_runs"] = {}
+        return counts
+
+    def _mark_user_initiated(self, task_id: str):
+        counts = self._manual_run_counts()
+        counts[task_id] = counts.get(task_id, 0) + 1
+
+    def _clear_user_initiated(self, task_id: str):
+        counts = self._manual_run_counts()
+        remaining = counts.get(task_id, 0) - 1
+        if remaining > 0:
+            counts[task_id] = remaining
+        else:
+            counts.pop(task_id, None)
+
+    def _is_user_initiated(self, task_id: str) -> bool:
+        return self._manual_run_counts().get(task_id, 0) > 0
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -734,7 +761,8 @@ class TaskScheduler:
         finally:
             db.close()
 
-    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True):
+    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True,
+                            user_initiated: bool = False):
         # Create the run record with status="queued" BEFORE waiting on the
         # semaphore so the UI can show that a manually-triggered task is in
         # line behind another. Once we acquire the slot, flip to "running"
@@ -760,13 +788,18 @@ class TaskScheduler:
         finally:
             _q_db.close()
 
+        # A run the user asked for is foreground work by definition: it must not
+        # wait for the UI to go quiet, and it must not cancel itself the moment
+        # the user touches the app it was launched from.
+        gate_foreground = not (bypass_model_slot or user_initiated)
+
         try:
             if bypass_model_slot or not self._task_needs_model_slot(task_id):
                 await self._execute_task_locked(
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=not bypass_model_slot,
+                    gate_foreground=gate_foreground,
                 )
                 return
 
@@ -775,7 +808,7 @@ class TaskScheduler:
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=True,
+                    gate_foreground=gate_foreground,
                 )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
@@ -787,6 +820,8 @@ class TaskScheduler:
             handle = self._task_handles.get(task_id)
             if handle is current:
                 self._task_handles.pop(task_id, None)
+            if user_initiated:
+                self._clear_user_initiated(task_id)
             if release_executing:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
@@ -2264,13 +2299,19 @@ class TaskScheduler:
     async def run_task_now(self, task_id: str, *, force: bool = False):
         """Manually trigger a task execution."""
         if force:
-            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
+            self._mark_user_initiated(task_id)
+            asyncio.create_task(self._execute_task(
+                task_id, bypass_model_slot=True, release_executing=False, user_initiated=True,
+            ))
             return True
         async with self._executing_lock:
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
-        asyncio.create_task(self._execute_task(task_id))
+            # Marked under the lock so a concurrent foreground stop can never
+            # see the task as executing-but-not-yet-exempt.
+            self._mark_user_initiated(task_id)
+        asyncio.create_task(self._execute_task(task_id, user_initiated=True))
         return True
 
     async def stop_task(self, task_id: str) -> bool:
@@ -2293,11 +2334,13 @@ class TaskScheduler:
 
         This is intentionally blunt for scheduled/background work: when the
         user opens or uses Odysseus, foreground interaction wins immediately.
-        Manual force-runs can be restarted by the user; automatic jobs will be
-        deferred by their cancellation path instead of stealing the app.
+        Automatic jobs are deferred by their cancellation path instead of
+        stealing the app. Runs the user triggered by hand are exempt — the
+        click that started them is itself foreground activity, so cancelling
+        them here would mean a manual run could never survive its own trigger.
         """
         async with self._executing_lock:
-            task_ids = list(self._executing)
+            task_ids = [tid for tid in self._executing if not self._is_user_initiated(tid)]
         stopped = 0
         for task_id in task_ids:
             handle = self._task_handles.get(task_id)
