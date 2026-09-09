@@ -57,6 +57,13 @@ def test_production_has_no_unledgered_legacy_calls():
     assert unknown == []
 
 
+def test_legacy_loop_is_held_until_acceptance_ledger_says_so():
+    residuals = [entry for entry in _LEDGER["entries"] if entry["deletion_status"] == "residual-until-acceptance"]
+    assert residuals
+    for entry in residuals:
+        assert (_ROOT / entry["location"]).is_file()
+
+
 def test_five_loop_callers_no_longer_invoke_stream_agent_loop():
     for rel in (
         "routes/chat_routes.py",

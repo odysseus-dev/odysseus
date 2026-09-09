@@ -216,3 +216,7 @@ Run the app for user-facing or integration changes. Unit tests and syntax checks
 - There is no canonical full-suite known-failing/flaky ledger.
 - There is no central CLI redaction/sensitive-output regression matrix across backup, logs, mail, MCP, tasks, and webhook scripts.
 - Dependency/image pinning policy is mixed: Python requirements are mostly unpinned, SearXNG is pinned, Chroma image currently uses `latest`, npm uses a lockfile, and browser MCP uses cache-gated `@playwright/mcp@latest`.
+
+## OpenHands platform probes
+
+Local cutover evidence lives under `tests/integration/openhands/` and `tests/agents/`. Run focused probes with `python3 scripts/openhands_probe.py <gate> --json`. Compose overlay: `docker-compose.openhands.yml`. Live Docker/Tailscale acceptance is recorded by `acceptance`; do not treat a missing live stack as passed. See `docs/operations/openhands-stack.md`.

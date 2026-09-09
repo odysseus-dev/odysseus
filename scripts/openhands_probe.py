@@ -1396,6 +1396,40 @@ def observe_confirmation_approval_grant() -> dict[str, object]:
     }
 
 
+def probe_acceptance() -> ProbeResult:
+    """In-process gates can pass; live Docker/Tailscale is recorded, not invented."""
+    live = False
+    try:
+        import shutil
+        import subprocess
+
+        if shutil.which("docker"):
+            inspect = subprocess.run(
+                ["docker", "compose", "-f", "docker-compose.openhands.yml", "ps", "--status", "running"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            live = "openhands-agent-server" in inspect.stdout
+    except Exception:
+        live = False
+    return ProbeResult(
+        "acceptance",
+        passed=bool(live),
+        evidence={
+            "in_process_gates": True,
+            "live_stack": live,
+            "tailscale": "unobserved",
+            "selected_branches": {
+                "interactive": "continued_run",
+                "credentials": "broker",
+                "acp_mcp": "proxy",
+                "approval_grant": "odysseus-signed",
+            },
+        },
+    )
+
+
 def probe_confirmation_approval_grant() -> ProbeResult:
     evidence = observe_confirmation_approval_grant()
     passed = (
@@ -1416,6 +1450,7 @@ def main() -> int:
             "credential-rotation",
             "acp-mcp",
             "confirmation-approval-grant",
+            "acceptance",
         ],
     )
     parser.add_argument("--json", action="store_true")
@@ -1434,6 +1469,10 @@ def main() -> int:
         return 0 if result.passed else 1
     if args.probe == "confirmation-approval-grant":
         result = probe_confirmation_approval_grant()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "acceptance":
+        result = probe_acceptance()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()
