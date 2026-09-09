@@ -1,0 +1,28 @@
+id: chat
+version: 1
+execution_kind: agent
+input_schema: ChatInputV1
+result_schema: ChatResultV1
+required_capabilities: []
+optional_capabilities:
+  - notes.read
+risk_class: low
+approval_policy: confirm-risky
+budget: chat-standard
+timeout_seconds: 600
+audit_requirements:
+  - owner
+  - execution
+completion_criteria: terminal-message
+failure_retry_policy: transient-only
+compatible_runtime_traits:
+  - native
+  - acp
+preferred_profile_traits:
+  - chat
+conversation_policy: durable
+workspace_policy: none
+delegation_policy:
+  max_depth: 0
+checkpoint_resume_policy: none
+interaction_policy: interactive
