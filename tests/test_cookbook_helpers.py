@@ -712,6 +712,12 @@ def test_windows_ollama_runner_keeps_effective_command_replay_safe():
     assert _validate_serve_cmd(effective_cmd) == effective_cmd
 
 
+def test_windows_ollama_runner_rejects_unclosed_host_quote_without_regex_backtracking():
+    effective_cmd = "OLLAMA_HOST=" + "!'" * 10_000 + " ollama serve"
+
+    assert _windows_serve_command_lines(effective_cmd) == [effective_cmd]
+
+
 def test_remote_ollama_port_probe_uses_the_target_platform_shell():
     windows = _remote_ollama_port_probe_command(11434, 2, is_windows=True)
     encoded = windows.rsplit(" ", 1)[-1]

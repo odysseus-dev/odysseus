@@ -193,16 +193,45 @@ def _windows_serve_command_lines(cmd: str) -> list[str]:
     generated remote-Windows runner needs PowerShell assignment syntax.
     """
     command = (cmd or "").strip()
-    match = re.fullmatch(
-        r"OLLAMA_HOST\s*=\s*(['\"]?)([^\s'\"]+)\1\s+(ollama\s+serve(?:\s+.*)?)",
-        command,
-        re.IGNORECASE,
-    )
-    if not match:
+    env_name = "OLLAMA_HOST"
+    if command[: len(env_name)].upper() != env_name:
+        return [command]
+
+    remainder = command[len(env_name) :].lstrip()
+    if not remainder.startswith("="):
+        return [command]
+    remainder = remainder[1:].lstrip()
+    if not remainder:
+        return [command]
+
+    if remainder[0] in {"'", '"'}:
+        quote = remainder[0]
+        value_end = remainder.find(quote, 1)
+        if value_end < 0:
+            return [command]
+        host = remainder[1:value_end]
+        serve_command = remainder[value_end + 1 :].strip()
+    else:
+        value_end = next(
+            (index for index, char in enumerate(remainder) if char.isspace()),
+            len(remainder),
+        )
+        host = remainder[:value_end]
+        serve_command = remainder[value_end:].strip()
+
+    serve_parts = serve_command.split(None, 2)
+    if (
+        not host
+        or "'" in host
+        or '"' in host
+        or len(serve_parts) < 2
+        or serve_parts[0].lower() != "ollama"
+        or serve_parts[1].lower() != "serve"
+    ):
         return [command]
     return [
-        f"$env:OLLAMA_HOST = '{_ps_squote(match.group(2))}'",
-        match.group(3),
+        f"$env:OLLAMA_HOST = '{_ps_squote(host)}'",
+        serve_command,
     ]
 
 
