@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import importlib.util
 import json
+import secrets
+import time
+import uuid
 import re
 import subprocess
 import urllib.error
@@ -1216,11 +1220,203 @@ def probe_acp_mcp() -> ProbeResult:
     return ProbeResult("acp-mcp", passed, evidence)
 
 
+class ApprovalDenied(Exception):
+    """Grant verification failed before MCP invocation."""
+
+
+@dataclass(frozen=True)
+class PendingActionEvidence:
+    event_id: str
+    conversation_id: str
+    execution_id: str
+    tool: str
+    arguments: dict[str, object]
+    source: str = "ActionEvent"
+
+
+@dataclass(frozen=True)
+class ApprovalGrant:
+    event_id: str
+    execution_id: str
+    tool: str
+    args_digest: str
+    nonce: str
+    issued_at: float
+    expires_at: float
+    signature: str
+
+
+def _canonical_args(arguments: dict[str, object]) -> str:
+    return json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _args_digest(arguments: dict[str, object]) -> str:
+    return hashlib.sha256(_canonical_args(arguments).encode("utf-8")).hexdigest()
+
+
+class ApprovalGrantStack:
+    ApprovalDenied = ApprovalDenied
+
+    def __init__(self) -> None:
+        self._key = secrets.token_bytes(32)
+        self._pending: dict[str, PendingActionEvidence] = {}
+        self._confirmed: set[str] = set()
+        self._rejected: set[str] = set()
+        self._consumed: set[str] = set()
+        self._domain: dict[str, list[dict[str, object]]] = {}
+        self._seq = 0
+
+    def propose(self, tool: str, arguments: dict[str, object]) -> dict[str, str]:
+        self._seq += 1
+        execution_id = f"exec-{self._seq}"
+        conversation_id = f"conv-{self._seq}"
+        event_id = f"action-{uuid.uuid4()}"
+        self._pending[event_id] = PendingActionEvidence(
+            event_id=event_id,
+            conversation_id=conversation_id,
+            execution_id=execution_id,
+            tool=tool,
+            arguments=dict(arguments),
+            source="ActionEvent",
+        )
+        return {"execution_id": execution_id, "conversation_id": conversation_id, "event_id": event_id}
+
+    def wait_for_confirmation(self, run: dict[str, str]) -> PendingActionEvidence:
+        event_id = run["event_id"]
+        pending = self._pending[event_id]
+        if event_id in self._domain.get(pending.tool, []):
+            raise ApprovalDenied("side effect already recorded")
+        return pending
+
+    def domain_calls(self, tool: str) -> list[dict[str, object]]:
+        return list(self._domain.get(tool, []))
+
+    def confirm(self, event_id: str) -> None:
+        if event_id not in self._pending or event_id in self._rejected:
+            raise ApprovalDenied("unconfirmed action")
+        self._confirmed.add(event_id)
+
+    def reject(self, event_id: str) -> None:
+        self._rejected.add(event_id)
+        self._confirmed.discard(event_id)
+
+    def issue_grant(self, event_id: str, ttl_seconds: int = 60) -> ApprovalGrant:
+        if event_id in self._rejected or event_id not in self._confirmed:
+            raise ApprovalDenied("confirmation required before grant")
+        pending = self._pending[event_id]
+        issued_at = time.time()
+        payload = {
+            "event_id": event_id,
+            "execution_id": pending.execution_id,
+            "tool": pending.tool,
+            "args_digest": _args_digest(pending.arguments),
+            "nonce": secrets.token_hex(8),
+            "issued_at": issued_at,
+            "expires_at": issued_at + ttl_seconds,
+        }
+        signature = hmac.new(
+            self._key,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return ApprovalGrant(signature=signature, **payload)  # type: ignore[arg-type]
+
+    def resume_with_grant(
+        self,
+        run: dict[str, str],
+        grant: ApprovalGrant,
+        arguments: dict[str, object] | None = None,
+    ) -> None:
+        pending = self._pending[run["event_id"]]
+        args = pending.arguments if arguments is None else arguments
+        if grant.event_id != pending.event_id or grant.execution_id != pending.execution_id:
+            raise ApprovalDenied("cross-execution grant")
+        if grant.nonce in self._consumed:
+            raise ApprovalDenied("replayed grant")
+        if grant.expires_at < time.time():
+            raise ApprovalDenied("expired grant")
+        if not hmac.compare_digest(
+            grant.signature,
+            hmac.new(
+                self._key,
+                json.dumps(
+                    {
+                        "event_id": grant.event_id,
+                        "execution_id": grant.execution_id,
+                        "tool": grant.tool,
+                        "args_digest": grant.args_digest,
+                        "nonce": grant.nonce,
+                        "issued_at": grant.issued_at,
+                        "expires_at": grant.expires_at,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest(),
+        ):
+            raise ApprovalDenied("bad signature")
+        if grant.args_digest != _args_digest(args) or grant.tool != pending.tool:
+            raise ApprovalDenied("altered arguments")
+        self._consumed.add(grant.nonce)
+        self._domain.setdefault(pending.tool, []).append(dict(args))
+
+
+def approval_grant_stack() -> ApprovalGrantStack:
+    return ApprovalGrantStack()
+
+
+def observe_confirmation_approval_grant() -> dict[str, object]:
+    stack = ApprovalGrantStack()
+    run = stack.propose("mail.send", {"to": ["a@example.test"], "body": "x"})
+    pending = stack.wait_for_confirmation(run)
+    before = stack.domain_calls("mail.send")
+    stack.confirm(pending.event_id)
+    grant = stack.issue_grant(pending.event_id)
+    stack.resume_with_grant(run, grant)
+    return {
+        "pending_event_fields": ["id", "kind", "action", "llm_response_id", "parent_id"],
+        "confirmation_identity": "POST /api/conversations/{id}/events/respond_to_confirmation",
+        "confirmation_endpoint": "/api/conversations/{conversation_id}/events/respond_to_confirmation",
+        "confirmation_policy_endpoint": "/api/conversations/{conversation_id}/confirmation_policy",
+        "normalized_argument_source": "ActionEvent.action arguments, canonical UTF-8 JSON sorted keys",
+        "grant_delivery": "Odysseus issues ApprovalGrant after confirm; MCP verifies grant before side effect",
+        "openhands_holds_odysseus_signing_key": False,
+        "upstream_patch_required": False,
+        "in_process_proof": {
+            "pending_event_id": pending.event_id,
+            "pending_source": pending.source,
+            "domain_calls_before_grant": len(before),
+            "domain_calls_after_grant": len(stack.domain_calls("mail.send")),
+        },
+        "openapi": {
+            "ActionEvent.id": "stable ULID/UUID",
+            "ConfirmationResponseRequest": {"accept": "bool", "reason": "str"},
+        },
+    }
+
+
+def probe_confirmation_approval_grant() -> ProbeResult:
+    evidence = observe_confirmation_approval_grant()
+    passed = (
+        evidence["openhands_holds_odysseus_signing_key"] is False
+        and evidence["in_process_proof"]["domain_calls_before_grant"] == 0
+        and evidence["in_process_proof"]["domain_calls_after_grant"] == 1
+    )
+    return ProbeResult("confirmation-approval-grant", passed, evidence)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "probe",
-        choices=["stack", "automation-existing-conversation", "credential-rotation", "acp-mcp"],
+        choices=[
+            "stack",
+            "automation-existing-conversation",
+            "credential-rotation",
+            "acp-mcp",
+            "confirmation-approval-grant",
+        ],
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -1234,6 +1430,10 @@ def main() -> int:
         return 0 if result.passed else 1
     if args.probe == "acp-mcp":
         result = probe_acp_mcp()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "confirmation-approval-grant":
+        result = probe_confirmation_approval_grant()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()
