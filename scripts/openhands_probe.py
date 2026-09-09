@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -1050,11 +1051,176 @@ def probe_credential_rotation() -> ProbeResult:
     return ProbeResult("credential-rotation", passed, evidence)
 
 
+ACP_PROFILES = ("opencode", "hermes")
+
+
+@dataclass(frozen=True)
+class AcpProbeRun:
+    profile: str
+    conversation_id: str | None
+    token_id: str
+    cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class AcpMcpCall:
+    allowed: bool
+    status: int | str | None = None
+
+
+@dataclass
+class AcpMcpStack:
+    observation: dict[str, object]
+    attempts: list[dict[str, object]] = field(default_factory=list)
+
+    def start_acp_probe(self, profile: str, scopes: set[str]) -> AcpProbeRun:
+        live = _live_start_token_probe(profile, "T-acp")
+        self.attempts.append({"op": "start_acp_probe", "profile": profile, "scopes": sorted(scopes)})
+        return AcpProbeRun(
+            profile=profile,
+            conversation_id=_opt_str(live.get("conversation_id")),
+            token_id="token-ref",
+        )
+
+    def mcp_call(self, run: AcpProbeRun, tool: str) -> AcpMcpCall:
+        self.attempts.append({"op": "mcp_call", "profile": run.profile, "tool": tool})
+        return AcpMcpCall(allowed=False, status="unsupported")
+
+    def find_secret(self, token_id: str, sources: tuple[str, ...]) -> bool:
+        self.attempts.append({"op": "find_secret", "token_id": token_id, "sources": list(sources)})
+        return False
+
+    def disconnect(self, run: AcpProbeRun) -> None:
+        self.attempts.append({"op": "disconnect", "profile": run.profile})
+
+    def reconnect(self, run: AcpProbeRun) -> AcpProbeRun:
+        self.attempts.append({"op": "reconnect", "profile": run.profile})
+        return run
+
+    def cancel(self, run: AcpProbeRun) -> ExecutionRecord:
+        self.attempts.append({"op": "cancel", "profile": run.profile})
+        return ExecutionRecord(
+            execution_id=run.conversation_id,
+            conversation_id=run.conversation_id,
+            request_key=None,
+            status="unsupported",
+        )
+
+
+def _load_agent_module(name: str, relative: str):
+    import sys
+
+    path = ROOT / relative
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None or not path.is_file():
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _proxy_capability_proof() -> dict[str, object]:
+    broker = _load_agent_module("_odysseus_mcp_broker", "services/agents/mcp_broker.py")
+    module = _load_agent_module("_acp_mcp_proxy_probe", "services/agents/acp_mcp_proxy.py")
+    if broker is None or module is None:
+        return {"available": False}
+
+    class _Resolver:
+        def current_token(self, *, execution_id: str, workload_id: str) -> str:
+            return "current"
+
+    class _Transport:
+        def send(self, request: object, token: str) -> object:
+            tool = getattr(request, "tool", "")
+            allowed = tool == "notes.read" and token == "current"
+            return broker.McpResponse(status=200 if allowed else 403, body={"allowed": allowed})
+
+    surfaces: dict[str, object] = {"agent_environment": {}, "events": [], "profile_snapshots": []}
+    proxy = module.AcpMcpProxy(
+        broker.McpBroker(_Resolver(), _Transport(), surfaces=surfaces),
+        allowed_scopes={"notes.read"},
+        surfaces=surfaces,
+    )
+    proof: dict[str, object] = {"available": True}
+    for profile in ACP_PROFILES:
+        session = proxy.connect(
+            module.AcpSession(profile=profile, execution_id=f"e-{profile}", workload_id="w1"),
+            mcp_config={"headers": {"Authorization": "must-not-persist"}},
+        )
+        allowed = proxy.call(session, "notes.read")
+        denied = proxy.call(session, "mail.send")
+        proxy.disconnect(session)
+        resumed = proxy.reconnect(session)
+        resumed_ok = proxy.call(resumed, "notes.read")
+        proxy.cancel(resumed)
+        cancelled = proxy.call(resumed, "notes.read")
+        snap = str(proxy.snapshot(resumed)) + str(surfaces)
+        proof[profile] = {
+            "forwarding": allowed.allowed and not denied.allowed,
+            "reconnect": resumed.profile == profile,
+            "resume": resumed_ok.allowed,
+            "cancellation": cancelled.allowed is False,
+            "secret_handling": "must-not-persist" not in snap and "current" not in snap,
+        }
+    return proof
+
+
+def observe_acp_mcp() -> dict[str, object]:
+    versions = _versions()
+    proxy_proof = _proxy_capability_proof()
+    profiles: dict[str, object] = {}
+    for profile in ACP_PROFILES:
+        proxy_row = dict(proxy_proof.get(profile, {})) if isinstance(proxy_proof.get(profile), dict) else {}
+        profiles[profile] = {
+            "forwarding": "proxy" if proxy_row.get("forwarding") else "unsupported",
+            "reconnect": "proxy" if proxy_row.get("reconnect") else "unsupported",
+            "resume": "proxy" if proxy_row.get("resume") else "unsupported",
+            "cancellation": "proxy" if proxy_row.get("cancellation") else "unsupported",
+            "secret_handling": "redacted" if proxy_row.get("secret_handling") else "unsupported",
+            "direct_acp_binary": False,
+            "native_behavior": False,
+        }
+    return {
+        "pins": {
+            "OPENHANDS_AGENT_SERVER_IMAGE": versions.get("OPENHANDS_AGENT_SERVER_IMAGE"),
+            "OPENCODE_VERSION": versions.get("OPENCODE_VERSION"),
+            "HERMES_VERSION": versions.get("HERMES_VERSION"),
+        },
+        "profiles": profiles,
+        "selected_branch": "proxy",
+        "proxy_required": True,
+        "credential_delivery_mode": "broker",
+        "acp_binaries_present": False,
+        "acp_wrappers_present": list(ACP_WRAPPERS),
+        "proxy_proof": {
+            key: value for key, value in proxy_proof.items() if key != "available"
+        } | {"available": bool(proxy_proof.get("available"))},
+        "why_not_direct": [
+            "OpenCode and Hermes ACP binaries are absent",
+            "Agent Server wrappers are claude-agent-acp/codex-acp/gemini",
+            "Task 3 selected broker credential delivery; ACP secret updates restart the session",
+        ],
+    }
+
+
+def acp_mcp_stack() -> AcpMcpStack:
+    return AcpMcpStack(observation=observe_acp_mcp())
+
+
+def probe_acp_mcp() -> ProbeResult:
+    evidence = observe_acp_mcp()
+    passed = evidence.get("selected_branch") == "direct"
+    return ProbeResult("acp-mcp", passed, evidence)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "probe",
-        choices=["stack", "automation-existing-conversation", "credential-rotation"],
+        choices=["stack", "automation-existing-conversation", "credential-rotation", "acp-mcp"],
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -1064,6 +1230,10 @@ def main() -> int:
         return 0 if result.passed else 1
     if args.probe == "credential-rotation":
         result = probe_credential_rotation()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "acp-mcp":
+        result = probe_acp_mcp()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()
