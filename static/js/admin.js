@@ -2387,6 +2387,10 @@ function initMcpForm() {
     try {
       const res = await fetch('/api/mcp/servers', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
+      if (!res.ok) {
+        msg.textContent = data.detail || `Failed (${res.status})`; msg.className = 'admin-error';
+        return;
+      }
       if (data.needs_oauth) {
         msg.innerHTML = `Added ${esc(name)} — <a href="/api/mcp/oauth/authorize/${data.id}" target="_blank" style="color:var(--red);font-weight:600;">Authorize with Google</a> to connect`;
         msg.className = 'admin-success';
