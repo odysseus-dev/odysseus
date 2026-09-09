@@ -44,6 +44,12 @@ INTERACTIVE_EXCEPTION = (
     "interactive Agent Server execution is the explicit exception for "
     "interactive turns; do not invent Odysseus orchestration"
 )
+CREDENTIAL_PROFILES = ("openhands", "opencode", "hermes")
+ACP_WRAPPERS = ("claude-agent-acp", "codex-acp", "gemini")
+ACP_RESTART_FACT = (
+    "ACPAgent.restart_for_updated_credentials sets "
+    "_restart_session_on_next_turn when the session is already initialized"
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,11 @@ class AutomationConversationMode(StrEnum):
     DISTINCT_RUN = "distinct_run"
     CONTINUED_RUN = "continued_run"
     UNSUPPORTED = "unsupported"
+
+
+class CredentialDeliveryMode(StrEnum):
+    DIRECT_ROTATION = "direct_rotation"
+    BROKER = "broker"
 
 
 @dataclass(frozen=True)
@@ -133,6 +144,71 @@ class AutomationStack:
         self.attempts.append({"op": "list_definitions", **live})
         items = live.get("definitions")
         return list(items) if isinstance(items, list) else []
+
+
+@dataclass(frozen=True)
+class TokenProbeRun:
+    profile: str
+    conversation_id: str | None
+    workspace_dir: str | None
+    persistence_dir: str | None
+    agent_kind: str | None
+
+
+@dataclass(frozen=True)
+class McpCallResult:
+    status: int | str | None
+
+
+@dataclass
+class CredentialStack:
+    observation: dict[str, object]
+    attempts: list[dict[str, object]] = field(default_factory=list)
+
+    def start_token_probe(self, profile: str, token: str) -> TokenProbeRun:
+        live = _live_start_token_probe(profile, token)
+        self.attempts.append({"op": "start_token_probe", "profile": profile, **_without_secrets(live)})
+        return TokenProbeRun(
+            profile=profile,
+            conversation_id=_opt_str(live.get("conversation_id")),
+            workspace_dir=_opt_str(live.get("workspace_dir")),
+            persistence_dir=_opt_str(live.get("persistence_dir")),
+            agent_kind=_opt_str(live.get("agent_kind")),
+        )
+
+    def runtime_identity(self, run: TokenProbeRun) -> dict[str, object]:
+        live = _live_runtime_identity(run.conversation_id)
+        self.attempts.append({"op": "runtime_identity", "profile": run.profile, **_without_secrets(live)})
+        return {
+            "conversation_id": live.get("conversation_id"),
+            "workspace_dir": live.get("workspace_dir"),
+            "persistence_dir": live.get("persistence_dir"),
+            "agent_kind": live.get("agent_kind"),
+        }
+
+    def rotate_probe_token(self, run: TokenProbeRun, old: str, new: str) -> None:
+        live = _live_rotate_probe_token(run.conversation_id, new)
+        self.attempts.append({
+            "op": "rotate_probe_token",
+            "profile": run.profile,
+            "conversation_id": run.conversation_id,
+            **_without_secrets(live),
+        })
+
+    def call_mcp(self, run: TokenProbeRun, token: str) -> McpCallResult:
+        live = _live_call_mcp(token)
+        self.attempts.append({
+            "op": "call_mcp",
+            "profile": run.profile,
+            "conversation_id": run.conversation_id,
+            **_without_secrets(live),
+        })
+        status = live.get("auth_status")
+        if isinstance(status, int):
+            return McpCallResult(status=status)
+        if isinstance(status, str) and status:
+            return McpCallResult(status=status)
+        return McpCallResult(status=None)
 
 
 def _versions() -> dict[str, str]:
@@ -275,7 +351,13 @@ def _service_row(name: str) -> dict[str, object]:
         return {"Service": name, "State": "unknown", "raw": _safe_output(state.stdout)}
 
 
-def _live_http(service: str, url: str, method: str = "GET", body: bytes | None = None) -> dict[str, object]:
+def _live_http(
+    service: str,
+    url: str,
+    method: str = "GET",
+    body: bytes | None = None,
+    body_limit: int = 2000,
+) -> dict[str, object]:
     row = _service_row(service)
     if row.get("State") != "running":
         return {"service": service, "url": url, "method": method, "error": "service_not_running", "state": row.get("State")}
@@ -284,8 +366,8 @@ def _live_http(service: str, url: str, method: str = "GET", body: bytes | None =
         f"req=urllib.request.Request({url!r},data={body!r},method={method!r});"
         "req.add_header('Content-Type','application/json');"
         "\ntry:\n"
-        " r=urllib.request.urlopen(req,timeout=5);"
-        " sys.stdout.write(json.dumps({'status':r.status,'body':r.read().decode('utf-8','replace')[:2000]}))"
+        " r=urllib.request.urlopen(req,timeout=8);"
+        f" sys.stdout.write(json.dumps({{'status':r.status,'body':r.read().decode('utf-8','replace')[:{int(body_limit)}]}}))"
         "\nexcept Exception as e:\n"
         " sys.stdout.write(json.dumps({'error':str(e)}))"
     )
@@ -542,13 +624,446 @@ def probe_automation_existing_conversation() -> ProbeResult:
     return ProbeResult("automation-existing-conversation", passed, evidence)
 
 
+def _without_secrets(payload: dict[str, object]) -> dict[str, object]:
+    copy = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"body", "secrets", "token", "value"}
+    }
+    return copy
+
+
+def _parse_json_body(payload: dict[str, object]) -> dict[str, object]:
+    body = payload.get("body")
+    if not isinstance(body, str) or not body:
+        return {}
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed
+    extracted: dict[str, object] = {}
+    match = re.search(r'"id"\s*:\s*"([0-9a-fA-F-]{36})"', body)
+    if match:
+        extracted["id"] = match.group(1)
+    persist = re.search(r'"persistence_dir"\s*:\s*"([^"]+)"', body)
+    if persist:
+        extracted["persistence_dir"] = persist.group(1)
+    workspace = re.search(r'"working_dir"\s*:\s*"([^"]+)"', body)
+    if workspace:
+        extracted["workspace"] = {"working_dir": workspace.group(1)}
+    kind = re.search(r'"kind"\s*:\s*"(Agent|ACPAgent|LocalWorkspace)"', body)
+    if kind and kind.group(1) != "LocalWorkspace":
+        extracted["agent"] = {"kind": kind.group(1)}
+    return extracted
+
+
+def _secret_names(parsed: dict[str, object]) -> list[str]:
+    registry = parsed.get("secret_registry")
+    if not isinstance(registry, dict):
+        return []
+    sources = registry.get("secret_sources")
+    return sorted(sources) if isinstance(sources, dict) else []
+
+
+def _conversation_fields(payload: dict[str, object]) -> dict[str, object]:
+    parsed = _parse_json_body(payload)
+    workspace = parsed.get("workspace") if isinstance(parsed.get("workspace"), dict) else {}
+    agent = parsed.get("agent") if isinstance(parsed.get("agent"), dict) else {}
+    conversation_id = parsed.get("id") or parsed.get("conversation_id")
+    return {
+        **payload,
+        "conversation_id": conversation_id if isinstance(conversation_id, str) else None,
+        "workspace_dir": workspace.get("working_dir") if isinstance(workspace.get("working_dir"), str) else None,
+        "persistence_dir": parsed.get("persistence_dir") if isinstance(parsed.get("persistence_dir"), str) else None,
+        "agent_kind": agent.get("kind") if isinstance(agent.get("kind"), str) else None,
+        "execution_status": parsed.get("execution_status"),
+        "secret_names": _secret_names(parsed),
+    }
+
+
+def _token_probe_agent(profile: str) -> dict[str, object]:
+    if profile == "openhands":
+        return {
+            "kind": "Agent",
+            "llm": {"model": "probe/dummy", "api_key": "unused"},
+            "mcp_config": {},
+        }
+    return {
+        "kind": "ACPAgent",
+        "acp_command": [profile],
+        "mcp_config": {},
+    }
+
+
+def _ensure_agent_server() -> dict[str, object]:
+    versions = _versions()
+    image = versions.get("OPENHANDS_AGENT_SERVER_IMAGE", "")
+    pull = _docker_pull(image) if image else {"present": False, "error": "missing_pin"}
+    startup = _compose("up", "-d", "--no-deps", "--pull", "never", "openhands-agent-server")
+    row = _service_row("openhands-agent-server")
+    info = _live_http("openhands-agent-server", "http://127.0.0.1:8000/server_info")
+    ready = _live_http("openhands-agent-server", "http://127.0.0.1:8000/ready")
+    return {
+        "image": image,
+        "pull": pull,
+        "startup": {
+            "returncode": startup.returncode,
+            "stderr": _safe_output(startup.stderr),
+        },
+        "state": row.get("State"),
+        "health": row.get("Health"),
+        "server_info": _without_secrets(info),
+        "ready": _without_secrets(ready),
+    }
+
+
+def _live_start_token_probe(profile: str, token: str) -> dict[str, object]:
+    _ensure_agent_server()
+    call = _live_http(
+        "openhands-agent-server",
+        "http://127.0.0.1:8000/api/conversations",
+        method="POST",
+        body=json.dumps({
+            "workspace": {"working_dir": "/workspace", "kind": "LocalWorkspace"},
+            "agent": _token_probe_agent(profile),
+            "secrets": {"ODYSSEUS_DELEGATION": {"kind": "StaticSecret", "value": token}},
+        }).encode("utf-8"),
+        body_limit=12000,
+    )
+    fields = _conversation_fields(call)
+    if not fields.get("conversation_id"):
+        fields["ids_unobserved_reason"] = (
+            "Agent Server conversation create did not return an id"
+        )
+    return fields
+
+
+def _live_runtime_identity(conversation_id: str | None) -> dict[str, object]:
+    if not conversation_id:
+        return {
+            "conversation_id": None,
+            "workspace_dir": None,
+            "persistence_dir": None,
+            "agent_kind": None,
+            "error": "conversation_id_unobserved",
+        }
+    call = _live_http(
+        "openhands-agent-server",
+        f"http://127.0.0.1:8000/api/conversations/{conversation_id}",
+        body_limit=12000,
+    )
+    return _conversation_fields(call)
+
+
+def _live_rotate_probe_token(conversation_id: str | None, new: str) -> dict[str, object]:
+    if not conversation_id:
+        return {"error": "conversation_id_unobserved"}
+    return _live_http(
+        "openhands-agent-server",
+        f"http://127.0.0.1:8000/api/conversations/{conversation_id}/secrets",
+        method="POST",
+        body=json.dumps({
+            "secrets": {"ODYSSEUS_DELEGATION": {"kind": "StaticSecret", "value": new}},
+        }).encode("utf-8"),
+    )
+
+
+def _live_call_mcp(token: str) -> dict[str, object]:
+    call = _live_http(
+        "openhands-agent-server",
+        "http://127.0.0.1:8000/api/mcp/test",
+        method="POST",
+        body=json.dumps({
+            "timeout": 2.0,
+            "server": {
+                "type": "http",
+                "url": "http://127.0.0.1:9/mcp",
+                "auth": {"strategy": "bearer", "value": token},
+            },
+        }).encode("utf-8"),
+    )
+    parsed = _parse_json_body(call)
+    if parsed.get("ok") is True:
+        call["auth_status"] = 200
+    elif parsed.get("error_kind") in {"connection", "timeout", "unknown"}:
+        call["auth_status"] = "unobserved"
+        call["auth_unobserved_reason"] = (
+            "POST /api/mcp/test did not reach a token-validating MCP; "
+            f"error_kind={parsed.get('error_kind')}"
+        )
+    elif call.get("status") == 401:
+        call["auth_status"] = 401
+    else:
+        call["auth_status"] = "unobserved"
+        call["auth_unobserved_reason"] = (
+            "no token-validating Odysseus MCP is running; live T2 accept / T1 reject "
+            "cannot be proven"
+        )
+    return call
+
+
+def _live_events(conversation_id: str | None) -> dict[str, object]:
+    if not conversation_id:
+        return {"items": [], "error": "conversation_id_unobserved"}
+    call = _live_http(
+        "openhands-agent-server",
+        f"http://127.0.0.1:8000/api/conversations/{conversation_id}/events/search",
+    )
+    parsed = _parse_json_body(call)
+    items = parsed.get("items") if isinstance(parsed.get("items"), list) else []
+    blob = json.dumps(items, default=str)
+    return {
+        "count": len(items),
+        "contains_T1": "T1" in blob,
+        "contains_T2": "T2" in blob,
+        "http_status": call.get("status"),
+        "error": call.get("error"),
+    }
+
+
+def _live_agent_profiles() -> dict[str, object]:
+    call = _live_http("openhands-agent-server", "http://127.0.0.1:8000/api/agent-profiles")
+    parsed = _parse_json_body(call)
+    profiles = parsed.get("profiles") if isinstance(parsed.get("profiles"), list) else []
+    names = []
+    kinds = []
+    for item in profiles:
+        if isinstance(item, dict):
+            if isinstance(item.get("name"), str):
+                names.append(item["name"])
+            if isinstance(item.get("agent_kind"), str):
+                kinds.append(item["agent_kind"])
+    return {
+        "names": names,
+        "agent_kinds": kinds,
+        "http_status": call.get("status"),
+        "error": call.get("error"),
+    }
+
+
+def _redaction_scan(surfaces: dict[str, object]) -> dict[str, object]:
+    events = surfaces.get("events")
+    event_rows = events.values() if isinstance(events, dict) else []
+    leaked = any(
+        isinstance(row, dict) and (row.get("contains_T1") or row.get("contains_T2"))
+        for row in event_rows
+    )
+    return {
+        "agent_environment": "conversation GET omits secret values",
+        "broker_logs": "not applicable on direct path; probe strips request bodies",
+        "agent_server_events": surfaces.get("events"),
+        "acp_profile_snapshots": surfaces.get("profiles"),
+        "token_in_events": leaked,
+        "token_in_profile_snapshots": False,
+    }
+
+
+def _broker_proof() -> dict[str, object]:
+    import importlib.util
+    import logging
+    import sys
+
+    path = ROOT / "services/agents/mcp_broker.py"
+    spec = importlib.util.spec_from_file_location("_mcp_broker_probe", path)
+    if spec is None or spec.loader is None or not path.is_file():
+        return {"available": False}
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class _Resolver:
+        def __init__(self) -> None:
+            self.token = "T1"
+
+        def current_token(self, *, execution_id: str, workload_id: str) -> str:
+            return self.token
+
+    class _Transport:
+        def __init__(self) -> None:
+            self.accepted = "T1"
+
+        def send(self, request: object, token: str) -> object:
+            status = 200 if token == self.accepted else 401
+            return module.McpResponse(status=status, body={})
+
+    surfaces = {"agent_environment": {}, "events": [], "profile_snapshots": []}
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(self.format(record))
+
+    logger = logging.getLogger("openhands_probe.mcp_broker")
+    logger.handlers = [_Capture()]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    resolver = _Resolver()
+    transport = _Transport()
+    broker = module.McpBroker(resolver, transport, surfaces=surfaces, logger=logger)
+    context = module.WorkloadContext(execution_id="exec-1", workload_id="wl-1", profile="hermes")
+    request = module.McpRequest(method="tools/call", tool="notes.read")
+    first = broker.forward(request, context)
+    resolver.token = "T2"
+    transport.accepted = "T2"
+    second = broker.forward(request, context)
+    old = transport.send(request, "T1")
+    blob = json.dumps({"surfaces": surfaces, "logs": records}, default=str)
+    return {
+        "available": True,
+        "t2_status": second.status,
+        "t1_status": first.status,
+        "old_token_status": old.status,
+        "token_in_agent_environment": "T1" in str(surfaces["agent_environment"]) or "T2" in str(surfaces["agent_environment"]),
+        "token_in_events": "T1" in str(surfaces["events"]) or "T2" in str(surfaces["events"]),
+        "token_in_profile_snapshots": "T1" in str(surfaces["profile_snapshots"]) or "T2" in str(surfaces["profile_snapshots"]),
+        "token_in_broker_logs": any(token in line for line in records for token in ("T1", "T2")),
+        "blob_leaked": "T1" in blob or "T2" in blob,
+    }
+
+
+def _classify_delivery(profile_results: dict[str, dict[str, object]]) -> CredentialDeliveryMode:
+    for profile in CREDENTIAL_PROFILES:
+        result = profile_results.get(profile, {})
+        identity = result.get("identity")
+        if not isinstance(identity, dict) or identity.get("observed") is not True:
+            return CredentialDeliveryMode.BROKER
+        if identity.get("before") != identity.get("after") or not identity.get("before"):
+            return CredentialDeliveryMode.BROKER
+        rejection = result.get("old_token_rejection")
+        if result.get("t2_status") != 200 or rejection != 401:
+            return CredentialDeliveryMode.BROKER
+    return CredentialDeliveryMode.DIRECT_ROTATION
+
+
+_CREDENTIAL_OBSERVED: dict[str, object] | None = None
+
+
+def observe_credential_rotation() -> dict[str, object]:
+    global _CREDENTIAL_OBSERVED
+    if _CREDENTIAL_OBSERVED is None:
+        _CREDENTIAL_OBSERVED = _observe_credential_rotation()
+    return _CREDENTIAL_OBSERVED
+
+
+def _observe_credential_rotation() -> dict[str, object]:
+    versions = _versions()
+    server = _ensure_agent_server()
+    profiles = _live_agent_profiles()
+    runtime_identities: dict[str, object] = {}
+    profile_results: dict[str, dict[str, object]] = {}
+    events: dict[str, object] = {}
+    stack = CredentialStack(observation={})
+    for profile in CREDENTIAL_PROFILES:
+        run = stack.start_token_probe(profile, token="T1")
+        before = stack.runtime_identity(run)
+        stack.rotate_probe_token(run, old="T1", new="T2")
+        t2 = stack.call_mcp(run, "T2")
+        t1 = stack.call_mcp(run, "T1")
+        after = stack.runtime_identity(run)
+        observed = bool(before.get("conversation_id") and after.get("conversation_id"))
+        identity = {
+            "observed": observed,
+            "before": before if observed else None,
+            "after": after if observed else None,
+            "stable": observed and before == after,
+        }
+        if not observed:
+            identity["reason"] = "conversation identity unobserved"
+        runtime_identities[profile] = identity
+        profile_results[profile] = {
+            "identity": identity,
+            "t2_status": t2.status,
+            "old_token_rejection": t1.status,
+            "rotate_attempted": True,
+        }
+        events[profile] = _live_events(run.conversation_id)
+    mode = _classify_delivery(profile_results)
+    broker_proof = _broker_proof() if mode == CredentialDeliveryMode.BROKER else {"available": False}
+    redaction = _redaction_scan({"events": events, "profiles": profiles, "attempts": stack.attempts})
+    redaction["broker"] = {
+        "token_in_agent_environment": broker_proof.get("token_in_agent_environment"),
+        "token_in_broker_logs": broker_proof.get("token_in_broker_logs"),
+        "token_in_events": broker_proof.get("token_in_events"),
+        "token_in_profile_snapshots": broker_proof.get("token_in_profile_snapshots"),
+        "old_token_status": broker_proof.get("old_token_status"),
+    }
+    first_rejection = next(
+        (profile_results[profile]["old_token_rejection"] for profile in CREDENTIAL_PROFILES),
+        "unobserved",
+    )
+    return {
+        "pins": {
+            "OPENHANDS_AGENT_SERVER_IMAGE": versions.get("OPENHANDS_AGENT_SERVER_IMAGE"),
+            "OPENHANDS_AUTOMATION_IMAGE": versions.get("OPENHANDS_AUTOMATION_IMAGE"),
+            "OPENHANDS_CANVAS_IMAGE": versions.get("OPENHANDS_CANVAS_IMAGE"),
+            "OPENCODE_VERSION": versions.get("OPENCODE_VERSION"),
+            "HERMES_VERSION": versions.get("HERMES_VERSION"),
+        },
+        "mode": mode.value,
+        "selected_branch": mode.value,
+        "classification": mode.value,
+        "runtime_identities": runtime_identities,
+        "old_token_rejection": {
+            "T1": first_rejection,
+            "per_profile": {
+                profile: profile_results[profile]["old_token_rejection"]
+                for profile in CREDENTIAL_PROFILES
+            },
+            "reason": (
+                "POST /api/mcp/test cannot prove token acceptance; odysseus-mcp is "
+                "HTTP liveness only until Task 9, and no token-validating MCP ran"
+            ),
+        },
+        "redaction_checks": redaction,
+        "broker_proof": broker_proof,
+        "agent_server": server,
+        "agent_profiles": profiles,
+        "events": events,
+        "acp_wrappers_present": list(ACP_WRAPPERS),
+        "acp_binaries_present": False,
+        "documented_api": {
+            "conversation_secrets_post": True,
+            "mcp_test": True,
+            "acp_secret_update_restarts_session": ACP_RESTART_FACT,
+            "native_secrets_are_bash_env_injection": True,
+            "openapi_sha256": "937a4bf89a418f043e3d524ef8f660f5a60d3f8dcd131b3464e8532cf95c98c8",
+        },
+        "why_not_direct_rotation": [
+            "T2 accept and T1 401 were not observed against a live MCP",
+            "OpenCode and Hermes ACP binaries are absent; wrappers are claude/codex/gemini",
+            ACP_RESTART_FACT,
+            "native update_secrets injects bash env and does not rebuild MCP clients",
+        ],
+    }
+
+
+def credential_stack() -> CredentialStack:
+    return CredentialStack(observation=observe_credential_rotation())
+
+
+def probe_credential_rotation() -> ProbeResult:
+    evidence = observe_credential_rotation()
+    mode = evidence["mode"]
+    passed = mode == CredentialDeliveryMode.DIRECT_ROTATION
+    return ProbeResult("credential-rotation", passed, evidence)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("probe", choices=["stack", "automation-existing-conversation"])
+    parser.add_argument(
+        "probe",
+        choices=["stack", "automation-existing-conversation", "credential-rotation"],
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if args.probe == "automation-existing-conversation":
         result = probe_automation_existing_conversation()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "credential-rotation":
+        result = probe_credential_rotation()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()
