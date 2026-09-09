@@ -33,6 +33,9 @@ def test_all_first_party_components_are_pinned(version_file):
         "HERMES_VERSION",
     }
     assert all(value and ":latest" not in value for value in values.values())
+    compose = (ROOT / "docker-compose.openhands.yml").read_text(encoding="utf-8")
+    for key in ("OPENHANDS_AGENT_SERVER_IMAGE", "OPENHANDS_AUTOMATION_IMAGE", "OPENHANDS_CANVAS_IMAGE"):
+        assert values[key] in compose
 
 
 def test_probe_accepts_compose_json_lines(monkeypatch):
@@ -45,6 +48,7 @@ def test_probe_accepts_compose_json_lines(monkeypatch):
     responses = iter((
         '{"services": {"openhands-agent-server": {}, "openhands-automation": {}, "openhands-canvas": {}, "odysseus-mcp": {}}}',
         '{"Service": "openhands-agent-server", "State": "running", "Health": "healthy"}\n',
+        '',
     ))
     monkeypatch.setattr(probe, "_compose", lambda *args: type("Result", (), {"returncode": 0, "stdout": next(responses), "stderr": ""})())
 

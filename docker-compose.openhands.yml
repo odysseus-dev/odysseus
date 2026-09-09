@@ -54,13 +54,20 @@ services:
 
   odysseus-mcp:
     build: .
-    command: ["python", "-m", "mcp_servers.memory_server"]
+    # Task 1 exposes Odysseus liveness only. Task 9 replaces this contract
+    # endpoint with authenticated Streamable HTTP MCP; stdio cannot be a Compose service.
+    command: ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
     environment:
       ODYSSEUS_OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
       ODYSSEUS_OPENHANDS_AUTOMATION_URL: http://openhands-automation:8000
     depends_on:
       openhands-agent-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/api/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
 volumes:
