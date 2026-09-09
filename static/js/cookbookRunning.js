@@ -8,7 +8,12 @@ import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
-import { portOf, nextFreePort } from './cookbookPorts.js';
+import {
+  portOf,
+  nextFreePort,
+  taskServePort,
+  withEffectiveServeMetadata,
+} from './cookbookPorts.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
@@ -302,7 +307,7 @@ function _taskHostLabel(task) {
 }
 
 function _taskPort(task) {
-  return portOf(task?.payload?._cmd || '');
+  return taskServePort(task);
 }
 
 function _buildCrashReport(task, outputText) {
@@ -518,7 +523,7 @@ function _nextAvailablePort() {
   const presets = _loadPresets();
   const usedPorts = new Set();
   tasks.forEach(t => {
-    if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
+    if (t.type === 'serve' && (_isStoppableTask(t) || t.status === 'queued' || t._serveReady)) {
       const p = _taskPort(t);
       if (p) usedPorts.add(parseInt(p));
     }
@@ -1035,9 +1040,7 @@ function _winSessionCmd(task, tmuxArgs) {
     return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('has-session')) {
-    const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
+    const ps = _winSessionRootProofPs(task);
     return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('kill-session')) {
@@ -1066,15 +1069,7 @@ function _winPowerShellCmd(task, ps) {
 // are verified rather than silently skipped. Returns '' when unknown so callers
 // fail closed instead of reporting an unverifiable stop as clean.
 function _taskServePort(task) {
-  const persisted = task?.payload?.port ?? task?.port;
-  if (persisted != null && /^\d+$/.test(String(persisted))) return String(persisted);
-  const cmd = task?.payload?._cmd || '';
-  let m = cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
-  if (m) return m[1];
-  m = cmd.match(/OLLAMA_HOST=[^\s'"]*?:(\d+)/i);
-  if (m) return m[1];
-  if (/\bollama\s+serve\b/i.test(cmd)) return '11434';
-  return '';
+  return taskServePort(task);
 }
 
 // A distinctive token the genuine server's Win32 command line must contain,
@@ -1084,16 +1079,51 @@ function _taskServePort(task) {
 // identity, so the port owner is treated as unproven and not killed.
 function _taskProcessIdentity(task) {
   const cmd = task?.payload?._cmd || '';
-  let m = cmd.match(/([^\s"'\\/]+\.gguf)/i);
-  if (m) return m[1];
-  m = cmd.match(/--model[=\s]+"?([^"\s]+)"?/);
+  const stableToken = (value) => {
+    const seg = String(value || '').split(/[\\/]/).pop();
+    if (!seg || seg.length < 4 || /[?*$()[\]{}]/.test(seg)) return '';
+    return seg;
+  };
+  let m = cmd.match(/--model(?:-path|-id)?[=\s]+"?([^"\s]+)"?/i);
   if (m) {
-    const seg = m[1].split(/[\\/]/).pop();
-    if (seg && seg.length >= 4) return seg;
+    const token = stableToken(m[1]);
+    if (token) return token;
   }
+  m = cmd.match(/([^\s"'\\/]+\.gguf)/i);
+  if (m) {
+    const token = stableToken(m[1]);
+    if (token) return token;
+  }
+  m = cmd.match(/\bvllm\s+serve\s+([^\s'"]+)/i);
+  if (m) return m[1];
   m = cmd.match(/\bollama\s+run\s+([^\s'"]+)/i);
   if (m) return m[1];
+  const repo = String(task?.payload?.repo_id || task?.modelId || '').trim();
+  if (repo.length >= 4) return repo;
   return '';
+}
+
+function _taskProcessEngine(task) {
+  const cmd = task?.payload?._cmd || '';
+  if (/\bollama\s+serve\b/i.test(cmd)) return 'ollama';
+  if (/\bllama-server(?:\.exe)?\b/i.test(cmd) || /\bllama_cpp\.server\b/i.test(cmd)) return 'llama';
+  return '';
+}
+
+function _taskOwnsServeListener(task) {
+  if (task?.type !== 'serve') return false;
+  const cmd = task?.payload?._cmd || '';
+  const repo = String(task?.payload?.repo_id || '');
+  // Dependency repair and pip maintenance use the serve launcher only to get
+  // a tracked background session. They never own a network listener.
+  if (task?.payload?._dep || /^pip(?:-|\s|$)/i.test(repo)
+    || /\b(?:python3?|py)(?:\.exe)?\s+-m\s+pip\s+(?:install|uninstall)\b/i.test(cmd)
+    || /\b(?:pip3?(?:\.exe)?|uv(?:\.exe)?\s+pip)\s+(?:install|uninstall)\b/i.test(cmd)) return false;
+  // These commands attach a short-lived tracked wrapper to an existing Ollama
+  // daemon. Stopping the task must not kill that shared daemon or require its
+  // port to become unbound.
+  return !/\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b/i.test(cmd)
+    && !/\bollama\s+run\b/i.test(cmd);
 }
 
 // PowerShell single-quoted string literal (doubles embedded quotes).
@@ -1101,49 +1131,71 @@ function _psLit(value) {
   return `'${String(value ?? '').replace(/'/g, "''")}'`;
 }
 
-function _winSessionStopTreePs(task) {
+function _winSessionRootProofPs(task) {
   const host = _taskRemoteHost(task);
   const sessionDir = host ? 'odysseus-sessions' : 'odysseus-tmux';
   const sid = task.sessionId;
   const pidPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.pid')`;
-  const artifactPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.*')`;
+  const marker = _psLit(sid);
+  return `$sessionMarker = ${marker}; $p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -notmatch '^\\d+$') { exit 1 }; $proc = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$p) -ErrorAction SilentlyContinue; if ($null -eq $proc -or $null -eq $proc.CommandLine) { exit 1 }; $lower = $proc.CommandLine.ToLower(); if ($lower.Contains(($sessionMarker + '.sh').ToLower()) -or $lower.Contains(($sessionMarker + '_run.sh').ToLower()) -or $lower.Contains(($sessionMarker + '.cmd').ToLower()) -or $lower.Contains(($sessionMarker + '_run.ps1').ToLower())) { exit 0 }; exit 1`;
+}
+
+function _winSessionStopTreePs(task, { allowDeadServeCleanup = false } = {}) {
+  const host = _taskRemoteHost(task);
+  const sessionDir = host ? 'odysseus-sessions' : 'odysseus-tmux';
+  const sid = task.sessionId;
+  const pidPath = `(Join-Path $env:TEMP '${sessionDir}\\${sid}.pid')`;
+  // Launchers use both "<session>.*" (pid/log/wrapper) and
+  // "<session>_*" (the actual _run.sh/_run.ps1 script).
+  const artifactPaths = `@((Join-Path $env:TEMP '${sessionDir}\\${sid}.*'), (Join-Path $env:TEMP '${sessionDir}\\${sid}_*'))`;
   // The recorded PID is only a Git Bash wrapper in the launch chain, never
   // llama-server.exe itself: a native binary started through the bash runner
   // (or a ~/bin shim that `exec`s it) is reparented into a separate Win32
   // subtree, so a tree walk from the wrapper PID can miss the live GPU process.
-  // The authoritative signal is the LISTENING serve port — but its owner is
-  // killed only after its command line is proven to belong to this task
-  // (identity match), so a stale task or a reused port can never take down an
-  // unrelated service. A bound port whose owner cannot be proven ours fails
-  // closed and keeps the task so the UI can retry, while a task with no live
-  // process or listener is cleaned up so Remove can clear a dead row.
-  const isServe = task?.type === 'serve';
+  // We prove ownership twice: the process command line must identify this
+  // model/engine, and its Win32 ancestry must contain this session's runner
+  // artifact. The ancestry scan also finds a matching process before it opens
+  // the port, including the separate Git Bash subtree that caused the original
+  // GPU leak. Ambiguous listeners/PIDs fail closed and keep the task.
+  const isServe = _taskOwnsServeListener(task);
+  const allowDead = !!allowDeadServeCleanup;
   const port = _taskServePort(task);
   const portLit = /^\d+$/.test(port) ? port : '0';
   const idLit = _psLit(_taskProcessIdentity(task));
+  const engineLit = _psLit(_taskProcessEngine(task));
+  const sessionLit = _psLit(sid);
   const addTree = `$targets = [System.Collections.Generic.List[int]]::new(); function Add-Tree([int]$Id) { if ($Id -le 0) { return }; Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Add-Tree ([int]$_.ProcessId) }; if (-not $targets.Contains($Id)) { $targets.Add($Id) } }`;
-  const ownedFn = `$identity = ${idLit}; function Test-Owned([int]$Id) { if ($Id -le 0 -or $identity -eq '') { return $false }; $cl = (Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $Id) -ErrorAction SilentlyContinue).CommandLine; if ($null -eq $cl) { return $false }; return $cl.ToLower().Contains($identity.ToLower()) }`;
-  const listenersFn = `function Get-Listeners([int]$Prt) { $r = [System.Collections.Generic.List[int]]::new(); if ($Prt -le 0) { return ,$r }; foreach ($o in @(Get-NetTCPConnection -LocalPort $Prt -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique)) { if ([int]$o -gt 0) { $r.Add([int]$o) } }; return ,$r }`;
-  return `${addTree}; ${ownedFn}; ${listenersFn}; `
-    + `$port = ${portLit}; $isServe = ${isServe ? '$true' : '$false'}; `
-    + `$p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Add-Tree ([int]$p) }; `
-    + `$unverified = $false; foreach ($o in @(Get-Listeners $port)) { if (Test-Owned $o) { Add-Tree $o } else { $unverified = $true } }; `
-    + `if ($targets.Count -eq 0) { `
-    +   `if ($unverified) { Write-Error ('Serve port ' + $port + ' bound by an unverified process; refusing to force-kill'); exit 1 }; `
-    +   `if ($isServe -and $port -le 0) { Write-Error 'Serve task has no resolvable port; cannot verify shutdown'; exit 1 }; `
-    +   `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0 `
-    + `}; `
-    + `foreach ($target in @($targets)) { if (Get-Process -Id $target -ErrorAction SilentlyContinue) { & taskkill.exe /PID $target /T /F 2>$null | Out-Null } }; `
-    + `Start-Sleep -Milliseconds 250; `
-    + `$stillOwned = $false; foreach ($o in @(Get-Listeners $port)) { if (Test-Owned $o) { $stillOwned = $true } }; `
-    + `if ($stillOwned) { Write-Error ('Serve port ' + $port + ' still held by a task process after kill'); exit 1 }; `
-    + `$alive = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if ($alive.Count -gt 0) { Write-Error ('Processes still alive: ' + ($alive -join ',')); exit 1 }; `
-    + `Remove-Item ${artifactPath} -Force -ErrorAction SilentlyContinue; exit 0`;
+  const ownedFn = `$identity = ${idLit}; $engine = ${engineLit}; function Test-Owned([int]$Id, $Process = $null) { if ($Id -le 0) { return $false }; $proc = $Process; if ($null -eq $proc) { $proc = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $Id) -ErrorAction SilentlyContinue }; if ($null -eq $proc -or $null -eq $proc.CommandLine) { return $false }; if (@('powershell.exe','pwsh.exe','cmd.exe','bash.exe','sh.exe','ssh.exe') -contains $proc.Name.ToLower()) { return $false }; $cl = $proc.CommandLine; if ($identity -ne '' -and $cl.ToLower().Contains($identity.ToLower())) { return $true }; if ($engine -eq 'ollama' -and $proc.Name -ieq 'ollama.exe' -and $cl -match '(?i)(?:^|\\s)serve(?:\\s|$)') { return $true }; if ($engine -eq 'llama' -and ($proc.Name -ieq 'llama-server.exe' -or $proc.Name -ieq 'llama-server' -or $cl -match '(?i)(?:^|\\s)llama-server(?:\\.exe)?(?:\\s|$)' -or $cl -match '(?i)(?:^|\\s)-m\\s+llama_cpp\\.server(?:\\s|$)')) { return $true }; return $false }`;
+  const sessionFn = `$sessionMarker = ${sessionLit}; function Test-SessionRoot([int]$Id) { if ($Id -le 0 -or $sessionMarker -eq '') { return $false }; $cl = (Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $Id) -ErrorAction SilentlyContinue).CommandLine; if ($null -eq $cl) { return $false }; $lower = $cl.ToLower(); return $lower.Contains(($sessionMarker + '.sh').ToLower()) -or $lower.Contains(($sessionMarker + '_run.sh').ToLower()) -or $lower.Contains(($sessionMarker + '.cmd').ToLower()) -or $lower.Contains(($sessionMarker + '_run.ps1').ToLower()) }`;
+  const lineageFn = `function Get-SessionRoot([int]$Id) { $seen = [System.Collections.Generic.HashSet[int]]::new(); $cur = $Id; for ($i = 0; $i -lt 64 -and $cur -gt 0 -and $seen.Add($cur); $i++) { if (Test-SessionRoot $cur) { return [int]$cur }; $proc = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $cur) -ErrorAction SilentlyContinue; if ($null -eq $proc -or [int]$proc.ParentProcessId -eq $cur) { return 0 }; $cur = [int]$proc.ParentProcessId }; return 0 }`;
+  const listenersFn = `function Get-Listeners([int]$Prt) { if ($Prt -le 0) { return }; try { $net = @(Get-NetTCPConnection -LocalPort $Prt -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique); foreach ($id in $net) { if ([int]$id -gt 0) { [int]$id } }; return } catch {}; try { $rows = @(& netstat.exe -ano -p TCP 2>$null); if ($LASTEXITCODE -ne 0) { throw 'netstat failed' }; foreach ($line in $rows) { $parts = @(($line -split '\\s+') | Where-Object { $_ }); if ($parts.Count -ge 5 -and $parts[0] -eq 'TCP' -and $parts[1] -match (':' + $Prt + '$') -and $parts[2] -match ':0$' -and $parts[4] -match '^\\d+$') { [int]$parts[4] } } } catch { $script:listenerQueryOk = $false } }`;
+  return `${addTree}; ${ownedFn}; ${sessionFn}; ${lineageFn}; ${listenersFn}; `
+      + `$port = ${portLit}; $isServe = ${isServe ? '$true' : '$false'}; `
+      + `$allowDeadServeCleanup = ${allowDead ? '$true' : '$false'}; `
+      + `if ($isServe -and $port -le 0) { Write-Error 'Serve task has no resolvable port; cannot verify shutdown'; exit 1 }; `
+      + `$unsafePid = $false; $sessionRootVerified = $false; $p = Get-Content ${pidPath} -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { $pidProc = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$p) -ErrorAction SilentlyContinue; if ($null -ne $pidProc) { if (Test-SessionRoot ([int]$p)) { $sessionRootVerified = $true; Add-Tree ([int]$p) } else { $unsafePid = $true } } }; `
+      + `$script:processQueryOk = $true; if ($isServe) { try { $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { $script:processQueryOk = $false; $processes = @() }; if (-not $processQueryOk) { Write-Error 'Could not inspect Windows processes; refusing an unverifiable stop'; exit 1 }; foreach ($candidate in $processes) { if (Test-Owned ([int]$candidate.ProcessId) $candidate) { $root = Get-SessionRoot ([int]$candidate.ProcessId); if ($root -gt 0) { Add-Tree $root; Add-Tree ([int]$candidate.ProcessId) } } } }; `
+      + `$script:listenerQueryOk = $true; $listeners = @(); if ($isServe) { $listeners = @(Get-Listeners $port); if (-not $listenerQueryOk) { Write-Error ('Could not inspect serve port ' + $port + '; refusing an unverifiable stop'); exit 1 } }; `
+      + `$unverified = $false; foreach ($o in $listeners) { $root = Get-SessionRoot ([int]$o); if ((Test-Owned ([int]$o)) -and $root -gt 0) { Add-Tree $root; Add-Tree ([int]$o) } else { $unverified = $true } }; `
+      + `if ($unsafePid) { Write-Error 'Recorded task PID belongs to an unverified process; refusing to force-kill'; exit 1 }; `
+      + `if ($unverified) { Write-Error ('Serve port ' + $port + ' is bound by an unverified process; refusing to force-kill'); exit 1 }; `
+      + `if ($targets.Count -eq 0) { `
+      +   `if ($isServe -and -not $allowDeadServeCleanup) { Write-Error 'No verified session root or listener was found; refusing an unverifiable serve cleanup'; exit 1 }; `
+      +   `$artifacts = ${artifactPaths}; Remove-Item -Path $artifacts -Force -ErrorAction SilentlyContinue; exit 0 `
+      + `}; `
+      + `foreach ($target in @($targets)) { if (Get-Process -Id $target -ErrorAction SilentlyContinue) { & taskkill.exe /PID $target /T /F 2>$null | Out-Null } }; `
+      + `Start-Sleep -Milliseconds 250; `
+      + `$script:listenerQueryOk = $true; $remainingListeners = @(); if ($isServe) { $remainingListeners = @(Get-Listeners $port); if (-not $listenerQueryOk) { Write-Error ('Could not verify serve port ' + $port + ' after kill'); exit 1 }; if ($remainingListeners.Count -gt 0) { Write-Error ('Serve port ' + $port + ' is still bound after kill'); exit 1 } }; `
+      + `$alive = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if ($alive.Count -gt 0) { Write-Error ('Processes still alive: ' + ($alive -join ',')); exit 1 }; `
+      // Check only matching processes still rooted in this session. Another
+      // valid task may serve the same model/engine on a different port.
+      + `if ($isServe) { try { $remainingOwned = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { (Test-Owned ([int]$_.ProcessId) $_) -and (Get-SessionRoot ([int]$_.ProcessId)) -gt 0 }) } catch { Write-Error 'Could not verify model processes after kill'; exit 1 }; if ($remainingOwned.Count -gt 0) { Write-Error ('Matching model process still exists after kill: ' + (($remainingOwned | Select-Object -ExpandProperty ProcessId) -join ',')); exit 1 } }; `
+      + `$artifacts = ${artifactPaths}; Remove-Item -Path $artifacts -Force -ErrorAction SilentlyContinue; exit 0`;
 }
 
-export function _tmuxGracefulKill(task) {
+export function _tmuxGracefulKill(task, options = {}) {
   if (_isWindows(task)) {
-    const ps = _winSessionStopTreePs(task);
+    const ps = _winSessionStopTreePs(task, options);
     return _winPowerShellCmd(task, ps);
   }
   const host = _taskRemoteHost(task);
@@ -1153,13 +1205,13 @@ export function _tmuxGracefulKill(task) {
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
 }
 
-async function _stopTaskSession(task) {
+async function _stopTaskSession(task, { allowDeadServeCleanup = false } = {}) {
   let commandOk = false;
   try {
     const response = await _fetchWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
+      body: JSON.stringify({ command: _tmuxGracefulKill(task, { allowDeadServeCleanup }) }),
     });
     if (!response.ok) return false;
     const result = await response.json();
@@ -1192,6 +1244,73 @@ async function _stopTaskSession(task) {
   // follow-up probe look dead, so never let that override a failed helper.
   if (_isWindows(task) && !commandOk) return false;
   return probeKnown || commandOk;
+}
+
+async function _stopTaskFromElement(el, task, { showFailure = true } = {}) {
+  if (!task) return false;
+  // Abort reconnect before the shell writes a failure marker; otherwise a
+  // user-requested stop can race the download auto-retry path.
+  if (el?._abort) el._abort.abort();
+  const badge = el?.querySelector?.('.cookbook-task-status') || null;
+  if (badge) {
+    badge.textContent = 'stopping...';
+    badge.className = 'cookbook-task-status cookbook-task-stopping';
+  }
+  _updateTask(task.sessionId, { _userStopped: true });
+  const outputText = el?.querySelector?.('.cookbook-output-pre')?.textContent || task.output || '';
+  const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+  // A direct `ollama serve` owns its daemon and the verified stop below kills
+  // it. Sidecar/`ollama run` tasks share an external daemon, so unload only
+  // after proving this exact tracked session is still live. A stale task must
+  // never send keep_alive:0 to a new service that reused its saved port.
+  if (ollamaUnload && !_taskOwnsServeListener(task) && await _taskSessionOwnershipConfirmed(task)) {
+    try {
+      await _fetchWithTimeout('/api/shell/exec', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: ollamaUnload }),
+      });
+    } catch {}
+  }
+  const stopped = await _stopTaskSession(task, {
+    allowDeadServeCleanup: task.type === 'serve' && _canClearTask(task),
+  });
+  if (!stopped) {
+    const priorStatus = task.status || 'running';
+    if (el?.dataset) el.dataset.status = priorStatus;
+    _updateTask(task.sessionId, { _userStopped: false, status: priorStatus });
+    if (badge) {
+      badge.textContent = _statusLabel(priorStatus, task.type);
+      badge.className = `cookbook-task-status cookbook-task-${priorStatus}`;
+    }
+    if (showFailure) {
+      uiModule.showToast('Stop failed: process exit was not confirmed. The task was kept so you can retry.', 'error');
+    }
+    return false;
+  }
+  if (el?.dataset) el.dataset.status = 'stopped';
+  if (task.type === 'serve' && task.payload) {
+    _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
+  }
+  if (el) _animateOutThenRemove(el, task.sessionId);
+  else _removeTask(task.sessionId);
+  return true;
+}
+
+async function _taskSessionOwnershipConfirmed(task) {
+  if (!task?.sessionId) return false;
+  try {
+    const response = await _fetchWithTimeout('/api/shell/exec', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
+    });
+    if (!response.ok) return false;
+    const result = await response.json();
+    return Number(result?.exit_code ?? 1) === 0;
+  } catch (_) {
+    return false;
+  }
 }
 
 // Force-kill escalation: SIGKILL the tmux pane's owning PID and any children,
@@ -1251,9 +1370,7 @@ function _ollamaBaseUrlForTask(task, outputText = '') {
   const out = String(outputText || '');
   const ready = out.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
   if (ready) return ready[1].replace(/\/+$/, '');
-  const cmd = String(task?.payload?._cmd || '');
-  const host = cmd.match(/OLLAMA_HOST=([^\s]+)/)?.[1] || '';
-  const port = host.match(/:(\d+)$/)?.[1] || '11434';
+  const port = _taskServePort(task) || '11434';
   return `http://127.0.0.1:${port}`;
 }
 
@@ -1280,8 +1397,7 @@ function _endpointUrlForTask(task, outputText = '') {
     return _ollamaBaseUrlForTask(task, outputText) + '/v1';
   }
   const host = _connectHostFromRemote(_taskRemoteHost(task));
-  const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-  const port = portMatch ? portMatch[1] : '8000';
+  const port = _taskServePort(task) || '8000';
   return `http://${host}:${port}/v1`;
 }
 
@@ -1395,8 +1511,7 @@ function _redactPresetForStorage(preset) {
 
 function _saveTaskAsPreset(task, label) {
   const host = task.remoteHost || 'localhost';
-  const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-  const port = portMatch ? portMatch[1] : '8000';
+  const port = _taskServePort(task) || '8000';
   const presets = _loadPresets();
   if (presets.some(p => p.cmd === task.payload._cmd)) return false;
   presets.push(_redactPresetForStorage({ name: task.name, model: task.payload.repo_id, backend: 'vllm', host, port, cmd: task.payload._cmd, remoteHost: task.remoteHost || '', label: label || task.name, ..._presetEnvFields(task) }));
@@ -1449,8 +1564,7 @@ function _autoSaveWorkingConfig(task) {
   // Respect the per-model cap the manual save flow uses (max 5).
   if (_presetsForModelLocal(presets, model).length >= 5) { task._autoSaved = true; return; }
   const host = task.remoteHost || 'localhost';
-  const portMatch = cmd.match(/--port[=\s]+(\d+)/);
-  const port = portMatch ? portMatch[1] : '8000';
+  const port = _taskServePort(task) || '8000';
   presets.push(_redactPresetForStorage({
     name: task.name, model, backend: 'vllm', host, port,
     cmd, remoteHost: task.remoteHost || '',
@@ -2104,13 +2218,14 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   // old one instead of leaving a dead duplicate behind. (The retry buttons
   // already removed their own task, so this is a no-op for them.)
   if (!_launchAnyway) try {
-    const _pm = cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
-    const _newPort = _pm ? _pm[1] : '';
+    // Only replace a task when the submitted command explicitly targets its
+    // port. Bare `ollama serve` lets the backend choose a free 11434-11444
+    // port, so treating it as 11434 here could stop an unrelated live task.
+    const _newPort = portOf(cmd);
     if (_newPort) {
       for (const _t of _loadTasks()) {
         if (_t.type !== 'serve' || !_t.payload || !_t.payload._cmd) continue;
-        const _tm = _t.payload._cmd.match(/--port[=\s]+(\d+)/) || _t.payload._cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
-        if ((_tm ? _tm[1] : '') === _newPort && (_t.remoteHost || '') === _host) {
+        if (_taskServePort(_t) === _newPort && (_t.remoteHost || '') === _host) {
           if (!(await _stopTaskSession(_t))) {
             uiModule.showToast(`Launch aborted: an existing server on port ${_newPort} could not be confirmed stopped.`, 'error');
             return;
@@ -2182,7 +2297,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     // _fields = the exact structured serve-form values used for this launch,
     // so the "Edit / relaunch" button can re-open the Serve panel pre-filled
     // with these precise settings (not just the last-used-for-repo state).
-    const payload = { repo_id: repo, remote_host: _host || undefined, remote_server_key: _serverMetaKey || undefined, remote_server_name: _serverMetaName || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
+    const payload = withEffectiveServeMetadata({ repo_id: repo, remote_host: _host || undefined, remote_server_key: _serverMetaKey || undefined, remote_server_name: _serverMetaName || undefined, ssh_port: _sp || undefined, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus }, data, cmd);
     _addTask(data.session_id, shortName, 'serve', payload);
     uiModule.showToast(`Serving ${shortName}...`);
     // Auto-register may have enabled an existing (offline) endpoint for this
@@ -2417,59 +2532,44 @@ export function _renderRunningTab() {
         return;
       }
       if (!await window.styledConfirm(`Clear ${toRemove.length} finished task${toRemove.length === 1 ? '' : 's'} on ${_serverName(host)}?`, { confirmText: 'Clear' })) return;
-      toRemove.forEach(t => _tombstoneTask(t.sessionId));
-      const remaining = allTasks.filter(t => _taskServerKey(t) !== host || !_canClearTask(t));
-      _saveTasks(remaining);
-      // Fade/slide each finished card out (same exit as the per-card clear)
-      // instead of yanking them instantly.
-      toRemove.forEach(t => {
+      let clearedCount = 0;
+      for (const t of toRemove) {
         const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-        if (el) {
-          _disposeTaskCard(el);
-          el.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
-          el.style.opacity = '0';
-          el.style.transform = 'translateX(-10px)';
-        }
-      });
-      // After the animation, remove the cards and tidy up the now-empty section.
-      setTimeout(() => {
-        toRemove.forEach(t => {
-          const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-          if (el) {
-            _disposeTaskCard(el);
-            el.remove();
-          }
-        });
-        // If this server's section is now empty (only finished tasks lived here),
-        // remove the whole section so its header/title doesn't linger.
-        const _sk = (host || 'local').replace(/[^a-zA-Z0-9-]/g, '_');
-        const _sec = group.querySelector(`.cookbook-server-section-${_sk}`);
-        if (_sec && !_sec.querySelector('.cookbook-task')) _sec.remove();
-        if (!remaining.length) _renderRunningTab();
-      }, 360);
+        if (await _stopTaskFromElement(el, t, { showFailure: false })) clearedCount += 1;
+      }
+      const failedCount = toRemove.length - clearedCount;
+      if (failedCount) {
+        uiModule.showToast(`Cleared ${clearedCount}; ${failedCount} could not be confirmed dead and ${failedCount === 1 ? 'was' : 'were'} kept.`, 'error');
+      }
     });
   });
 
-  // Wire "Stop all" buttons — stop every running task on that server.
+  // Wire "Stop all" buttons — stop every live task on that server. Ready
+  // serves still own their GPU process even though the monitor promoted their
+  // status from running.
   group.querySelectorAll('[data-stop-server]').forEach(btn => {
     if (btn._bound) return;
     btn._bound = true;
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();  // don't toggle the section collapse
       const host = btn.dataset.stopServer;
-      const running = _loadTasks().filter(t => _taskServerKey(t) === host && t.status === 'running');
+      const running = _loadTasks().filter(t => _taskServerKey(t) === host && _isStoppableTask(t));
       if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
       if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
-      // Mark every task as user-stopped BEFORE firing the kills so that the
+      // Mark every task as user-stopped BEFORE starting the kills so that the
       // download auto-retry logic never restarts a task the user just stopped.
       running.forEach(t => _updateTask(t.sessionId, { _userStopped: true }));
-      // Reuse each task's own Stop action so it does the full teardown
-      // (send C-c, drop the endpoint, mark stopped) consistently.
-      running.forEach(t => {
+      let stoppedCount = 0;
+      for (const t of running) {
         const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-        el?.querySelector('.cookbook-task-action-stop')?.click();
-      });
-      uiModule.showToast(`Stopped ${running.length} task${running.length > 1 ? 's' : ''} on ${_serverName(host)}`);
+        if (await _stopTaskFromElement(el, t, { showFailure: false })) stoppedCount += 1;
+      }
+      const failedCount = running.length - stoppedCount;
+      if (failedCount) {
+        uiModule.showToast(`Stopped ${stoppedCount}; ${failedCount} could not be confirmed and ${failedCount === 1 ? 'was' : 'were'} kept.`, 'error');
+      } else {
+        uiModule.showToast(`Stopped ${stoppedCount} task${stoppedCount > 1 ? 's' : ''} on ${_serverName(host)}`);
+      }
     });
   });
 
@@ -2661,7 +2761,7 @@ export function _renderRunningTab() {
     // morphs to a red ✕ on hover (see CSS).
     const _clearChk = el.querySelector('.cookbook-task-check');
     if (_clearChk) {
-      _clearChk.addEventListener('click', (e) => {
+      _clearChk.addEventListener('click', async (e) => {
         e.stopPropagation();
         // If the output still shows an active shard line, the task isn't
         // actually finished — clicking is "reconnect" (flip back to running
@@ -2687,16 +2787,9 @@ export function _renderRunningTab() {
           _renderRunningTab();
           return;
         }
-        // Otherwise: real clear. Kill the tmux session as belt-and-suspenders,
-        // then animate out + remove the row.
-        try {
-          _fetchWithTimeout('/api/shell/exec', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-          }).catch(() => {});
-        } catch {}
-        _animateOutThenRemove(el, task.sessionId);
+        // Otherwise, verify the terminal task has no live/ambiguous process
+        // before dropping the last retry handle from the UI.
+        await _stopTaskFromElement(el, task);
       });
     }
 
@@ -2819,8 +2912,7 @@ export function _renderRunningTab() {
         if (task.type === 'serve' && task.payload?._cmd) {
           items.push({ group: 'endpoint', label: 'Register endpoint', action: 'register-endpoint', custom: async () => {
             const host = _connectHostFromRemote(task.remoteHost);
-            const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-            const port = portMatch ? portMatch[1] : '8000';
+            const port = _taskServePort(task) || '8000';
             const baseUrl = `http://${host}:${port}/v1`;
             try {
               // Check existing first — offer to overwrite if present
@@ -3039,80 +3131,13 @@ export function _renderRunningTab() {
 
     // Wire stop
     el.querySelector('.cookbook-task-action-stop').addEventListener('click', async () => {
-      // Abort the reconnect loop before sending kill so that a DOWNLOAD_FAILED
-      // marker written by the shell wrapper (on SIGINT/non-zero exit) cannot
-      // trigger an auto-retry after a manual stop.
-      if (el._abort) el._abort.abort();
-      const badge = el.querySelector('.cookbook-task-status');
-      if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
-      _updateTask(task.sessionId, { _userStopped: true });
-      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
-      if (ollamaUnload) {
-        try {
-          await _fetchWithTimeout('/api/shell/exec', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: ollamaUnload }),
-          });
-        } catch {}
-      }
-      const stopped = await _stopTaskSession(task);
-      if (!stopped) {
-        const priorStatus = task.status || 'running';
-        el.dataset.status = priorStatus;
-        _updateTask(task.sessionId, { _userStopped: false, status: priorStatus });
-        if (badge) {
-          badge.textContent = _statusLabel(priorStatus, task.type);
-          badge.className = `cookbook-task-status cookbook-task-${priorStatus}`;
-        }
-        uiModule.showToast('Stop failed: process exit was not confirmed. The task was kept so you can retry.', 'error');
-        return;
-      }
-      el.dataset.status = 'stopped';
-      if (task.type === 'serve' && task.payload) {
-        _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
-      }
-      // Only remove the card after the process/session is confirmed gone.
-      _animateOutThenRemove(el, task.sessionId);
+      await _stopTaskFromElement(el, task);
     });
 
-    // Wire kill — awaits the SSH/tmux kill and verifies the session is
-    // actually gone before removing the row. Previously fire-and-forget,
-    // which meant a failed kill (wrong remoteHost, SSH error, tmux server
-    // already exited) silently left the live serve running while the
-    // row disappeared from the UI.
+    // Wire kill through the same abort, ownership, and verified-stop path as
+    // Stop. This prevents reconnect/auto-retry from racing a user removal.
     el.querySelector('.cookbook-task-action-kill').addEventListener('click', async () => {
-      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
-      if (ollamaUnload) {
-        try {
-          await _fetchWithTimeout('/api/shell/exec', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: ollamaUnload }),
-          });
-        } catch (_) { /* unload best-effort */ }
-      }
-      const killOk = await _stopTaskSession(task);
-      if (!killOk) {
-        try { uiModule.showToast('Kill failed: process exit was not confirmed. The task was kept so you can retry.', 'error'); } catch (_) {}
-        return;  // leave the row so the user can retry
-      }
-      if (task.type === 'serve' && task.payload) {
-        const endpointUrl = _endpointUrlForTask(task, outputText);
-        _removeEndpointByUrl(endpointUrl);
-        const modelName = task.payload.model || task.name || '';
-        if (modelName) {
-          _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' })
-            .then(r => r.json())
-            .then(eps => {
-              const ep = eps.find(e => e.name === modelName || e.base_url === endpointUrl);
-              if (ep) _fetchWithTimeout(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' }).then(() => _refreshModelsAfterEndpointChange());
-            }).catch(() => {});
-        }
-      }
-      _animateOutThenRemove(el, task.sessionId);
+      if (!await _stopTaskFromElement(el, task)) return;
     });
 
     // Wire retry
@@ -3754,13 +3779,11 @@ async function _reconnectTask(el, task) {
         if (task.type === 'serve' && !task._endpointAdded && !task._endpointAddInFlight && task._serveReady) {
           task._endpointAddInFlight = true;
           let host = _connectHostFromRemote(task.remoteHost);
-          const portMatch = task.payload?._cmd?.match(/--port[=\s]+(\d+)/)
-            || task.payload?._cmd?.match(/(?:^|\s)-p[=\s]+(\d+)/)
-            || snapshot.match(/Uvicorn running on\D*?:(\d+)/i)
+          const portMatch = snapshot.match(/Uvicorn running on\D*?:(\d+)/i)
             || snapshot.match(/running on\D*?:(\d+)/i)
             || snapshot.match(/listening on\D*?:(\d+)/i)
             || snapshot.match(/port[:=\s]+(\d+)/i);
-          let port = portMatch ? portMatch[1] : '8000';
+          let port = _taskServePort(task) || (portMatch ? portMatch[1] : '8000');
           let baseUrl = `http://${host}:${port}/v1`;
           const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
           if (ollamaUrlMatch) {
@@ -3887,13 +3910,19 @@ const BG_LEADER_KEY = 'odysseus-cookbook-bg-leader';
 const BG_LEADER_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const BG_LEADER_TTL_MS = 15000;
 
+function _isStoppableTask(task) {
+  return !!task && (
+    task.status === 'running'
+    || task.status === 'ready'
+    || _downloadOutputLooksActive(task)
+  );
+}
+
 function _hasLiveTasks(tasks = null) {
   const list = tasks || _loadTasks();
   return list.some(t =>
-    t.status === 'running'
+    _isStoppableTask(t)
     || t.status === 'queued'
-    || t.status === 'ready'
-    || _downloadOutputLooksActive(t)
   );
 }
 
@@ -3994,8 +4023,7 @@ async function _checkServeReachability() {
     ]);
     for (const task of serveTasks) {
       const host = _connectHostFromRemote(task.remoteHost);
-      const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-      const port = portMatch ? portMatch[1] : '8000';
+      const port = _taskServePort(task) || '8000';
       const baseUrl = `http://${host}:${port}/v1`;
       const ep = (eps || []).find(e => e.base_url === baseUrl);
       if (!ep) continue;                       // not registered yet — can't judge
@@ -4432,9 +4460,7 @@ async function _pollBackgroundStatus() {
       const localTask = localTasks.find(lt => lt.sessionId === t.session_id);
 
       let host = _connectHostFromRemote(localTask?.remoteHost || t.remote);
-      const portMatch = localTask?.payload?._cmd?.match(/--port\s+(\d+)/)
-        || localTask?.payload?._cmd?.match(/OLLAMA_HOST=[^\s:]+:(\d+)/);
-      let port = portMatch ? portMatch[1] : '8000';
+      let port = _taskServePort(localTask) || '8000';
       let baseUrl = `http://${host}:${port}/v1`;
       const snapshot = t.output || localTask?.output || '';
       const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
@@ -4593,4 +4619,4 @@ export function initRunning(shared) {
 }
 
 // Also export _retryDownload and _nextAvailablePort for use by other modules
-export { _retryDownload, _nextAvailablePort, _processQueue, _taskPort };
+export { _retryDownload, _nextAvailablePort, _processQueue, _taskPort, _stopTaskFromElement };

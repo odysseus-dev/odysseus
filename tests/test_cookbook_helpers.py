@@ -1,4 +1,5 @@
 import json
+import base64
 import os
 import subprocess
 import sys
@@ -6,6 +7,12 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from routes.cookbook_routes import (
+    _serve_launch_result,
+    _serve_port_from_cmd,
+    _remote_ollama_port_probe_command,
+    _windows_serve_command_lines,
+)
 
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
@@ -656,6 +663,67 @@ def test_model_serve_normalizes_llama_cpp_python_cache_types_after_validation():
     assert "req.cmd = _validate_serve_cmd(req.cmd) or \"\"" in src
     assert "req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or \"\"" in src
     assert src.index("_validate_serve_cmd(req.cmd)") < src.index("_normalize_llama_cpp_python_cache_types(req.cmd)")
+
+
+@pytest.mark.parametrize(
+    ("cmd", "expected"),
+    [
+        ("vllm serve org/model --port 8000", "8000"),
+        ("llama-server --port=8001 --model model.gguf", "8001"),
+        ("llama-server -p 8002 --model model.gguf", "8002"),
+        ("llama-server -p=8003 --model model.gguf", "8003"),
+        ("OLLAMA_HOST=127.0.0.1:11435 ollama serve", "11435"),
+        ("OLLAMA_HOST='[::1]:11436' ollama serve", "11436"),
+        ("$env:OLLAMA_HOST = '0.0.0.0:11437'; ollama serve", "11437"),
+        ("ollama serve", "11434"),
+        ("docker exec ollama-rocm ollama show llama3", "11434"),
+        ("python -m pip install package", ""),
+    ],
+)
+def test_serve_port_from_cmd_handles_all_supported_forms(cmd, expected):
+    assert _serve_port_from_cmd(cmd) == expected
+
+
+def test_serve_launch_result_returns_authoritative_ollama_metadata():
+    result = _serve_launch_result(
+        session_id="serve-abc12345",
+        remote=None,
+        endpoint_id="local-abc12345",
+        cmd="OLLAMA_HOST=127.0.0.1:11437 ollama serve",
+    )
+
+    assert result == {
+        "ok": True,
+        "session_id": "serve-abc12345",
+        "remote": "local",
+        "endpoint_id": "local-abc12345",
+        "effective_cmd": "OLLAMA_HOST=127.0.0.1:11437 ollama serve",
+        "runtime_port": 11437,
+    }
+
+
+def test_windows_ollama_runner_keeps_effective_command_replay_safe():
+    effective_cmd = "OLLAMA_HOST=0.0.0.0:11437 ollama serve"
+
+    assert _windows_serve_command_lines(effective_cmd) == [
+        "$env:OLLAMA_HOST = '0.0.0.0:11437'",
+        "ollama serve",
+    ]
+    assert _validate_serve_cmd(effective_cmd) == effective_cmd
+
+
+def test_remote_ollama_port_probe_uses_the_target_platform_shell():
+    windows = _remote_ollama_port_probe_command(11434, 2, is_windows=True)
+    encoded = windows.rsplit(" ", 1)[-1]
+    decoded = base64.b64decode(encoded).decode("utf-16le")
+
+    assert windows.startswith("powershell -NoProfile -NonInteractive -EncodedCommand ")
+    assert "GetActiveTcpListeners" in decoded
+    assert "@(11434,11435,11436)" in decoded
+
+    posix = _remote_ollama_port_probe_command(11434, 1, is_windows=False)
+    assert "/dev/tcp/127.0.0.1/$p" in posix
+    assert "for p in 11434 11435" in posix
 
 
 def test_ollama_serve_defaults_to_loopback_bind():
