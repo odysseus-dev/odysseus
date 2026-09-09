@@ -1,0 +1,10 @@
+agent_profile_id: opencode
+agent_profile_revision: 1
+transport: acp
+command: opencode acp
+snapshot_rejects_unknown_fields: true
+capabilities:
+  - documents.read
+archetypes:
+  - chat
+extra: forbid

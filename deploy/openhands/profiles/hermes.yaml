@@ -1,0 +1,12 @@
+agent_profile_id: hermes
+agent_profile_revision: 12
+transport: acp
+command: hermes acp
+snapshot_rejects_unknown_fields: true
+capabilities:
+  - research.invoke
+  - documents.read
+archetypes:
+  - chat
+  - deep-research
+extra: forbid
