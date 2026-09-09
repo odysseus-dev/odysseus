@@ -1,6 +1,11 @@
 """Regression guards for the Cookbook local server profile."""
 
+import json
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,15 +75,72 @@ def test_model_download_resolves_local_profile_before_building_payload():
     assert "host ? (srv.env" not in model_download
 
 
-def test_synthesized_local_entry_uses_local_only_defaults_under_active_remote():
-    # A missing Local entry is synthesized from local-only defaults. When a
-    # remote server is the active context, _es.env/_es.envPath describe the
-    # remote venv, so the synthetic Local entry must not inherit them — that
-    # would make Local build/download/serve resolve the remote interpreter/path.
-    synth = _between(COOKBOOK, "if (!_localSeen) {", "if (!_es.remoteHost) {")
+def test_missing_local_active_remote_executes_local_only_transition():
+    if shutil.which("node") is None:
+        pytest.skip("node binary not on PATH")
 
-    assert "const _localActive = !_es.remoteHost" in synth
-    assert "env: _localActive ? (_es.env || 'none') : 'none'" in synth
-    assert "envPath: _localActive ? (_es.envPath || '') : ''" in synth
-    # The old unconditional inheritance of the active (possibly remote) env is gone.
-    assert "env: _es.env || 'none', envPath: _es.envPath || ''" not in synth
+    server_helpers = _between(
+        COOKBOOK,
+        "function _isLocalEntry(s)",
+        "const GEMMA4_THINKING_CHAT_TEMPLATE",
+    ).replace("export ", "")
+    selection = _between(
+        COOKBOOK,
+        "function _applyServerSelection(val)",
+        "async function _refreshScanDownloadTarget()",
+    )
+    synthesis = _between(
+        COOKBOOK,
+        "let _localSeen = false;",
+        "if (_es.remoteHost &&",
+    )
+    state = {
+        "remoteHost": "gpu.example",
+        "remoteServerKey": "srv:remote",
+        "env": "venv",
+        "envPath": "/remote/venv",
+        "platform": "linux",
+        "hostPlatform": "windows",
+        "servers": [{
+            "name": "Remote",
+            "host": "gpu.example",
+            "env": "venv",
+            "envPath": "/remote/venv",
+            "platform": "linux",
+        }],
+    }
+    script = f"""
+      const _envState = {json.dumps(state)};
+      const document = {{ querySelectorAll: () => [] }};
+      const _persistEnvState = () => {{}};
+      {server_helpers}
+      {selection}
+      const _es = _envState;
+      {synthesis}
+      const remoteBefore = JSON.stringify(_envState.servers.find(s => s.host === 'gpu.example'));
+      _applyServerSelection('local');
+      console.log(JSON.stringify({{
+        state: _envState,
+        local: _envState.servers.find(_isLocalEntry),
+        remoteUnchanged: remoteBefore === JSON.stringify(_envState.servers.find(s => s.host === 'gpu.example')),
+      }}));
+    """
+    proc = subprocess.run(
+        ["node", "--input-type=module"],
+        input=script,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+
+    assert result["local"]["env"] == "none"
+    assert result["local"]["envPath"] == ""
+    assert result["local"]["platform"] == "windows"
+    assert result["state"]["remoteHost"] == ""
+    assert result["state"]["remoteServerKey"] == ""
+    assert result["state"]["env"] == "none"
+    assert result["state"]["envPath"] == ""
+    assert result["state"]["platform"] == "windows"
+    assert result["remoteUnchanged"] is True
