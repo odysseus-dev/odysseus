@@ -1,7 +1,8 @@
 services:
   openhands-agent-server:
     image: ghcr.io/openhands/agent-server:1.45.0-python@sha256:b0104980776ed6adbd6ce406636e08069087b4f11fa130bfd3548b965b262946
-    command: ["openhands-agent-server", "--host", "0.0.0.0"]
+    # Image entrypoint is already tini -- /usr/local/bin/openhands-agent-server.
+    command: ["--host", "0.0.0.0"]
     env_file: deploy/openhands/versions.env
     volumes:
       - openhands-agent-server-data:/workspace
