@@ -1291,6 +1291,58 @@ def test_approval_pause_does_not_trigger_teacher_takeover(monkeypatch):
     )
 
 
+def test_teacher_takeover_inherits_delegated_and_tainted_run_authority(monkeypatch):
+    from src.prompt_security import untrusted_context_message
+
+    import src.agent_loop as agent_loop
+    import src.teacher_escalation as teacher_escalation
+
+    monkeypatch.setattr(
+        agent_loop,
+        "get_setting",
+        lambda key, default=None: default,
+        raising=False,
+    )
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None, raising=False)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(
+        agent_loop,
+        "blocked_tools_for_owner",
+        lambda owner: set(),
+        raising=False,
+    )
+
+    async def fake_stream(*args, **kwargs):
+        yield "data: " + json.dumps({"delta": "finished"}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    captured = {}
+
+    async def capture_teacher(*args, **kwargs):
+        captured.update(kwargs)
+        if False:
+            yield ""  # pragma: no cover
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+    monkeypatch.setattr(teacher_escalation, "run_teacher_inline", capture_teacher)
+    _collect_agent_events(
+        agent_loop.stream_agent_loop(
+            "http://local.test/v1",
+            "qwen-local-model",
+            [
+                {"role": "user", "content": "finish it"},
+                untrusted_context_message("stored context", "untrusted"),
+            ],
+            session_id="session-1",
+            max_rounds=1,
+            delegated_credential=True,
+        )
+    )
+
+    assert captured["delegated_credential"] is True
+    assert captured["external_untrusted_context_seen"] is True
+
+
 def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     root = Path(__file__).parents[1]
     chat = (root / "static/js/chat.js").read_text()

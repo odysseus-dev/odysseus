@@ -84,24 +84,34 @@ async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -
             pending = fut
             owner = True
     if not owner:
+        # A cancelled waiter must not cancel the shared Future for the owner
+        # and every other waiter.
         return await asyncio.shield(pending)
     try:
         val = await fetch()
         async with _shared_cache_lock:
             _shared_cache[key] = (time.monotonic() + ttl, val)
-            _shared_cache_pending.pop(key, None)
-        if not pending.done():
-            pending.set_result(val)
+        pending.set_result(val)
         return val
-    except BaseException as e:
-        async with _shared_cache_lock:
-            _shared_cache_pending.pop(key, None)
-        if not pending.done():
-            if isinstance(e, asyncio.CancelledError):
-                pending.cancel()
-            else:
-                pending.set_exception(e)
+    except asyncio.CancelledError:
+        # Cancellation is a BaseException on supported Python versions, so it
+        # bypasses the Exception handler below. Wake all current waiters while
+        # allowing a later caller to retry the fetch.
+        pending.cancel()
         raise
+    except Exception as e:
+        pending.set_exception(e)
+        # The owner raises the fetch error directly. Mark the Future's
+        # exception as retrieved as well, so a race with a late waiter does
+        # not produce an unhandled-future warning.
+        pending.exception()
+        raise
+    finally:
+        # Keep this cleanup synchronous so a second cancellation cannot
+        # interrupt it and leave a permanently pending Future behind. All
+        # access runs on the scheduler's event-loop thread.
+        if _shared_cache_pending.get(key) is pending:
+            _shared_cache_pending.pop(key, None)
 
 
 def compute_next_run(schedule: str, scheduled_time: str,

@@ -91,6 +91,17 @@ def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
     assert ".git/config" not in r["output"]
 
 
+def test_grep_python_fallback_uses_relative_glob_paths(repo, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    r = _run(
+        "grep",
+        f'{{"pattern": "needle|python", "glob": "**/*.py", "path": "{repo}"}}',
+    )
+    assert r["exit_code"] == 0
+    assert "a.py" in r["output"]
+    assert "sub/deep/c.py" in r["output"]
+
+
 @pytest.mark.skipif(shutil.which("rg") is None, reason="targets the ripgrep fast-path")
 def test_grep_skips_case_variant_sensitive_files_rg(repo):
     """The rg fast-path must exclude deny-listed key files case-insensitively.
