@@ -1483,3 +1483,12 @@ async def dispatch_ai_tool(
         result = {"error": f"Unknown AI interaction tool: {tool}"}
 
     return desc, result
+
+
+def invoke_structured_model(payload, *, archetype=None, owner=None):
+    """Single structured-request boundary for governed model jobs.
+
+    Embeddings, STT/TTS, image generation, moderation, and capability probes
+    stay on their existing infrastructure paths and do not enter this function.
+    """
+    raise RuntimeError("structured model invocation requires a configured provider")
