@@ -2,6 +2,7 @@
 // ES6 module — extracted from index.html inline scripts
 
 import Storage from './storage.js';
+import { initAgentPlatform } from './agents.js';
 
 function markComposerUserEdited() {
   const msgInput = document.getElementById('message');
@@ -30,6 +31,7 @@ function clearFreshComposerRestore() {
 
 markComposerUserEdited();
 clearFreshComposerRestore();
+initAgentPlatform();
 window.addEventListener('pageshow', clearFreshComposerRestore);
 document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: true });
 

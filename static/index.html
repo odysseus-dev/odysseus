@@ -2547,6 +2547,23 @@
     </div>
   </div>
 
+  <section id="agent-platform-panel" hidden>
+    <header>
+      <strong>OpenHands agent</strong>
+      <span data-agent-status>idle</span>
+      <a data-agent-canvas href="#" rel="noopener noreferrer" target="_blank">Open in Agent Canvas</a>
+    </header>
+    <textarea data-agent-input aria-label="Agent message"></textarea>
+    <div>
+      <button type="button" data-agent-launch>Launch</button>
+      <button type="button" data-agent-approve>Approve</button>
+      <button type="button" data-agent-cancel>Cancel</button>
+      <button type="button" data-agent-resume>Resume</button>
+    </div>
+    <ol data-agent-events></ol>
+    <ul data-agent-artifacts></ul>
+  </section>
+
   <!-- Toast container (aria-live for screen readers) -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
@@ -2583,6 +2600,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/agents.js"></script>
 <script type="module" src="/static/app.js?v=20260815toolapproval4"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
 <script type="module" src="/static/js/a11y.js"></script>
