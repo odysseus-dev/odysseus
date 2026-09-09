@@ -128,6 +128,11 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     
     # Initialize model discovery
     model_discovery = ModelDiscovery(DEFAULT_HOST, OPENAI_API_KEY)
+
+    from services.agents.dispatcher import AgentDispatcher
+    from services.agents.openhands_client import OpenHandsClient
+
+    agent_dispatcher = AgentDispatcher(client=OpenHandsClient.from_env())
     
     # Load and apply saved API keys
     saved_keys = api_key_manager.load()
@@ -149,6 +154,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         "research_handler": research_handler,
         "chat_handler": chat_handler,
         "model_discovery": model_discovery,
+        "agent_dispatcher": agent_dispatcher,
         "current_presets": preset_manager.presets,
         "PERSONAL_INDEX": personal_docs_manager.index
     }
