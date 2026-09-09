@@ -96,6 +96,13 @@ def _canonical_digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def domain_approval_authority():
+    """Platform ApprovalGrant issuer. Legacy chat seals stay in this module."""
+    from services.agents.approvals import ApprovalAuthority
+
+    return ApprovalAuthority()
+
+
 def document_content_digest(content: Any) -> str:
     """Return the stable server-side fingerprint used to seal a document."""
     return hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
