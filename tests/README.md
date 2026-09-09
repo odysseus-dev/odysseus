@@ -232,6 +232,23 @@ helpers:
 - One-off custom module patching.
 - Custom DB session, route, and app setup.
 
+## OpenHands feasibility stack
+
+The OpenHands overlay is isolated from normal Compose startup. It adds Agent
+Server, Automation, Agent Canvas, and Odysseus MCP without publishing their
+internal APIs; only configured Odysseus and Canvas ports reach the host.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait
+python3 scripts/openhands_probe.py stack --json
+python3 -m pytest tests/integration/openhands/test_stack_contract.py -v
+```
+
+Pins live in `deploy/openhands/versions.env`. Update them only from official
+release artifacts, then update the image references in the overlay and rerun
+the probe.
+
 ## Validation expectations
 
 Run validation locally before opening or approving a PR. Practical checks:

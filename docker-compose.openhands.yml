@@ -1,0 +1,69 @@
+services:
+  openhands-agent-server:
+    image: ghcr.io/openhands/agent-server:1.45.0-python@sha256:b0104980776ed6adbd6ce406636e08069087b4f11fa130bfd3548b965b262946
+    command: ["openhands-agent-server", "--host", "0.0.0.0"]
+    env_file: deploy/openhands/versions.env
+    volumes:
+      - openhands-agent-server-data:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  openhands-automation:
+    image: ghcr.io/openhands/automation:1.11.0
+    env_file: deploy/openhands/versions.env
+    environment:
+      AUTOMATION_AGENT_SERVER_URL: http://openhands-agent-server:8000
+      AGENT_SERVER_URL: http://openhands-agent-server:8000
+      AUTOMATION_DB_URL: sqlite+aiosqlite:////data/automations.db
+      FILE_STORE: local
+      LOCAL_STORAGE_PATH: /data/storage
+    volumes:
+      - openhands-automation-data:/data
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  openhands-canvas:
+    image: ghcr.io/openhands/agent-canvas:1.16.0@sha256:ab194760cb46098641747b27c1e07458ab1bed439821af7a31c97133ca466bb8
+    env_file: deploy/openhands/versions.env
+    ports:
+      - "${OPENHANDS_CANVAS_BIND:-127.0.0.1}:${OPENHANDS_CANVAS_PORT:-8000}:8000"
+    volumes:
+      - openhands-canvas-data:/home/openhands/.openhands
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+      openhands-automation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  odysseus-mcp:
+    build: .
+    command: ["python", "-m", "mcp_servers.memory_server"]
+    environment:
+      ODYSSEUS_OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
+      ODYSSEUS_OPENHANDS_AUTOMATION_URL: http://openhands-automation:8000
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  openhands-agent-server-data:
+  openhands-automation-data:
+  openhands-canvas-data:
