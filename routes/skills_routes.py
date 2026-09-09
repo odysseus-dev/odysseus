@@ -447,7 +447,7 @@ async def _run_skill_test_job(
     """Background coroutine: run the skill in an agent loop, capture a condensed
     log + transcript, then have the judge grade it. Writes into _skill_test_jobs."""
     import json as _json
-    from src.agent_loop import stream_agent_loop
+    from services.agents.legacy_bridge import stream_governed_agent
 
     job = _skill_test_jobs.get(key)
     if job is None:
@@ -463,7 +463,7 @@ async def _run_skill_test_job(
 
     messages = list(messages) if isinstance(messages, list) else _skill_test_messages(md, task)
     try:
-        async for chunk in stream_agent_loop(
+        async for chunk in stream_governed_agent(
             url, model, messages, headers=headers,
             temperature=0.3, max_tokens=0, max_rounds=8, owner=owner,
             exact_approval=exact_approval,
@@ -738,7 +738,7 @@ def _apply_skill_md(skills_manager, name: str, md: str, owner) -> bool:
 async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -> tuple:
     """Run the skill once in the agent loop; return (transcript, verdict)."""
     import json as _json
-    from src.agent_loop import stream_agent_loop
+    from services.agents.legacy_bridge import stream_governed_agent
     transcript = []
     approval_required = None
     messages = _skill_test_messages(md, task)
@@ -747,7 +747,7 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
         # OpenAI-compat) generate an empty completion, which manifested as
         # the skill test returning nothing while chat (which carries its
         # preset's max_tokens) worked. 4096 matches the chat default.
-        async for chunk in stream_agent_loop(url, model, messages, headers=headers,
+        async for chunk in stream_governed_agent(url, model, messages, headers=headers,
                                              temperature=0.3, max_tokens=4096, max_rounds=8, owner=owner):
             if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
                 continue

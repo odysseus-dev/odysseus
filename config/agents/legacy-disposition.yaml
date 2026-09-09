@@ -1,0 +1,72 @@
+entries:
+  - old_symbol: stream_agent_loop
+    location: routes/chat_routes.py
+    purpose: interactive chat turns
+    target: chat archetype via AgentDispatcher
+    execution_kind: agent
+    owner: openhands-agent-server
+    replacement_test: tests/agents/test_dispatcher.py
+    deletion_status: replaced
+  - old_symbol: stream_agent_loop
+    location: routes/skills_routes.py
+    purpose: skill test and skill-driven agent turns
+    target: chat archetype via AgentDispatcher
+    execution_kind: agent
+    owner: openhands-agent-server
+    replacement_test: tests/test_skills_routes_nondict.py
+    deletion_status: replaced
+  - old_symbol: stream_agent_loop
+    location: src/teacher_escalation.py
+    purpose: teacher evaluation / escalation
+    target: chat archetype via AgentDispatcher
+    execution_kind: agent
+    owner: openhands-agent-server
+    replacement_test: tests/test_teacher_eval_tier2.py
+    deletion_status: replaced
+  - old_symbol: stream_agent_loop
+    location: src/bg_monitor.py
+    purpose: background follow-up drain
+    target: chat archetype via AgentDispatcher
+    execution_kind: agent
+    owner: openhands-agent-server
+    replacement_test: tests/test_bg_monitor_stream.py
+    deletion_status: replaced
+  - old_symbol: stream_agent_loop
+    location: src/task_scheduler.py
+    purpose: scheduled task agent fire
+    target: Automation-backed dispatch (Task 16)
+    execution_kind: agent
+    owner: openhands-automation
+    replacement_test: tests/agents/test_automation_scheduling.py
+    deletion_status: replaced
+  - old_symbol: stream_agent_loop
+    location: src/agent_loop.py
+    purpose: legacy loop retained for compatibility tests until Task 18
+    target: delete after acceptance
+    execution_kind: agent
+    owner: odysseus-legacy
+    replacement_test: tests/integration/openhands/test_platform_acceptance.py
+    deletion_status: residual-until-acceptance
+  - old_symbol: execute_tool_block
+    location: src/tool_execution.py
+    purpose: legacy tool executor used only by src/agent_loop.py
+    target: Odysseus MCP domain tools
+    execution_kind: service
+    owner: odysseus-mcp
+    replacement_test: tests/agents/test_odysseus_mcp.py
+    deletion_status: residual-until-acceptance
+  - old_symbol: llm_call
+    location: src/llm_core.py
+    purpose: infrastructure model invocation
+    target: ModelJobExecutor or infrastructure exemption
+    execution_kind: model-job
+    owner: odysseus-model-jobs
+    replacement_test: tests/agents/test_model_jobs.py
+    deletion_status: exempt-infrastructure
+exemptions:
+  - embeddings
+  - stt
+  - tts
+  - image-generation
+  - moderation
+  - capability-probes

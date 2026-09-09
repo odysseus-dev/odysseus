@@ -53,7 +53,7 @@ def test_autonomous_skill_test_reports_exact_approval_as_inconclusive(monkeypatc
     async def fail_eval(*args, **kwargs):
         raise AssertionError("approval pause must not be judged as a failed skill")
 
-    monkeypatch.setattr("src.agent_loop.stream_agent_loop", fake_loop)
+    monkeypatch.setattr("services.agents.legacy_bridge.stream_governed_agent", fake_loop)
     monkeypatch.setattr(skills_routes, "_eval_skill_run", fail_eval)
 
     transcript, verdict = asyncio.run(_run_skill_test_once(
@@ -85,7 +85,7 @@ def test_manual_skill_test_pauses_with_resumable_exact_approval(monkeypatch):
             "ask_user": approval,
         })
 
-    monkeypatch.setattr("src.agent_loop.stream_agent_loop", fake_loop)
+    monkeypatch.setattr("services.agents.legacy_bridge.stream_governed_agent", fake_loop)
     key = ("owner", "skill")
     _skill_test_jobs[key] = {
         "status": "running",

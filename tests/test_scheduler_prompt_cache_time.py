@@ -53,7 +53,7 @@ async def test_scheduler_agent_loop_path(monkeypatch):
         return
         yield  # async generator
 
-    monkeypatch.setattr("src.agent_loop.stream_agent_loop", _stub_stream)
+    monkeypatch.setattr("services.agents.legacy_bridge.stream_governed_agent", _stub_stream)
     monkeypatch.setattr("src.task_endpoint.resolve_task_candidates", lambda **kw: [])
 
     from src.task_scheduler import TaskScheduler
@@ -95,7 +95,7 @@ async def test_scheduler_retires_unattended_exact_approval(monkeypatch):
         }) + "\n\n"
 
     monkeypatch.setattr(
-        "src.agent_loop.stream_agent_loop",
+        "services.agents.legacy_bridge.stream_governed_agent",
         fake_stream_agent_loop,
     )
     monkeypatch.setattr(

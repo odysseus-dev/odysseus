@@ -187,7 +187,7 @@ def _chat_stream_endpoint(
     monkeypatch.setattr(chat_routes, "SessionLocal", _EmptyDb)
     monkeypatch.setattr(chat_routes, "_is_image_generation_session", lambda *args, **kwargs: False)
     monkeypatch.setattr(chat_routes, "stream_llm_with_fallback", fake_chat_stream)
-    monkeypatch.setattr(chat_routes, "stream_agent_loop", fake_agent_stream)
+    monkeypatch.setattr(chat_routes, "stream_governed_agent", fake_agent_stream)
     if capture_completion:
         monkeypatch.setattr(
             chat_routes,

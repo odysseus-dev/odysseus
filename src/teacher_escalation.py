@@ -621,12 +621,12 @@ async def run_teacher_inline(
     # Recursively invoke the agent loop with the teacher's params.
     # The _is_teacher_run flag prevents infinite recursion (the teacher
     # run will skip its own escalation hook).
-    from src.agent_loop import stream_agent_loop
+    from services.agents.legacy_bridge import stream_governed_agent
     captured_tool_events: List[Dict[str, Any]] = []
     captured_text_parts: List[str] = []
     captured_metrics: Dict[str, Any] = {}
 
-    async for evt_str in stream_agent_loop(
+    async for evt_str in stream_governed_agent(
         endpoint_url=teacher_url,
         model=teacher_model,
         messages=teacher_messages,

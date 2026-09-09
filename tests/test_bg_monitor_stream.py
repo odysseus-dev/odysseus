@@ -16,9 +16,9 @@ def test_drain_agent_ignores_non_string_deltas(monkeypatch):
         yield 'data: {"type": "tool_output", "tool": "shell", "output": "done"}'
         yield "data: [DONE]"
 
-    agent_loop = types.ModuleType("src.agent_loop")
-    agent_loop.stream_agent_loop = fake_stream_agent_loop
-    monkeypatch.setitem(sys.modules, "src.agent_loop", agent_loop)
+    monkeypatch.setattr(bg_monitor, "stream_governed_agent", fake_stream_agent_loop, raising=False)
+    import services.agents.legacy_bridge as bridge
+    monkeypatch.setattr(bridge, "stream_governed_agent", fake_stream_agent_loop)
 
     sess = SimpleNamespace(
         endpoint_url="http://example.test",
@@ -69,9 +69,9 @@ def test_background_drain_preserves_exact_approval_card(monkeypatch):
         })
         yield "data: [DONE]"
 
-    agent_loop = types.ModuleType("src.agent_loop")
-    agent_loop.stream_agent_loop = fake_stream_agent_loop
-    monkeypatch.setitem(sys.modules, "src.agent_loop", agent_loop)
+    monkeypatch.setattr(bg_monitor, "stream_governed_agent", fake_stream_agent_loop, raising=False)
+    import services.agents.legacy_bridge as bridge
+    monkeypatch.setattr(bridge, "stream_governed_agent", fake_stream_agent_loop)
 
     sess = SimpleNamespace(
         endpoint_url="http://example.test",

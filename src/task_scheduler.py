@@ -362,6 +362,9 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+        from services.agents.scheduling import AutomationScheduler
+
+        self.automation_scheduler = AutomationScheduler()
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -1862,7 +1865,7 @@ class TaskScheduler:
                               override_user_message: str | None = None,
                               datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
-        from src.agent_loop import stream_agent_loop
+        from services.agents.legacy_bridge import stream_governed_agent
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
@@ -1915,7 +1918,7 @@ class TaskScheduler:
             )[1:]
         except Exception:
             _task_fallbacks = []
-        async for event_str in stream_agent_loop(
+        async for event_str in stream_governed_agent(
             endpoint_url=endpoint_url,
             model=model,
             messages=messages,

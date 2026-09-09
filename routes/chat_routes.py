@@ -22,7 +22,7 @@ from src.llm_core import (
     stream_llm,
     stream_llm_with_fallback,
 )
-from src.agent_loop import stream_agent_loop
+from services.agents.legacy_bridge import stream_governed_agent
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.context_compactor import (
@@ -2333,7 +2333,7 @@ def setup_chat_routes(
                     elif _explicit_browser_intent:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
 
-                    async for chunk in stream_agent_loop(
+                    async for chunk in stream_governed_agent(
                         sess.endpoint_url,
                         sess.model,
                         messages,
