@@ -119,3 +119,11 @@ class DocsService:
     def rebuild_index(self) -> bool:
         """Rebuild the entire index."""
         return self.rag.rebuild_index()
+
+
+def to_mcp_chunks(chunks: List[DocChunk]) -> List[Dict[str, Any]]:
+    """Project retrieved chunks for the Odysseus MCP documents.read tool."""
+    return [
+        {"text": chunk.text, "source": chunk.source, "score": chunk.score, "metadata": chunk.metadata}
+        for chunk in chunks
+    ]

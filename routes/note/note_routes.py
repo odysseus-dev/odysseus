@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
 from core.middleware import INTERNAL_TOOL_USER
+from services.notes.service import note_to_dict
 from src.auth_helpers import require_user
 from src.constants import DATA_DIR
 from src.upload_handler import reserve_upload_references
@@ -60,42 +61,7 @@ class NoteUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _note_to_dict(note: Note) -> Dict[str, Any]:
-    items = None
-    if note.items:
-        try:
-            items = json.loads(note.items)
-        except (json.JSONDecodeError, TypeError):
-            items = None
-    ai_cls = None
-    raw_ai = getattr(note, "ai_classification", None)
-    if raw_ai:
-        try:
-            ai_cls = json.loads(raw_ai)
-        except (json.JSONDecodeError, TypeError):
-            ai_cls = None
-    return {
-        "id": note.id,
-        "owner": note.owner,
-        "title": note.title,
-        "content": note.content,
-        "items": items,
-        "note_type": note.note_type,
-        "color": note.color,
-        "label": note.label,
-        "pinned": note.pinned,
-        "archived": note.archived,
-        "due_date": note.due_date,
-        "source": note.source,
-        "session_id": note.session_id,
-        "sort_order": note.sort_order or 0,
-        "image_url": note.image_url,
-        "repeat": note.repeat or "none",
-        "ai_classification": ai_cls,
-        "ai_content_hash": getattr(note, "ai_content_hash", None),
-        "agent_session_id": getattr(note, "agent_session_id", None),
-        "created_at": note.created_at.isoformat() if note.created_at else None,
-        "updated_at": note.updated_at.isoformat() if note.updated_at else None,
-    }
+    return note_to_dict(note)
 
 
 def _reminder_text_from_note(note: Note) -> tuple[str, str]:

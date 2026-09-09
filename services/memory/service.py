@@ -124,3 +124,16 @@ class MemoryService:
         if self.vector_store and self.vector_store.healthy:
             self.vector_store.remove(memory_id)
         return True
+
+
+def to_mcp_memories(memories: List[Memory]) -> List[Dict[str, Any]]:
+    """Project memory rows for the Odysseus MCP memory.read tool."""
+    return [
+        {
+            "id": memory.id,
+            "text": memory.text,
+            "timestamp": memory.timestamp,
+            "session_id": memory.session_id,
+        }
+        for memory in memories
+    ]

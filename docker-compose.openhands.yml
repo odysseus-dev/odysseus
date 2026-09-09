@@ -55,9 +55,8 @@ services:
 
   odysseus-mcp:
     build: .
-    # Task 1 exposes Odysseus liveness only. Task 9 replaces this contract
-    # endpoint with authenticated Streamable HTTP MCP; stdio cannot be a Compose service.
-    command: ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
+    # Authenticated Streamable HTTP MCP. stdio cannot be a Compose service.
+    command: ["python", "-m", "mcp_servers.odysseus_server"]
     environment:
       ODYSSEUS_OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
       ODYSSEUS_OPENHANDS_AUTOMATION_URL: http://openhands-automation:8000
