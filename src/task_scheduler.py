@@ -29,7 +29,7 @@ def _utcnow() -> datetime:
 # setting turns them off). The RAG tool selector + ASSISTANT_ALWAYS_AVAILABLE
 # never include bash/python, so on a host with an empty/degraded tool-embedding
 # index a task could not run shell or Python even for an admin owner. Offering
-# them here is safe: stream_agent_loop's blocked_tools_for_owner() still strips
+# them here is safe: stream_governed_agent's blocked_tools_for_owner() still strips
 # this whole group for non-admin multi-user owners, and only admits it for
 # admins and single-user (AUTH_ENABLED=false) deployments.
 TASK_DEFAULT_SHELL_TOOLS = frozenset({
@@ -44,7 +44,7 @@ def compose_task_relevant_tools(rag_tools, assistant_always, disabled_tools):
     Unions the RAG-retrieved tools, the assistant's always-available set, and
     the default shell/file group, then removes anything the task's crew
     explicitly disabled via its `enabled_tools` allowlist. Per-owner admin
-    gating is applied later by stream_agent_loop (blocked_tools_for_owner).
+    gating is applied later by stream_governed_agent (blocked_tools_for_owner).
     """
     tools = set(rag_tools) | set(assistant_always) | set(TASK_DEFAULT_SHELL_TOOLS)
     if disabled_tools:

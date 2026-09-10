@@ -1396,30 +1396,74 @@ def observe_confirmation_approval_grant() -> dict[str, object]:
     }
 
 
+def _compose_running_names() -> str:
+    inspect = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            "docker-compose.openhands.yml",
+            "ps",
+            "--status",
+            "running",
+            "--format",
+            "{{.Name}} {{.Service}} {{.Status}}",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=12,
+    )
+    return inspect.stdout
+
+
+def _observe_tailscale_serve() -> dict[str, object]:
+    try:
+        status = subprocess.run(
+            ["tailscale", "serve", "status"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"state": "unobserved", "reason": "tailscale CLI missing or timed out"}
+    text = (status.stdout or "").strip()
+    if status.returncode != 0 or not text:
+        return {"state": "unobserved", "reason": "serve status empty"}
+    return {
+        "state": "observed",
+        "odysseus": "8443" in text and "7001" in text,
+        "canvas": "8444" in text and "8000" in text,
+        "status": text[:2000],
+    }
+
+
 def probe_acceptance() -> ProbeResult:
     """In-process gates can pass; live Docker/Tailscale is recorded, not invented."""
+    services: dict[str, bool] = {}
     live = False
     try:
         import shutil
-        import subprocess
 
         if shutil.which("docker"):
-            inspect = subprocess.run(
-                ["docker", "compose", "-f", "docker-compose.openhands.yml", "ps", "--status", "running"],
-                capture_output=True,
-                text=True,
-                timeout=8,
-            )
-            live = "openhands-agent-server" in inspect.stdout
+            text = _compose_running_names()
+            for service in SERVICES:
+                services[service] = service in text
+            live = all(services.values())
     except Exception:
         live = False
+    tailscale = _observe_tailscale_serve()
     return ProbeResult(
         "acceptance",
         passed=bool(live),
         evidence={
             "in_process_gates": True,
             "live_stack": live,
-            "tailscale": "unobserved",
+            "services": services,
+            "tailscale": tailscale.get("state", "unobserved"),
+            "tailscale_detail": tailscale,
             "selected_branches": {
                 "interactive": "continued_run",
                 "credentials": "broker",
