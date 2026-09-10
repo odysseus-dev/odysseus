@@ -3,13 +3,23 @@
 from pathlib import Path
 
 
-def test_agent_mode_skips_odysseus_model_picker():
-    """OpenHands owns the LLM for agent turns; 9router still owns Chat mode."""
+def test_interactive_openhands_turns_skip_odysseus_model_picker():
+    """OpenHands owns the LLM for Chat and Agent; compare still uses Odysseus models."""
     source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
     stream = source.split("async def chat_stream", 1)[1]
-    gated = stream.split("if not user_requested_agent:", 1)[1]
-    assert "No model selected for this chat" in gated[:800]
-    assert "Selected model endpoint is not configured" in gated[:800]
+    gated = stream.split("if compare_mode:", 1)[1]
+    assert "No model selected for this chat" in gated[:1200]
+    assert "Selected model endpoint is not configured" in gated[:1200]
+    picker = stream.split("if compare_mode:", 1)[0]
+    assert "No model selected for this chat" not in picker
+
+
+def test_non_compare_chat_uses_governed_agent_not_stream_llm():
+    source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
+    stream = source.split("async def chat_stream", 1)[1].split("async def chat_resume", 1)[0]
+    assert "async for chunk in stream_governed_agent(" in stream
+    # Non-compare Chat must not keep the old tool-less stream_llm branch.
+    assert "# ── Chat mode: call stream_llm directly, NO tools, NO document access ──" not in stream
 
 
 def test_chat_route_passes_binding_kwargs():

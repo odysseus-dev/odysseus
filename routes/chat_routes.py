@@ -1261,7 +1261,7 @@ def setup_chat_routes(
             # generic 401/503).
             _recover_empty_session_model(sess, session, owner=owner)
             # Agent turns go to OpenHands; the Odysseus picker is the 9router slice.
-            if not user_requested_agent:
+            if compare_mode:
                 if not getattr(sess, "model", "").strip():
                     raise HTTPException(
                         400,
@@ -1960,7 +1960,7 @@ def setup_chat_routes(
                 yield "data: [DONE]\n\n"
                 _active_streams.pop(session, None)
                 return
-            elif chat_mode == "chat":
+            elif compare_mode and chat_mode == "chat":
                 _chat_start = time.time()
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 _requested_model = sess.model
@@ -1975,7 +1975,7 @@ def setup_chat_routes(
                         _chat_request_state.get("compactions", {}).get(candidate_index),
                     )
 
-                # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
+                # Compare Chat pane still uses Odysseus stream_llm (no tools).
                 try:
                     async for chunk in stream_llm_with_fallback(
                         _foreground_candidates,
