@@ -32,3 +32,10 @@ def test_chat_route_passes_binding_kwargs():
     sse_parser = source.split('elif data.get("type") == "execution":', 1)[1]
     confirm_block = sse_parser.split('elif data.get("type") == "pending_confirmation":', 1)[1]
     assert "yield chunk" in confirm_block.split("elif ", 1)[0]
+
+
+def test_chat_stream_passes_user_requested_agent_into_governed_stream():
+    source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
+    call = source.split("async for chunk in stream_governed_agent(", 1)[1].split("):", 1)[0]
+    assert "user_requested_agent=user_requested_agent" in call
+    assert "workspace_grants=" in call

@@ -19,6 +19,14 @@ def test_agents_js_exports_native_controls_and_canvas_link():
         assert f"export async function {name}" in _JS
 
 
+def test_index_has_no_engineering_admin_controls():
+    html = _HTML
+    lowered = html.lower()
+    assert "add agent" not in lowered
+    assert "add workflow" not in lowered
+    assert "agent-canvas-frame" not in html
+
+
 def test_index_has_no_side_panel():
     assert 'id="agent-platform-panel"' not in _HTML
     assert "agent-canvas-frame" not in _HTML

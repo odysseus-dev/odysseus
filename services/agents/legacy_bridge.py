@@ -12,6 +12,11 @@ import uuid
 from typing import Any, AsyncIterator
 
 from .dispatcher import AgentDispatcher, DispatchRequest
+from .workspace_privilege import (
+    human_workspace_writable,
+    is_human_workspace_mutating_action,
+    workspace_grants_for_turn,
+)
 
 _IDLE = {"finished", "paused", "completed", "failed", "cancelled"}
 _POLL_SLEEP_S = 0.4
@@ -89,6 +94,16 @@ async def stream_governed_agent(
     if rebound:
         conversation_id = None
     request_id = str(kwargs.get("turn_id") or kwargs.get("request_id") or uuid.uuid4().hex)
+    if "user_requested_agent" in kwargs:
+        writable = human_workspace_writable(
+            user_requested_agent=bool(kwargs.get("user_requested_agent")),
+        )
+    else:
+        writable = True
+    grants = workspace_grants_for_turn(
+        user_requested_agent=bool(kwargs.get("user_requested_agent")),
+        requested=tuple(kwargs.get("workspace_grants") or ()),
+    )
     ref = dispatcher.dispatch(
         DispatchRequest(
             request_id=request_id,
@@ -96,6 +111,7 @@ async def stream_governed_agent(
             payload={"text": _user_text(messages)},
             conversation_id=conversation_id,
             agent_profile_id=profile,
+            workspace_grants=grants,
         )
     )
     yield "data: " + json.dumps({
@@ -122,11 +138,15 @@ async def stream_governed_agent(
             if text:
                 yield "data: " + json.dumps({"delta": text}) + "\n\n"
             if event.get("kind") == "ActionEvent" and eid and eid not in emitted_pending:
-                emitted_pending.add(eid)
-                yield "data: " + json.dumps({
-                    "type": "pending_confirmation",
-                    "event_id": eid,
-                }) + "\n\n"
+                tool_name = event.get("tool_name") or event.get("tool")
+                if writable or not is_human_workspace_mutating_action(
+                    str(tool_name) if tool_name is not None else None
+                ):
+                    emitted_pending.add(eid)
+                    yield "data: " + json.dumps({
+                        "type": "pending_confirmation",
+                        "event_id": eid,
+                    }) + "\n\n"
             if _event_idle(event):
                 idle = True
         if idle or _client_conversation_idle(

@@ -181,3 +181,65 @@ def test_client_idle_uses_execution_status():
     )
     assert client._poll_i <= 2
     assert chunks[-1] == "data: [DONE]\n\n"
+
+
+def test_chat_turn_sends_empty_workspace_grants():
+    client = ScriptedClient([])
+    _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "hi"}],
+        turn_id="t-chat-ws",
+        user_requested_agent=False,
+        workspace_grants=("/Users/me/proj",),
+        poll_timeout_s=0,
+    )
+    assert client.calls[0]["workspace_grants"] == ()
+
+
+def test_agent_turn_keeps_workspace_grants():
+    client = ScriptedClient([])
+    _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "hi"}],
+        turn_id="t-agent-ws",
+        user_requested_agent=True,
+        workspace_grants=("/Users/me/proj",),
+        poll_timeout_s=0,
+    )
+    assert client.calls[0]["workspace_grants"] == ("/Users/me/proj",)
+
+
+def test_chat_does_not_confirm_human_workspace_mutating_actions():
+    action = {"id": "a1", "kind": "ActionEvent", "tool_name": "mail.send"}
+    client = ScriptedClient(
+        [
+            action,
+            {"id": "s1", "kind": "ConversationStateUpdate", "status": "paused"},
+        ]
+    )
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "send"}],
+        turn_id="t-chat-deny",
+        user_requested_agent=False,
+        poll_timeout_s=0,
+    )
+    assert '"type": "pending_confirmation"' not in "".join(chunks)
+
+
+def test_chat_still_confirms_sandbox_actions():
+    action = {"id": "a1", "kind": "ActionEvent", "tool_name": "terminal"}
+    client = ScriptedClient(
+        [
+            action,
+            {"id": "s1", "kind": "ConversationStateUpdate", "status": "paused"},
+        ]
+    )
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "run"}],
+        turn_id="t-chat-term",
+        user_requested_agent=False,
+        poll_timeout_s=0,
+    )
+    assert '"type": "pending_confirmation"' in "".join(chunks)

@@ -24,6 +24,7 @@ from src.llm_core import (
     stream_llm_with_fallback,
 )
 from services.agents.legacy_bridge import stream_governed_agent
+from services.agents.workspace_privilege import workspace_grants_for_turn
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.context_compactor import (
@@ -1291,15 +1292,11 @@ def setup_chat_routes(
                     auto_escalated = True
                     _workspace_agent_intent = False
                     logger.info("chat→agent auto-escalation: contextual browser/form follow-up")
-            if not workspace and isinstance(message, str):
+            if user_requested_agent and not workspace and isinstance(message, str):
                 _auto_workspace, _ = _resolve_workspace_from_message_path(request, message)
                 if _auto_workspace:
                     workspace = _auto_workspace
-                    chat_mode = "agent"
-                    auto_escalated = True
-                    _workspace_agent_intent = True
-                    allow_bash = "true"
-                    logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
+                    logger.info("agent workspace bind: explicit path workspace=%s", workspace)
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
@@ -2399,7 +2396,12 @@ def setup_chat_routes(
                         fallback_on_empty=_foreground_policy.fallback_on_empty,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
-                        workspace=workspace or None,
+                        user_requested_agent=user_requested_agent,
+                        workspace=(workspace or None) if user_requested_agent else None,
+                        workspace_grants=workspace_grants_for_turn(
+                            user_requested_agent=user_requested_agent,
+                            requested=((workspace,) if workspace else ()),
+                        ),
                         relevant_tools=(
                             set(pending_tool_approval.selected_tools)
                             if exact_tool_approval
