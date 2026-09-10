@@ -8,6 +8,7 @@ from services.agents.session_binding import (
     SessionBinding,
     conversation_kwarg,
     normalize_agent_profile_id,
+    resolve_agent_profile_id,
 )
 
 
@@ -27,6 +28,13 @@ def test_put_round_trips_conversation_and_profile():
 def test_hermes_is_not_a_selectable_profile():
     assert normalize_agent_profile_id("hermes") == "odysseus"
     assert normalize_agent_profile_id("opencode") == "opencode"
+
+
+def test_resolve_agent_profile_id_keeps_bound_when_omitted():
+    assert resolve_agent_profile_id(None, "opencode") == "opencode"
+    assert resolve_agent_profile_id("", "opencode") == "opencode"
+    assert resolve_agent_profile_id("odysseus", "opencode") == "odysseus"
+    assert resolve_agent_profile_id("hermes", "opencode") == "odysseus"
 
 
 def test_conversation_kwarg_rejects_odysseus_session_id():

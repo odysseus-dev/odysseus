@@ -980,7 +980,9 @@ def setup_chat_routes(
         form_data = await request.form()
         message = form_data.get("message")
         session = form_data.get("session")
-        requested_agent_profile_id = (body or {}).get("agent_profile_id")
+        requested_agent_profile_id = form_data.get("agent_profile_id")
+        if requested_agent_profile_id is None:
+            requested_agent_profile_id = (body or {}).get("agent_profile_id")
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
@@ -2340,6 +2342,7 @@ def setup_chat_routes(
                         SessionBinding,
                         conversation_kwarg,
                         normalize_agent_profile_id,
+                        resolve_agent_profile_id,
                     )
 
                     _bound_cid = getattr(sess, "openhands_conversation_id", None)
@@ -2366,8 +2369,8 @@ def setup_chat_routes(
                                 sess.agent_profile_id = _bound_profile
                         finally:
                             _bind_db.close()
-                    _requested_profile = normalize_agent_profile_id(
-                        requested_agent_profile_id
+                    _requested_profile = resolve_agent_profile_id(
+                        requested_agent_profile_id, _bound_profile
                     )
 
                     async for chunk in stream_governed_agent(
@@ -2416,7 +2419,7 @@ def setup_chat_routes(
                             ),
                         ),
                         turn_id=uuid.uuid4().hex,
-                        agent_profile_id=_requested_profile or _bound_profile,
+                        agent_profile_id=_requested_profile,
                         bound_agent_profile_id=_bound_profile,
                         archetype="chat",
                     ):
@@ -2437,9 +2440,7 @@ def setup_chat_routes(
                                     _cid = data.get("conversation_id")
                                     if _cid:
                                         sess.openhands_conversation_id = _cid
-                                        sess.agent_profile_id = (
-                                            _requested_profile or _bound_profile
-                                        )
+                                        sess.agent_profile_id = _requested_profile
                                         _bind_db = SessionLocal()
                                         try:
                                             _db_sess = (
@@ -2450,7 +2451,7 @@ def setup_chat_routes(
                                             if _db_sess is not None:
                                                 _db_sess.openhands_conversation_id = _cid
                                                 _db_sess.agent_profile_id = (
-                                                    _requested_profile or _bound_profile
+                                                    _requested_profile
                                                 )
                                                 _bind_db.commit()
                                         except Exception:

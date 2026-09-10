@@ -18,6 +18,12 @@ def normalize_agent_profile_id(value: str | None) -> str:
     return DEFAULT_AGENT_PROFILE
 
 
+def resolve_agent_profile_id(requested: str | None, bound: str) -> str:
+    if requested is None or requested == "":
+        return bound
+    return normalize_agent_profile_id(requested)
+
+
 def conversation_kwarg(session_id: str, binding: SessionBinding) -> str | None:
     if binding.conversation_id and binding.conversation_id != session_id:
         return binding.conversation_id
