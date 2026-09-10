@@ -1,13 +1,20 @@
 # Task 18 deletion hold
 
-Date: 2026-09-08
+Date: 2026-09-10
 
-`src/agent_loop.py` and `execute_tool_block` remain. The disposition ledger marks them `residual-until-acceptance`.
+`src/agent_loop.py` and `execute_tool_block` remain. The disposition ledger
+marks them `residual-until-acceptance`.
 
 Reasons:
 
-- `python3 scripts/openhands_probe.py acceptance --json` reports `live_stack` only when the pinned compose services are actually running. This host did not complete a green live Docker/Tailscale acceptance run in this session.
-- Compatibility tests still call `stream_agent_loop` and `execute_tool_block` directly.
-- Plan: delete only after Task 17 live evidence and a clean ledger.
+- Gate 10 live Docker/Tailscale acceptance is now green
+  (`python3 scripts/openhands_probe.py acceptance --json` → `live_stack: true`).
+  That does **not** authorize deletion.
+- Compatibility tests still call `stream_agent_loop` and `execute_tool_block`
+  directly.
+- Coordinated cutover still requires backup/restore, one switch off the old
+  loop, a clean disposition ledger, and acceptance with the old runtime
+  disabled.
 
-Production callers in chat, skills, teacher, bg_monitor, and task_scheduler no longer invoke `stream_agent_loop`.
+Production callers in chat, skills, teacher, bg_monitor, and task_scheduler
+invoke `stream_governed_agent`, not `stream_agent_loop`.
