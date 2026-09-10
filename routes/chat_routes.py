@@ -1260,13 +1260,15 @@ def setup_chat_routes(
             # upstream isn't called with model="" (which surfaces as a
             # generic 401/503).
             _recover_empty_session_model(sess, session, owner=owner)
-            if not getattr(sess, "model", "").strip():
-                raise HTTPException(
-                    400,
-                    "No model selected for this chat. Open the model picker and choose one before sending.",
-                )
-            if not (getattr(sess, "endpoint_url", "") or "").strip():
-                raise HTTPException(400, "Selected model endpoint is not configured")
+            # Agent turns go to OpenHands; the Odysseus picker is the 9router slice.
+            if not user_requested_agent:
+                if not getattr(sess, "model", "").strip():
+                    raise HTTPException(
+                        400,
+                        "No model selected for this chat. Open the model picker and choose one before sending.",
+                    )
+                if not (getattr(sess, "endpoint_url", "") or "").strip():
+                    raise HTTPException(400, "Selected model endpoint is not configured")
             if (
                 chat_mode == "chat"
                 and isinstance(message, str)
