@@ -26,6 +26,9 @@ class ScriptedClient:
             return list(self.polls[idx])
         return list(self.events)
 
+    def get_execution(self, execution_id):
+        return dict(getattr(self, "execution", {}))
+
 
 def _collect(**kwargs):
     return asyncio.run(_alist(kwargs))
@@ -134,3 +137,47 @@ def test_pending_confirmation_emitted_once_per_event_id():
     joined = "".join(chunks)
     assert joined.count('"type": "pending_confirmation"') == 1
     assert '"event_id": "a1"' in joined
+
+
+def test_stream_reads_agent_server_message_and_execution_status():
+    client = ScriptedClient(
+        [
+            {
+                "id": "m1",
+                "kind": "MessageEvent",
+                "source": "agent",
+                "llm_message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "pong"}],
+                },
+            },
+            {
+                "id": "s1",
+                "kind": "ConversationStateUpdateEvent",
+                "key": "execution_status",
+                "value": "finished",
+            },
+        ]
+    )
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "ping"}],
+        turn_id="t-as145",
+        poll_timeout_s=0,
+    )
+    joined = "".join(chunks)
+    assert '"delta": "pong"' in joined
+    assert chunks[-1] == "data: [DONE]\n\n"
+
+
+def test_client_idle_uses_execution_status():
+    client = ScriptedClient([], polls=[[]] * 50)
+    client.execution = {"execution_status": "finished"}
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "ping"}],
+        turn_id="t-exec-idle",
+        poll_timeout_s=5,
+    )
+    assert client._poll_i <= 2
+    assert chunks[-1] == "data: [DONE]\n\n"

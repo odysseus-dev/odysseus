@@ -20,8 +20,13 @@ _REBOUND_NOTE = "Started a new OpenHands conversation because the agent type cha
 
 
 def _event_idle(event: dict[str, Any]) -> bool:
+    kind = str(event.get("kind") or "")
+    if kind not in {"ConversationStateUpdate", "ConversationStateUpdateEvent"}:
+        return False
     status = str(event.get("status") or "").lower()
-    return event.get("kind") == "ConversationStateUpdate" and status in _IDLE
+    if event.get("key") == "execution_status":
+        status = str(event.get("value") or "").lower()
+    return status in _IDLE
 
 
 def _client_conversation_idle(client: Any, conversation_id: str, execution_id: str) -> bool:
@@ -31,7 +36,12 @@ def _client_conversation_idle(client: Any, conversation_id: str, execution_id: s
     fetch = getattr(client, "get_execution", None)
     if callable(fetch):
         info = fetch(execution_id) or {}
-        status = str(info.get("status") or info.get("conversation_status") or "").lower()
+        status = str(
+            info.get("status")
+            or info.get("conversation_status")
+            or info.get("execution_status")
+            or ""
+        ).lower()
         return status in _IDLE
     return False
 
@@ -47,7 +57,13 @@ def _user_text(messages: list[dict[str, Any]] | None) -> str:
 def _assistant_text(event: dict[str, Any]) -> str:
     if event.get("kind") != "MessageEvent" or event.get("source") == "user":
         return ""
-    parts = event.get("content") or event.get("text") or ""
+    llm_message = event.get("llm_message") or {}
+    parts = (
+        event.get("content")
+        or event.get("text")
+        or llm_message.get("content")
+        or ""
+    )
     if isinstance(parts, str):
         return parts
     return "".join(
