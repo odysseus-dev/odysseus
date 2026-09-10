@@ -57,6 +57,7 @@ def test_create_sends_workspace_and_initial_message():
     assert body["autotitle"] is False
     assert "credential_delivery_mode" not in body
     assert "request_id" not in body
+    assert "agent_profile_id" not in body
 
 
 def test_create_sends_opencode_profile_id():

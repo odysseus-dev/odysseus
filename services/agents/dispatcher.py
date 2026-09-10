@@ -8,6 +8,7 @@ from typing import Any
 
 from .contracts import AutomationExecutionRef
 from .openhands_client import OpenHandsClient
+from .session_binding import normalize_agent_profile_id
 
 _ROOT = Path(__file__).resolve().parents[2]
 _ARCHETYPES = _ROOT / "config" / "agents" / "archetypes"
@@ -57,7 +58,7 @@ class AgentDispatcher:
                 payload=dict(kwargs.get("payload") or {}),
                 conversation_id=kwargs.get("conversation_id"),
                 workspace_grants=tuple(kwargs.get("workspace_grants") or ()),
-                agent_profile_id=str(kwargs.get("agent_profile_id") or "odysseus"),
+                agent_profile_id=normalize_agent_profile_id(kwargs.get("agent_profile_id")),
             )
         if request.request_id in self._idempotency:
             return self._idempotency[request.request_id]
@@ -71,7 +72,7 @@ class AgentDispatcher:
             archetype_version=archetype_version,
             workspace_grants=request.workspace_grants,
             credential_delivery_mode="broker",
-            agent_profile_id=request.agent_profile_id,
+            agent_profile_id=normalize_agent_profile_id(request.agent_profile_id),
         )
         ref = AutomationExecutionRef(
             automation_execution_id=resumed.execution_id,

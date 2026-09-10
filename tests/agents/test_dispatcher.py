@@ -6,6 +6,7 @@ ensure_agents_package()
 
 from services.agents.contracts import AutomationExecutionRef  # noqa: E402
 from services.agents.dispatcher import AgentDispatcher, DispatchRequest  # noqa: E402
+from services.agents.openhands_client import OpenHandsClient  # noqa: E402
 
 
 class FakeClient:
@@ -58,6 +59,56 @@ def test_dispatcher_has_no_raw_http():
     assert "urllib" not in source
     assert "requests" not in source
     assert "httpx" not in source
+
+
+def test_dispatch_normalizes_hermes_to_odysseus():
+    client = FakeClient()
+    dispatcher = AgentDispatcher(client=client)
+    dispatcher.dispatch(
+        request_id="turn-hermes",
+        archetype="chat",
+        payload={"text": "hi"},
+        agent_profile_id="hermes",
+    )
+    assert client.agent_server_calls[0]["agent_profile_id"] == "odysseus"
+
+    client.agent_server_calls.clear()
+    dispatcher.dispatch(
+        DispatchRequest(
+            request_id="turn-hermes-2",
+            archetype="chat",
+            payload={"text": "hi"},
+            agent_profile_id="hermes",
+        )
+    )
+    assert client.agent_server_calls[0]["agent_profile_id"] == "odysseus"
+
+
+class _CreateBodyTransport:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def request(self, method: str, path: str, body: dict | None = None) -> dict:
+        self.calls.append((method, path, body or {}))
+        if path == "/api/settings" and method == "GET":
+            return {"agent_settings": {"agent_kind": "openhands", "agent": "CodeActAgent"}}
+        if path == "/api/conversations" and method == "POST":
+            return {"id": "conv-new"}
+        raise AssertionError(f"unexpected {method} {path}")
+
+
+def test_dispatch_hermes_not_sent_in_openhands_create_body():
+    transport = _CreateBodyTransport()
+    client = OpenHandsClient(transport=transport, agent_server_base="http://agent-server")
+    dispatcher = AgentDispatcher(client=client)
+    dispatcher.dispatch(
+        request_id="turn-hermes-body",
+        archetype="chat",
+        payload={"text": "hi"},
+        agent_profile_id="hermes",
+    )
+    body = transport.calls[1][2]
+    assert "agent_profile_id" not in body
 
 
 def test_dispatch_forwards_agent_profile_id():
