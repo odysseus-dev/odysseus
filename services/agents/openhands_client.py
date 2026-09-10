@@ -78,32 +78,39 @@ class OpenHandsClient:
         archetype_version: int,
         workspace_grants: tuple[str, ...] = (),
         credential_delivery_mode: str = "broker",
+        agent_profile_id: str = "odysseus",
     ) -> ConversationResume:
+        # Agent Server 1.45 StartConversationRequest requires workspace.
+        # request_id / grants / broker mode are Odysseus-only and 422 upstream.
+        _ = (request_id, profile_revision, archetype_version, workspace_grants, credential_delivery_mode)
+        user_message = {
+            "role": "user",
+            "content": [{"type": "text", "text": message}],
+        }
         if not conversation_id:
-            created = self.transport.request(
-                "POST",
-                "/api/conversations",
-                {
-                    "request_id": request_id,
-                    "profile_revision": profile_revision,
-                    "archetype_version": archetype_version,
-                    "workspace_grants": list(workspace_grants),
-                    "credential_delivery_mode": credential_delivery_mode,
+            settings = self.transport.request("GET", "/api/settings")
+            body: dict[str, Any] = {
+                "workspace": {
+                    "working_dir": "/workspace",
+                    "kind": "LocalWorkspace",
                 },
-            )
+                "agent_settings": settings.get("agent_settings") or {},
+                **({"initial_message": user_message} if message else {}),
+                "autotitle": False,
+            }
+            if agent_profile_id == "opencode":
+                body["agent_profile_id"] = os.environ.get(
+                    "OPENHANDS_OPENCODE_PROFILE_ID",
+                    "opencode",
+                )
+            created = self.transport.request("POST", "/api/conversations", body)
             conversation_id = str(created.get("id") or created.get("conversation_id"))
-        self.transport.request(
-            "POST",
-            f"/api/conversations/{conversation_id}/events",
-            {
-                "message": message,
-                "request_id": request_id,
-                "profile_revision": profile_revision,
-                "archetype_version": archetype_version,
-                "workspace_grants": list(workspace_grants),
-                "credential_delivery_mode": credential_delivery_mode,
-            },
-        )
+        elif message:
+            self.transport.request(
+                "POST",
+                f"/api/conversations/{conversation_id}/events",
+                {**user_message, "run": True},
+            )
         return ConversationResume(
             conversation_id=conversation_id,
             execution_id=f"agent-server:{conversation_id}",
@@ -111,13 +118,30 @@ class OpenHandsClient:
 
     def cancel_execution(self, execution_id: str) -> dict[str, Any]:
         conversation_id = execution_id.removeprefix("agent-server:")
-        return self.transport.request("POST", f"/api/conversations/{conversation_id}/stop", {})
+        return self.transport.request(
+            "POST", f"/api/conversations/{conversation_id}/interrupt", {}
+        )
 
     def get_execution(self, execution_id: str) -> dict[str, Any]:
         conversation_id = execution_id.removeprefix("agent-server:")
         return self.transport.request("GET", f"/api/conversations/{conversation_id}")
 
     def conversation_events(self, conversation_id: str) -> list[dict[str, Any]]:
-        payload = self.transport.request("GET", f"/api/conversations/{conversation_id}/events")
+        payload = self.transport.request(
+            "GET", f"/api/conversations/{conversation_id}/events/search"
+        )
         items = payload.get("items") or payload.get("events") or []
         return list(items)
+
+    def respond_to_confirmation(
+        self,
+        conversation_id: str,
+        *,
+        accept: bool,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        return self.transport.request(
+            "POST",
+            f"/api/conversations/{conversation_id}/events/respond_to_confirmation",
+            {"accept": accept, "reason": reason},
+        )

@@ -60,6 +60,21 @@ def test_dispatcher_has_no_raw_http():
     assert "httpx" not in source
 
 
+def test_dispatch_forwards_agent_profile_id():
+    client = FakeClient()
+    dispatcher = AgentDispatcher(client=client)
+    dispatcher.dispatch(
+        DispatchRequest(
+            request_id="turn-2",
+            archetype="chat",
+            payload={"text": "hi"},
+            conversation_id="conv-keep",
+            agent_profile_id="opencode",
+        )
+    )
+    assert client.agent_server_calls[0]["agent_profile_id"] == "opencode"
+
+
 def test_dispatch_injects_workspace_grants_and_request_id():
     client = FakeClient()
     dispatcher = AgentDispatcher(client=client)

@@ -21,6 +21,7 @@ class DispatchRequest:
     payload: dict[str, Any]
     conversation_id: str | None = None
     workspace_grants: tuple[str, ...] = ()
+    agent_profile_id: str = "odysseus"
 
 
 class AgentDispatcher:
@@ -56,6 +57,7 @@ class AgentDispatcher:
                 payload=dict(kwargs.get("payload") or {}),
                 conversation_id=kwargs.get("conversation_id"),
                 workspace_grants=tuple(kwargs.get("workspace_grants") or ()),
+                agent_profile_id=str(kwargs.get("agent_profile_id") or "odysseus"),
             )
         if request.request_id in self._idempotency:
             return self._idempotency[request.request_id]
@@ -69,6 +71,7 @@ class AgentDispatcher:
             archetype_version=archetype_version,
             workspace_grants=request.workspace_grants,
             credential_delivery_mode="broker",
+            agent_profile_id=request.agent_profile_id,
         )
         ref = AutomationExecutionRef(
             automation_execution_id=resumed.execution_id,
