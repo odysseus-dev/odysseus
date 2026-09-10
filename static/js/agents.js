@@ -49,15 +49,35 @@ export async function resumeAgent(executionId) {
 export function initAgentPlatform() {
   const root = document.getElementById('agent-chat-controls');
   if (!root) return;
+  const menu = document.getElementById('agent-run-menu');
+  const toggle = document.getElementById('agent-run-menu-btn');
   const canvas = root.querySelector('[data-agent-canvas]');
   const approve = root.querySelector('[data-agent-approve]');
   const cancel = root.querySelector('[data-agent-cancel]');
   const resume = root.querySelector('[data-agent-resume]');
+  const dot = root.querySelector('[data-agent-run-dot]');
   if (canvas) {
     canvas.textContent = 'Open in Agent Canvas';
     canvas.setAttribute('rel', 'noopener noreferrer');
     canvas.setAttribute('target', '_blank');
   }
+
+  function setMenuOpen(open) {
+    if (!menu || !toggle) return;
+    menu.classList.toggle('hidden', !open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.classList.toggle('expanded', open);
+  }
+
+  toggle?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setMenuOpen(toggle.getAttribute('aria-expanded') !== 'true');
+  });
+  document.addEventListener('click', (event) => {
+    if (root.contains(event.target)) return;
+    setMenuOpen(false);
+  });
+
   window.__odysseusBindAgentExecution = function bind(execution) {
     if (!execution) return;
     if (execution.execution_id) root.dataset.executionId = execution.execution_id;
@@ -71,6 +91,9 @@ export function initAgentPlatform() {
     if (approve) approve.hidden = !execution.pending_confirmation;
     if (cancel) cancel.hidden = !execution.execution_id;
     if (resume) resume.hidden = execution.status !== 'paused';
+    if (dot) {
+      dot.hidden = !execution.pending_confirmation && execution.status !== 'paused';
+    }
   };
   approve?.addEventListener('click', async () => {
     const id = root.dataset.executionId;

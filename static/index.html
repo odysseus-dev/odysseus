@@ -1206,11 +1206,21 @@
               <option value="odysseus">Native</option>
               <option value="opencode">OpenCode</option>
             </select>
-            <span data-agent-status hidden>idle</span>
-            <button type="button" class="input-icon-btn" data-agent-approve hidden>Approve</button>
-            <button type="button" class="input-icon-btn" data-agent-cancel hidden>Cancel</button>
-            <button type="button" class="input-icon-btn" data-agent-resume hidden>Resume</button>
-            <a class="input-icon-btn" data-agent-canvas hidden rel="noopener noreferrer" target="_blank">Open in Canvas</a>
+            <div class="agent-run-wrap">
+              <button type="button" class="input-icon-btn" id="agent-run-menu-btn" title="Agent run" aria-label="Agent run" aria-haspopup="true" aria-expanded="false" aria-controls="agent-run-menu">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="6 15 12 9 18 15"/>
+                </svg>
+                <span class="plus-active-dot" data-agent-run-dot hidden></span>
+              </button>
+              <div id="agent-run-menu" class="overflow-menu hidden" role="menu">
+                <span data-agent-status hidden>idle</span>
+                <button type="button" class="overflow-menu-item" data-agent-approve hidden>Approve</button>
+                <button type="button" class="overflow-menu-item" data-agent-cancel hidden>Cancel</button>
+                <button type="button" class="overflow-menu-item" data-agent-resume hidden>Resume</button>
+                <a class="overflow-menu-item" data-agent-canvas hidden rel="noopener noreferrer" target="_blank">Open in Canvas</a>
+              </div>
+            </div>
           </div>
           <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>

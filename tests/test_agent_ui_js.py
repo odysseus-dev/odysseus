@@ -23,6 +23,8 @@ def test_index_has_no_side_panel():
     assert 'id="agent-platform-panel"' not in _HTML
     assert "agent-canvas-frame" not in _HTML
     assert 'id="agent-chat-controls"' in _HTML
+    assert 'id="agent-run-menu"' in _HTML
+    assert 'id="agent-run-menu-btn"' in _HTML
     assert "data-agent-approve" in _HTML
     assert "data-agent-cancel" in _HTML
     assert "data-agent-resume" in _HTML
@@ -43,6 +45,8 @@ def test_agents_js_has_no_query_gate_or_second_composer():
     assert "data-agent-input" not in _JS
     assert "data-agent-launch" not in _JS
     assert "initAgentPlatform" in _JS
+    assert "agent-run-menu-btn" in _JS
+    assert "aria-expanded" in _JS
 
 
 def test_chat_binds_execution_sse_and_posts_profile():

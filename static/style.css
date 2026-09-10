@@ -2635,6 +2635,32 @@ body.bg-pattern-sparkles {
       align-items: center;
       flex-shrink: 0;
     }
+    #agent-chat-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    #agent-type-select {
+      max-width: 7.5rem;
+      height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--fg);
+      font-size: 12px;
+      padding: 0 6px;
+    }
+    .agent-run-wrap {
+      position: relative;
+    }
+    #agent-run-menu.overflow-menu {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 0;
+      left: auto;
+      transform-origin: bottom right;
+    }
     .input-icon-btn {
       background: none;
       border: none;
