@@ -17,6 +17,8 @@ class FakeClient:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
         self.resumed: list[str] = []
+        self.confirmed: list[dict] = []
+        self.events: list[dict] = []
 
     def create_or_resume(self, **kwargs):
         conversation_id = kwargs.get("conversation_id") or "conv-1"
@@ -27,7 +29,13 @@ class FakeClient:
         return {"ok": True}
 
     def conversation_events(self, conversation_id: str):
-        return []
+        return list(self.events)
+
+    def respond_to_confirmation(self, conversation_id: str, *, accept: bool, reason: str = ""):
+        self.confirmed.append(
+            {"conversation_id": conversation_id, "accept": accept, "reason": reason}
+        )
+        return {"ok": True}
 
 
 class FakeDispatcher:
@@ -101,3 +109,31 @@ def test_missing_owner_is_unauthorized(stack):
         owner=None,
     )
     assert response.status_code == 401
+
+
+def test_approve_without_pending_confirmation_is_conflict(stack):
+    client, run, dispatcher = stack
+    response = client.post(f"/api/agents/executions/{run.automation_execution_id}/approve")
+    assert response.status_code == 409
+    assert "error" in response.get_json()
+    assert dispatcher.client.confirmed == []
+
+
+def test_approve_responds_to_pending_action_event(stack):
+    client, run, dispatcher = stack
+    dispatcher.client.events = [
+        {
+            "id": "action-1",
+            "kind": "ActionEvent",
+            "tool_name": "mail.send",
+            "action": {"to": ["a@example.test"], "body": "x"},
+        }
+    ]
+    response = client.post(f"/api/agents/executions/{run.automation_execution_id}/approve")
+    assert response.status_code == 202
+    body = response.get_json()
+    assert body["approved"] is True
+    assert body["event_id"] == "action-1"
+    assert dispatcher.client.confirmed == [
+        {"conversation_id": run.conversation_id, "accept": True, "reason": ""}
+    ]

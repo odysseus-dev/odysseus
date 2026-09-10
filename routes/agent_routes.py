@@ -83,7 +83,28 @@ class AgentHttp:
             )
             return _Response(202, {"execution_id": execution_id, "resumed": True})
         if path.endswith("/approve"):
-            return _Response(202, {"approved": True})
+            execution_id = path[len("/api/agents/executions/") : -len("/approve")]
+            ref = self._ref_for(execution_id)
+            client = getattr(self.dispatcher, "client", None)
+            events = []
+            if client is not None and hasattr(client, "conversation_events"):
+                events = list(client.conversation_events(ref.conversation_id) or [])
+            pending = next(
+                (event for event in reversed(events) if event.get("kind") == "ActionEvent"),
+                None,
+            )
+            if pending is None:
+                return _Response(409, {"error": "no pending confirmation"})
+            accept = bool(body.get("accept", True))
+            reason = str(body.get("reason") or "")
+            if client is not None and hasattr(client, "respond_to_confirmation"):
+                client.respond_to_confirmation(
+                    ref.conversation_id, accept=accept, reason=reason
+                )
+            return _Response(
+                202,
+                {"approved": accept, "event_id": pending.get("id")},
+            )
         if path.endswith("/messages"):
             execution_id = path[len("/api/agents/executions/") : -len("/messages")]
             ref = self._ref_for(execution_id)
