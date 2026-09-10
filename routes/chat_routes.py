@@ -6,6 +6,7 @@ import os
 import re
 import time
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List, Optional
 
@@ -979,6 +980,7 @@ def setup_chat_routes(
         form_data = await request.form()
         message = form_data.get("message")
         session = form_data.get("session")
+        requested_agent_profile_id = (body or {}).get("agent_profile_id")
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
@@ -2333,6 +2335,41 @@ def setup_chat_routes(
                     elif _explicit_browser_intent:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
 
+                    from services.agents.session_binding import (
+                        DEFAULT_AGENT_PROFILE,
+                        SessionBinding,
+                        conversation_kwarg,
+                        normalize_agent_profile_id,
+                    )
+
+                    _bound_cid = getattr(sess, "openhands_conversation_id", None)
+                    _bound_profile = normalize_agent_profile_id(
+                        getattr(sess, "agent_profile_id", None)
+                    )
+                    if _bound_cid is None:
+                        _bind_db = SessionLocal()
+                        try:
+                            _db_sess = (
+                                _bind_db.query(DBSession)
+                                .filter(DBSession.id == session)
+                                .first()
+                            )
+                            if _db_sess is not None:
+                                _bound_cid = getattr(
+                                    _db_sess, "openhands_conversation_id", None
+                                )
+                                _bound_profile = normalize_agent_profile_id(
+                                    getattr(_db_sess, "agent_profile_id", None)
+                                    or DEFAULT_AGENT_PROFILE
+                                )
+                                sess.openhands_conversation_id = _bound_cid
+                                sess.agent_profile_id = _bound_profile
+                        finally:
+                            _bind_db.close()
+                    _requested_profile = normalize_agent_profile_id(
+                        requested_agent_profile_id
+                    )
+
                     async for chunk in stream_governed_agent(
                         sess.endpoint_url,
                         sess.model,
@@ -2371,6 +2408,17 @@ def setup_chat_routes(
                         external_untrusted_context_seen=external_untrusted_context_seen,
                         delegated_credential=_delegated_credential,
                         exact_approval=exact_tool_approval,
+                        conversation_id=conversation_kwarg(
+                            session,
+                            SessionBinding(
+                                conversation_id=_bound_cid,
+                                agent_profile_id=_bound_profile,
+                            ),
+                        ),
+                        turn_id=uuid.uuid4().hex,
+                        agent_profile_id=_requested_profile or _bound_profile,
+                        bound_agent_profile_id=_bound_profile,
+                        archetype="chat",
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -2384,6 +2432,36 @@ def setup_chat_routes(
                                     else:
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
+                                    yield chunk
+                                elif data.get("type") == "execution":
+                                    _cid = data.get("conversation_id")
+                                    if _cid:
+                                        sess.openhands_conversation_id = _cid
+                                        sess.agent_profile_id = (
+                                            _requested_profile or _bound_profile
+                                        )
+                                        _bind_db = SessionLocal()
+                                        try:
+                                            _db_sess = (
+                                                _bind_db.query(DBSession)
+                                                .filter(DBSession.id == session)
+                                                .first()
+                                            )
+                                            if _db_sess is not None:
+                                                _db_sess.openhands_conversation_id = _cid
+                                                _db_sess.agent_profile_id = (
+                                                    _requested_profile or _bound_profile
+                                                )
+                                                _bind_db.commit()
+                                        except Exception:
+                                            _bind_db.rollback()
+                                            logger.warning(
+                                                "Failed to persist OpenHands binding for %s",
+                                                session,
+                                                exc_info=True,
+                                            )
+                                        finally:
+                                            _bind_db.close()
                                     yield chunk
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
