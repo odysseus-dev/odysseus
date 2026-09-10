@@ -47,35 +47,43 @@ export async function resumeAgent(executionId) {
 }
 
 export function initAgentPlatform() {
-  const root = document.getElementById('agent-platform-panel');
+  const root = document.getElementById('agent-chat-controls');
   if (!root) return;
-  const status = root.querySelector('[data-agent-status]');
   const canvas = root.querySelector('[data-agent-canvas]');
-  if (status) status.textContent = 'idle';
+  const approve = root.querySelector('[data-agent-approve]');
+  const cancel = root.querySelector('[data-agent-cancel]');
+  const resume = root.querySelector('[data-agent-resume]');
   if (canvas) {
     canvas.textContent = 'Open in Agent Canvas';
     canvas.setAttribute('rel', 'noopener noreferrer');
     canvas.setAttribute('target', '_blank');
   }
-  root.querySelector('[data-agent-launch]')?.addEventListener('click', async () => {
-    const created = await launchAgent({
-      request_id: `ui-${Date.now()}`,
-      archetype: 'chat',
-      payload: { text: root.querySelector('[data-agent-input]')?.value || '' },
-    });
-    if (status) status.textContent = renderAgentStatus(created);
-    if (canvas && created.canvas_url) canvas.setAttribute('href', created.canvas_url);
+  window.__odysseusBindAgentExecution = function bind(execution) {
+    if (!execution) return;
+    if (execution.execution_id) root.dataset.executionId = execution.execution_id;
+    if (canvas && execution.conversation_id) {
+      canvas.hidden = false;
+      canvas.setAttribute(
+        'href',
+        execution.canvas_url || canvasUrl(execution.conversation_id, window.OPENHANDS_CANVAS_URL || ''),
+      );
+    }
+    if (execution.pending_confirmation) {
+      if (approve) approve.hidden = false;
+    }
+    if (cancel) cancel.hidden = !execution.execution_id;
+    if (resume) resume.hidden = execution.status !== 'paused';
+  };
+  approve?.addEventListener('click', async () => {
+    const id = root.dataset.executionId;
+    if (id) await approveAgent(id, {});
   });
-  root.querySelector('[data-agent-cancel]')?.addEventListener('click', async () => {
-    const executionId = root.dataset.executionId;
-    if (executionId) await cancelAgent(executionId);
+  cancel?.addEventListener('click', async () => {
+    const id = root.dataset.executionId;
+    if (id) await cancelAgent(id);
   });
-  root.querySelector('[data-agent-resume]')?.addEventListener('click', async () => {
-    const executionId = root.dataset.executionId;
-    if (executionId) await resumeAgent(executionId);
-  });
-  root.querySelector('[data-agent-approve]')?.addEventListener('click', async () => {
-    const executionId = root.dataset.executionId;
-    if (executionId) await approveAgent(executionId, {});
+  resume?.addEventListener('click', async () => {
+    const id = root.dataset.executionId;
+    if (id) await resumeAgent(id);
   });
 }

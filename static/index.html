@@ -1200,6 +1200,18 @@
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
             <button type="button" class="mode-toggle-btn" id="mode-chat-btn" aria-pressed="false">Chat</button>
           </div>
+          <div id="agent-chat-controls">
+            <label class="sr-only" for="agent-type-select">Agent type</label>
+            <select id="agent-type-select" aria-label="Agent type">
+              <option value="odysseus">Native</option>
+              <option value="opencode">OpenCode</option>
+            </select>
+            <span data-agent-status hidden>idle</span>
+            <button type="button" class="input-icon-btn" data-agent-approve hidden>Approve</button>
+            <button type="button" class="input-icon-btn" data-agent-cancel hidden>Cancel</button>
+            <button type="button" class="input-icon-btn" data-agent-resume hidden>Resume</button>
+            <a class="input-icon-btn" data-agent-canvas hidden rel="noopener noreferrer" target="_blank">Open in Canvas</a>
+          </div>
           <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>
           </button>
@@ -2546,23 +2558,6 @@
       <div class="search-results" id="search-results"></div>
     </div>
   </div>
-
-  <section id="agent-platform-panel" hidden>
-    <header>
-      <strong>OpenHands agent</strong>
-      <span data-agent-status>idle</span>
-      <a data-agent-canvas href="#" rel="noopener noreferrer" target="_blank">Open in Agent Canvas</a>
-    </header>
-    <textarea data-agent-input aria-label="Agent message"></textarea>
-    <div>
-      <button type="button" data-agent-launch>Launch</button>
-      <button type="button" data-agent-approve>Approve</button>
-      <button type="button" data-agent-cancel>Cancel</button>
-      <button type="button" data-agent-resume>Resume</button>
-    </div>
-    <ol data-agent-events></ol>
-    <ul data-agent-artifacts></ul>
-  </section>
 
   <!-- Toast container (aria-live for screen readers) -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

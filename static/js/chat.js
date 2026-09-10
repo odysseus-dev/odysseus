@@ -1894,6 +1894,7 @@ import { loadPanel } from './panels.js';
 	        isAgentMode = true;
 	      }
 	      fd.append('mode', isAgentMode ? 'agent' : 'chat');
+	      fd.append('agent_profile_id', document.getElementById('agent-type-select')?.value || 'odysseus');
 	      fd.append('plan_mode', isPlanMode ? 'true' : 'false');
 	      if (!isPlanMode && _pendingApprovedPlan) {
 	        fd.append('approved_plan', _pendingApprovedPlan.slice(0, 8192));
@@ -2868,10 +2869,19 @@ import { loadPanel } from './panels.js';
                 if (spinner && spinner.element) spinner.destroy();
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress' || json.type === 'execution' || json.type === 'pending_confirmation') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
+              }
+              if (json.type === 'execution' || json.type === 'pending_confirmation') {
+                const payload = json.type === 'pending_confirmation'
+                  ? { ...json, pending_confirmation: true }
+                  : json;
+                if (typeof window.__odysseusBindAgentExecution === 'function') {
+                  window.__odysseusBindAgentExecution(payload);
+                }
+                continue;
               }
               if (json.type === 'generated_image') {
                 _rememberGeneratedImage(json);
@@ -5056,6 +5066,13 @@ import { loadPanel } from './panels.js';
             }
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
             renderDelta();
+          } else if (json.type === 'execution' || json.type === 'pending_confirmation') {
+            const payloadBind = json.type === 'pending_confirmation'
+              ? { ...json, pending_confirmation: true }
+              : json;
+            if (typeof window.__odysseusBindAgentExecution === 'function') {
+              window.__odysseusBindAgentExecution(payloadBind);
+            }
           } else if (json.type === 'doc_stream_open') {
             rich = true;
             if (documentModule) documentModule.streamDocOpen(json.title || '', json.lang || '');
