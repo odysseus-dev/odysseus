@@ -39,3 +39,10 @@ def test_chat_stream_passes_user_requested_agent_into_governed_stream():
     call = source.split("async for chunk in stream_governed_agent(", 1)[1].split("):", 1)[0]
     assert "user_requested_agent=user_requested_agent" in call
     assert "workspace_grants=" in call
+
+
+def test_can_use_agent_false_clears_user_requested_agent():
+    source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
+    block = source.split('if not _privs.get("can_use_agent", True):', 1)[1]
+    branch = block.split("\n", 4)[0:4]
+    assert any("user_requested_agent = False" in line for line in branch)

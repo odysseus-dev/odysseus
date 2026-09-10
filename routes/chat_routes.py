@@ -1567,6 +1567,7 @@ def setup_chat_routes(
             if not _privs.get("can_use_agent", True):
                 _effective_mode = 'chat'
                 chat_mode = 'chat'
+                user_requested_agent = False
         # Global admin disabled tools
         from src.settings import get_setting
         _global_disabled = get_setting("disabled_tools", [])

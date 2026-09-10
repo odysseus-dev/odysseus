@@ -13,6 +13,7 @@ class ScriptedClient:
         self.polls = polls
         self._poll_i = 0
         self.calls = []
+        self.confirmed = []
 
     def create_or_resume(self, **kwargs):
         self.calls.append(kwargs)
@@ -28,6 +29,12 @@ class ScriptedClient:
 
     def get_execution(self, execution_id):
         return dict(getattr(self, "execution", {}))
+
+    def respond_to_confirmation(self, conversation_id, *, accept, reason=""):
+        self.confirmed.append(
+            {"conversation_id": conversation_id, "accept": accept, "reason": reason}
+        )
+        return {"ok": True}
 
 
 def _collect(**kwargs):
@@ -225,6 +232,39 @@ def test_chat_does_not_confirm_human_workspace_mutating_actions():
         poll_timeout_s=0,
     )
     assert '"type": "pending_confirmation"' not in "".join(chunks)
+    assert len(client.confirmed) == 1
+    assert client.confirmed[0]["accept"] is False
+    assert client.confirmed[0]["conversation_id"] == "conv-new"
+
+
+def test_chat_rejects_agent_server_action_event_shape():
+    action = {
+        "id": "a-as145",
+        "kind": "ActionEvent",
+        "llm_response_id": "lr1",
+        "parent_id": "p1",
+        "action": {
+            "kind": "MCPToolAction",
+            "name": "mail.send",
+            "arguments": {"to": ["a@example.test"]},
+        },
+    }
+    client = ScriptedClient(
+        [
+            action,
+            {"id": "s1", "kind": "ConversationStateUpdate", "status": "paused"},
+        ]
+    )
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "send"}],
+        turn_id="t-chat-as145",
+        user_requested_agent=False,
+        poll_timeout_s=0,
+    )
+    assert '"type": "pending_confirmation"' not in "".join(chunks)
+    assert len(client.confirmed) == 1
+    assert client.confirmed[0]["accept"] is False
 
 
 def test_chat_still_confirms_sandbox_actions():
@@ -243,3 +283,4 @@ def test_chat_still_confirms_sandbox_actions():
         poll_timeout_s=0,
     )
     assert '"type": "pending_confirmation"' in "".join(chunks)
+    assert not getattr(client, "confirmed", [])

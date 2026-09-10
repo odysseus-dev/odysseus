@@ -15,8 +15,11 @@ from .dispatcher import AgentDispatcher, DispatchRequest
 from .workspace_privilege import (
     human_workspace_writable,
     is_human_workspace_mutating_action,
+    resolve_action_tool_name,
     workspace_grants_for_turn,
 )
+
+_CHAT_MUTATING_REJECT_REASON = "Chat mode cannot approve human-workspace writes."
 
 _IDLE = {"finished", "paused", "completed", "failed", "cancelled"}
 _POLL_SLEEP_S = 0.4
@@ -124,6 +127,7 @@ async def stream_governed_agent(
         yield "data: " + json.dumps({"delta": _REBOUND_NOTE}) + "\n\n"
     seen: set[str] = set()
     emitted_pending: set[str] = set()
+    rejected_mutating: set[str] = set()
     idle = False
     deadline = time.monotonic() + float(kwargs.get("poll_timeout_s", _POLL_TIMEOUT_S))
     while True:
@@ -137,11 +141,22 @@ async def stream_governed_agent(
             text = _assistant_text(event)
             if text:
                 yield "data: " + json.dumps({"delta": text}) + "\n\n"
-            if event.get("kind") == "ActionEvent" and eid and eid not in emitted_pending:
-                tool_name = event.get("tool_name") or event.get("tool")
-                if writable or not is_human_workspace_mutating_action(
-                    str(tool_name) if tool_name is not None else None
-                ):
+            if event.get("kind") == "ActionEvent" and eid:
+                tool_name = resolve_action_tool_name(event)
+                mutating = is_human_workspace_mutating_action(tool_name)
+                if not writable and mutating:
+                    if eid not in rejected_mutating:
+                        rejected_mutating.add(eid)
+                        respond = getattr(
+                            dispatcher.client, "respond_to_confirmation", None
+                        )
+                        if callable(respond):
+                            respond(
+                                ref.conversation_id,
+                                accept=False,
+                                reason=_CHAT_MUTATING_REJECT_REASON,
+                            )
+                elif eid not in emitted_pending:
                     emitted_pending.add(eid)
                     yield "data: " + json.dumps({
                         "type": "pending_confirmation",
