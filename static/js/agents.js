@@ -68,9 +68,7 @@ export function initAgentPlatform() {
         execution.canvas_url || canvasUrl(execution.conversation_id, window.OPENHANDS_CANVAS_URL || ''),
       );
     }
-    if (execution.pending_confirmation) {
-      if (approve) approve.hidden = false;
-    }
+    if (approve) approve.hidden = !execution.pending_confirmation;
     if (cancel) cancel.hidden = !execution.execution_id;
     if (resume) resume.hidden = execution.status !== 'paused';
   };

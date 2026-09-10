@@ -5,14 +5,35 @@ Legacy ``stream_agent_loop`` remains for tests until Task 18 deletion.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
 from typing import Any, AsyncIterator
 
 from .dispatcher import AgentDispatcher, DispatchRequest
 
 _IDLE = {"finished", "paused", "completed", "failed", "cancelled"}
+_POLL_SLEEP_S = 0.4
+_POLL_TIMEOUT_S = 120.0
 _REBOUND_NOTE = "Started a new OpenHands conversation because the agent type changed."
+
+
+def _event_idle(event: dict[str, Any]) -> bool:
+    status = str(event.get("status") or "").lower()
+    return event.get("kind") == "ConversationStateUpdate" and status in _IDLE
+
+
+def _client_conversation_idle(client: Any, conversation_id: str, execution_id: str) -> bool:
+    getter = getattr(client, "conversation_status", None)
+    if callable(getter):
+        return str(getter(conversation_id) or "").lower() in _IDLE
+    fetch = getattr(client, "get_execution", None)
+    if callable(fetch):
+        info = fetch(execution_id) or {}
+        status = str(info.get("status") or info.get("conversation_status") or "").lower()
+        return status in _IDLE
+    return False
 
 
 def _user_text(messages: list[dict[str, Any]] | None) -> str:
@@ -70,9 +91,10 @@ async def stream_governed_agent(
     if rebound:
         yield "data: " + json.dumps({"delta": _REBOUND_NOTE}) + "\n\n"
     seen: set[str] = set()
+    emitted_pending: set[str] = set()
     idle = False
-    pending_id = None
-    for _ in range(20):
+    deadline = time.monotonic() + float(kwargs.get("poll_timeout_s", _POLL_TIMEOUT_S))
+    while True:
         events = dispatcher.client.conversation_events(ref.conversation_id)
         for event in events:
             eid = str(event.get("id") or "")
@@ -83,16 +105,19 @@ async def stream_governed_agent(
             text = _assistant_text(event)
             if text:
                 yield "data: " + json.dumps({"delta": text}) + "\n\n"
-            if event.get("kind") == "ActionEvent":
-                pending_id = event.get("id")
-            status = str(event.get("status") or "")
-            if event.get("kind") == "ConversationStateUpdate" and status.lower() in _IDLE:
+            if event.get("kind") == "ActionEvent" and eid and eid not in emitted_pending:
+                emitted_pending.add(eid)
+                yield "data: " + json.dumps({
+                    "type": "pending_confirmation",
+                    "event_id": eid,
+                }) + "\n\n"
+            if _event_idle(event):
                 idle = True
-        if pending_id:
-            yield "data: " + json.dumps({
-                "type": "pending_confirmation",
-                "event_id": pending_id,
-            }) + "\n\n"
-        if idle or not events:
+        if idle or _client_conversation_idle(
+            dispatcher.client, ref.conversation_id, ref.automation_execution_id
+        ):
             break
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(_POLL_SLEEP_S)
     yield "data: [DONE]\n\n"

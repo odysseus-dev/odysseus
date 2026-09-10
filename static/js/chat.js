@@ -2878,7 +2878,7 @@ import { loadPanel } from './panels.js';
                 const payload = json.type === 'pending_confirmation'
                   ? { ...json, pending_confirmation: true }
                   : json;
-                if (typeof window.__odysseusBindAgentExecution === 'function') {
+                if (!_isBg && typeof window.__odysseusBindAgentExecution === 'function') {
                   window.__odysseusBindAgentExecution(payload);
                 }
                 continue;

@@ -51,6 +51,14 @@ def test_chat_binds_execution_sse_and_posts_profile():
     assert "pending_confirmation" in _CHAT
 
 
+def test_approve_hidden_unless_pending_confirmation():
+    assert "approve.hidden = !execution.pending_confirmation" in _JS
+
+
+def test_chat_skips_agent_bind_when_background():
+    assert "if (!_isBg && typeof window.__odysseusBindAgentExecution === 'function')" in _CHAT
+
+
 def test_init_loads_agent_platform_module():
     assert "agents.js" in _INIT
     assert "initAgentPlatform" in _INIT

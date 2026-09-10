@@ -2464,6 +2464,8 @@ def setup_chat_routes(
                                         finally:
                                             _bind_db.close()
                                     yield chunk
+                                elif data.get("type") == "pending_confirmation":
+                                    yield chunk
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
                                     yield chunk
