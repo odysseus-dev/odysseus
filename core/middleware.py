@@ -4,6 +4,7 @@
 import os
 import secrets
 from collections.abc import Mapping
+from urllib.parse import quote, unquote
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -38,6 +39,30 @@ def with_asgi_root_path(scope: Mapping[str, object], path: str) -> str:
     if not isinstance(root_path, str) or not root_path:
         return path
     return f"{root_path.rstrip('/')}{path}"
+
+
+def safe_post_login_path(next_value: str | None) -> str:
+    """Return an application-relative path+query, or ``/`` if it is unsafe."""
+    raw = unquote(next_value or "")
+    if not raw.startswith("/") or raw.startswith("//") or "\\" in raw:
+        return "/"
+    if "://" in raw:
+        return "/"
+    if raw == "/login" or raw.startswith("/login?") or raw.startswith("/login#"):
+        return "/"
+    return raw
+
+
+def login_redirect_url(scope: Mapping[str, object]) -> str:
+    """Send browsers to ``/login`` with ``next`` set to the blocked URL."""
+    route_path = get_application_route_path(scope) or "/"
+    query = scope.get("query_string") or b""
+    query_s = query.decode("latin-1") if isinstance(query, (bytes, bytearray)) else str(query)
+    next_path = route_path if route_path.startswith("/") else f"/{route_path}"
+    if query_s:
+        next_path = f"{next_path}?{query_s}"
+    login = with_asgi_root_path(scope, "/login")
+    return f"{login}?next={quote(next_path, safe='')}"
 
 
 def path_is_route_or_child(path: str, prefix: str) -> bool:

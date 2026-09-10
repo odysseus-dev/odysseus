@@ -198,7 +198,11 @@ const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
-    window.location.href = '/login';
+    const here = window.location.pathname + window.location.search;
+    const next = (here.charAt(0) === '/' && here.charAt(1) !== '/' && !here.startsWith('/login'))
+      ? here
+      : '/';
+    window.location.href = '/login?next=' + encodeURIComponent(next);
   }
   return res;
 };

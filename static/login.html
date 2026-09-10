@@ -28,6 +28,13 @@
     }
     return appBasePath + normalizedPath;
   };
+  function postLoginPath() {
+    var next = new URLSearchParams(window.location.search).get('next') || '/';
+    if (next.charAt(0) !== '/' || next.charAt(1) === '/' || next.indexOf('\\') !== -1) return '/';
+    if (next.indexOf('://') !== -1) return '/';
+    if (next === '/login' || next.indexOf('/login?') === 0 || next.indexOf('/login#') === 0) return '/';
+    return next;
+  }
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
   // static/js/theme.js so login picks the same default pattern as the
   // main app for users who never explicitly chose one.
@@ -388,7 +395,7 @@
     const statusRes = await fetch(appUrl('/api/auth/status'), { credentials: 'same-origin' });
     const data = await statusRes.json();
     if (data.authenticated) {
-      window.location.replace(appUrl('/'));
+      window.location.replace(appUrl(postLoginPath()));
       return;
     }
     signupAllowed = !!data.signup_enabled;
@@ -504,7 +511,7 @@
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
         sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace(appUrl('/')); });
+      }).catch(() => {}).finally(() => { window.location.replace(appUrl(postLoginPath())); });
     }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };

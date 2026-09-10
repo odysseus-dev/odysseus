@@ -71,6 +71,7 @@ from core.middleware import (
     SecurityHeadersMiddleware,
     get_application_route_path,
     is_cors_preflight,
+    login_redirect_url,
     path_is_route_or_child,
     with_asgi_root_path,
 )
@@ -407,7 +408,7 @@ if AUTH_ENABLED:
                 # No users yet — redirect to login for first-time setup
                 if not path.startswith("/api/"):
                     return RedirectResponse(
-                        url=with_asgi_root_path(request.scope, "/login"),
+                        url=login_redirect_url(request.scope),
                         status_code=302,
                     )
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
@@ -472,7 +473,7 @@ if AUTH_ENABLED:
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
                 return RedirectResponse(
-                    url=with_asgi_root_path(request.scope, "/login"),
+                    url=login_redirect_url(request.scope),
                     status_code=302,
                 )
 
