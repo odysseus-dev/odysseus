@@ -31,12 +31,19 @@ def test_all_first_party_components_are_pinned(version_file):
         "OPENHANDS_AGENT_SERVER_IMAGE",
         "OPENHANDS_AUTOMATION_IMAGE",
         "OPENHANDS_CANVAS_IMAGE",
+        "NINE_ROUTER_IMAGE",
         "OPENCODE_VERSION",
         "HERMES_VERSION",
     }
     assert all(value and ":latest" not in value for value in values.values())
+    assert "@sha256:" in values["NINE_ROUTER_IMAGE"]
     compose = (ROOT / "docker-compose.openhands.yml").read_text(encoding="utf-8")
-    for key in ("OPENHANDS_AGENT_SERVER_IMAGE", "OPENHANDS_AUTOMATION_IMAGE", "OPENHANDS_CANVAS_IMAGE"):
+    for key in (
+        "OPENHANDS_AGENT_SERVER_IMAGE",
+        "OPENHANDS_AUTOMATION_IMAGE",
+        "OPENHANDS_CANVAS_IMAGE",
+        "NINE_ROUTER_IMAGE",
+    ):
         assert values[key] in compose
 
 

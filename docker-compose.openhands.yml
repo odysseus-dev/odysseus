@@ -117,6 +117,31 @@ services:
       retries: 12
     restart: unless-stopped
 
+  9router:
+    # Unmodified decolua/9router 0.5.69 on the default overlay network.
+    # In-network OpenAI-compatible base URL: http://9router:20128/v1
+    # Overlay health target for Agent Server / ACP: http://9router:20128/api/health
+    # Host publish of the provider port is not required.
+    # Virtual inference keys are created later in the 9router dashboard
+    # (Endpoint & Key) and stored under DATA_DIR. Later units inject that
+    # key into Agent Server / ACP only. Odysseus must never receive it.
+    image: decolua/9router:0.5.69@sha256:47c17576ad49f0918d1a455dd412ae4509ee8bc742f17ba0b3327ddc70f35a40
+    pull_policy: never
+    env_file: deploy/openhands/versions.env
+    environment:
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - HOSTNAME=0.0.0.0
+      - ENABLE_REQUEST_LOGS=false
+    volumes:
+      - ${APP_DATA_DIR:-./data}/9router:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:20128/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   openhands-agent-server-data:
   openhands-automation-data:

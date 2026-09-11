@@ -235,14 +235,19 @@ helpers:
 ## OpenHands feasibility stack
 
 The OpenHands overlay is isolated from normal Compose startup. It adds Agent
-Server, Automation, Agent Canvas, and Odysseus MCP without publishing their
-internal APIs; only configured Odysseus and Canvas ports reach the host.
+Server, Automation, Agent Canvas, Odysseus MCP, and 9router without publishing
+their internal APIs; only configured Odysseus and Canvas ports reach the host.
+9router is reachable on the overlay network at `http://9router:20128/v1`
+(health `GET /api/health`). Create a virtual inference key later in the 9router
+dashboard (Endpoint & Key). That key stays in 9router `DATA_DIR` and is injected
+into Agent Server / ACP in later units. Odysseus overlay environment must not
+receive it.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.openhands.yml config --quiet
-docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never
 python3 scripts/openhands_probe.py stack --json
-python3 -m pytest tests/integration/openhands/test_stack_contract.py -v
+python3 -m pytest tests/integration/openhands/test_stack_contract.py tests/integration/openhands/test_9router_reachability.py -v
 ```
 
 Pins live in `deploy/openhands/versions.env`. Update them only from official
