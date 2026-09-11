@@ -1539,6 +1539,52 @@ def probe_opencode_9router() -> ProbeResult:
     )
 
 
+def probe_hermes_9router() -> ProbeResult:
+    """Report non-secret Hermes named-provider route from isolated HERMES_HOME."""
+    probe = _compose(
+        "exec",
+        "-T",
+        "openhands-agent-server",
+        "python",
+        "-c",
+        (
+            "import json,os;"
+            "from pathlib import Path;"
+            "home=os.environ.get('HERMES_HOME') or '/home/hermes/.hermes';"
+            "p=os.environ.get('HERMES_CONFIG') or str(Path(home)/'config.yaml');"
+            "print(json.dumps({'exists': Path(p).is_file(), 'path': p, "
+            "'text': Path(p).read_text() if Path(p).is_file() else ''}))"
+        ),
+    )
+    if probe.returncode:
+        return ProbeResult(
+            "hermes-9router",
+            False,
+            {"error": "hermes_config_unreadable", "stderr": probe.stderr[-400:]},
+        )
+    payload = json.loads(probe.stdout)
+    text = str(payload.get("text") or "")
+    passed = bool(
+        payload.get("exists")
+        and "providers:" in text
+        and "ninerouter:" in text
+        and "9router" in text
+        and "chat_completions" in text
+        and "chatgpt.com" not in text
+        and "api.anthropic.com" not in text
+    )
+    return ProbeResult(
+        "hermes-9router",
+        passed,
+        {
+            "config_exists": payload.get("exists"),
+            "named_provider": "ninerouter" if "ninerouter:" in text else None,
+            "native_settings_used": False,
+            "opencode_config_used": False,
+        },
+    )
+
+
 def probe_acceptance() -> ProbeResult:
     """In-process gates can pass; live Docker/Tailscale is recorded, not invented."""
     services: dict[str, bool] = {}
@@ -1596,6 +1642,7 @@ def main() -> int:
             "acceptance",
             "native-9router",
             "opencode-9router",
+            "hermes-9router",
         ],
     )
     parser.add_argument("--json", action="store_true")
@@ -1626,6 +1673,10 @@ def main() -> int:
         return 0 if result.passed else 1
     if args.probe == "opencode-9router":
         result = probe_opencode_9router()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "hermes-9router":
+        result = probe_hermes_9router()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()

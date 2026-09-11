@@ -1,0 +1,15 @@
+# Hermes ACP provider config for hermes-agent v2026.9.7.
+# Named providers: entry (not bare custom). Overlay bootstrap writes the
+# isolated HERMES_HOME copy with a separate odysseus-hermes virtual key.
+_config_version: 12
+model:
+  default: auto
+  provider: ninerouter
+  base_url: http://9router:20128/v1
+  api_mode: chat_completions
+providers:
+  ninerouter:
+    base_url: http://9router:20128/v1
+    key_env: HERMES_NINE_ROUTER_KEY
+    api_mode: chat_completions
+    model: auto

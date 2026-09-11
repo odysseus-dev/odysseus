@@ -9,4 +9,6 @@ capabilities:
 archetypes:
   - chat
   - deep-research
+mcp:
+  - odysseus
 extra: forbid

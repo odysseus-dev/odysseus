@@ -60,6 +60,25 @@ OPENCODE_ACP_PROFILE_PATH = Path(
         "/home/openhands/.openhands/agent-profiles/opencode.json",
     )
 )
+HERMES_KEY_NAME = "odysseus-hermes"
+HERMES_MACHINE_ID = "odysseushermes1"
+HERMES_HOME = Path(os.environ.get("HERMES_HOME", "/home/hermes/.hermes"))
+HERMES_CONFIG_PATH = Path(
+    os.environ.get("HERMES_CONFIG_PATH", str(HERMES_HOME / "config.yaml"))
+)
+HERMES_TEMPLATE_PATH = Path(
+    os.environ.get(
+        "HERMES_TEMPLATE_PATH",
+        "/opt/odysseus/hermes-config.yaml",
+    )
+)
+HERMES_ACP_PROFILE_PATH = Path(
+    os.environ.get(
+        "HERMES_ACP_PROFILE_PATH",
+        "/home/openhands/.openhands/agent-profiles/hermes.json",
+    )
+)
+HERMES_KEY_ENV = "HERMES_NINE_ROUTER_KEY"
 NINE_ROUTER_DB = Path(
     os.environ.get(
         "NINE_ROUTER_SQLITE_PATH",
@@ -301,6 +320,35 @@ def apply_native_9router_settings() -> None:
     )
 
 
+def _write_owned_text(path: Path, text: str, mode: int = 0o600) -> None:
+    """Write a text file onto a runtime volume as the Agent Server user.
+
+    Parameters
+    ----------
+    path
+        Destination path on a mounted volume.
+    text
+        Full file contents.
+    mode
+        File mode after replace.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path("/tmp") / f"odysseus-{path.name}"
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        tmp.replace(path)
+    except OSError:
+        _run_sudo(["cp", str(tmp), str(path)])
+    if os.geteuid() == 0:
+        os.chown(path, 10001, 10001)
+        os.chmod(path, mode)
+        os.chown(path.parent, 10001, 10001)
+    else:
+        _run_sudo(["chown", "10001:10001", str(path), str(path.parent)])
+        _run_sudo(["chmod", oct(mode)[2:], str(path)])
+
+
 def _write_owned_json(path: Path, payload: dict[str, Any], mode: int = 0o600) -> None:
     """Write JSON onto a runtime volume as the Agent Server user.
 
@@ -436,7 +484,86 @@ def apply_opencode_9router_config() -> None:
     log.info("opencode provider now %s key=%s acp_server=opencode", NINE_ROUTER_V1, OPENCODE_KEY_NAME)
 
 
+def _hermes_config_yaml(virtual_key: str) -> str:
+    """Build Hermes v2026.9.7 ``providers:`` YAML pointing at 9router.
+
+    Parameters
+    ----------
+    virtual_key
+        Hermes-only 9router virtual key. Never logged.
+
+    Returns
+    -------
+    str
+        ``config.yaml`` text with named ``ninerouter`` provider.
+    """
+
+    model_id = _pick_opencode_model(virtual_key)
+    if HERMES_TEMPLATE_PATH.is_file():
+        raw = HERMES_TEMPLATE_PATH.read_text(encoding="utf-8")
+        if "ninerouter:" not in raw or "providers:" not in raw:
+            raise RuntimeError("Hermes template missing named providers.ninerouter")
+    return (
+        "_config_version: 12\n"
+        "model:\n"
+        f"  default: {json.dumps(model_id)}\n"
+        "  provider: ninerouter\n"
+        f"  base_url: {NINE_ROUTER_V1}\n"
+        "  api_mode: chat_completions\n"
+        "providers:\n"
+        "  ninerouter:\n"
+        f"    base_url: {NINE_ROUTER_V1}\n"
+        f"    api_key: {json.dumps(virtual_key)}\n"
+        f"    key_env: {HERMES_KEY_ENV}\n"
+        "    api_mode: chat_completions\n"
+        f"    model: {json.dumps(model_id)}\n"
+    )
+
+
+def _retag_hermes_acp_profile() -> None:
+    """Force live Hermes ACP off the Anthropic ``claude-code`` channel."""
+
+    if HERMES_ACP_PROFILE_PATH.is_file():
+        payload = json.loads(HERMES_ACP_PROFILE_PATH.read_text(encoding="utf-8"))
+    else:
+        payload = {
+            "schema_version": 2,
+            "name": "hermes",
+            "revision": 0,
+            "agent_kind": "acp",
+            "acp_command": "hermes acp",
+        }
+    if payload.get("acp_server") == "claude-code":
+        log.info("retag acp_server claude-code -> hermes")
+    payload["acp_server"] = "hermes"
+    payload["acp_command"] = payload.get("acp_command") or "hermes acp"
+    payload.pop("llm_profile_ref", None)
+    _write_owned_json(HERMES_ACP_PROFILE_PATH, payload, mode=0o644)
+
+
+def apply_hermes_9router_config() -> None:
+    """Mint a separate Hermes 9router key and write isolated HERMES_HOME config."""
+
+    _reexec_as_root()
+    _wait_http(NINE_ROUTER_HEALTH)
+    virtual_key = _mint_virtual_key(HERMES_KEY_NAME, HERMES_MACHINE_ID)
+    home = Path("/home/hermes")
+    hermes_home = HERMES_HOME
+    home.mkdir(parents=True, exist_ok=True)
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    if os.geteuid() == 0:
+        os.chown(home, 10001, 10001)
+        os.chown(hermes_home, 10001, 10001)
+    else:
+        _run_sudo(["chown", "10001:10001", str(home), str(hermes_home)])
+    _write_owned_text(HERMES_CONFIG_PATH, _hermes_config_yaml(virtual_key))
+    _write_owned_text(hermes_home / ".env", f"{HERMES_KEY_ENV}={virtual_key}\n")
+    _retag_hermes_acp_profile()
+    log.info("hermes provider now %s key=%s acp_server=hermes", NINE_ROUTER_V1, HERMES_KEY_NAME)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     apply_native_9router_settings()
     apply_opencode_9router_config()
+    apply_hermes_9router_config()
