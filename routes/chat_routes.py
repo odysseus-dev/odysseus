@@ -20,10 +20,9 @@ from src.llm_core import (
     _normalize_http_status,
     llm_call_async,
     llm_call_async_with_route_fallback,
-    stream_llm,
-    stream_llm_with_fallback,
 )
 from services.agents.legacy_bridge import stream_governed_agent
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from services.agents.workspace_privilege import workspace_grants_for_turn
 from src import agent_runs
 from src.model_context import estimate_tokens
@@ -1261,15 +1260,7 @@ def setup_chat_routes(
             # upstream isn't called with model="" (which surfaces as a
             # generic 401/503).
             _recover_empty_session_model(sess, session, owner=owner)
-            # Agent turns go to OpenHands; the Odysseus picker is the 9router slice.
-            if compare_mode:
-                if not getattr(sess, "model", "").strip():
-                    raise HTTPException(
-                        400,
-                        "No model selected for this chat. Open the model picker and choose one before sending.",
-                    )
-                if not (getattr(sess, "endpoint_url", "") or "").strip():
-                    raise HTTPException(400, "Selected model endpoint is not configured")
+            # Agent turns go to OpenHands. Compare panes are bounded jobs.
             if (
                 chat_mode == "chat"
                 and isinstance(message, str)
@@ -1960,341 +1951,77 @@ def setup_chat_routes(
                 return
             elif compare_mode and chat_mode == "chat":
                 _chat_start = time.time()
-                _answered_by = None  # set if the selected model failed and a fallback answered
-                _requested_model = sess.model
-                _actual_model = None
-                _requested_route = _foreground_route_descriptors[0]
-                _actual_route = _requested_route
-                _actual_candidate_index = 0
-                _chat_terminal_saved = False
-                def _commit_chat_compaction(candidate_index: int) -> bool:
-                    return apply_compaction_state(
-                        sess,
-                        _chat_request_state.get("compactions", {}).get(candidate_index),
-                    )
-
-                # Compare Chat pane still uses Odysseus stream_llm (no tools).
+                _requested_model = sess.model or "auto"
+                full_response = ""
                 try:
-                    async for chunk in stream_llm_with_fallback(
-                        _foreground_candidates,
-                        messages,
-                        temperature=ctx.preset.temperature,
-                        # Respect the preset; 0/unset = let the server decide (no
-                        # cap), matching agent mode. The old hard 4096 fallback
-                        # truncated reasoning models mid-<think> — they'd burn the
-                        # whole budget thinking and never emit the answer (seen in
-                        # Compare on heavy generation prompts).
-                        max_tokens=ctx.preset.max_tokens,
-                        prompt_type=preset_id,
-                        tools=None,
-                        session_id=session,
-                        fallback_statuses=_foreground_policy.eligible_statuses,
-                        fallback_on_empty=_foreground_policy.fallback_on_empty,
-                        candidate_request_factory=_chat_request_factory,
-                        candidate_route_descriptors=_foreground_route_descriptors,
-                    ):
-                        if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
-                            try:
-                                data = json.loads(chunk[6:])
-                                if "delta" in data:
-                                    if _commit_chat_compaction(_actual_candidate_index):
-                                        _compacted_length = _chat_request_state["context_lengths"].get(
-                                            _actual_candidate_index,
-                                            _selected_context_length,
-                                        )
-                                        yield f'data: {json.dumps({"type": "compacted", "context_length": _compacted_length})}\n\n'
-                                    # Reasoning tokens arrive flagged thinking:true.
-                                    # Forward them so the client can show a thinking
-                                    # indicator, but don't fold them into the saved
-                                    # reply (mirrors the rewrite path below).
-                                    if data.get("thinking"):
-                                        thinking_response += data["delta"]
-                                    else:
-                                        full_response += data["delta"]
-                                        _stream_set(session, partial=full_response)
-                                    yield chunk
-                                elif data.get("type") == "fallback":
-                                    # Selected model failed; a fallback answered.
-                                    # Forward the notice and remember the real model.
-                                    _answered_by = data.get("answered_by") or _answered_by
-                                    _actual_model = _actual_model or _answered_by
-                                    _actual_candidate_index = data.get("candidate_index", 0)
-                                    if not isinstance(_actual_candidate_index, int):
-                                        _actual_candidate_index = 0
-                                    if 0 <= _actual_candidate_index < len(_foreground_route_descriptors):
-                                        _actual_route = _foreground_route_descriptors[_actual_candidate_index]
-                                    if _commit_chat_compaction(_actual_candidate_index):
-                                        _compacted_length = _chat_request_state["context_lengths"].get(
-                                            _actual_candidate_index,
-                                            _selected_context_length,
-                                        )
-                                        yield f'data: {json.dumps({"type": "compacted", "context_length": _compacted_length})}\n\n'
-                                    data["selected_model"] = data.get("selected_model") or _requested_model
-                                    yield f'data: {json.dumps(data)}\n\n'
-                                elif data.get("type") == "model_actual":
-                                    if _commit_chat_compaction(_actual_candidate_index):
-                                        _compacted_length = _chat_request_state["context_lengths"].get(
-                                            _actual_candidate_index,
-                                            _selected_context_length,
-                                        )
-                                        yield f'data: {json.dumps({"type": "compacted", "context_length": _compacted_length})}\n\n'
-                                    _actual_model = data.get("model") or _actual_model
-                                    data["requested_model"] = _requested_model
-                                    data["requested_endpoint_id"] = _requested_route.get("endpoint_id")
-                                    data["requested_endpoint_label"] = _requested_route.get("endpoint_label")
-                                    data["endpoint_id"] = _actual_route.get("endpoint_id")
-                                    data["endpoint_label"] = _actual_route.get("endpoint_label")
-                                    yield f'data: {json.dumps(data)}\n\n'
-                                elif data.get("type") == "usage":
-                                    if _commit_chat_compaction(_actual_candidate_index):
-                                        _compacted_length = _chat_request_state["context_lengths"].get(
-                                            _actual_candidate_index,
-                                            _selected_context_length,
-                                        )
-                                        yield f'data: {json.dumps({"type": "compacted", "context_length": _compacted_length})}\n\n'
-                                    last_metrics = data.get("data", {})
-                                    _reported_model = last_metrics.get("model")
-                                    last_metrics["requested_model"] = _requested_model
-                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
-                                    last_metrics["requested_endpoint_id"] = _requested_route.get("endpoint_id")
-                                    last_metrics["requested_endpoint_label"] = _requested_route.get("endpoint_label")
-                                    last_metrics["endpoint_id"] = _actual_route.get("endpoint_id")
-                                    last_metrics["endpoint_label"] = _actual_route.get("endpoint_label")
-                                    if isinstance(
-                                        _actual_route.get("endpoint_cost_tracked"),
-                                        bool,
-                                    ):
-                                        last_metrics["endpoint_cost_tracked"] = _actual_route.get(
-                                            "endpoint_cost_tracked"
-                                        )
-                                    _actual_context_length = _chat_request_state["context_lengths"].get(
-                                    _actual_candidate_index,
-                                        _selected_context_length,
-                                    )
-                                    _route_trim = _chat_request_state.get("trim_stats", {}).get(
-                                        _actual_candidate_index,
-                                        {},
-                                    )
-                                    if _route_trim and (
-                                        _route_trim.get("messages_after") < _route_trim.get("messages_before")
-                                        or _route_trim.get("tokens_after") < _route_trim.get("tokens_before")
-                                    ):
-                                        last_metrics["context_trimmed"] = True
-                                        last_metrics["context_messages_before_trim"] = _route_trim.get("messages_before")
-                                        last_metrics["context_messages_after_trim"] = _route_trim.get("messages_after")
-                                        last_metrics["context_tokens_before_trim"] = _route_trim.get("tokens_before")
-                                        last_metrics["context_tokens_after_trim"] = _route_trim.get("tokens_after")
-                                    elif ctx.context_trimmed:
-                                        last_metrics["context_trimmed"] = True
-                                        last_metrics["context_messages_before_trim"] = ctx.context_messages_before_trim
-                                        last_metrics["context_messages_after_trim"] = ctx.context_messages_after_trim
-                                        last_metrics["context_tokens_before_trim"] = ctx.context_tokens_before_trim
-                                        last_metrics["context_tokens_after_trim"] = ctx.context_tokens_after_trim
-                                    if _actual_context_length and last_metrics.get("input_tokens"):
-                                        pct = min(round((last_metrics["input_tokens"] / _actual_context_length) * 100, 1), 100.0)
-                                        last_metrics["context_percent"] = pct
-                                        last_metrics["context_length"] = _actual_context_length
-                                    # The frontend reads `tokens_per_second`; the raw usage event
-                                    # carries the backend's true gen speed as `gen_tps` (llama.cpp
-                                    # timings). Map it through so this direct-chat path shows real
-                                    # t/s instead of "n/a" → falling back to a bare token count.
-                                    if last_metrics.get("gen_tps") and not last_metrics.get("tokens_per_second"):
-                                        last_metrics["tokens_per_second"] = last_metrics["gen_tps"]
-                                        last_metrics["tps_source"] = "backend"
-                                    # Wall-clock response time for the stats popup ("Time").
-                                    last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
-                                    yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
-                            except json.JSONDecodeError:
-                                yield chunk
-                        elif chunk.startswith("event: error"):
-                            logger.warning(f"Stream error for {sess.model} on {sess.endpoint_url}: {chunk!r}")
-                            if (
-                                not _chat_terminal_saved
-                                and (full_response.strip() or thinking_response.strip())
-                            ):
-                                _failure_status = _stream_failure_status(chunk)
-                                _failure_message = (
-                                    f"Model request failed (HTTP {_failure_status})"
-                                    if _failure_status is not None
-                                    else "Model request failed"
-                                )
-                                _terminal_content = full_response.strip()
-                                _failure_note = f"[Response stopped: {_failure_message}]"
-                                _terminal_content = (
-                                    f"{_terminal_content}\n\n{_failure_note}"
-                                    if _terminal_content
-                                    else _failure_note
-                                )
-                                _had_terminal_usage = bool(last_metrics)
-                                _terminal_metrics = dict(last_metrics or {})
-                                if not _had_terminal_usage:
-                                    _actual_request_messages = _chat_request_state["requests"].get(
-                                        _actual_candidate_index,
-                                        messages,
-                                    )
-                                    _actual_context_length = _chat_request_state["context_lengths"].get(
-                                        _actual_candidate_index,
-                                        _selected_context_length,
-                                    )
-                                    _estimated_input = estimate_tokens(_actual_request_messages)
-                                    _estimated_output = max(
-                                        len(full_response + thinking_response) // 4,
-                                        0,
-                                    )
-                                    _terminal_metrics.update({
-                                        "input_tokens": _estimated_input,
-                                        "output_tokens": _estimated_output,
-                                        "total_tokens": _estimated_input + _estimated_output,
-                                        "usage_source": "estimated",
-                                        "response_time": round(time.time() - _chat_start, 2),
-                                        "context_length": _actual_context_length,
-                                        "context_percent": (
-                                            min(
-                                                round(
-                                                    (_estimated_input / _actual_context_length) * 100,
-                                                    1,
-                                                ),
-                                                100.0,
-                                            )
-                                            if _actual_context_length
-                                            else 0
-                                        ),
-                                    })
-                                _terminal_metrics.update({
-                                    "failed": True,
-                                    "failure": {
-                                        "status": _failure_status,
-                                        "message": _failure_message,
-                                    },
-                                    "model": _actual_model or _answered_by or _requested_model,
-                                    "requested_model": _requested_model,
-                                    "endpoint_id": _actual_route.get("endpoint_id"),
-                                    "endpoint_label": _actual_route.get("endpoint_label"),
-                                    "requested_endpoint_id": _requested_route.get("endpoint_id"),
-                                    "requested_endpoint_label": _requested_route.get("endpoint_label"),
-                                })
-                                if isinstance(
-                                    _actual_route.get("endpoint_cost_tracked"),
-                                    bool,
-                                ):
-                                    _terminal_metrics["endpoint_cost_tracked"] = _actual_route.get(
-                                        "endpoint_cost_tracked"
-                                    )
-                                if thinking_response.strip():
-                                    _terminal_metrics["thinking"] = thinking_response.strip()
-                                _commit_chat_compaction(_actual_candidate_index)
-                                _saved_id = save_assistant_response(
-                                    sess,
-                                    session_manager,
-                                    session,
-                                    _terminal_content,
-                                    _terminal_metrics,
-                                    character_name=ctx.preset.character_name,
-                                    incognito=incognito,
-                                )
-                                accumulate_token_usage(session, _terminal_metrics)
-                                _chat_terminal_saved = True
-                                _stream_set(session, status="error")
-                                if _saved_id:
-                                    yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
-                                yield f'data: {json.dumps({"type": "chat_terminal", "data": _terminal_metrics})}\n\n'
-                            yield chunk
-                        elif chunk.startswith("event: "):
-                            yield chunk
-                        elif chunk == "data: [DONE]\n\n":
-                            if _chat_terminal_saved:
-                                # Some providers append DONE after a terminal
-                                # error.  The failed partial is already saved;
-                                # never re-save/post-process it as a success or
-                                # advertise successful completion to the client.
-                                continue
-                            # Generate fallback metrics if LLM didn't send usage
-                            if not last_metrics and full_response:
-                                _elapsed = time.time() - _chat_start
-                                _est_out = len(full_response) // 4
-                                _tps = round(_est_out / _elapsed, 2) if _elapsed > 0 else 0
-                                _actual_context_length = _chat_request_state["context_lengths"].get(
-                                    _actual_candidate_index,
-                                    _selected_context_length,
-                                )
-                                _actual_request_messages = _chat_request_state["requests"].get(
-                                    _actual_candidate_index,
-                                    messages,
-                                )
-                                _est_in = estimate_tokens(_actual_request_messages)
-                                _ctx_pct = min(round((_est_in / _actual_context_length) * 100, 1), 100.0) if _actual_context_length else 0
-                                last_metrics = {
-                                    "response_time": round(_elapsed, 2),
-                                    "input_tokens": _est_in,
-                                    "output_tokens": _est_out,
-                                    "tokens_per_second": _tps,
-                                    "request_context_tokens": _est_in,
-                                    "context_percent": _ctx_pct,
-                                    "context_length": _actual_context_length,
-                                    "model": _actual_model or _answered_by or _requested_model,
-                                    "requested_model": _requested_model,
-                                    "requested_endpoint_id": _requested_route.get("endpoint_id"),
-                                    "requested_endpoint_label": _requested_route.get("endpoint_label"),
-                                    "endpoint_id": _actual_route.get("endpoint_id"),
-                                    "endpoint_label": _actual_route.get("endpoint_label"),
-                                    "usage_source": "estimated",
-                                }
-                                if isinstance(
-                                    _actual_route.get("endpoint_cost_tracked"),
-                                    bool,
-                                ):
-                                    last_metrics["endpoint_cost_tracked"] = _actual_route.get(
-                                        "endpoint_cost_tracked"
-                                    )
-                                yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
-                            if full_response:
-                                _commit_chat_compaction(_actual_candidate_index)
-                                _metrics_to_save = dict(last_metrics or {})
-                                if thinking_response.strip() and not _metrics_to_save.get("thinking"):
-                                    _metrics_to_save["thinking"] = thinking_response.strip()
-                                _saved_id = save_assistant_response(
-                                    sess, session_manager, session, full_response, _metrics_to_save,
-                                    character_name=ctx.preset.character_name,
-                                    web_sources=web_sources,
-                                    rag_sources=ctx.rag_sources,
-                                    research_sources=research_sources,
-                                    used_memories=ctx.used_memories,
-                                    do_research=effective_do_research,
-                                    incognito=incognito,
-                                )
-                                if _saved_id:
-                                    yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
-                                run_post_response_tasks(
-                                    sess, session_manager, session, message, full_response,
-                                    _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
-                                    incognito=incognito, compare_mode=compare_mode,
-                                    character_name=ctx.preset.character_name,
-                                    owner=_user,
-                                    allow_background_extraction=(
-                                        not tool_policy.block_all_tool_calls
-                                        and not tool_approval_continuation
-                                    ),
-                                )
-                            _stream_set(session, status="done")
-                            yield chunk
+                    result = await asyncio.to_thread(
+                        submit_model_job,
+                        bounded_archetype("compare-pane", temperature=0.7),
+                        {
+                            "pane_id": session,
+                            "text": message,
+                            "model": _requested_model,
+                            "messages": messages,
+                        },
+                        _user or getattr(sess, "owner", None) or "",
+                    )
+                    full_response = str((result.output or {}).get("text") or "")
+                    _actual_model = result.audit.get("resolved_model") or _requested_model
+                    _resolved_route = result.audit.get("resolved_route") or "9router"
+                    yield f'data: {json.dumps({"type": "model_actual", "model": _actual_model, "requested_model": _requested_model, "resolved_route": _resolved_route})}\n\n'
+                    if full_response:
+                        _stream_set(session, partial=full_response)
+                        yield f'data: {json.dumps({"delta": full_response})}\n\n'
+                    last_metrics = {
+                        "model": _actual_model,
+                        "requested_model": _requested_model,
+                        "resolved_route": _resolved_route,
+                        "response_time": round(time.time() - _chat_start, 2),
+                    }
+                    yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                    if full_response:
+                        _saved_id = save_assistant_response(
+                            sess, session_manager, session, full_response, last_metrics,
+                            character_name=ctx.preset.character_name,
+                            web_sources=web_sources,
+                            rag_sources=ctx.rag_sources,
+                            research_sources=research_sources,
+                            used_memories=ctx.used_memories,
+                            do_research=effective_do_research,
+                            incognito=incognito,
+                        )
+                        if _saved_id:
+                            yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                        run_post_response_tasks(
+                            sess, session_manager, session, message, full_response,
+                            last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                            incognito=incognito, compare_mode=compare_mode,
+                            character_name=ctx.preset.character_name,
+                            owner=_user,
+                            allow_background_extraction=(
+                                not tool_policy.block_all_tool_calls
+                                and not tool_approval_continuation
+                            ),
+                        )
+                    _stream_set(session, status="done")
+                    yield "data: [DONE]\n\n"
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response and not incognito:
-                        logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(
-                            full_response,
-                            {
-                                "stopped": True,
-                                "model": _actual_model or _answered_by or _requested_model,
-                                "requested_model": _requested_model,
-                                "endpoint_id": _actual_route.get("endpoint_id"),
-                                "endpoint_label": _actual_route.get("endpoint_label"),
-                                "requested_endpoint_id": _requested_route.get("endpoint_id"),
-                                "requested_endpoint_label": _requested_route.get("endpoint_label"),
-                            },
+                        logger.info(
+                            "Client disconnected mid-stream (compare job) for session %s, saving partial (%d chars)",
+                            session,
+                            len(full_response),
                         )
-                        sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
+                        sess.add_message(ChatMessage(
+                            "assistant",
+                            full_response,
+                            metadata={"stopped": True, "model": _requested_model},
+                        ))
                         session_manager.save_sessions()
                     raise
+                except Exception as e:
+                    logger.error("Compare bounded job failed: %s", e)
+                    yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 503})}\n\n'
                 finally:
                     _active_streams.pop(session, None)
             else:
@@ -2843,69 +2570,48 @@ def setup_chat_routes(
         async def stream_rewrite() -> AsyncGenerator[str, None]:
             full_response = ""
             try:
-                async for chunk in stream_llm(
-                    sess.endpoint_url,
-                    sess.model,
-                    messages,
-                    headers=sess.headers,
-                    temperature=0.7,
-                    # 0 = let the server decide (no cap). A hardcoded 4096 made
-                    # local reasoning models (Qwen3 / R1) burn the whole budget
-                    # inside <think> and emit no rewrite — the bubble just hung
-                    # on "Rewriting...". Same fix as the chat max_tokens cap.
-                    max_tokens=0,
-                    tools=None,
-                ):
-                    if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
-                        try:
-                            data = json.loads(chunk[6:])
-                            if "delta" in data:
-                                # Forward the chunk (so the client can show a
-                                # thinking indicator) but DON'T fold reasoning
-                                # tokens into the saved rewrite — only real
-                                # content. reasoning_content arrives flagged
-                                # with thinking:true.
-                                if not data.get("thinking"):
-                                    full_response += data["delta"]
-                                yield chunk
-                        except json.JSONDecodeError:
-                            yield chunk
-                    elif chunk.startswith("event: "):
-                        yield chunk
-                    elif chunk == "data: [DONE]\n\n":
-                        # Update the last assistant message in session history.
-                        # Strip reasoning-model <think> blocks so the persisted
-                        # rewrite is just the rewritten text, not its scratchpad.
-                        from src.research_utils import strip_thinking
-                        full_response = strip_thinking(full_response).strip() or full_response
-                        if full_response:
-                            for msg in reversed(sess.history):
-                                if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
-                                   (isinstance(msg, dict) and msg.get('role') == 'assistant'):
-                                    if isinstance(msg, ChatMessage):
-                                        msg.content = full_response
-                                    else:
-                                        msg['content'] = full_response
-                                    break
-                            # Update in DB too
-                            db = SessionLocal()
-                            try:
-                                db_msg = (
-                                    db.query(DBChatMessage)
-                                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.role == 'assistant')
-                                    .order_by(DBChatMessage.timestamp.desc())
-                                    .first()
-                                )
-                                if db_msg:
-                                    db_msg.content = full_response
-                                    db.commit()
-                            except Exception as e:
-                                logger.warning("Failed to update rewritten message in DB: %s", e)
-                                db.rollback()
-                            finally:
-                                db.close()
-                            session_manager.save_sessions()
-                        yield chunk
+                owner = getattr(sess, "owner", None) or effective_user(request) or ""
+                result = await asyncio.to_thread(
+                    submit_model_job,
+                    bounded_archetype("rewrite", temperature=0.7, token_limit=4096),
+                    {
+                        "original_text": original_text,
+                        "instruction": instruction,
+                        "messages": messages,
+                    },
+                    owner,
+                )
+                full_response = str((result.output or {}).get("text") or "")
+                from src.research_utils import strip_thinking
+                full_response = strip_thinking(full_response).strip() or full_response
+                if full_response:
+                    yield f'data: {json.dumps({"delta": full_response})}\n\n'
+                    for msg in reversed(sess.history):
+                        if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
+                           (isinstance(msg, dict) and msg.get('role') == 'assistant'):
+                            if isinstance(msg, ChatMessage):
+                                msg.content = full_response
+                            else:
+                                msg['content'] = full_response
+                            break
+                    db = SessionLocal()
+                    try:
+                        db_msg = (
+                            db.query(DBChatMessage)
+                            .filter(DBChatMessage.session_id == session_id, DBChatMessage.role == 'assistant')
+                            .order_by(DBChatMessage.timestamp.desc())
+                            .first()
+                        )
+                        if db_msg:
+                            db_msg.content = full_response
+                            db.commit()
+                    except Exception as e:
+                        logger.warning("Failed to update rewritten message in DB: %s", e)
+                        db.rollback()
+                    finally:
+                        db.close()
+                    session_manager.save_sessions()
+                yield "data: [DONE]\n\n"
             except Exception as e:
                 logger.error("Rewrite stream error: %s", e)
                 yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 500})}\n\n'

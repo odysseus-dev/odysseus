@@ -5,8 +5,11 @@ services:
       - ODYSSEUS_OPENHANDS_AGENT_SERVER_URL=http://openhands-agent-server:8000
       - ODYSSEUS_OPENHANDS_AUTOMATION_URL=http://openhands-automation:8000
       - OPENHANDS_CANVAS_URL=${OPENHANDS_CANVAS_URL:-http://127.0.0.1:8000/canvas}
+      - ODYSSEUS_MODEL_JOB_WORKER_URL=http://odysseus-model-jobs:8091
     depends_on:
       openhands-agent-server:
+        condition: service_healthy
+      odysseus-model-jobs:
         condition: service_healthy
 
   openhands-agent-server:
@@ -156,6 +159,28 @@ services:
       - ${APP_DATA_DIR:-./data}/9router:/app/data
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:20128/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  odysseus-model-jobs:
+    image: odysseus-odysseus:latest
+    pull_policy: never
+    command: ["python", "-m", "services.agents.model_job_worker"]
+    environment:
+      - NINE_ROUTER_V1=http://9router:20128/v1
+      - NINE_ROUTER_SQLITE_PATH=/opt/odysseus/9router-data/db/data.sqlite
+      - MODEL_JOB_WORKER_HOST=0.0.0.0
+      - MODEL_JOB_WORKER_PORT=8091
+      - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
+    volumes:
+      - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
+    depends_on:
+      9router:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3).read()"]
       interval: 5s
       timeout: 5s
       retries: 12

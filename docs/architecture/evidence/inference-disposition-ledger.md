@@ -39,10 +39,10 @@ are not unlabeled.
 |---|---|---|---|---|
 | mcp_servers/email_server.py | _ai_draft_reply_to_email | bounded-job | U6 model-job worker; keep mail reply | `llm_call_async_with_fallback`; MCP-adjacent draft |
 | routes/calendar_routes.py | quick_parse | bounded-job | U6 model-job worker; calendar parse | `llm_call_async` |
-| routes/chat_helpers.py | auto_name_session | bounded-job | U6 model-job worker; session titles | `llm_call_async` |
+| routes/chat_helpers.py | auto_name_session | bounded-job | U6 replacement live: heuristic first, worker if insufficient | no `llm_call_async`; `submit_model_job` / `session_title_heuristic` |
 | routes/chat_routes.py | chat_endpoint | agent-conversation | leftover `POST /api/chat`; U8 onto `stream_governed_agent` | `llm_call_async_with_route_fallback` |
-| routes/chat_routes.py | stream_rewrite | bounded-job | U6 model-job worker; rewrite | `stream_llm` |
-| routes/chat_routes.py | stream_with_save | bounded-job | U6 model-job worker; compare panes | `stream_llm_with_fallback` behind `compare_mode` |
+| routes/chat_routes.py | stream_rewrite | bounded-job | U6 replacement live: rewrite via model-job worker | no `stream_llm`; `submit_model_job` |
+| routes/chat_routes.py | stream_with_save | bounded-job | U6 replacement live: compare panes as parallel bounded jobs | no `stream_llm_with_fallback`; `submit_model_job` + resolved-model provenance |
 | routes/document/document_routes.py | ai_fill_annotations | bounded-job | U6 model-job worker; document extract/fill | `llm_call_async` VL page fill |
 | routes/document/document_routes.py | ai_tidy_documents | bounded-job | U6 model-job worker; document tidy | `llm_call_async` |
 | routes/email_helpers.py | _generate_email_summary | bounded-job | U6 model-job worker; mail summarize | `llm_call_async` |

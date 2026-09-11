@@ -4,14 +4,15 @@ from pathlib import Path
 
 
 def test_interactive_openhands_turns_skip_odysseus_model_picker():
-    """OpenHands owns the LLM for Chat and Agent; compare still uses Odysseus models."""
+    """OpenHands owns Chat/Agent LLM. Compare is bounded jobs, not the Odysseus picker."""
     source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
     stream = source.split("async def chat_stream", 1)[1]
-    gated = stream.split("if compare_mode:", 1)[1]
-    assert "No model selected for this chat" in gated[:1200]
-    assert "Selected model endpoint is not configured" in gated[:1200]
     picker = stream.split("if compare_mode:", 1)[0]
     assert "No model selected for this chat" not in picker
+    assert "Selected model endpoint is not configured" not in picker
+    compare = stream.split('elif compare_mode and chat_mode == "chat":', 1)[1].split("else:", 1)[0]
+    assert "submit_model_job" in compare
+    assert "stream_llm_with_fallback" not in compare
 
 
 def test_non_compare_chat_uses_governed_agent_not_stream_llm():
