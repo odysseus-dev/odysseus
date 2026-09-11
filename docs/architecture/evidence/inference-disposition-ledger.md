@@ -40,7 +40,7 @@ are not unlabeled.
 | mcp_servers/email_server.py | _ai_draft_reply_to_email | bounded-job | U6 model-job worker; keep mail reply | `llm_call_async_with_fallback`; MCP-adjacent draft |
 | routes/calendar_routes.py | quick_parse | bounded-job | U6 model-job worker; calendar parse | `llm_call_async` |
 | routes/chat_helpers.py | auto_name_session | bounded-job | U6 replacement live: heuristic first, worker if insufficient | no `llm_call_async`; `submit_model_job` / `session_title_heuristic` |
-| routes/chat_routes.py | chat_endpoint | agent-conversation | leftover `POST /api/chat`; U8 onto `stream_governed_agent` | `llm_call_async_with_route_fallback` |
+| routes/chat_routes.py | chat_endpoint | agent-conversation | U8 replacement live: leftover `POST /api/chat` onto `stream_governed_agent` | no `llm_call_async_with_route_fallback`; `stream_governed_agent` |
 | routes/chat_routes.py | stream_rewrite | bounded-job | U6 replacement live: rewrite via model-job worker | no `stream_llm`; `submit_model_job` |
 | routes/chat_routes.py | stream_with_save | bounded-job | U6 replacement live: compare panes as parallel bounded jobs | no `stream_llm_with_fallback`; `submit_model_job` + resolved-model provenance |
 | routes/document/document_routes.py | ai_fill_annotations | bounded-job | U6 model-job worker; document extract/fill | `llm_call_async` VL page fill |
@@ -64,7 +64,7 @@ are not unlabeled.
 | routes/skills_routes.py | _improve_skill_md | bounded-job | U6 model-job worker; skill rewrite | `llm_call_async`; MCP-adjacent `skills.invoke` |
 | routes/task/task_routes.py | _generate_task_name | bounded-job | U6 model-job worker; titles | `llm_call_async` |
 | routes/task/task_routes.py | parse_task | bounded-job | U6 model-job worker; task parse | `llm_call_async` |
-| routes/webhook/webhook_routes.py | sync_chat | agent-conversation | leftover `POST /api/v1/chat`; U8 governed conversation, never completions gateway | `llm_call_async` |
+| routes/webhook/webhook_routes.py | sync_chat | agent-conversation | U8 replacement live: authenticated governed conversation; Case 2 provider URL/key rejected | no `llm_call_async`; `stream_governed_agent` |
 | services/memory/memory_extractor.py | audit_memories | bounded-job | U6 model-job worker; memory extract | `llm_call_async` |
 | services/memory/memory_extractor.py | extract_and_store | bounded-job | U6 model-job worker; memory extract | `llm_call_async` |
 | services/memory/skill_extractor.py | maybe_extract_skill | bounded-job | U6 model-job worker; skill extract | `llm_call_async` |
@@ -85,8 +85,9 @@ are not unlabeled.
 | src/deep_research.py | DeepResearcher._llm | agent-conversation | agentic research; OpenHands/Hermes after U4 | `llm_call_async` |
 | src/document_processor.py | analyze_image_with_vl_result | bounded-job | U6 model-job worker; vision extract, not image generation | `llm_call` |
 | src/research_handler.py | ResearchHandler._probe_endpoint | keep-specialist | capability probe; stay off agent conversation (R15/AE7) | `llm_call_async` ping |
-| src/research_handler.py | ResearchHandler.generate_plan | bounded-job | U6 model-job worker; research plan helper | `llm_call_async`; MCP-adjacent `research.invoke` |
-| src/research_handler.py | ResearchHandler.synthesize_query | bounded-job | U6 model-job worker; research query helper | `llm_call_async`; MCP-adjacent `research.invoke` |
+| src/research_handler.py | ResearchHandler.call_research_service | agent-conversation | U8 replacement live: agentic research onto governed OpenHands | no `llm_call_async`; `stream_governed_agent` |
+| src/research_handler.py | ResearchHandler.generate_plan | bounded-job | U8 replacement live: research plan helper via model-job worker | no `llm_call_async`; `submit_model_job` |
+| src/research_handler.py | ResearchHandler.synthesize_query | bounded-job | U8 replacement live: research query helper via model-job worker | no `llm_call_async`; `submit_model_job` |
 | src/session_actions.py | run_auto_sort | bounded-job | U6 model-job worker; auto-sort | `llm_call_async` |
 | src/task_scheduler.py | TaskScheduler._execute_llm_task | agent-conversation | scheduled agent fallback after loop raise; stay agent conversation | `task_llm_call_async` |
 | src/task_scheduler.py | TaskScheduler._run_agent_loop | agent-conversation | grace summary on scheduled agent path; leftover nested completion | `task_llm_call_async` |

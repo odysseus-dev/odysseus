@@ -18,8 +18,6 @@ from core.models import ChatMessage
 from src.request_models import ChatRequest
 from src.llm_core import (
     _normalize_http_status,
-    llm_call_async,
-    llm_call_async_with_route_fallback,
 )
 from services.agents.legacy_bridge import stream_governed_agent
 from services.agents.model_jobs import bounded_archetype, submit_model_job
@@ -96,6 +94,47 @@ def _stream_failure_status(chunk: str) -> Optional[int]:
     except json.JSONDecodeError:
         return None
     return None
+
+
+async def _collect_governed_reply(stream) -> tuple[str, Optional[str]]:
+    """Drain a governed OpenHands SSE stream into reply text.
+
+    Parameters
+    ----------
+    stream
+        Async iterator of ``data:`` SSE chunks from ``stream_governed_agent``.
+
+    Returns
+    -------
+    tuple[str, Optional[str]]
+        Visible assistant text and conversation id when the execution event
+        reported one.
+
+    Example
+    -------
+    ``reply, cid = await _collect_governed_reply(stream_governed_agent(...))``
+    """
+
+    parts: List[str] = []
+    conversation_id = None
+    async for chunk in stream:
+        if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+            continue
+        try:
+            data = json.loads(chunk[6:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("type") == "execution":
+            conversation_id = data.get("conversation_id") or conversation_id
+            continue
+        if data.get("thinking"):
+            continue
+        delta = data.get("delta")
+        if isinstance(delta, str) and delta:
+            parts.append(delta)
+    return "".join(parts), conversation_id
 
 
 def _reject_delegated_tool_approval(request: Request) -> None:
@@ -820,11 +859,6 @@ def setup_chat_routes(
         if memory_response:
             return {"response": memory_response}
 
-        foreground_policy = resolve_foreground_model_policy(
-            owner=owner,
-            allowed_models=_allowed_models_for_request(request),
-        )
-
         # Build shared context (preset, preprocess, preface, compact)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
@@ -836,100 +870,65 @@ def setup_chat_routes(
             time_filter=time_filter,
             webhook_manager=webhook_manager,
             allow_tool_preprocessing=allow_tool_preprocessing,
-            defer_context_shaping=foreground_policy.enabled,
         )
 
-        # Research injection
         research_blocked_by_policy = (
             tool_policy.blocks("trigger_research")
             or tool_policy.blocks("manage_research")
         )
         if use_research and not research_blocked_by_policy:
-            try:
-                _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
-                research_ctx = await research_handler.call_research_service(
-                    message, _r_ep, _r_model, llm_headers=_r_headers
-                )
-                research_message = untrusted_context_message("research context", research_ctx)
-                ctx.messages.insert(len(ctx.preface), research_message)
-                if foreground_policy.enabled:
-                    getattr(ctx, "route_messages", ctx.messages).insert(
-                        len(ctx.preface),
-                        research_message,
-                    )
-            except Exception as e:
-                logger.error(f"Research failed: {e}")
-
-        foreground_candidates = build_foreground_model_candidates(
-            sess.endpoint_url,
-            sess.model,
-            sess.headers,
-            owner=owner,
-            policy=foreground_policy,
-        )
-        route_descriptors = build_foreground_route_descriptors(
-            sess.endpoint_url,
-            sess.model,
-            sess.headers,
-            owner=owner,
-            policy=foreground_policy,
-            selected_endpoint_id=chat_request.selected_endpoint_id,
-        )
-        candidate_request_factory = None
-        selected_context_length = getattr(ctx, "context_length", 0)
-        candidate_request_state = {
-            "context_lengths": {0: selected_context_length},
-            "requests": {0: ctx.messages},
-            "trim_stats": {},
-        }
-        request_messages = ctx.messages
-        if foreground_policy.enabled:
-            request_messages = getattr(ctx, "route_messages", ctx.messages)
-            candidate_request_factory, candidate_request_state = _chat_candidate_request_factory(
-                request_messages,
-                selected_context_length,
-                session=sess,
-                owner=owner,
+            ctx.messages.insert(
+                len(getattr(ctx, "preface", [])),
+                {
+                    "role": "system",
+                    "content": (
+                        "The user asked for research. Investigate with available "
+                        "tools and answer from findings."
+                    ),
+                },
             )
+
+        from services.agents.session_binding import (
+            DEFAULT_AGENT_PROFILE,
+            SessionBinding,
+            conversation_kwarg,
+            normalize_agent_profile_id,
+            resolve_agent_profile_id,
+        )
+
+        bound_cid = getattr(sess, "openhands_conversation_id", None)
+        bound_profile = normalize_agent_profile_id(
+            getattr(sess, "agent_profile_id", None)
+        )
+        requested_profile = resolve_agent_profile_id(None, bound_profile)
         requested_model = sess.model
-        reply, actual_candidate, actual_model = await llm_call_async_with_route_fallback(
-            foreground_candidates,
-            request_messages,
-            fallback_statuses=foreground_policy.eligible_statuses,
-            candidate_request_factory=candidate_request_factory,
-            temperature=ctx.preset.temperature,
-            max_tokens=ctx.preset.max_tokens,
-            prompt_type=preset_id,
-            session_id=session,
+        reply, new_cid = await _collect_governed_reply(
+            stream_governed_agent(
+                messages=ctx.messages,
+                session_id=session,
+                history_session=sess,
+                owner=owner,
+                conversation_id=conversation_kwarg(
+                    session,
+                    SessionBinding(
+                        conversation_id=bound_cid,
+                        agent_profile_id=bound_profile or DEFAULT_AGENT_PROFILE,
+                    ),
+                ),
+                turn_id=uuid.uuid4().hex,
+                agent_profile_id=requested_profile,
+                bound_agent_profile_id=bound_profile,
+                archetype="chat",
+            )
         )
-        actual_index = _candidate_index(foreground_candidates, actual_candidate)
-        apply_compaction_state(
-            sess,
-            candidate_request_state.get("compactions", {}).get(actual_index),
-        )
-        requested_route = route_descriptors[0]
-        actual_route = route_descriptors[actual_index]
-        actual_trim = candidate_request_state.get("trim_stats", {}).get(actual_index, {})
+        if new_cid:
+            sess.openhands_conversation_id = new_cid
+            sess.agent_profile_id = requested_profile
         _clean_reply, _clean_md = clean_thinking_for_save(
             reply,
             {
-                "model": actual_model,
+                "model": requested_model,
                 "requested_model": requested_model,
-                "endpoint_id": actual_route.get("endpoint_id"),
-                "endpoint_label": actual_route.get("endpoint_label"),
-                "requested_endpoint_id": requested_route.get("endpoint_id"),
-                "requested_endpoint_label": requested_route.get("endpoint_label"),
-                "context_length": candidate_request_state["context_lengths"].get(
-                    actual_index,
-                    selected_context_length,
-                ),
-                "context_trimmed": bool(
-                    actual_trim
-                    and (
-                        actual_trim.get("messages_after") < actual_trim.get("messages_before")
-                        or actual_trim.get("tokens_after") < actual_trim.get("tokens_before")
-                    )
-                ),
             },
         )
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
@@ -938,7 +937,6 @@ def setup_chat_routes(
         update_session_last_accessed(session)
         session_manager.save_sessions()
 
-        # Background tasks (memory, webhook, auto-name)
         run_post_response_tasks(
             sess, session_manager, session, message, reply, None,
             ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -950,11 +948,11 @@ def setup_chat_routes(
         return {
             "response": reply,
             "requested_model": requested_model,
-            "model": actual_model,
-            "requested_endpoint_id": requested_route.get("endpoint_id"),
-            "requested_endpoint_label": requested_route.get("endpoint_label"),
-            "endpoint_id": actual_route.get("endpoint_id"),
-            "endpoint_label": actual_route.get("endpoint_label"),
+            "model": requested_model,
+            "requested_endpoint_id": None,
+            "requested_endpoint_label": None,
+            "endpoint_id": None,
+            "endpoint_label": None,
         }
 
     # ------------------------------------------------------------------ #

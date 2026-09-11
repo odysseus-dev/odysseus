@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_interactive_openhands_turns_skip_odysseus_model_picker():
     """OpenHands owns Chat/Agent LLM. Compare is bounded jobs, not the Odysseus picker."""
@@ -37,9 +39,43 @@ def test_chat_route_passes_binding_kwargs():
 
 def test_chat_stream_passes_user_requested_agent_into_governed_stream():
     source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
-    call = source.split("async for chunk in stream_governed_agent(", 1)[1].split("):", 1)[0]
+    stream = source.split("async def chat_stream", 1)[1]
+    call = stream.split("async for chunk in stream_governed_agent(", 1)[1].split("):", 1)[0]
     assert "user_requested_agent=user_requested_agent" in call
     assert "workspace_grants=" in call
+
+
+def test_leftover_post_api_chat_uses_governed_agent_not_llm_fallback():
+    source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
+    endpoint = source.split("async def chat_endpoint", 1)[1].split("async def chat_stream", 1)[0]
+    assert "stream_governed_agent(" in endpoint
+    assert "llm_call_async_with_route_fallback" not in endpoint
+    assert "llm_call_async(" not in endpoint
+    assert "stream_llm(" not in endpoint
+    assert "stream_llm_with_fallback" not in endpoint
+
+
+def test_agent_loop_file_remains_for_task_18_hold():
+    assert (_ROOT / "src" / "agent_loop.py").is_file()
+
+
+def test_odysseus_registers_no_inbound_chat_completions_route():
+    forbidden = ('"/v1/chat/completions"', "'/v1/chat/completions'",
+                 '"/api/v1/chat/completions"', "'/api/v1/chat/completions'")
+    for path in (_ROOT / "routes").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for needle in forbidden:
+            assert needle not in text, f"{path} registers inbound completions path {needle}"
+
+
+def test_webhook_sync_chat_is_not_a_completions_gateway():
+    source = Path("routes/webhook/webhook_routes.py").read_text(encoding="utf-8")
+    sync = source.split("async def sync_chat", 1)[1]
+    assert "llm_call_async(" not in sync
+    assert "stream_governed_agent(" in sync
+    assert "body.api_key" not in sync or "Provider credentials" in sync
+    assert "build_chat_url" not in sync
+    assert "build_headers" not in sync
 
 
 def test_can_use_agent_false_clears_user_requested_agent():

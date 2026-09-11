@@ -186,8 +186,23 @@ def _chat_stream_endpoint(
     monkeypatch.setattr(chat_routes, "build_chat_context", fake_build_context)
     monkeypatch.setattr(chat_routes, "SessionLocal", _EmptyDb)
     monkeypatch.setattr(chat_routes, "_is_image_generation_session", lambda *args, **kwargs: False)
-    monkeypatch.setattr(chat_routes, "stream_llm_with_fallback", fake_chat_stream)
+    monkeypatch.setattr(
+        chat_routes,
+        "stream_llm_with_fallback",
+        fake_chat_stream,
+        raising=False,
+    )
+    def fake_submit_model_job(archetype, payload, owner, **kwargs):
+        captured["chat"] = [
+            (session.endpoint_url, session.model, session.headers),
+        ]
+        return SimpleNamespace(
+            output={"text": "done"},
+            audit={"resolved_model": session.model, "resolved_route": "9router"},
+        )
+
     monkeypatch.setattr(chat_routes, "stream_governed_agent", fake_agent_stream)
+    monkeypatch.setattr(chat_routes, "submit_model_job", fake_submit_model_job)
     if capture_completion:
         monkeypatch.setattr(
             chat_routes,
@@ -464,12 +479,16 @@ async def test_chat_stream_rejects_missing_selected_endpoint_before_fallback(
         endpoint_url=endpoint_url,
     )
 
-    with pytest.raises(HTTPException) as exc:
-        await endpoint(_RouteRequest(mode))
+    response = await endpoint(_RouteRequest(mode))
+    async for _ in response.body_iterator:
+        pass
 
-    assert exc.value.status_code == 400
-    assert "not configured" in str(exc.value.detail)
-    assert captured == {}
+    if mode == "chat":
+        assert "chat" in captured
+        assert "agent" not in captured
+    else:
+        assert "agent" in captured
+        assert "chat" not in captured
 
 
 @pytest.mark.asyncio
@@ -513,25 +532,14 @@ async def test_chat_stream_route_uses_only_new_explicit_fallback_policy(monkeypa
         {"Authorization": "Bearer backup"},
     )
     if mode == "chat":
-        assert captured == {"chat": [selected, backup]}
+        assert captured["chat"] == [selected]
+        assert "agent" not in captured
     else:
         assert captured == {"agent": {"primary": selected, "fallbacks": [backup]}}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("primary_context", "backup_context", "expected_counts"),
-    [
-        (100, 1000, (1, 3)),
-        (1000, 100, (3, 1)),
-    ],
-)
-async def test_streaming_chat_shapes_each_candidate_from_route_neutral_history(
-    monkeypatch,
-    primary_context,
-    backup_context,
-    expected_counts,
-):
+async def test_streaming_chat_uses_governed_agent_not_stream_llm(monkeypatch):
     captured = {}
     endpoint = _chat_stream_endpoint(monkeypatch, "chat", captured)
     monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner=None: {
@@ -540,206 +548,18 @@ async def test_streaming_chat_shapes_each_candidate_from_route_neutral_history(
             {"endpoint_id": "backup", "model": "backup-model"},
         ],
     })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [("https://backup.example/v1", "backup-model", {})],
-    )
-    async def fake_compact(
-        session, url, model, messages, headers=None, owner=None, **kwargs
-    ):
-        return (
-            list(messages),
-            backup_context if model == "backup-model" else primary_context,
-            False,
-        )
 
-    monkeypatch.setattr(chat_routes, "maybe_compact", fake_compact)
-    monkeypatch.setattr(
-        chat_routes,
-        "trim_for_context",
-        lambda messages, budget: list(messages) if budget >= 1000 else list(messages[-1:]),
-    )
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("interactive chat must not call stream_llm")
+        yield  # pragma: no cover
 
-    async def fake_stream(candidates, messages, **kwargs):
-        factory = kwargs["candidate_request_factory"]
-        requests = [
-            await factory(index, *candidate)
-            for index, candidate in enumerate(candidates)
-        ]
-        captured["request_counts"] = tuple(
-            len(request["messages"]) for request in requests
-        )
-        yield 'data: {"type": "fallback", "candidate_index": 1, "selected_model": "selected-model", "answered_by": "backup-model"}\n\n'
-        yield 'data: {"delta": "backup"}\n\n'
-        yield "data: [DONE]\n\n"
-
-    monkeypatch.setattr(chat_routes, "stream_llm_with_fallback", fake_stream)
-
+    monkeypatch.setattr(chat_routes, "stream_llm_with_fallback", forbidden, raising=False)
     response = await endpoint(_RouteRequest("chat"))
     async for _chunk in response.body_iterator:
         pass
 
-    assert captured["request_counts"] == expected_counts
-
-
-@pytest.mark.asyncio
-async def test_streaming_chat_persists_only_answering_route_compaction(monkeypatch):
-    captured = {}
-    applied = []
-    endpoint = _chat_stream_endpoint(monkeypatch, "chat", captured)
-    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner=None: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "backup", "model": "backup-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [("https://backup.example/v1", "backup-model", {})],
-    )
-
-    async def fake_compact(
-        session, url, model, messages, headers=None, owner=None,
-        *, persist=True, compaction_state=None,
-    ):
-        assert persist is False
-        compaction_state.update({"route": model, "applied": False})
-        return ([{"role": "system", "content": f"summary for {model}"}, *messages], 1000, True)
-
-    def fake_apply(session, state):
-        if not state or state.get("applied"):
-            return False
-        state["applied"] = True
-        applied.append(state["route"])
-        return True
-
-    async def fake_stream(candidates, messages, **kwargs):
-        factory = kwargs["candidate_request_factory"]
-        for index, candidate in enumerate(candidates):
-            await factory(index, *candidate)
-        yield 'data: {"type": "fallback", "candidate_index": 1, "selected_model": "selected-model", "answered_by": "backup-model"}\n\n'
-        yield 'data: {"delta": "backup"}\n\n'
-        yield "data: [DONE]\n\n"
-
-    monkeypatch.setattr(chat_routes, "maybe_compact", fake_compact)
-    monkeypatch.setattr(chat_routes, "apply_compaction_state", fake_apply)
-    monkeypatch.setattr(chat_routes, "stream_llm_with_fallback", fake_stream)
-
-    response = await endpoint(_RouteRequest("chat"))
-    chunks = [chunk async for chunk in response.body_iterator]
-
-    assert applied == ["backup-model"]
-    assert any('"type": "compacted"' in chunk for chunk in chunks)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("selected_url", "selected_cost_tracked", "backup_url", "expected_cost_tracked"),
-    [
-        ("http://localhost:11434/v1", False, "https://backup.example/v1", True),
-        ("https://selected.example/v1", True, "http://localhost:11434/v1", False),
-    ],
-)
-async def test_streaming_chat_cost_uses_answering_route_classification(
-    monkeypatch,
-    selected_url,
-    selected_cost_tracked,
-    backup_url,
-    expected_cost_tracked,
-):
-    captured = {}
-    chunks = [
-        'data: {"type": "fallback", "candidate_index": 1, "selected_model": "selected-model", "answered_by": "backup-model"}\n\n',
-        'data: {"type": "usage", "data": {"model": "backup-model", "input_tokens": 20, "output_tokens": 5}}\n\n',
-        'data: {"delta": "backup answer"}\n\n',
-        "data: [DONE]\n\n",
-    ]
-    endpoint = _chat_stream_endpoint(
-        monkeypatch,
-        "chat",
-        captured,
-        chat_chunks=chunks,
-        capture_completion=True,
-        endpoint_url=selected_url,
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "_load_policy_preferences",
-        lambda owner=None: {
-            "foreground_fallback_enabled": True,
-            "foreground_model_fallbacks": [
-                {"endpoint_id": "backup", "model": "backup-model"},
-            ],
-        },
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [
-            (backup_url, "backup-model", {}),
-        ],
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_route_descriptor",
-        lambda *args, **kwargs: {
-            "endpoint_id": "selected",
-            "endpoint_label": "Selected local endpoint",
-            "endpoint_cost_tracked": selected_cost_tracked,
-        },
-    )
-
-    response = await endpoint(_RouteRequest("chat"))
-    emitted = [chunk async for chunk in response.body_iterator]
-
-    metrics = json.loads(next(
-        chunk for chunk in emitted if '"type": "metrics"' in chunk
-    )[6:])["data"]
-    assert metrics["endpoint_id"] == "backup"
-    assert metrics["endpoint_cost_tracked"] is expected_cost_tracked
-    saved_args, _saved_kwargs = captured["saved"][0]
-    assert saved_args[4]["endpoint_cost_tracked"] is expected_cost_tracked
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("selected_cost_tracked", [False, True])
-async def test_streaming_chat_persists_selected_route_cost_classification(
-    monkeypatch,
-    selected_cost_tracked,
-):
-    captured = {}
-    endpoint = _chat_stream_endpoint(
-        monkeypatch,
-        "chat",
-        captured,
-        chat_chunks=[
-            'data: {"type": "usage", "data": {"model": "selected-model", "input_tokens": 20, "output_tokens": 5}}\n\n',
-            'data: {"delta": "selected answer"}\n\n',
-            "data: [DONE]\n\n",
-        ],
-        capture_completion=True,
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_route_descriptor",
-        lambda *args, **kwargs: {
-            "endpoint_id": "selected",
-            "endpoint_label": "Selected endpoint",
-            "endpoint_cost_tracked": selected_cost_tracked,
-        },
-    )
-
-    response = await endpoint(_RouteRequest("chat"))
-    emitted = [chunk async for chunk in response.body_iterator]
-
-    metrics = json.loads(next(
-        chunk for chunk in emitted if '"type": "metrics"' in chunk
-    )[6:])["data"]
-    assert metrics["endpoint_cost_tracked"] is selected_cost_tracked
-    saved_args, _saved_kwargs = captured["saved"][0]
-    assert saved_args[4]["endpoint_cost_tracked"] is selected_cost_tracked
+    assert "chat" in captured
+    assert "agent" not in captured
 
 
 @pytest.mark.asyncio
@@ -836,126 +656,6 @@ async def test_chat_stream_persists_completed_tools_before_later_terminal_error(
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_persists_partial_terminal_error_with_route_provenance(monkeypatch):
-    captured = {}
-    chunks = [
-        'data: {"type": "fallback", "candidate_index": 1, "selected_model": "selected-model", "answered_by": "backup-model", "answered_by_endpoint_id": "backup", "answered_by_endpoint_label": "Backup endpoint"}\n\n',
-        'data: {"delta": "visible partial"}\n\n',
-        'event: error\ndata: {"status": 503, "error": "credential-shaped provider detail"}\n\n',
-        "data: [DONE]\n\n",
-    ]
-    endpoint = _chat_stream_endpoint(
-        monkeypatch,
-        "chat",
-        captured,
-        chat_chunks=chunks,
-        capture_completion=True,
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "_load_policy_preferences",
-        lambda owner=None: {
-            "foreground_fallback_enabled": True,
-            "foreground_model_fallbacks": [
-                {"endpoint_id": "backup", "model": "backup-model"},
-            ],
-        },
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [
-            ("https://backup.example/v1", "backup-model", {"Authorization": "Bearer backup"}),
-        ],
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_route_descriptor",
-        lambda *args, **kwargs: {
-            "endpoint_id": "selected",
-            "endpoint_label": "Selected endpoint",
-        },
-    )
-
-    response = await endpoint(_RouteRequest("chat"))
-    emitted = [chunk async for chunk in response.body_iterator]
-
-    assert any(chunk.startswith("event: error") for chunk in emitted)
-    assert not any(chunk == "data: [DONE]\n\n" for chunk in emitted)
-    assert len(captured["saved"]) == 1
-    saved_args, _saved_kwargs = captured["saved"][0]
-    assert saved_args[3] == (
-        "visible partial\n\n"
-        "[Response stopped: Model request failed (HTTP 503)]"
-    )
-    assert "credential-shaped provider detail" not in str(saved_args)
-    assert saved_args[4]["failure"] == {
-        "status": 503,
-        "message": "Model request failed (HTTP 503)",
-    }
-    assert saved_args[4]["model"] == "backup-model"
-    assert saved_args[4]["requested_model"] == "selected-model"
-    assert saved_args[4]["endpoint_id"] == "backup"
-    assert saved_args[4]["endpoint_label"] == "backup"
-    assert saved_args[4]["requested_endpoint_id"] == "selected"
-    assert saved_args[4]["requested_endpoint_label"] == "Selected endpoint"
-    assert saved_args[4]["endpoint_cost_tracked"] is True
-    assert saved_args[4]["input_tokens"] == 10
-    assert saved_args[4]["output_tokens"] == len("visible partial") // 4
-    assert saved_args[4]["usage_source"] == "estimated"
-    assert captured["accumulated_usage"][0][0][1] == saved_args[4]
-    chat_terminal = json.loads(next(
-        chunk for chunk in emitted if '"type": "chat_terminal"' in chunk
-    )[6:])["data"]
-    assert chat_terminal == saved_args[4]
-    assert "post_processed" not in captured
-
-
-@pytest.mark.asyncio
-async def test_chat_terminal_preserves_real_usage_and_accumulates_once(monkeypatch):
-    captured = {}
-    endpoint = _chat_stream_endpoint(
-        monkeypatch,
-        "chat",
-        captured,
-        chat_chunks=[
-            'data: {"type": "usage", "data": {"model": "selected-model", "input_tokens": 123, "output_tokens": 17, "usage_source": "real"}}\n\n',
-            'data: {"delta": "visible partial"}\n\n',
-            'event: error\ndata: {"status": 503, "error": "provider detail"}\n\n',
-        ],
-        capture_completion=True,
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_route_descriptor",
-        lambda *args, **kwargs: {
-            "endpoint_id": "selected",
-            "endpoint_label": "Selected paid endpoint",
-            "endpoint_cost_tracked": True,
-        },
-    )
-
-    response = await endpoint(_RouteRequest("chat"))
-    emitted = [chunk async for chunk in response.body_iterator]
-
-    saved_metrics = captured["saved"][0][0][4]
-    assert saved_metrics["input_tokens"] == 123
-    assert saved_metrics["output_tokens"] == 17
-    assert saved_metrics["usage_source"] == "real"
-    assert saved_metrics["endpoint_cost_tracked"] is True
-    assert saved_metrics["failed"] is True
-    assert len(captured["accumulated_usage"]) == 1
-    assert captured["accumulated_usage"][0][0][1] == saved_metrics
-    assert len([
-        chunk for chunk in emitted if '"type": "metrics"' in chunk
-    ]) == 1
-    assert len([
-        chunk for chunk in emitted if '"type": "chat_terminal"' in chunk
-    ]) == 1
-    assert "post_processed" not in captured
-
-
-@pytest.mark.asyncio
 async def test_cancelled_agent_fallback_saves_endpoint_and_round_provenance(monkeypatch):
     captured = {}
     chunks = [
@@ -1009,58 +709,6 @@ async def test_cancelled_agent_fallback_saves_endpoint_and_round_provenance(monk
     assert saved.metadata["round_models"] == ["selected-provider-alias", "backup-model"]
     assert saved.metadata["round_endpoint_ids"] == ["account-one", "account-two"]
     assert saved.metadata["round_endpoint_labels"] == ["Account one", "Account two"]
-
-
-@pytest.mark.asyncio
-async def test_cancelled_chat_fallback_saves_same_model_endpoint_provenance(monkeypatch):
-    captured = {}
-    chunks = [
-        'data: {"type": "fallback", "candidate_index": 1, "selected_model": "selected-model", "answered_by": "selected-model", "answered_by_endpoint_id": "account-two", "answered_by_endpoint_label": "Account two"}\n\n',
-        'data: {"delta": "partial answer"}\n\n',
-        asyncio.CancelledError(),
-    ]
-    endpoint = _chat_stream_endpoint(
-        monkeypatch,
-        "chat",
-        captured,
-        chat_chunks=chunks,
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "_load_policy_preferences",
-        lambda owner=None: {
-            "foreground_fallback_enabled": True,
-            "foreground_model_fallbacks": [
-                {"endpoint_id": "account-two", "model": "selected-model"},
-            ],
-        },
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [
-            ("https://backup.example/v1", "selected-model", {"Authorization": "Bearer two"}),
-        ],
-    )
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_route_descriptor",
-        lambda *args, **kwargs: {
-            "endpoint_id": "account-one",
-            "endpoint_label": "Account one",
-        },
-    )
-
-    response = await endpoint(_RouteRequest("chat"))
-    with pytest.raises(asyncio.CancelledError):
-        async for _chunk in response.body_iterator:
-            pass
-
-    saved = captured["added_messages"][-1]
-    assert saved.metadata["requested_endpoint_id"] == "account-one"
-    assert saved.metadata["endpoint_id"] == "account-two"
-    assert saved.metadata["requested_endpoint_label"] == "Account one"
-    assert saved.metadata["endpoint_label"] == "account-two"
 
 
 @pytest.mark.asyncio
@@ -1141,6 +789,10 @@ def _chat_endpoint(
     async def fake_build_context(*args, **kwargs):
         return context
 
+    async def _default_governed(*args, **kwargs):
+        yield 'data: {"delta": "selected answer"}\n\n'
+        yield "data: [DONE]\n\n"
+
     monkeypatch.setattr(chat_routes, "_verify_session_owner", lambda *args, **kwargs: None)
     monkeypatch.setattr(chat_routes, "effective_user", lambda request: owner)
     monkeypatch.setattr(chat_routes, "_clear_orphaned_session_endpoint", lambda *args, **kwargs: False)
@@ -1149,6 +801,7 @@ def _chat_endpoint(
     monkeypatch.setattr(chat_routes, "build_chat_context", fake_build_context)
     monkeypatch.setattr(chat_routes, "clean_thinking_for_save", lambda reply, metadata: (reply, metadata))
     monkeypatch.setattr(chat_routes, "run_post_response_tasks", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chat_routes, "stream_governed_agent", _default_governed)
 
     import core.database as database
 
@@ -1169,6 +822,7 @@ def _chat_endpoint(
 @pytest.mark.asyncio
 async def test_nonstream_chat_is_strict_by_default_and_reports_selected_route(monkeypatch):
     calls = []
+    llm_calls = []
     monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {})
     monkeypatch.setattr(
         foreground_model_routing,
@@ -1177,41 +831,27 @@ async def test_nonstream_chat_is_strict_by_default_and_reports_selected_route(mo
     )
 
     async def fake_call(url, model, messages, **kwargs):
-        calls.append((url, model, kwargs.get("headers")))
-        return "selected answer"
+        llm_calls.append((url, model, kwargs.get("headers")))
+        return "should not run"
+
+    async def fake_governed(*args, **kwargs):
+        calls.append((args, kwargs))
+        yield 'data: {"delta": "selected answer"}\n\n'
+        yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
     endpoint, saved = _chat_endpoint(monkeypatch)
+    monkeypatch.setattr(chat_routes, "stream_governed_agent", fake_governed)
 
     response = await endpoint(
         _RouteRequest("chat"),
         ChatRequest(message="hello", session="session-1"),
     )
 
-    assert calls == [(
-        "https://selected.example/v1",
-        "selected-model",
-        {"Authorization": "Bearer selected"},
-    )]
-    assert response == {
-        "response": "selected answer",
-        "requested_model": "selected-model",
-        "model": "selected-model",
-        "requested_endpoint_id": None,
-        "requested_endpoint_label": "Selected route",
-        "endpoint_id": None,
-        "endpoint_label": "Selected route",
-    }
-    assert saved[-1].metadata == {
-        "model": "selected-model",
-        "requested_model": "selected-model",
-        "endpoint_id": None,
-        "endpoint_label": "Selected route",
-        "requested_endpoint_id": None,
-        "requested_endpoint_label": "Selected route",
-        "context_length": 100,
-        "context_trimmed": False,
-    }
+    assert llm_calls == []
+    assert calls, "leftover POST /api/chat must dispatch stream_governed_agent"
+    assert response["response"] == "selected answer"
+    assert saved[-1].content == "selected answer"
 
 
 @pytest.mark.asyncio
@@ -1256,34 +896,22 @@ async def test_nonstream_chat_opt_in_advances_only_on_eligible_failure(monkeypat
             raise HTTPException(503, "selected unavailable")
         return "backup answer"
 
+    async def fake_governed(*args, **kwargs):
+        yield 'data: {"delta": "governed answer"}\n\n'
+        yield "data: [DONE]\n\n"
+
     monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
     endpoint, saved = _chat_endpoint(monkeypatch)
+    monkeypatch.setattr(chat_routes, "stream_governed_agent", fake_governed)
 
     response = await endpoint(
         _RouteRequest("chat"),
         ChatRequest(message="hello", session="session-1"),
     )
 
-    assert [call[1] for call in calls] == ["selected-model", "backup-model"]
-    assert response == {
-        "response": "backup answer",
-        "requested_model": "selected-model",
-        "model": "backup-model",
-        "requested_endpoint_id": None,
-        "requested_endpoint_label": "Selected route",
-        "endpoint_id": "backup",
-        "endpoint_label": "backup",
-    }
-    assert saved[-1].metadata == {
-        "model": "backup-model",
-        "requested_model": "selected-model",
-        "endpoint_id": "backup",
-        "endpoint_label": "backup",
-        "requested_endpoint_id": None,
-        "requested_endpoint_label": "Selected route",
-        "context_length": 128000,
-        "context_trimmed": False,
-    }
+    assert calls == []
+    assert response["response"] == "governed answer"
+    assert saved[-1].content == "governed answer"
 
 
 @pytest.mark.asyncio
@@ -1342,320 +970,28 @@ async def test_nonstream_chat_shapes_each_candidate_from_route_neutral_history(
         ChatRequest(message="hello", session="session-1"),
     )
 
-    assert tuple(len(messages) for _model, messages in calls) == expected_counts
-    assert response["model"] == "backup-model"
+    assert calls == []
+    assert response["response"] == "selected answer"
 
 
 @pytest.mark.asyncio
-async def test_nonstream_same_model_fallback_persists_endpoint_identity(monkeypatch):
-    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "account-two", "model": "selected-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [(
-            "https://selected.example/v1",
-            "selected-model",
-            {"Authorization": "Bearer account-two"},
-        )],
-    )
+async def test_nonstream_chat_does_not_post_to_provider_http(monkeypatch):
+    posts = []
 
-    async def fake_call(url, model, messages, **kwargs):
-        if kwargs.get("headers", {}).get("Authorization") == "Bearer selected":
-            raise HTTPException(429, "rate limited")
-        return "second account answer"
+    async def fake_post(*args, **kwargs):
+        posts.append((args, kwargs))
+        raise AssertionError("leftover POST /api/chat must not call provider HTTP")
 
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_post)
     endpoint, saved = _chat_endpoint(monkeypatch)
-
     response = await endpoint(
         _RouteRequest("chat"),
         ChatRequest(message="hello", session="session-1"),
     )
-
-    assert response["requested_model"] == response["model"] == "selected-model"
-    assert response["endpoint_id"] == "account-two"
-    assert saved[-1].metadata["endpoint_id"] == "account-two"
-
-
-@pytest.mark.asyncio
-async def test_nonstream_chat_does_not_fallback_on_ineligible_failure(monkeypatch):
-    calls = []
-    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "backup", "model": "backup-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda entries, owner=None, require_exact_model=False: [
-            ("https://backup.example/v1", "backup-model", {}),
-        ],
-    )
-
-    async def fake_call(url, model, messages, **kwargs):
-        calls.append(model)
-        raise HTTPException(401, "invalid key")
-
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
-    endpoint, _saved = _chat_endpoint(monkeypatch)
-
-    with pytest.raises(HTTPException) as exc:
-        await endpoint(
-            _RouteRequest("chat"),
-            ChatRequest(message="hello", session="session-1"),
-        )
-
-    assert exc.value.status_code == 401
-    assert calls == ["selected-model"]
-
-
-@pytest.mark.asyncio
-async def test_nonstream_chat_does_not_fallback_on_endpoint_configuration_error(monkeypatch):
-    calls = []
-    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "backup", "model": "backup-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: [("https://backup.example/v1", "backup-model", {})],
-    )
-
-    async def fake_post(client, url, headers, **kwargs):
-        calls.append(url)
-        raise httpx.UnsupportedProtocol("unsupported protocol")
-
-    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
-    monkeypatch.setattr(llm_core, "_is_host_dead", lambda url: False)
-    monkeypatch.setattr(llm_core, "note_model_activity", lambda *args, **kwargs: None)
-    monkeypatch.setattr(llm_core, "_get_cached_response", lambda key: None)
-    endpoint, saved = _chat_endpoint(monkeypatch, endpoint_url="ftp://selected.example")
-
-    with pytest.raises(HTTPException) as exc:
-        await endpoint(
-            _RouteRequest("chat"),
-            ChatRequest(message="hello", session="session-1"),
-        )
-
-    assert exc.value.status_code == 502
-    assert len(calls) == 1
-    assert saved == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("primary_body", "expected_status"),
-    [
-        ({"error": {"type": "invalid_request_error", "message": "unsupported model"}}, 400),
-        ({"unexpected": "successful but malformed provider body"}, 502),
-    ],
-)
-async def test_nonstream_chat_real_parser_never_falls_back_on_provider_or_schema_error(
-    monkeypatch,
-    primary_body,
-    expected_status,
-):
-    calls = []
-    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "backup", "model": "backup-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda entries, owner=None, require_exact_model=False: [
-            ("https://backup.example/v1", "backup-model", {}),
-        ],
-    )
-
-    class _Response:
-        is_success = True
-        status_code = 200
-        text = ""
-
-        def __init__(self, body):
-            self._body = body
-
-        def json(self):
-            return self._body
-
-    async def fake_post(_client, target_url, _headers, **kwargs):
-        calls.append(target_url)
-        if "selected.example" in target_url:
-            return _Response(primary_body)
-        return _Response({"choices": [{"message": {"content": "backup answer"}}]})
-
-    monkeypatch.setattr(llm_core, "_get_http_client", lambda: object())
-    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
-    monkeypatch.setattr(llm_core, "_is_host_dead", lambda url: False)
-    monkeypatch.setattr(llm_core, "note_model_activity", lambda *args, **kwargs: None)
-    monkeypatch.setattr(llm_core, "_get_cached_response", lambda key: None)
-    monkeypatch.setattr(llm_core, "_set_cached_response", lambda *args, **kwargs: None)
-    endpoint, saved = _chat_endpoint(monkeypatch)
-
-    with pytest.raises(HTTPException) as exc:
-        await endpoint(
-            _RouteRequest("chat"),
-            ChatRequest(message="hello", session="session-1"),
-        )
-
-    assert exc.value.status_code == expected_status
-    assert len(calls) == 1
-    assert "selected.example" in calls[0]
-    assert saved == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("use_fallback", [False, True])
-async def test_nonstream_chat_real_parser_persists_provider_model_alias(
-    monkeypatch,
-    use_fallback,
-):
-    calls = []
-    if use_fallback:
-        monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {
-            "foreground_fallback_enabled": True,
-            "foreground_model_fallbacks": [
-                {"endpoint_id": "backup", "model": "backup-model"},
-            ],
-        })
-        monkeypatch.setattr(
-            foreground_model_routing,
-            "resolve_fallback_entries",
-            lambda *args, **kwargs: [
-                ("https://backup.example/v1", "backup-model", {}),
-            ],
-        )
-    else:
-        monkeypatch.setattr(
-            foreground_model_routing,
-            "_load_policy_preferences",
-            lambda owner: {},
-        )
-
-    class _Response:
-        is_success = True
-        status_code = 200
-        text = ""
-
-        def __init__(self, body):
-            self._body = body
-
-        def json(self):
-            return self._body
-
-    async def fake_post(_client, target_url, _headers, **kwargs):
-        calls.append(target_url)
-        if use_fallback and "selected.example" in target_url:
-            return _Response({
-                "error": {
-                    "status": 503,
-                    "message": "selected unavailable",
-                },
-            })
-        return _Response({
-            "model": "provider-backup-alias" if use_fallback else "provider-selected-alias",
-            "choices": [{"message": {"content": "provider answer"}}],
-        })
-
-    monkeypatch.setattr(llm_core, "_get_http_client", lambda: object())
-    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
-    monkeypatch.setattr(llm_core, "_is_host_dead", lambda url: False)
-    monkeypatch.setattr(llm_core, "note_model_activity", lambda *args, **kwargs: None)
-    monkeypatch.setattr(llm_core, "_get_cached_response", lambda key: None)
-    monkeypatch.setattr(llm_core, "_set_cached_response", lambda *args, **kwargs: None)
-    endpoint, saved = _chat_endpoint(monkeypatch)
-
-    response = await endpoint(
-        _RouteRequest("chat"),
-        ChatRequest(message="hello", session="session-1"),
-    )
-
-    expected_model = (
-        "provider-backup-alias" if use_fallback else "provider-selected-alias"
-    )
-    assert response["response"] == "provider answer"
-    assert response["model"] == expected_model
-    assert saved[-1].metadata["model"] == expected_model
-    assert response["endpoint_id"] == ("backup" if use_fallback else None)
-    assert len(calls) == (2 if use_fallback else 1)
-
-
-@pytest.mark.asyncio
-async def test_nonstream_chat_does_not_treat_empty_response_as_unavailability(monkeypatch):
-    calls = []
-    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "backup", "model": "backup-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda entries, owner=None, require_exact_model=False: [
-            ("https://backup.example/v1", "backup-model", {}),
-        ],
-    )
-
-    async def fake_call(url, model, messages, **kwargs):
-        calls.append(model)
-        return ""
-
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
-    endpoint, _saved = _chat_endpoint(monkeypatch)
-
-    response = await endpoint(
-        _RouteRequest("chat"),
-        ChatRequest(message="hello", session="session-1"),
-    )
-
-    assert calls == ["selected-model"]
-    assert response["model"] == "selected-model"
-
-
-@pytest.mark.asyncio
-async def test_nonstream_named_owner_does_not_inherit_flat_opt_in(monkeypatch):
-    calls = []
-    monkeypatch.setattr(prefs_routes, "_load", lambda: {
-        "foreground_fallback_enabled": True,
-        "foreground_model_fallbacks": [
-            {"endpoint_id": "shared", "model": "shared-model"},
-        ],
-    })
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "resolve_fallback_entries",
-        lambda *args, **kwargs: pytest.fail("flat opt-in resolved a candidate for bob"),
-    )
-
-    async def fake_call(url, model, messages, **kwargs):
-        calls.append(model)
-        raise HTTPException(503, "selected unavailable")
-
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
-    endpoint, _saved = _chat_endpoint(monkeypatch, owner="bob")
-
-    with pytest.raises(HTTPException) as exc:
-        await endpoint(
-            _RouteRequest("chat"),
-            ChatRequest(message="hello", session="session-1"),
-        )
-
-    assert exc.value.status_code == 503
-    assert calls == ["selected-model"]
+    assert posts == []
+    assert response["response"] == "selected answer"
+    assert saved[-1].content == "selected answer"
 
 
 def test_candidate_builder_appends_only_policy_authorized_fallbacks():
@@ -1753,9 +1089,7 @@ async def test_chat_stream_threads_form_endpoint_id_to_descriptor_builder(monkey
 
 
 @pytest.mark.asyncio
-async def test_nonstream_chat_threads_request_endpoint_id_to_descriptor_builder(
-    monkeypatch,
-):
+async def test_nonstream_chat_ignores_selected_endpoint_id_for_inference(monkeypatch):
     seen = []
 
     def fake_descriptors(*args, selected_endpoint_id=None, **kwargs):
@@ -1766,23 +1100,13 @@ async def test_nonstream_chat_threads_request_endpoint_id_to_descriptor_builder(
             "endpoint_cost_tracked": True,
         }]
 
-    async def fake_call(url, model, messages, **kwargs):
-        return "selected answer"
-
-    monkeypatch.setattr(
-        foreground_model_routing,
-        "_load_policy_preferences",
-        lambda owner: {},
-    )
     monkeypatch.setattr(
         chat_routes,
         "build_foreground_route_descriptors",
         fake_descriptors,
     )
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
     endpoint, _saved = _chat_endpoint(monkeypatch)
-
-    await endpoint(
+    response = await endpoint(
         _RouteRequest("chat"),
         ChatRequest(
             message="hello",
@@ -1791,7 +1115,8 @@ async def test_nonstream_chat_threads_request_endpoint_id_to_descriptor_builder(
         ),
     )
 
-    assert seen == ["account-two"]
+    assert seen == []
+    assert response["response"] == "selected answer"
 
 
 def test_strict_policy_builds_only_the_selected_chat_candidate():

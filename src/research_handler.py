@@ -1,9 +1,8 @@
 # src/research_handler.py
 """Handler for research service integration with expandable UI support.
 
-Uses the IterResearch-style DeepResearcher (LLM-in-the-loop) as the primary
-engine, falling back to the legacy ResearchOrchestrator or basic web search
-if needed.
+Agentic research runs through governed OpenHands. Plan/query helpers are
+bounded model jobs. Capability probes stay on the specialist path.
 
 Includes a task registry so research survives page refreshes and can be cancelled.
 """
@@ -15,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Optional, Dict
 
+from services.agents.legacy_bridge import stream_governed_agent
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.research_utils import strip_thinking, is_low_quality
 from src.constants import DEEP_RESEARCH_DIR
 
@@ -145,24 +146,30 @@ class ResearchHandler:
         convo += f"\nUser: {latest_message}"
 
         try:
-            from src.llm_core import llm_call_async
-
-            response = await llm_call_async(
-                url=llm_endpoint,
-                model=llm_model,
-                messages=[{"role": "user", "content":
-                    "Read this conversation and write a single, specific research query that captures "
-                    "what the user wants to know. Include all relevant context, constraints, and preferences "
-                    "they mentioned. Output ONLY the research query — nothing else.\n\n"
-                    f"Conversation:\n{convo}"
-                }],
-                temperature=0.1,
-                max_tokens=200,
-                headers=llm_headers,
-                timeout=15,
-                max_retries=1,
+            owner = getattr(sess, "owner", None) or ""
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "research-query",
+                    temperature=0.1,
+                    token_limit=200,
+                    timeout_seconds=15,
+                ),
+                {
+                    "text": convo,
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            "Read this conversation and write a single, specific research query that captures "
+                            "what the user wants to know. Include all relevant context, constraints, and preferences "
+                            "they mentioned. Output ONLY the research query — nothing else.\n\n"
+                            f"Conversation:\n{convo}"
+                        ),
+                    }],
+                },
+                owner,
             )
-            query = strip_thinking(response).strip().strip('"\'')
+            query = strip_thinking(str((result.output or {}).get("text") or "")).strip().strip('"\'')
             if query and len(query) > 5:
                 return query
         except Exception as e:
@@ -176,20 +183,20 @@ class ResearchHandler:
         """Generate a research plan for user review before starting research."""
         try:
             from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
-            from src.llm_core import llm_call_async
 
             prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=query)
-            response = await llm_call_async(
-                url=llm_endpoint,
-                model=llm_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1024,
-                headers=llm_headers,
-                timeout=30,
-                max_retries=1,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "research-plan",
+                    temperature=0.3,
+                    token_limit=1024,
+                    timeout_seconds=30,
+                ),
+                {"text": prompt, "messages": [{"role": "user", "content": prompt}]},
+                "",
             )
-            response = strip_thinking(response)
+            response = strip_thinking(str((result.output or {}).get("text") or result.output or ""))
 
             # Try to parse structured plan
             import json as _json
@@ -297,6 +304,7 @@ class ResearchHandler:
             "task": None,
             "researcher": None,
             "query": query,
+            "session_id": session_id,
             "status": "running",
             "progress": {},
             "result": None,
@@ -756,98 +764,84 @@ class ResearchHandler:
         extraction_concurrency: int = None,
     ) -> str:
         """
-        Run iterative deep research using the LLM-in-the-loop DeepResearcher.
+        Run agentic research through governed OpenHands.
 
-        Args:
-            query: Research question
-            llm_endpoint: LLM endpoint URL for chat completions
-            llm_model: Model name/ID
-            max_time: Maximum research time in seconds (default 5 minutes)
-            _task_entry: Internal - registry entry to store researcher ref
-            prior_report: Previous report to continue from.
-            prior_findings: Previous findings to build on.
-            prior_urls: URLs already visited (won't re-fetch).
+        Parameters
+        ----------
+        query : str
+            Research question.
+        llm_endpoint : str
+            Unused leftover argument kept for caller compatibility.
+        llm_model : str
+            Unused leftover argument kept for caller compatibility.
+        max_time : int
+            Wall-clock budget forwarded as the governed poll timeout.
+        _task_entry : dict
+            Optional registry row; may carry session_id and owner.
+        prior_report : str
+            Previous report to continue from.
+        prior_findings : list
+            Unused leftover argument kept for caller compatibility.
+        prior_urls : set
+            Unused leftover argument kept for caller compatibility.
 
-        Returns:
-            Formatted research report with expandable section and summary
+        Returns
+        -------
+        str
+            Formatted research report.
+
+        Example
+        -------
+        ``await handler.call_research_service("best EV", "", "")``
         """
         is_continuation = bool(prior_report)
-        logger.info(f"{'Continuing' if is_continuation else 'Starting'} IterResearch Deep Research")
+        logger.info(f"{'Continuing' if is_continuation else 'Starting'} OpenHands research")
         logger.info(f"Query: {query}")
-        logger.info(f"LLM: {llm_endpoint} / {llm_model}")
         logger.info(f"Max time: {max_time}s")
         if is_continuation:
             logger.info(f"Prior: {len(prior_findings or [])} findings, {len(prior_urls or set())} URLs")
 
-        # Probe the endpoint before committing to a long research run
         if progress_callback:
-            progress_callback({"phase": "probing", "model": llm_model})
-        await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
+            progress_callback({"phase": "research", "model": "openhands"})
+
+        prompt = query
+        if prior_report:
+            prompt = (
+                f"{query}\n\nContinue from this prior report:\n{prior_report[:4000]}"
+            )
 
         try:
-            from src.deep_research import DeepResearcher
-
-            from src.settings import get_setting
-            _max_report_tokens = int(get_setting("research_max_tokens", 16384))
-            _extraction_timeout = _bounded_int(
-                extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
-                default=90,
-                minimum=15,
-                maximum=3600,
-            )
-            _extraction_concurrency = _bounded_int(
-                extraction_concurrency if extraction_concurrency is not None else get_setting("research_extraction_concurrency", 3),
-                default=3,
-                minimum=1,
-                maximum=12,
-            )
-            _planning_timeout = _bounded_int(
-                get_setting("research_planning_timeout_seconds", _extraction_timeout),
-                default=_extraction_timeout,
-                minimum=15,
-                maximum=3600,
-            )
-            _query_timeout = _bounded_int(
-                get_setting("research_query_timeout_seconds", _extraction_timeout),
-                default=_extraction_timeout,
-                minimum=15,
-                maximum=3600,
-            )
-
-            researcher = DeepResearcher(
-                llm_endpoint=llm_endpoint,
-                llm_model=llm_model,
-                llm_headers=llm_headers,
-                max_rounds=max_rounds,
-                min_rounds=max(2, max_rounds - 2),
-                max_time=max_time,
-                max_report_tokens=_max_report_tokens,
-                extraction_timeout=_extraction_timeout,
-                planning_timeout=_planning_timeout,
-                query_timeout=_query_timeout,
-                extraction_concurrency=_extraction_concurrency,
-                progress_callback=progress_callback,
-                search_provider=search_provider,
-                category=category,
-            )
-            if _task_entry is not None:
-                _task_entry["researcher"] = researcher
-
             start_time = time.time()
-            report = await researcher.research(
-                query,
-                prior_report=prior_report,
-                prior_findings=prior_findings,
-                prior_urls=prior_urls,
-            )
+            parts = []
+            session_id = ""
+            owner = ""
+            if isinstance(_task_entry, dict):
+                session_id = str(_task_entry.get("session_id") or "")
+                owner = str(_task_entry.get("owner") or "")
+            async for chunk in stream_governed_agent(
+                messages=[{"role": "user", "content": prompt}],
+                session_id=session_id,
+                owner=owner,
+                user_requested_agent=True,
+                archetype="research",
+                poll_timeout_s=float(max_time),
+            ):
+                if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+                    continue
+                try:
+                    data = json.loads(chunk[6:])
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict) or data.get("thinking"):
+                    continue
+                delta = data.get("delta")
+                if isinstance(delta, str) and delta:
+                    parts.append(delta)
+            report = "".join(parts)
             elapsed = time.time() - start_time
+            stats = {"Rounds": 1, "Queries": 1, "URLs": 0}
+            logger.info("OpenHands research completed")
 
-            stats = researcher.get_stats()
-            logger.info("IterResearch completed successfully")
-            for key, value in stats.items():
-                logger.info(f"  {key}: {value}")
-
-            # Store raw report and stats for visual report generation
             if _task_entry is not None:
                 _task_entry["raw_report"] = strip_thinking(report)
                 _task_entry["stats"] = stats
@@ -855,7 +849,7 @@ class ResearchHandler:
             return self._format_research_report(query, report, stats, elapsed)
 
         except Exception as e:
-            logger.error(f"DeepResearcher failed: {e}", exc_info=True)
+            logger.error(f"OpenHands research failed: {e}", exc_info=True)
             return await self._fallback_research(query, llm_endpoint, llm_model, max_time, str(e))
 
     async def _fallback_research(

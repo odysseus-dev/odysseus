@@ -18,3 +18,7 @@ Reasons:
 
 Production callers in chat, skills, teacher, bg_monitor, and task_scheduler
 invoke `stream_governed_agent`, not `stream_agent_loop`.
+
+U8 retired leftover `POST /api/chat` and webhook `POST /api/v1/chat`
+completions paths onto governed OpenHands. That does **not** authorize
+Task 18 deletion. `src/agent_loop.py` remains residual-until-acceptance.
