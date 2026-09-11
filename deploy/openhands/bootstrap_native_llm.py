@@ -33,11 +33,31 @@ NATIVE_LITELLM_PREFIX = "openai/"
 NATIVE_LITELLM_MODEL = "openai/auto"
 KEY_NAME = "odysseus-native"
 MACHINE_ID = "odysseusnative1"
+OPENCODE_KEY_NAME = "odysseus-opencode"
+OPENCODE_MACHINE_ID = "odysseusopencode1"
 API_KEY_SECRET = os.environ.get("API_KEY_SECRET", "endpoint-proxy-api-key-secret")
 SETTINGS_PATH = Path(
     os.environ.get(
         "OPENHANDS_SETTINGS_PATH",
         "/home/openhands/.openhands/settings.json",
+    )
+)
+OPENCODE_CONFIG_PATH = Path(
+    os.environ.get(
+        "OPENCODE_CONFIG_PATH",
+        "/home/opencode/.config/opencode/opencode.json",
+    )
+)
+OPENCODE_TEMPLATE_PATH = Path(
+    os.environ.get(
+        "OPENCODE_TEMPLATE_PATH",
+        "/opt/odysseus/opencode.json",
+    )
+)
+OPENCODE_ACP_PROFILE_PATH = Path(
+    os.environ.get(
+        "OPENCODE_ACP_PROFILE_PATH",
+        "/home/openhands/.openhands/agent-profiles/opencode.json",
     )
 )
 NINE_ROUTER_DB = Path(
@@ -86,13 +106,20 @@ def _wait_http(url: str, timeout: float = 60.0) -> None:
     raise RuntimeError(f"timeout waiting for {url}: {last}")
 
 
-def _mint_virtual_key() -> str:
-    """Return an existing odysseus-native 9router key or insert a new one.
+def _mint_virtual_key(name: str = KEY_NAME, machine_id: str = MACHINE_ID) -> str:
+    """Return an existing named 9router key or insert a new one.
+
+    Parameters
+    ----------
+    name
+        9router ``apiKeys.name``. Native and OpenCode use different names.
+    machine_id
+        Machine suffix baked into the virtual key.
 
     Returns
     -------
     str
-        Virtual inference key stored only in 9router DATA_DIR and Agent Server settings.
+        Virtual inference key stored only in 9router DATA_DIR and runtime config.
     """
 
     deadline = time.time() + 60
@@ -103,45 +130,53 @@ def _mint_virtual_key() -> str:
     conn = sqlite3.connect(str(NINE_ROUTER_DB), timeout=10)
     conn.row_factory = sqlite3.Row
     try:
-        return _ensure_key_row(conn)
+        return _ensure_key_row(conn, name=name, machine_id=machine_id)
     finally:
         conn.close()
 
 
-def _ensure_key_row(conn: sqlite3.Connection) -> str:
+def _ensure_key_row(
+    conn: sqlite3.Connection,
+    name: str = KEY_NAME,
+    machine_id: str = MACHINE_ID,
+) -> str:
     """Reuse or insert the named virtual key.
 
     Parameters
     ----------
     conn
         Open 9router sqlite connection.
+    name
+        9router ``apiKeys.name``.
+    machine_id
+        Machine suffix baked into the virtual key.
 
     Returns
     -------
     str
-        Active virtual key for ``odysseus-native``.
+        Active virtual key for ``name``.
     """
 
     row = conn.execute(
         "SELECT key FROM apiKeys WHERE name = ? AND isActive = 1 LIMIT 1",
-        (KEY_NAME,),
+        (name,),
     ).fetchone()
     if row and row["key"]:
         return str(row["key"])
     key_id = uuid.uuid4().hex[:6]
     crc = hmac.new(
         API_KEY_SECRET.encode(),
-        (MACHINE_ID + key_id).encode(),
+        (machine_id + key_id).encode(),
         hashlib.sha256,
     ).hexdigest()[:8]
-    key = f"sk-{MACHINE_ID}-{key_id}-{crc}"
+    key = f"sk-{machine_id}-{key_id}-{crc}"
     conn.execute(
         "INSERT INTO apiKeys (id, key, name, machineId, isActive, createdAt) VALUES (?, ?, ?, ?, 1, ?)",
         (
             key_id,
             key,
-            KEY_NAME,
-            MACHINE_ID,
+            name,
+            machine_id,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
@@ -266,6 +301,142 @@ def apply_native_9router_settings() -> None:
     )
 
 
+def _write_owned_json(path: Path, payload: dict[str, Any], mode: int = 0o600) -> None:
+    """Write JSON onto a runtime volume as the Agent Server user.
+
+    Parameters
+    ----------
+    path
+        Destination path on a mounted volume.
+    payload
+        JSON-serializable document.
+    mode
+        File mode after replace.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path("/tmp") / f"odysseus-{path.name}"
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    try:
+        tmp.replace(path)
+    except OSError:
+        _run_sudo(["cp", str(tmp), str(path)])
+    if os.geteuid() == 0:
+        os.chown(path, 10001, 10001)
+        os.chmod(path, mode)
+        os.chown(path.parent, 10001, 10001)
+    else:
+        _run_sudo(["chown", "10001:10001", str(path), str(path.parent)])
+        _run_sudo(["chmod", oct(mode)[2:], str(path)])
+
+
+def _pick_opencode_model(virtual_key: str) -> str:
+    """Return a 9router catalog id for OpenCode, without the LiteLLM prefix.
+
+    Parameters
+    ----------
+    virtual_key
+        9router virtual key used only for the catalog GET.
+
+    Returns
+    -------
+    str
+        Catalog model id such as ``auto`` or ``kr/claude-opus-5``.
+    """
+
+    litellm = _pick_litellm_model(virtual_key)
+    if litellm.startswith(NATIVE_LITELLM_PREFIX):
+        return litellm[len(NATIVE_LITELLM_PREFIX) :] or "auto"
+    return litellm or "auto"
+
+
+def _opencode_config_payload(virtual_key: str) -> dict[str, Any]:
+    """Build OpenCode provider config pointing at 9router.
+
+    Parameters
+    ----------
+    virtual_key
+        OpenCode-only 9router virtual key. Never logged.
+
+    Returns
+    -------
+    dict
+        ``opencode.json`` document with ``options.baseURL`` on 9router.
+    """
+
+    if OPENCODE_TEMPLATE_PATH.is_file():
+        payload = json.loads(OPENCODE_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    else:
+        payload = {
+            "$schema": "https://opencode.ai/config.json",
+            "autoupdate": False,
+            "provider": {},
+        }
+    model_id = _pick_opencode_model(virtual_key)
+    provider = payload.setdefault("provider", {})
+    spec = dict(provider.get("ninerouter") or {})
+    spec["npm"] = "@ai-sdk/openai-compatible"
+    spec["name"] = "9router"
+    options = dict(spec.get("options") or {})
+    options["baseURL"] = NINE_ROUTER_V1
+    options["apiKey"] = virtual_key
+    spec["options"] = options
+    spec["models"] = {model_id: {"name": model_id}}
+    provider["ninerouter"] = spec
+    payload["provider"] = provider
+    payload["model"] = f"ninerouter/{model_id}"
+    payload["enabled_providers"] = ["ninerouter"]
+    payload["disabled_providers"] = [
+        "openai",
+        "anthropic",
+        "opencode",
+        "amazon-bedrock",
+        "google",
+        "gemini",
+    ]
+    payload["autoupdate"] = False
+    return payload
+
+
+def _retag_opencode_acp_profile() -> None:
+    """Force live OpenCode ACP off the Anthropic ``claude-code`` channel."""
+
+    if OPENCODE_ACP_PROFILE_PATH.is_file():
+        payload = json.loads(OPENCODE_ACP_PROFILE_PATH.read_text(encoding="utf-8"))
+    else:
+        payload = {
+            "schema_version": 2,
+            "name": "opencode",
+            "revision": 0,
+            "agent_kind": "acp",
+            "acp_command": "opencode acp",
+        }
+    if payload.get("acp_server") == "claude-code":
+        log.info("retag acp_server claude-code -> opencode")
+    payload["acp_server"] = "opencode"
+    payload["acp_command"] = payload.get("acp_command") or "opencode acp"
+    payload.pop("llm_profile_ref", None)
+    _write_owned_json(OPENCODE_ACP_PROFILE_PATH, payload, mode=0o644)
+
+
+def apply_opencode_9router_config() -> None:
+    """Mint a separate OpenCode 9router key and write isolated OpenCode config."""
+
+    _reexec_as_root()
+    _wait_http(NINE_ROUTER_HEALTH)
+    virtual_key = _mint_virtual_key(OPENCODE_KEY_NAME, OPENCODE_MACHINE_ID)
+    home = Path("/home/opencode")
+    home.mkdir(parents=True, exist_ok=True)
+    if os.geteuid() == 0:
+        os.chown(home, 10001, 10001)
+    else:
+        _run_sudo(["chown", "10001:10001", str(home)])
+    _write_owned_json(OPENCODE_CONFIG_PATH, _opencode_config_payload(virtual_key))
+    _retag_opencode_acp_profile()
+    log.info("opencode provider now %s key=%s acp_server=opencode", NINE_ROUTER_V1, OPENCODE_KEY_NAME)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     apply_native_9router_settings()
+    apply_opencode_9router_config()

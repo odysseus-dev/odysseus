@@ -50,6 +50,7 @@ class ConversationResume:
     # Non-secret route only. Never copy llm.api_key onto this record.
     resolved_base_url: str | None = None
     resolved_model: str | None = None
+    resolved_runtime: str | None = None
 
 
 class OpenHandsClient:
@@ -92,12 +93,24 @@ class OpenHandsClient:
         }
         resolved_base_url = None
         resolved_model = None
+        resolved_runtime = None
         if not conversation_id:
             settings = self.transport.request("GET", "/api/settings")
-            llm = ((settings.get("agent_settings") or {}).get("llm") or {})
-            if isinstance(llm, dict):
-                resolved_base_url = str(llm.get("base_url") or "").strip() or None
-                resolved_model = str(llm.get("model") or "").strip() or None
+            if agent_profile_id == "opencode":
+                # OpenCode provenance is overlay config, not Agent Server LLM.
+                resolved_runtime = "opencode"
+                resolved_base_url = os.environ.get(
+                    "OPENHANDS_OPENCODE_BASE_URL",
+                    "http://9router:20128/v1",
+                ).strip() or "http://9router:20128/v1"
+                resolved_model = (
+                    os.environ.get("OPENHANDS_OPENCODE_MODEL") or "ninerouter/auto"
+                ).strip() or "ninerouter/auto"
+            else:
+                llm = ((settings.get("agent_settings") or {}).get("llm") or {})
+                if isinstance(llm, dict):
+                    resolved_base_url = str(llm.get("base_url") or "").strip() or None
+                    resolved_model = str(llm.get("model") or "").strip() or None
             body: dict[str, Any] = {
                 "workspace": {
                     "working_dir": "/workspace",
@@ -125,6 +138,7 @@ class OpenHandsClient:
             execution_id=f"agent-server:{conversation_id}",
             resolved_base_url=resolved_base_url,
             resolved_model=resolved_model,
+            resolved_runtime=resolved_runtime,
         )
 
     def cancel_execution(self, execution_id: str) -> dict[str, Any]:

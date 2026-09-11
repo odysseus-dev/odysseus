@@ -21,13 +21,20 @@ services:
     environment:
       PATH: /opt/oh-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENCODE_CONFIG: /home/opencode/.config/opencode/opencode.json
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_BASE_URL: ""
+      CLAUDE_CODE_OAUTH_TOKEN: ""
+      OPENCODE_API_KEY: ""
     volumes:
       - openhands-agent-server-data:/workspace
       - ${APP_DATA_DIR:-./data}/openhands-agent-server-home:/home/openhands/.openhands
+      - ${APP_DATA_DIR:-./data}/openhands-opencode-home:/home/opencode
       - ${APP_DATA_DIR:-./data}/openhands-runtime-bin:/opt/oh-bin:ro
       - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
       - ./deploy/openhands/bootstrap_native_llm.py:/opt/odysseus/bootstrap_native_llm.py:ro
       - ./deploy/openhands/agent-server-entrypoint.sh:/opt/odysseus/agent-server-entrypoint.sh:ro
+      - ./deploy/openhands/opencode.json:/opt/odysseus/opencode.json:ro
     depends_on:
       9router:
         condition: service_healthy

@@ -1487,6 +1487,58 @@ def probe_native_9router() -> ProbeResult:
     )
 
 
+def probe_opencode_9router() -> ProbeResult:
+    """Report non-secret OpenCode provider route from isolated ACP config."""
+    probe = _compose(
+        "exec",
+        "-T",
+        "openhands-agent-server",
+        "python",
+        "-c",
+        (
+            "import json,os;"
+            "from pathlib import Path;"
+            "p=os.environ.get('OPENCODE_CONFIG') or '/home/opencode/.config/opencode/opencode.json';"
+            "print(json.dumps({'exists': Path(p).is_file(), 'path': p, "
+            "'text': Path(p).read_text() if Path(p).is_file() else ''}))"
+        ),
+    )
+    if probe.returncode:
+        return ProbeResult(
+            "opencode-9router",
+            False,
+            {"error": "opencode_config_unreadable", "stderr": probe.stderr[-400:]},
+        )
+    payload = json.loads(probe.stdout)
+    text = str(payload.get("text") or "")
+    cfg = json.loads(text) if text else {}
+    blob = json.dumps(cfg)
+    base = ""
+    for spec in (cfg.get("provider") or {}).values():
+        if isinstance(spec, dict):
+            base = str((spec.get("options") or {}).get("baseURL") or "")
+            if base:
+                break
+    passed = bool(
+        payload.get("exists")
+        and "9router" in base
+        and "@ai-sdk/openai-compatible" in blob
+        and "chatgpt.com" not in blob
+        and "api.anthropic.com" not in blob
+    )
+    return ProbeResult(
+        "opencode-9router",
+        passed,
+        {
+            "config_exists": payload.get("exists"),
+            "base_url": base,
+            "model": cfg.get("model"),
+            "enabled_providers": cfg.get("enabled_providers"),
+            "native_settings_used": False,
+        },
+    )
+
+
 def probe_acceptance() -> ProbeResult:
     """In-process gates can pass; live Docker/Tailscale is recorded, not invented."""
     services: dict[str, bool] = {}
@@ -1543,6 +1595,7 @@ def main() -> int:
             "confirmation-approval-grant",
             "acceptance",
             "native-9router",
+            "opencode-9router",
         ],
     )
     parser.add_argument("--json", action="store_true")
@@ -1569,6 +1622,10 @@ def main() -> int:
         return 0 if result.passed else 1
     if args.probe == "native-9router":
         result = probe_native_9router()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "opencode-9router":
+        result = probe_opencode_9router()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()
