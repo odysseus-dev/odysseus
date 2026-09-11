@@ -1365,7 +1365,7 @@ def _uses_max_completion_tokens(model: str) -> bool:
 # perfectly good model as failing. For these models we omit the field and let
 # the API use its required default. (gpt-4.5 is intentionally excluded — it is
 # not a reasoning model and accepts temperature normally.)
-_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5", "kimi-for-coding")
+_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5", "kimi-for-coding", "gpt-6")
 
 def _restricts_temperature(model: str) -> bool:
     """Check if a model rejects any non-default temperature."""
