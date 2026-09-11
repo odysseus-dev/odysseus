@@ -12,6 +12,8 @@ services:
   openhands-agent-server:
     image: ghcr.io/openhands/agent-server:1.45.0-python@sha256:b0104980776ed6adbd6ce406636e08069087b4f11fa130bfd3548b965b262946
     # Image entrypoint is already tini -- /usr/local/bin/openhands-agent-server.
+    # Overlay wraps it so persisted ChatGPT subscription cannot remain the default.
+    entrypoint: ["/bin/bash", "/opt/odysseus/agent-server-entrypoint.sh"]
     command: ["--host", "0.0.0.0"]
     env_file: deploy/openhands/versions.env
     extra_hosts:
@@ -23,6 +25,12 @@ services:
       - openhands-agent-server-data:/workspace
       - ${APP_DATA_DIR:-./data}/openhands-agent-server-home:/home/openhands/.openhands
       - ${APP_DATA_DIR:-./data}/openhands-runtime-bin:/opt/oh-bin:ro
+      - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
+      - ./deploy/openhands/bootstrap_native_llm.py:/opt/odysseus/bootstrap_native_llm.py:ro
+      - ./deploy/openhands/agent-server-entrypoint.sh:/opt/odysseus/agent-server-entrypoint.sh:ro
+    depends_on:
+      9router:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 5s

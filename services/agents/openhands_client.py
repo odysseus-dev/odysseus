@@ -47,6 +47,9 @@ class UrllibTransport:
 class ConversationResume:
     conversation_id: str
     execution_id: str
+    # Non-secret route only. Never copy llm.api_key onto this record.
+    resolved_base_url: str | None = None
+    resolved_model: str | None = None
 
 
 class OpenHandsClient:
@@ -87,8 +90,14 @@ class OpenHandsClient:
             "role": "user",
             "content": [{"type": "text", "text": message}],
         }
+        resolved_base_url = None
+        resolved_model = None
         if not conversation_id:
             settings = self.transport.request("GET", "/api/settings")
+            llm = ((settings.get("agent_settings") or {}).get("llm") or {})
+            if isinstance(llm, dict):
+                resolved_base_url = str(llm.get("base_url") or "").strip() or None
+                resolved_model = str(llm.get("model") or "").strip() or None
             body: dict[str, Any] = {
                 "workspace": {
                     "working_dir": "/workspace",
@@ -114,6 +123,8 @@ class OpenHandsClient:
         return ConversationResume(
             conversation_id=conversation_id,
             execution_id=f"agent-server:{conversation_id}",
+            resolved_base_url=resolved_base_url,
+            resolved_model=resolved_model,
         )
 
     def cancel_execution(self, execution_id: str) -> dict[str, Any]:

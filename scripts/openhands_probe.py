@@ -1440,6 +1440,53 @@ def _observe_tailscale_serve() -> dict[str, object]:
     }
 
 
+def probe_native_9router() -> ProbeResult:
+    """Report non-secret native LLM route from live Agent Server settings."""
+    probe = _compose(
+        "exec",
+        "-T",
+        "openhands-agent-server",
+        "python",
+        "-c",
+        (
+            "import json,urllib.request;"
+            "print(urllib.request.urlopen('http://127.0.0.1:8000/api/settings', timeout=8)"
+            ".read().decode())"
+        ),
+    )
+    if probe.returncode:
+        return ProbeResult(
+            "native-9router",
+            False,
+            {"error": "settings_unreadable", "stderr": probe.stderr[-400:]},
+        )
+    payload = json.loads(probe.stdout)
+    llm = ((payload.get("agent_settings") or {}).get("llm") or {})
+    base = str(llm.get("base_url") or "")
+    auth = str(llm.get("auth_type") or "")
+    model = str(llm.get("model") or "")
+    api_mode = str(llm.get("api_mode") or "")
+    passed = (
+        "9router" in base
+        and auth == "api_key"
+        and api_mode == "chat"
+        and model.startswith("openai/")
+        and "chatgpt.com" not in base
+    )
+    return ProbeResult(
+        "native-9router",
+        passed,
+        {
+            "base_url": base,
+            "auth_type": auth,
+            "api_mode": api_mode,
+            "model": model,
+            "api_key_set": bool(llm.get("api_key")),
+            "is_subscription": llm.get("is_subscription"),
+        },
+    )
+
+
 def probe_acceptance() -> ProbeResult:
     """In-process gates can pass; live Docker/Tailscale is recorded, not invented."""
     services: dict[str, bool] = {}
@@ -1495,6 +1542,7 @@ def main() -> int:
             "acp-mcp",
             "confirmation-approval-grant",
             "acceptance",
+            "native-9router",
         ],
     )
     parser.add_argument("--json", action="store_true")
@@ -1517,6 +1565,10 @@ def main() -> int:
         return 0 if result.passed else 1
     if args.probe == "acceptance":
         result = probe_acceptance()
+        print(json.dumps(asdict(result), sort_keys=True))
+        return 0 if result.passed else 1
+    if args.probe == "native-9router":
+        result = probe_native_9router()
         print(json.dumps(asdict(result), sort_keys=True))
         return 0 if result.passed else 1
     results = probe_stack()
