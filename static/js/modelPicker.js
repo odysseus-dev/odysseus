@@ -4,7 +4,6 @@
 import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
-import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
 
 const API_BASE = window.location.origin;
@@ -85,43 +84,31 @@ let _deps = null;
 let _autoSelectingDefault = false;
 let _defaultChatPickInFlight = false;
 let _defaultPendingSeq = 0;
+let _curatedRoutes = [{ id: 'automatic', label: 'Automatic' }];
+let _curatedFetched = false;
 
-function _modelExists(modelId, url) {
-  if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
-  const items = window.modelsModule.getCachedItems() || [];
-  if (!items.length) return true;
-  const targetUrl = (url || '').replace(/\/+$/, '');
-  return items.some(item => {
-    if (item.offline) return false;
-    const itemUrl = (item.url || '').replace(/\/+$/, '');
-    const models = (item.models || []).concat(item.models_extra || []);
-    return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
-  });
+async function _refreshCuratedRoutes() {
+  try {
+    const response = await fetch(`${API_BASE}/api/chat-routes`, { credentials: 'same-origin' });
+    if (!response.ok) return;
+    const data = await response.json();
+    const routes = Array.isArray(data && data.routes) ? data.routes : [];
+    _curatedRoutes = routes.length ? routes.map(route => ({
+      id: String(route.id || '').trim(),
+      label: String(route.label || route.id || '').trim(),
+    })).filter(route => route.id) : [{ id: 'automatic', label: 'Automatic' }];
+    if (!_curatedRoutes.length) _curatedRoutes = [{ id: 'automatic', label: 'Automatic' }];
+    _curatedFetched = true;
+  } catch (_) { /* picker still shows Automatic */ }
 }
 
-function _firstAvailableModel() {
-  if (!window.modelsModule || !window.modelsModule.getCachedItems) return null;
-  const items = window.modelsModule.getCachedItems() || [];
-  for (const item of items) {
-    if (item.offline) continue;
-    const models = (item.models || []).concat(item.models_extra || []);
-    if (!models.length) continue;
-    return {
-      url: item.url,
-      modelId: models[0],
-      endpointId: item.endpoint_id || '',
-    };
-  }
-  return null;
+function _automaticRoute() {
+  return { url: '', modelId: 'automatic', endpointId: '', source: 'default' };
 }
 
-async function _ensureModelCacheForFallback() {
-  if (!window.modelsModule || !window.modelsModule.getCachedItems) return;
-  const items = window.modelsModule.getCachedItems() || [];
-  if (items.length) return;
-  if (typeof window.modelsModule.refreshModels === 'function') {
-    try { await window.modelsModule.refreshModels(false); } catch (_) {}
-  }
+function _modelExists(modelId) {
+  if (!modelId) return false;
+  return _curatedRoutes.some(route => route.id === modelId);
 }
 
 async function _ensureDefaultPendingChat() {
@@ -132,49 +119,12 @@ async function _ensureDefaultPendingChat() {
   _defaultChatPickInFlight = true;
   const seq = ++_defaultPendingSeq;
   try {
-    let dc = null;
-    try {
-      dc = window.__odysseusDefaultChat || null;
-    } catch (_) {}
-    if (!dc || !dc.endpoint_url || !dc.model) {
-      try {
-        const res = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
-        if (res.ok) dc = await res.json();
-      } catch (_) {}
-    }
-    if (dc && dc.endpoint_url && dc.model) {
-      if (seq !== _defaultPendingSeq) return;
-      const latest = _deps.getPendingChat && _deps.getPendingChat();
-      if (latest && latest.modelId && latest.source !== 'default' && latest.source !== 'fallback') return;
-      try {
-        window.__odysseusDefaultChat = dc;
-        localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
-      } catch (_) {}
-      const pendingUrl = String((latest && latest.url) || '').replace(/\/+$/, '');
-      const defaultUrl = String(dc.endpoint_url || '').replace(/\/+$/, '');
-      _deps.setPendingChat({
-        url: dc.endpoint_url,
-        modelId: dc.model,
-        endpointId: dc.endpoint_id || '',
-        source: 'default',
-      });
-      if (!latest || latest.modelId !== dc.model || pendingUrl !== defaultUrl || latest.source !== 'default') {
-        updateModelPicker();
-      }
-      return;
-    }
-    if (pending && pending.modelId) return;
-    await _ensureModelCacheForFallback();
-    // No configured default, or the configured default is gone/offline:
-    // preserve the convenience fallback and keep the picker usable.
-    const fallback = _firstAvailableModel();
-    if (fallback) {
-      if (seq !== _defaultPendingSeq) return;
-      const latest = _deps.getPendingChat && _deps.getPendingChat();
-      if (latest && latest.modelId && latest.source !== 'default' && latest.source !== 'fallback') return;
-      _deps.setPendingChat({ ...fallback, source: 'fallback' });
-      updateModelPicker();
-    }
+    await _refreshCuratedRoutes();
+    if (seq !== _defaultPendingSeq) return;
+    const latest = _deps.getPendingChat && _deps.getPendingChat();
+    if (latest && latest.modelId && latest.source !== 'default' && latest.source !== 'fallback') return;
+    _deps.setPendingChat(_automaticRoute());
+    updateModelPicker();
   } finally {
     _defaultChatPickInFlight = false;
   }
@@ -249,90 +199,27 @@ function _initModelPickerDropdown() {
     } catch (_) {}
   }
 
-  // Local endpoint health — only probed for LOCAL endpoints, since
-  // cloud APIs are essentially always up. Cached briefly on the
-  // server side too (8s TTL). Picker opens do not probe; the refresh button
-  // is the explicit network/probe action.
-  let _localProbe = {};            // {endpoint_id: {alive, latency_ms, error}}
-  let _localProbeFetchedAt = 0;
-  const _LOCAL_PROBE_TTL_MS = 5000;
   let _pickerLoading = false;
   let _pickerLoadSeq = 0;
 
-  async function _refreshLocalProbe() {
-    try {
-      if (window.__odysseusChatBusy || Date.now() < (window.__odysseusChatBusyUntil || 0)) return;
-    } catch (_) {}
-    const now = Date.now();
-    if (now - _localProbeFetchedAt < _LOCAL_PROBE_TTL_MS) return;
-    _localProbeFetchedAt = now;
-    try {
-      const r = await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' });
-      if (r.ok) _localProbe = (await r.json()) || {};
-    } catch (_) { /* leave stale data; picker still works */ }
-  }
-
   function _getAllModels() {
-    const items = (window.modelsModule && window.modelsModule.getCachedItems) ? window.modelsModule.getCachedItems() : [];
-    const result = [];
-    const seen = new Set();
-    items.forEach(item => {
-      // Previously: offline endpoints were skipped entirely, so a server
-      // that briefly went down disappeared from the picker — confusing
-      // when the user can still see it (offline-tagged) in Settings.
-      // Now: include offline-endpoint models too but flag them
-      // `stale: true` so the row renderer dims them + shows the offline
-      // pill. The user can still click and try anyway (matches the
-      // existing "local server appears offline" path on line 301).
-      const epOffline = !!item.offline;
-      const allModels = (item.models || []).concat(item.models_extra || []);
-      const allDisplay = (item.models_display || []).concat(item.models_extra_display || []);
-      // Mark local endpoints whose live probe failed.
-      const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
-      const isLocalDead = !!(probeResult && probeResult.alive === false);
-      const isApiEndpoint = item.category && item.category !== 'local';
-      allModels.forEach((mid, i) => {
-        // Local/self-hosted servers often expose the same model through several
-        // stale endpoints, so keep deduping those by model id. Cloud/API
-        // endpoints are user-selected provider routes; the same model id can be
-        // intentionally enabled on OpenRouter and OpenAI, so key those by
-        // endpoint too or the chat picker silently drops one.
-        const seenKey = isApiEndpoint
-          ? `${item.endpoint_id || item.url || item.endpoint_name || 'api'}::${mid}`
-          : mid;
-        if (seen.has(seenKey)) return;
-        seen.add(seenKey);
-        result.push({
-          key: seenKey,
-          mid,
-          display: (allDisplay[i] || mid).split('/').pop(),
-          url: item.url,
-          endpointId: item.endpoint_id,
-          epName: item.endpoint_name || '',
-          category: item.category || '',
-          providerText: [
-            item.endpoint_name || '',
-            item.category || '',
-            item.host || '',
-            item.url || '',
-          ].filter(Boolean).join(' '),
-          stale: isLocalDead || epOffline,
-          staleReason: epOffline
-            ? (item.ping_error || 'endpoint offline')
-            : (isLocalDead ? (probeResult.error || 'not responding') : ''),
-          offline: epOffline,
-        });
-      });
-    });
-    return sortModelObjects(result);
+    return _curatedRoutes.map(route => ({
+      key: route.id,
+      mid: route.id,
+      display: route.label || route.id,
+      url: '',
+      endpointId: '',
+      epName: '',
+      category: 'curated',
+      providerText: route.label || route.id,
+      stale: false,
+      staleReason: '',
+      offline: false,
+    }));
   }
 
   function _hasModelCache() {
-    try {
-      return !!(window.modelsModule && window.modelsModule.getCachedItems && (window.modelsModule.getCachedItems() || []).length);
-    } catch (_) {
-      return false;
-    }
+    return _curatedFetched && _curatedRoutes.length > 0;
   }
 
   function _renderLoading(text = 'Loading models…') {
@@ -354,13 +241,11 @@ function _initModelPickerDropdown() {
   }
 
   async function _refreshPickerModels({ force = false, showLoading = false } = {}) {
-    if (!window.modelsModule || typeof window.modelsModule.refreshModels !== 'function') return;
     const seq = ++_pickerLoadSeq;
     _pickerLoading = true;
-    if (showLoading) _renderLoading(force ? 'Refreshing models…' : 'Loading models…');
+    if (showLoading) _renderLoading(force ? 'Refreshing routes…' : 'Loading routes…');
     try {
-      await window.modelsModule.refreshModels(force);
-      await _refreshLocalProbe();
+      await _refreshCuratedRoutes();
     } finally {
       if (seq === _pickerLoadSeq) {
         _pickerLoading = false;
@@ -736,41 +621,10 @@ async function _pick(m) {
     const pending = _deps.getPendingChat();
     if ((current && current.model) || (pending && pending.modelId)) return;
 
-    if (window.modelsModule && window.modelsModule.refreshModels) {
-      try { await window.modelsModule.refreshModels(false); } catch (_) {}
-    }
-    const items = window.modelsModule && window.modelsModule.getCachedItems ? window.modelsModule.getCachedItems() : [];
-    const targetEndpointId = detail.endpointId ? String(detail.endpointId) : '';
-    const targetModel = detail.modelId || '';
-    let match = null;
-    for (const item of items) {
-      if (item.offline) continue;
-      if (targetEndpointId && String(item.endpoint_id || '') !== targetEndpointId) continue;
-      const models = (item.models || []).concat(item.models_extra || []);
-      const displays = (item.models_display || []).concat(item.models_extra_display || []);
-      const idx = targetModel ? models.indexOf(targetModel) : (models.length ? 0 : -1);
-      if (idx >= 0) {
-        match = {
-          mid: models[idx],
-          display: (displays[idx] || models[idx]).split('/').pop(),
-          url: item.url || detail.url || '',
-          endpointId: item.endpoint_id || detail.endpointId || '',
-          epName: item.endpoint_name || detail.endpointName || '',
-          providerText: [item.endpoint_name || detail.endpointName || '', item.url || detail.url || ''].filter(Boolean).join(' '),
-        };
-        break;
-      }
-    }
-    if (!match && detail.modelId && detail.url) {
-      match = {
-        mid: detail.modelId,
-        display: String(detail.modelId).split('/').pop(),
-        url: detail.url,
-        endpointId: detail.endpointId || '',
-        epName: detail.endpointName || '',
-        providerText: [detail.endpointName || '', detail.url || ''].filter(Boolean).join(' '),
-      };
-    }
+    await _refreshCuratedRoutes();
+    const targetModel = detail.modelId || 'automatic';
+    const routes = _getAllModels();
+    const match = routes.find(route => route.mid === targetModel) || routes[0];
     if (match) await _pick(match);
   });
 
@@ -786,19 +640,12 @@ async function _pick(m) {
       if (hasCache) {
         _populate('');
       } else {
-        _renderLoading('Loading models…');
+        _renderLoading('Loading routes…');
       }
-      if (window.modelsModule && window.modelsModule.refreshModels) {
-        // Force the cheap /api/models cache refresh when the picker opens.
-        // This does not wait on provider probes; the backend returns cached
-        // inventory and starts refresh work separately. Without this, models
-        // enabled in Added Models can be absent from the chatbox picker until
-        // the tab's frontend cache ages out.
-        _refreshPickerModels({ force: hasCache, showLoading: !hasCache }).then(() => {
-          if (!menu.classList.contains('hidden')) _populate(search.value || '');
-          updateModelPicker();
-        }).catch(() => {});
-      }
+      _refreshPickerModels({ force: hasCache, showLoading: !hasCache }).then(() => {
+        if (!menu.classList.contains('hidden')) _populate(search.value || '');
+        updateModelPicker();
+      }).catch(() => {});
       if (window.innerWidth >= 768) search.focus();
       // Hide scroll button so it doesn't overlap
       const _scrollBtn = document.getElementById('scroll-bottom-btn');
@@ -877,69 +724,29 @@ export function updateModelPicker() {
     modelId = s.model;
   } else if (_pendingChat && _pendingChat.modelId) {
     modelId = _pendingChat.modelId;
-    if (_pendingChat.source === 'fallback' && !_modelExists(modelId, _pendingChat.url || '')) {
+    if (_pendingChat.source === 'fallback' && !_modelExists(modelId)) {
       _deps.setPendingChat(null);
       modelId = null;
     }
   }
   if (!modelId && !currentSessionId && !_pendingChat && _deps.setPendingChat) {
-    let cachedDefault = null;
-    try {
-      cachedDefault = window.__odysseusDefaultChat || null;
-    } catch (_) {}
-    if (!cachedDefault || !cachedDefault.endpoint_url || !cachedDefault.model) {
-      try {
-        cachedDefault = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
-      } catch (_) {}
-    }
-    if (cachedDefault && cachedDefault.endpoint_url && cachedDefault.model) {
-      modelId = cachedDefault.model;
-      _deps.setPendingChat({
-        url: cachedDefault.endpoint_url,
-        modelId,
-        endpointId: cachedDefault.endpoint_id || '',
-        source: 'default',
-      });
-    }
+    modelId = 'automatic';
+    _deps.setPendingChat(_automaticRoute());
   }
-  // SECURITY: deliberately NOT auto-injecting `odysseus-model-favorites[0]`
-  // here. localStorage favorites are per-browser, not per-user, so on a
-  // shared browser the previous account's first favorited model would
-  // silently pre-populate the chatbox of the next user that signed in. If
-  // we have no session model and no pending-chat pick, fall through to
-  // the "Select model" placeholder below.
-  //
-  // Check if selected model is still available — fall back ONLY for pending chats with no user selection
-  // Never override an existing session's model — the user explicitly chose it
   if (
     modelId &&
     !currentSessionId &&
     _pendingChat &&
     _pendingChat.source !== 'manual' &&
-    window.modelsModule &&
-    window.modelsModule.getCachedItems
+    !_modelExists(modelId)
   ) {
-    const items = window.modelsModule.getCachedItems();
-    const allAvailable = [];
-    items.forEach(item => {
-      if (item.offline) return;
-      (item.models || []).concat(item.models_extra || []).forEach(m => allAvailable.push(m));
-    });
-    if (allAvailable.length > 0 && !allAvailable.includes(modelId)) {
-      // Model no longer available — switch to first available
-      const fallback = items.find(item => !item.offline && (item.models || []).length > 0);
-      if (fallback) {
-        modelId = fallback.models[0];
-        _deps.setPendingChat({ url: fallback.url, modelId, endpointId: fallback.endpoint_id, source: 'fallback' });
-      }
-    }
+    modelId = 'automatic';
+    _deps.setPendingChat(_automaticRoute());
   }
   const latestPending = _deps.getPendingChat && _deps.getPendingChat();
   if (
     !currentSessionId &&
     !_autoSelectingDefault &&
-    window.modelsModule &&
-    window.modelsModule.getCachedItems &&
     (!modelId || (latestPending && latestPending.source === 'fallback'))
   ) {
     _ensureDefaultPendingChat();

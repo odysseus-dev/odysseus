@@ -65,6 +65,36 @@ def test_copilot_success_uses_complete_verification_uri():
     assert out["calls"] == ["/api/copilot/device/start", "/api/copilot/device/poll", "/api/copilot/device/poll"]
 
 
+def test_chatgpt_success_prefers_9router_redirect_url():
+    js = f"""
+      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      const opened = [];
+      const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
+      const fetchImpl = async (url) => {{
+        if (url.endsWith('/device/start')) {{
+          return response(true, 200, {{
+            poll_id: 'poll-1',
+            redirect_url: 'http://9router.example:20128/dashboard/providers',
+            verification_uri: 'https://auth.openai.com/codex/device',
+            interval: 2,
+            expires_in: 30,
+          }});
+        }}
+        return response(true, 200, {{ status: 'authorized', endpoint: {{ connection_id: 'conn-1', status: 'usable' }} }});
+      }};
+      const result = await runProviderDeviceFlow('chatgpt-subscription', {{
+        fetchImpl,
+        openWindow: (url) => opened.push(url),
+        sleep: async () => {{}},
+        now: () => 0,
+      }});
+      console.log(JSON.stringify({{ result, opened }}));
+    """
+    out = _run_node(js)
+    assert out["result"]["status"] == "authorized"
+    assert out["opened"] == ["http://9router.example:20128/dashboard/providers"]
+
+
 def test_chatgpt_success_uses_plain_verification_uri():
     js = f"""
       import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';

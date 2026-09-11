@@ -1367,6 +1367,42 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
     ), pinned
 
 
+def curated_chat_route_payload(providers: Any = None) -> Dict[str, Any]:
+    """Return Automatic plus optional 9router aliases for ordinary chat.
+
+    Parameters
+    ----------
+    providers
+        Optional redacted 9router provider payload. When omitted, the
+        allowlisted metadata client is used.
+
+    Returns
+    -------
+    dict
+        ``default`` plus ``routes`` with id/label only.
+
+    Examples
+    --------
+    >>> curated_chat_route_payload([])["default"]
+    'automatic'
+    """
+    from services.ninerouter.metadata import (
+        NineRouterMetadataClient,
+        NineRouterMetadataError,
+        build_curated_chat_routes,
+    )
+
+    payload = providers
+    if payload is None:
+        try:
+            payload = NineRouterMetadataClient().get("/api/providers")
+        except NineRouterMetadataError:
+            payload = []
+        except Exception:
+            payload = []
+    return {"default": "automatic", "routes": build_curated_chat_routes(payload)}
+
+
 def _api_key_fingerprint(api_key: Optional[str]) -> str:
     """Stable, non-secret label for distinguishing same-URL credentials."""
     key = (api_key or "").strip()
@@ -1664,6 +1700,27 @@ def setup_model_routes(model_discovery):
         if background or refresh:
             _refresh_caches_bg(force=refresh)
         return result
+
+    @router.get("/chat-routes")
+    def api_chat_routes(request: Request):
+        """Ordinary-chat curated routes. No raw URLs or provider keys."""
+        try:
+            if getattr(request.state, "api_token", False):
+                scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+                if "chat" not in scopes:
+                    raise HTTPException(403, "API token is not scoped for chat")
+                if not getattr(request.state, "api_token_owner", None):
+                    raise HTTPException(403, "API token has no owner")
+            owner = effective_user(request) or ""
+            auth_mgr = getattr(request.app.state, "auth_manager", None)
+            if not owner and not _auth_disabled() and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+                raise HTTPException(401, "Not authenticated")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Auth gate error in GET /api/chat-routes, failing closed: %s", e)
+            raise HTTPException(status_code=500, detail="Internal error")
+        return curated_chat_route_payload()
 
     # Brief cache for local-probe results so picker-open doesn't hammer
     # endpoint health checks every time. 8s TTL — long enough to amortize cost,

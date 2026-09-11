@@ -556,7 +556,12 @@ class ModelEndpoint(TimestampMixin, Base):
 
 
 class ProviderAuthSession(TimestampMixin, Base):
-    """Encrypted OAuth/session credentials for refresh-aware model providers."""
+    """Owner-scoped 9router connection projection.
+
+    Ordinary connect stores an opaque connection id and non-secret status.
+    ``access_token`` / ``refresh_token`` remain on the table so leftover vault
+    rows can be wiped; new writes must leave them null.
+    """
     __tablename__ = "provider_auth_sessions"
 
     id = Column(String, primary_key=True, index=True)
@@ -568,6 +573,9 @@ class ProviderAuthSession(TimestampMixin, Base):
     refresh_token = Column(EncryptedText, nullable=True)
     last_refresh = Column(DateTime, nullable=True)
     auth_mode = Column(String, nullable=True)
+    connection_id = Column(String, nullable=True, index=True)
+    status = Column(String, nullable=True)
+    entitlement = Column(String, nullable=True)
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
@@ -1031,6 +1039,49 @@ def _migrate_add_model_endpoint_owner_column():
             logging.getLogger(__name__).info("Migrated: added 'owner' column + index to model_endpoints")
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_endpoints.owner migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_provider_connection_projection_columns():
+    """Add opaque 9router projection columns on provider_auth_sessions."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(provider_auth_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return
+        added = False
+        if "connection_id" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN connection_id VARCHAR")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_provider_auth_sessions_connection_id "
+                "ON provider_auth_sessions(connection_id)"
+            )
+            added = True
+        if "status" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN status VARCHAR")
+            added = True
+        if "entitlement" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN entitlement VARCHAR")
+            added = True
+        if added:
+            conn.commit()
+            logging.getLogger(__name__).info(
+                "Migrated: added provider connection projection columns"
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"provider_auth_sessions projection migration failed: {e}"
+        )
     finally:
         try:
             conn.close()
@@ -2128,6 +2179,7 @@ def init_db():
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
+    _migrate_add_provider_connection_projection_columns()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()

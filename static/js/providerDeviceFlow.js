@@ -14,7 +14,7 @@ export const PROVIDER_DEVICE_FLOWS = {
     startUrl: '/api/chatgpt-subscription/device/start',
     pollUrl: '/api/chatgpt-subscription/device/poll',
     authUrl(start) {
-      return start?.verification_uri || '';
+      return start?.redirect_url || start?.verification_uri || '';
     },
   },
 };

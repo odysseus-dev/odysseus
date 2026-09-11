@@ -1,13 +1,10 @@
-"""ChatGPT Subscription device-flow setup routes."""
+"""Product connection UX that redirects to 9router-hosted PKCE."""
 
-import json
 import logging
-import uuid
-from typing import Dict, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import HTTPException, Request
 
-from core.database import ModelEndpoint, ProviderAuthSession, SessionLocal, utcnow_naive
 from routes.device_flow import (
     DeviceFlowPoll,
     DeviceFlowStart,
@@ -21,150 +18,139 @@ logger = logging.getLogger(__name__)
 
 _DEVICE_FLOW_STORE = PendingDeviceFlowStore()
 
+# Spike against unmodified 9router 0.5.69 (do not vendor its source):
+# /dashboard/providers hosts connect after /login; GET /api/oauth/{provider}/authorize
+# accepts redirect_uri (default http://localhost:8080/callback) but requires a
+# 9router dashboard session. Odysseus only redirects the browser there.
+_NINEROUTER_PKCE_PATH = "/dashboard/providers"
 
-def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
-    access_token = tokens.get("access_token")
-    refresh_token = tokens.get("refresh_token")
-    if not access_token or not refresh_token:
-        raise ValueError("ChatGPT token response was missing access_token or refresh_token")
 
-    base = chatgpt_subscription.DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL
-    models = chatgpt_subscription.fetch_available_models(access_token)
-    if not models:
-        raise ValueError("ChatGPT Subscription connected, but no usable Codex models were discovered for this account.")
-    db = SessionLocal()
-    try:
-        auth = (
-            db.query(ProviderAuthSession)
-            .filter(
-                ProviderAuthSession.provider == chatgpt_subscription.CHATGPT_SUBSCRIPTION_PROVIDER,
-                ProviderAuthSession.owner == owner,
-            )
-            .first()
-        )
-        if auth is None:
-            auth = ProviderAuthSession(
-                id=str(uuid.uuid4())[:8],
-                provider=chatgpt_subscription.CHATGPT_SUBSCRIPTION_PROVIDER,
-                owner=owner,
-                label="ChatGPT Subscription",
-                base_url=base,
-                auth_mode="chatgpt",
-            )
-            db.add(auth)
-        auth.base_url = base
-        auth.access_token = access_token
-        auth.refresh_token = refresh_token
-        auth.last_refresh = utcnow_naive()
-        auth.auth_mode = "chatgpt"
+def _provision_connection(projection: Dict[str, Any], owner: Optional[str]) -> Dict[str, Any]:
+    return chatgpt_subscription.provision_connection(projection, owner)
 
-        ep = (
-            db.query(ModelEndpoint)
-            .filter(
-                ModelEndpoint.base_url == base,
-                ModelEndpoint.provider_auth_id == auth.id,
-                ModelEndpoint.owner == owner,
-            )
-            .first()
-        )
-        if ep is None:
-            ep = ModelEndpoint(
-                id=str(uuid.uuid4())[:8],
-                name="ChatGPT Subscription",
-                base_url=base,
-                model_type="llm",
-                endpoint_kind="api",
-                owner=owner,
-            )
-            db.add(ep)
-        ep.name = "ChatGPT Subscription"
-        ep.base_url = base
-        ep.api_key = None
-        ep.provider_auth_id = auth.id
-        ep.is_enabled = True
-        ep.supports_tools = False
-        ep.model_type = "llm"
-        ep.endpoint_kind = "api"
-        ep.model_refresh_mode = "manual"
-        ep.cached_models = json.dumps(models)
-        db.commit()
-        result = {
-            "id": ep.id,
-            "name": ep.name,
-            "base_url": ep.base_url,
-            "models": models,
+
+def _provision_endpoint(_tokens: Dict, _owner: Optional[str]) -> Dict:
+    raise ValueError("connection_id is required; Odysseus no longer stores provider tokens")
+
+
+def _list_redacted_providers() -> List[Dict[str, Any]]:
+    from services.ninerouter.metadata import NineRouterMetadataClient, redact_providers
+
+    payload = NineRouterMetadataClient().get("/api/providers")
+    return redact_providers(payload)
+
+
+def _provider_rows(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        rows = payload.get("providers") or payload.get("data") or payload.get("connections") or []
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _match_pending_connection(providers: Any, pending: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    wanted = str(pending.get("connection_id") or "").strip()
+    failed: Optional[Dict[str, Any]] = None
+    for row in _provider_rows(providers):
+        cid = str(row.get("id") or row.get("connectionId") or "").strip()
+        if not cid:
+            continue
+        status = str(row.get("testStatus") or row.get("status") or "usable").lower()
+        if status in {"error", "failed", "denied", "invalid"}:
+            if wanted and cid == wanted:
+                return {"id": cid, "status": "error", "error": str(row.get("error") or status)}
+            failed = failed or {"id": cid, "status": "error", "error": str(row.get("error") or status)}
+            continue
+        if wanted and cid != wanted:
+            continue
+        return {
+            "id": cid,
+            "status": "usable",
+            "entitlement": row.get("entitlement") or row.get("provider") or row.get("name"),
+            "name": row.get("displayName") or row.get("name") or "9router",
         }
-    finally:
-        db.close()
-
-    try:
-        from routes.model_routes import _invalidate_models_cache
-
-        _invalidate_models_cache()
-    except Exception:
-        pass
-    return result
+    if wanted and failed:
+        return failed
+    return None
 
 
 def _start_device_flow(request: Request, _form) -> DeviceFlowStart:
-    try:
-        data = chatgpt_subscription.request_device_code()
-    except Exception as exc:
-        raise chatgpt_subscription.to_http_exception(exc)
-
-    device_auth_id = data.get("device_auth_id")
-    user_code = data.get("user_code")
-    if not device_auth_id or not user_code:
-        raise HTTPException(502, "ChatGPT did not return a complete device code")
-    verification_uri = data.get("verification_uri") or f"{chatgpt_subscription.CHATGPT_OAUTH_ISSUER}/codex/device"
+    owner = get_current_user(request) or None
+    redirect_url = f"{chatgpt_subscription.ninerouter_public_url()}{_NINEROUTER_PKCE_PATH}"
     return DeviceFlowStart(
-        pending={
-            "device_auth_id": device_auth_id,
-            "user_code": user_code,
-            "owner": get_current_user(request) or None,
-        },
+        pending={"owner": owner, "redirect_url": redirect_url},
         response={
-            "user_code": user_code,
-            "verification_uri": verification_uri,
+            "redirect_url": redirect_url,
+            "verification_uri": redirect_url,
         },
-        interval=int(data.get("interval") or 5),
-        expires_in=int(data.get("expires_in") or 900),
+        interval=5,
+        expires_in=900,
     )
 
 
 def _poll_device_flow(_request: Request, pending: Dict) -> DeviceFlowPoll:
+    if pending.get("oauth_error"):
+        return DeviceFlowPoll.failed(str(pending.get("oauth_error") or "denied"))
+
     try:
-        data = chatgpt_subscription.poll_device_auth(pending["device_auth_id"], pending["user_code"])
+        providers = _list_redacted_providers()
     except Exception as exc:
-        logger.debug("ChatGPT device poll failed: %s", exc)
+        logger.debug("9router metadata poll failed: %s", exc)
         return DeviceFlowPoll.pending(str(exc))
 
-    authorization_code = data.get("authorization_code")
-    code_verifier = data.get("code_verifier")
-    if authorization_code and code_verifier:
-        try:
-            tokens = chatgpt_subscription.exchange_authorization_code(authorization_code, code_verifier)
-            result = _provision_endpoint(tokens, pending["owner"])
-        except Exception as exc:
-            logger.exception("ChatGPT Subscription endpoint provisioning failed")
-            raise chatgpt_subscription.to_http_exception(exc)
-        return DeviceFlowPoll.authorized(result)
-
-    err = data.get("error") or data.get("status")
-    if err in ("authorization_pending", "pending", None):
+    match = _match_pending_connection(providers, pending)
+    if match is None:
         return DeviceFlowPoll.pending()
-    if err == "slow_down":
-        return DeviceFlowPoll.slow_down(int(data.get("interval") or 0) or None)
-    if err in ("expired_token", "access_denied", "denied"):
-        return DeviceFlowPoll.failed(err)
-    return DeviceFlowPoll.pending(err or "unknown")
+    if match.get("status") == "error":
+        return DeviceFlowPoll.failed(str(match.get("error") or "denied"))
+
+    result = _provision_connection(
+        {
+            "connection_id": match["id"],
+            "status": "usable",
+            "entitlement": match.get("entitlement"),
+            "label": match.get("name") or "9router",
+        },
+        pending.get("owner"),
+    )
+    return DeviceFlowPoll.authorized(result)
 
 
 def setup_chatgpt_subscription_routes():
-    return create_device_flow_router(
+    router = create_device_flow_router(
         prefix="/api/chatgpt-subscription",
         tags=["chatgpt-subscription"],
         store=_DEVICE_FLOW_STORE,
         start_flow=_start_device_flow,
         poll_flow=_poll_device_flow,
     )
+
+    @router.get("/callback")
+    def provider_oauth_callback(
+        request: Request,
+        connection_id: str = "",
+        status: str = "usable",
+        error: str = "",
+        entitlement: str = "",
+    ):
+        params = request.query_params
+        if params.get("access_token") or params.get("refresh_token") or params.get("code_verifier"):
+            logger.warning("Discarded secret fields on 9router connection callback")
+        if error:
+            raise HTTPException(400, f"Provider connection failed: {error}")
+        if not connection_id.strip():
+            raise HTTPException(400, "Provider connection failed: missing connection id")
+        owner = get_current_user(request) or None
+        return _provision_connection(
+            {
+                "connection_id": connection_id.strip(),
+                "status": status or "usable",
+                "entitlement": entitlement or None,
+                "label": "9router",
+            },
+            owner,
+        )
+
+    return router
