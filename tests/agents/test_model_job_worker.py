@@ -208,7 +208,9 @@ def test_overlay_odysseus_env_omits_worker_ninerouter_key():
     assert any("ODYSSEUS_MODEL_JOB_WORKER_URL=" in line for line in list_entries)
     assert "NINE_ROUTER" not in odysseus
     assert "9router:/opt/odysseus/9router-data" in worker
+    assert "./services:/app/services:ro" in worker
     assert "python" in worker and "model_job_worker" in worker
+    assert "entrypoint:" in worker
     assert "pull_policy: never" in worker
     assert _service_block(compose, "9router")
     assert "deploy/openhands/opencode.json" in compose

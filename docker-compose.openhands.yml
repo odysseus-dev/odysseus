@@ -171,7 +171,8 @@ services:
   odysseus-model-jobs:
     image: odysseus-odysseus:latest
     pull_policy: never
-    command: ["python", "-m", "services.agents.model_job_worker"]
+    entrypoint: ["python", "-m", "services.agents.model_job_worker"]
+    command: []
     environment:
       - NINE_ROUTER_V1=http://9router:20128/v1
       - NINE_ROUTER_SQLITE_PATH=/opt/odysseus/9router-data/db/data.sqlite
@@ -179,6 +180,8 @@ services:
       - MODEL_JOB_WORKER_PORT=8091
       - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
     volumes:
+      # Overlay bind so a stale odysseus image still runs the branch worker.
+      - ./services:/app/services:ro
       # TEMPORARY BRIDGE. Preferred: Agent Server → supported 9router control/API
       # → scoped virtual key. Deletion condition: mint exclusively via
       # POST /api/keys (or another official control API) and drop this mount.
