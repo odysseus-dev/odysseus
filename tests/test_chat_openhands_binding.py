@@ -53,6 +53,9 @@ def test_leftover_post_api_chat_uses_governed_agent_not_llm_fallback():
     assert "llm_call_async(" not in endpoint
     assert "stream_llm(" not in endpoint
     assert "stream_llm_with_fallback" not in endpoint
+    assert "No model selected for this chat" not in endpoint
+    assert "Selected model endpoint is not configured" not in endpoint
+    assert "Selected model endpoint was removed" not in endpoint
 
 
 def test_agent_loop_file_remains_for_task_18_hold():

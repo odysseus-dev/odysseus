@@ -756,12 +756,13 @@ def _chat_endpoint(
     *,
     owner="alice",
     endpoint_url="https://selected.example/v1",
+    model="selected-model",
 ):
     saved = []
     session = SimpleNamespace(
         endpoint_url=endpoint_url,
-        model="selected-model",
-        headers={"Authorization": "Bearer selected"},
+        model=model,
+        headers={"Authorization": "Bearer selected"} if endpoint_url else {},
         history=[],
         add_message=saved.append,
     )
@@ -855,22 +856,37 @@ async def test_nonstream_chat_is_strict_by_default_and_reports_selected_route(mo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("endpoint_url", ["", None])
-async def test_nonstream_chat_rejects_missing_selected_endpoint_before_fallback(
+@pytest.mark.parametrize(
+    ("endpoint_url", "model"),
+    [("", ""), (None, ""), ("", None)],
+)
+async def test_nonstream_chat_dispatches_openhands_without_legacy_endpoint(
     monkeypatch,
     endpoint_url,
+    model,
 ):
-    endpoint, saved = _chat_endpoint(monkeypatch, endpoint_url=endpoint_url)
+    calls = []
 
-    with pytest.raises(HTTPException) as exc:
-        await endpoint(
-            _RouteRequest("chat"),
-            ChatRequest(message="hello", session="session-1"),
-        )
+    async def fake_governed(*args, **kwargs):
+        calls.append(kwargs)
+        yield 'data: {"delta": "openhands answer"}\n\n'
+        yield "data: [DONE]\n\n"
 
-    assert exc.value.status_code == 400
-    assert "not configured" in str(exc.value.detail)
-    assert saved == []
+    endpoint, saved = _chat_endpoint(
+        monkeypatch,
+        endpoint_url=endpoint_url,
+        model=model,
+    )
+    monkeypatch.setattr(chat_routes, "stream_governed_agent", fake_governed)
+
+    response = await endpoint(
+        _RouteRequest("chat"),
+        ChatRequest(message="hello", session="session-1"),
+    )
+
+    assert calls, "POST /api/chat must dispatch OpenHands without a legacy model/endpoint"
+    assert response["response"] == "openhands answer"
+    assert saved[-1].content == "openhands answer"
 
 
 @pytest.mark.asyncio

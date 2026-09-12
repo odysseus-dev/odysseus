@@ -830,20 +830,10 @@ def setup_chat_routes(
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
         owner = effective_user(request)
-        if _clear_orphaned_session_endpoint(sess, owner=owner):
-            raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
-
-        # Empty model + live endpoint = setup race (Issue #587). Repair from
-        # the endpoint's cached model list before privilege checks, which
-        # otherwise see "" and behave inconsistently with the allowlist.
+        # OpenHands owns this turn. Legacy ModelEndpoint fields are optional
+        # provenance only; do not fail closed when they are empty or orphaned.
+        _clear_orphaned_session_endpoint(sess, owner=owner)
         _recover_empty_session_model(sess, session, owner=owner)
-        if not getattr(sess, "model", "").strip():
-            raise HTTPException(
-                400,
-                "No model selected for this chat. Open the model picker and choose one before sending.",
-            )
-        if not (getattr(sess, "endpoint_url", "") or "").strip():
-            raise HTTPException(400, "Selected model endpoint is not configured")
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
