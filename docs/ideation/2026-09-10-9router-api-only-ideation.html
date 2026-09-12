@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: 9router / OpenHands / Odysseus boundaries</title>
+<style>
+  :root {
+    --bg: #141414;
+    --fg: #e8e4dc;
+    --muted: #9a9488;
+    --line: #2a2a2a;
+    --card: #1c1c1c;
+    --accent: #c4a574;
+    --ok: #8fbc8f;
+    --warn: #c9a227;
+  }
+  body {
+    margin: 0 auto;
+    max-width: 46rem;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  h1 { font-size: 1.55rem; font-weight: 650; margin: 0 0 0.4rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.6rem; border-top: 1px solid var(--line); padding-top: 1.4rem; }
+  h3 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+  .meta, footer { color: var(--muted); font-size: 0.88rem; }
+  .meta div { margin: 0.15rem 0; }
+  a { color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; margin: 1rem 0; }
+  .k { color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  pre {
+    background: #0e0e0e;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #d8d4cc;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { border-top: 1px solid var(--line); padding: 0.45rem 0.35rem; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 550; }
+  ul { padding-left: 1.2rem; }
+  .tag { color: var(--ok); font-size: 0.82rem; }
+  .tag-rev { color: var(--warn); font-size: 0.82rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ideation: 9router / OpenHands / Odysseus boundaries</h1>
+  <div class="meta">
+    <div>Date: <time datetime="2026-09-10">2026-09-10</time></div>
+    <div>Topic: 9router-openhands-odysseus-boundaries</div>
+    <div>Focus: One architecture, seven components — rigid invariant only; remaining choices follow product value and real APIs</div>
+    <div>Mode: repo-grounded</div>
+  </div>
+</header>
+
+<h2 id="form">How to read this document</h2>
+<p>This is <strong>one plan with seven components</strong>, not seven competing products. The first draft ranked them as alternatives. After boundary correction they are seams of a single architecture. A later review then cut topology purity that had been treated as constitution.</p>
+<p>The only <strong>rigid invariant</strong> is:</p>
+<blockquote>Odysseus is the canonical production/operations frontend. OpenHands is the canonical agent runtime, conversation, and event backend.</blockquote>
+<p>Everything else is replaceable: provider topology, catalog presentation, subscription UX, and how bounded jobs run.</p>
+
+<h2 id="invariant">What stays constitutional</h2>
+<ul>
+  <li>OpenHands remains the exclusive canonical agent runtime, conversation, and event backend.</li>
+  <li>Odysseus remains the production/operations frontend and product/domain authority.</li>
+  <li>Odysseus does not proxy or accept chat-completions APIs, and does not own a second agent runtime or second canonical transcript.</li>
+  <li>9router is sole <em>provider authority</em> for every inference-capable runtime in this OpenHands distribution.</li>
+  <li>Odysseus does not supply per-turn raw model URLs or provider credentials.</li>
+  <li>Provider secrets live in 9router, not Odysseus.</li>
+  <li>Domain MCP remains Odysseus-owned. MCP is not a 9router concern.</li>
+  <li>Task 18 (<code>src/agent_loop.py</code>) remains held until a clean disposition ledger and acceptance gates.</li>
+  <li>9router stays unmodified. Canvas stays the engineering/admin surface. Odysseus does not embed Canvas.</li>
+</ul>
+
+<h2 id="arch">Recommended architecture</h2>
+<pre>PRODUCT PLANE
+Browser
+  ↔ Odysseus
+     UI, product workflows, policy, approvals,
+     schedules, domain services, MCP, projections,
+     curated route-quality choices, non-secret connection status
+
+RUNTIME PLANE
+Odysseus
+  ↔ OpenHands Agent Server / Automation
+     canonical conversations, bounded runs,
+     events, workspaces, cancellation, artifacts,
+     profile provenance
+
+PROVIDER PLANE
+OpenHands native runtime ───────────┐
+OpenCode ACP runtime ───────────────┼→ 9router
+Hermes ACP runtime ─────────────────┘
+                                   raw catalog, routes,
+                                   credentials, failover,
+                                   quotas, provider health</pre>
+<p>One provider authority is <strong>not</strong> one inherited Agent Server socket. Native OpenHands uses Agent Server LLM settings → 9router. OpenCode ACP uses OpenCode provider config → 9router. Hermes ACP uses Hermes custom provider config → 9router. OpenHands owns the ACP envelope; each ACP implementation owns its internal model calls. Each runtime is configured and acceptance-tested separately.</p>
+<p>Optional bounded worker (only if OpenHands lacks a lightweight run that does not pollute visible chat):</p>
+<pre>Odysseus submits typed job
+  → governed job worker (separate process; no 9router creds in the web process)
+  → 9router
+  → typed result + audit</pre>
+<p>That worker must not become a second conversation runtime.</p>
+
+<h2 id="components">The seven components (corrected)</h2>
+
+<article class="card" id="c1">
+  <h3>1. Odysseus exits conversational LLM APIs <span class="tag-rev">revised</span></h3>
+  <p><span class="k">Adopt</span><br>No interactive <code>stream_llm</code>; no chat-completions fallback; no inbound OpenAI-compatible <code>/v1/chat/completions</code>; no provider-specific agent loop; no per-turn provider URL; no second transcript; no Odysseus-owned agent runtime.</p>
+  <p><span class="k">Do not adopt</span><br>A ban on every bounded typed inference. A 300&nbsp;ms extraction is not an agent. Forcing titles/classifiers through conversation create → workspace → agent → event stream is machinery that does not protect the invariant.</p>
+  <p><span class="k">Better rule</span><br>Odysseus does not run agent loops or direct conversational inference. Agentic and conversational work executes through OpenHands. Bounded typed inference may use a governed job runtime that does not create a competing conversation or agent backend.</p>
+  <p><span class="k">Bounded-job owners (ranked)</span><br>1. First-class lightweight OpenHands run/job. 2. Private/ephemeral OpenHands conversation as a migration bridge. 3. Separate governed worker calling 9router (Odysseus submits; web process does not hold 9router credentials). 4. Deletion or deterministic replacement. 5. Direct arbitrary calls from Odysseus web routes — reject.</p>
+</article>
+
+<article class="card" id="c2">
+  <h3>2. One provider authority, separately injected <span class="tag-rev">wording rejected; intent kept</span></h3>
+  <p>Agent Server <code>LLM_BASE_URL=9router</code> does <strong>not</strong> automatically configure OpenCode or Hermes. ACP <code>llm</code> fields are largely metrics/model-selection metadata, not credential injection.</p>
+  <p>Correct formulation: 9router is sole provider authority for this OpenHands distribution. Every inference-capable runtime launched under OpenHands must be independently configured and acceptance-tested to use 9router. Odysseus stores no copied provider schema.</p>
+<pre>AgentProfile: odysseus
+  transport: native
+  llm_profile_ref: 9router-native
+
+AgentProfile: opencode
+  transport: ACP
+  command: opencode acp
+  ACP provider config: 9router-opencode
+
+AgentProfile: hermes
+  transport: ACP
+  command: hermes acp
+  ACP provider config: 9router-hermes</pre>
+  <p>If “sole” is security rather than convention, sandbox egress must also block ACP children from hitting provider APIs directly. Native config may be low complexity; distribution verification is medium/high.</p>
+</article>
+
+<article class="card" id="c3">
+  <h3>3. One inference path; keep the control plane <span class="tag-rev">revised</span></h3>
+  <p>“Two cables” omitted the required <code>Odysseus ↔ OpenHands</code> link. Without it Odysseus cannot submit, stream, approve, cancel, resume, or project work.</p>
+  <p>Actual planes: Browser ↔ Odysseus; Odysseus ↔ OpenHands; OpenHands-owned runtimes ↔ 9router; agents ↔ Odysseus MCP.</p>
+  <p><span class="k">Better invariant</span><br>All agent inference traverses an OpenHands-owned runtime. Odysseus does not proxy chat completions or accept an OpenAI-compatible completions API.</p>
+  <p>“No Odysseus ↔ 9router” is revised to: no inference or secret-custody link. A metadata/control link is allowed if useful (health, opaque connection id, curated route list).</p>
+</article>
+
+<article class="card" id="c4">
+  <h3>4. Disposition taxonomy, not “OpenHands or die” <span class="tag-rev">binary rejected</span></h3>
+  <table>
+    <thead><tr><th>Existing work</th><th>Destination</th></tr></thead>
+    <tbody>
+      <tr><td>Interactive chat</td><td>OpenHands conversation</td></tr>
+      <tr><td>Agentic research</td><td>OpenHands agent/archetype</td></tr>
+      <tr><td>Research synthesis with tools/artifacts</td><td>Bounded read-only OpenHands agent job</td></tr>
+      <tr><td>Document rewrite</td><td>Bounded typed job; tools only if required</td></tr>
+      <tr><td>Structured extraction</td><td>Bounded structured-output job or deterministic parser</td></tr>
+      <tr><td>Session title</td><td>Heuristic first; bounded job only if justified</td></tr>
+      <tr><td>Compare</td><td>Parallel bounded jobs + resolved-model provenance</td></tr>
+      <tr><td>Webhook chat</td><td>Authenticated governed conversation/job API — not an OpenAI gateway</td></tr>
+      <tr><td>Embeddings / STT/TTS / image gen</td><td>Existing specialist services</td></tr>
+      <tr><td>Obsolete low-value inference</td><td>Delete</td></tr>
+    </tbody>
+  </table>
+  <p>“OpenHands work” does not mean every task is a visible chat turn. Prefer: Odysseus submits a bounded job → OpenHands run/job id → execution through 9router → OpenHands owns lifecycle/events/provenance → Odysseus projects the product result. Implement a bounded path before removing titles, extract, rewrite, compare, or research behavior.</p>
+</article>
+
+<article class="card" id="c5">
+  <h3>5. Odysseus is the production frontend <span class="tag-rev">wording widened</span></h3>
+  <p>Not “policy, domain, and projection only.” Odysseus also retains production workflows, entitlements, schedule definitions, workspace privilege, approval UX and ApprovalGrant authority, artifact presentation, retry/cancel, provider-health projection where useful, bounded-job submission, and audit views.</p>
+  <p>OpenHands retains runtime, conversations/events, workspaces, native and ACP envelope, interrupt/resume, action confirmation, profile resolution, runtime provenance.</p>
+  <p>9router retains provider routing, credentials, raw catalog, aliases, failover, quotas, provider health, resolved-provider information.</p>
+</article>
+
+<article class="card" id="c6">
+  <h3>6. Raw catalog upstream; curated projection allowed <span class="tag">authority adopted</span></h3>
+  <p>9router owns the raw provider/model catalog. OpenHands owns the executable runtime capability view. Odysseus may own a curated product projection: Automatic, Fast, Balanced, Best, Vision, Private/local, compare-these-two, route availability, quota/health, resolved-model provenance after execution.</p>
+  <p>Odysseus must not expose raw base URLs, API keys, every provider model id, low-level routing, or model-admin screens. Removing the ordinary-chat picker can be a product decision. It is not an automatic consequence of moving inference upstream.</p>
+</article>
+
+<article class="card" id="c7">
+  <h3>7. Secrets upstream; connection UX may stay <span class="tag">strongly adopt for secrets</span></h3>
+  <p>Provider access/refresh tokens live in 9router. Upstream credentials never return to Odysseus. No token pump, no second subscription vault. OpenHands and ACP agents receive only a narrowly scoped 9router credential/configuration.</p>
+  <p>Odysseus may still own Connect, status, tenant association, entitlement, allowed routing policy, usage/quota display, disconnect, and an opaque connection id:</p>
+<pre>User starts connection in Odysseus
+  → redirect to 9router-hosted authorization
+  → 9router completes PKCE/OAuth
+  → 9router stores provider tokens
+  → Odysseus stores opaque connection ID + non-secret status</pre>
+  <p>Canvas remains the engineering surface for raw provider debugging.</p>
+</article>
+
+<h2 id="reject">Reject</h2>
+<ul>
+  <li>Treating Agent Server native LLM configuration as automatically inherited by ACP agents.</li>
+  <li>Deleting useful bounded jobs solely for topology purity.</li>
+  <li>Forcing every classifier/title/extraction into visible chat.</li>
+  <li>Sending ordinary production users to Canvas for all connection/status work.</li>
+  <li>Removing all model visibility because Odysseus no longer performs inference.</li>
+  <li>A global provider credential shared across owners without an explicit single-user constraint.</li>
+  <li>Direct upstream provider credentials in OpenCode/Hermes if sole-provider is meant as enforceable policy.</li>
+  <li>Any new Odysseus chat-completions gateway.</li>
+</ul>
+
+<h2 id="order">Suggested implementation order</h2>
+<ol>
+  <li>Deploy 9router independently; prove reachability from Agent Server and ACP execution environments.</li>
+  <li>Materialize a real upstream <code>odysseus</code> AgentProfile (today native often uses Agent Server <code>default</code>).</li>
+  <li>Configure native OpenHands for 9router; test conversation, tools, cancel, condensation, errors.</li>
+  <li>Configure OpenCode independently; run ACP acceptance.</li>
+  <li>Configure Hermes independently; run ACP acceptance.</li>
+  <li>Decide whether sole-provider is configuration-only or egress-enforced.</li>
+  <li>Inventory remaining direct LLM calls and classify (conversation / bounded job / deterministic / specialist / delete).</li>
+  <li>Implement the bounded execution path before removing leftover product behavior.</li>
+  <li>Replace raw model picker with automatic routing or curated route choices.</li>
+  <li>Move credential custody to 9router; keep only opaque connection state in Odysseus.</li>
+  <li>Remove legacy direct product-LLM paths.</li>
+  <li>Full acceptance, then revisit Task 18.</li>
+</ol>
+
+<h2 id="bottom">Bottom line</h2>
+<p>Best insight: 9router serves the OpenHands distribution; it does not become another Odysseus agent backend.</p>
+<p>Weakest assumption (now dropped): therefore Odysseus must have no model metadata, subscription UX, bounded inference path, or provider-control relationship.</p>
+<p>Canonical relationship is protected when Odysseus owns the product experience, OpenHands owns agent execution and conversation truth, and 9router owns provider routing and credentials. Remaining choices follow product value and existing APIs, not cable-count purity.</p>
+
+<footer class="composition-signal">Revised 2026-09-10T23:06Z by ce-ideate after architecture review: one plan, seven components; rigid invariant only; ACP injection correction; bounded-job taxonomy.</footer>
+</body>
+</html>
