@@ -1687,10 +1687,16 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 	      let isAgentMode = Storage.getSessionMode(sessionId, toggleState.mode || 'chat') === 'agent';
       const isIncognito = isIncognitoForSend;
 	      const workspaceAgentIntent = !isIncognito && /\b(fix|debug|implement|change|update|refactor|patch|review|test|run|execute|start|launch|build|lint|typecheck|benchmark|eval|terminal[- ]bench|tbench|repo|repository|codebase|project|app|server|api|frontend|backend|bug|issue|pr|file|folder|directory|source|logs?|trace|stacktrace|traceback|docker|container|tmux|terminal|shell|git|branch|commit|diff|pytest|process|port|endpoint|computer|machine|laptop|device|system)\b/i.test(String(msg || ''));
+	      // A pasted link almost always means the user wants its content read —
+	      // Chat mode has no way to fetch a specific URL (the web toggle only
+	      // does a generic SearXNG search of the message text), so a link needs
+	      // Agent mode's web_fetch tool. Kept separate from workspaceAgentIntent
+	      // so it doesn't also force allow_bash below.
+	      const containsUrl = !isIncognito && /https?:\/\/\S+/i.test(String(msg || ''));
 	      if (isPlanMode || _pendingApprovedPlan) {
 	        isAgentMode = true;
 	      }
-	      if (!isAgentMode && workspaceAgentIntent) {
+	      if (!isAgentMode && (workspaceAgentIntent || containsUrl)) {
 	        isAgentMode = true;
 	      }
 	      // Auto-escalate to agent mode when a document is open — the user expects
@@ -1741,7 +1747,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       currentAbort = abortCtrl;
 
 	      const _tState = Storage.loadToggleState();
-	      const _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
+	      const _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent || containsUrl;
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
