@@ -756,6 +756,7 @@ def setup_chat_routes(
         _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
         _explicit_web_intent = False
         _explicit_browser_intent = False
+        _contains_url = False
         if isinstance(message, str):
             _msg_l = message.lower()
             _explicit_web_intent = bool(re.search(
@@ -768,9 +769,15 @@ def setup_chat_routes(
                 r"contact\s+form|web\s*form|form\s+submission)\b",
                 _msg_l,
             ))
+            # A pasted link needs web_fetch regardless of what language the
+            # surrounding request is in (the keyword regexes above are
+            # English-only) — a bare URL is itself unambiguous intent to have
+            # its content read.
+            _contains_url = bool(re.search(r"https?://\S+", message, re.I))
         _allow_browser_for_web_turn = bool(
             _explicit_browser_intent
             or _explicit_web_intent
+            or _contains_url
             or _search_enabled
         )
         # Intent auto-escalation: if the user is clearly asking the assistant
@@ -802,6 +809,10 @@ def setup_chat_routes(
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: explicit web intent")
+        elif chat_mode == "chat" and _contains_url:
+            chat_mode = "agent"
+            auto_escalated = True
+            logger.info("chat→agent auto-escalation: message contains a URL")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
