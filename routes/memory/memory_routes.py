@@ -1,6 +1,7 @@
 # routes/memory_routes.py
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from typing import Dict, Any, Optional, List
+import asyncio
 import json
 import os
 import re
@@ -21,11 +22,23 @@ def _strip_list_prefix(text: str) -> str:
         return text
     return _LIST_PREFIX_RE.sub("", text, count=1).strip()
 
+
+def _model_job_text(result) -> str:
+    output = getattr(result, "output", None) or {}
+    if not isinstance(output, dict):
+        return str(output or "")
+    text = output.get("text")
+    if text:
+        return str(text)
+    if output:
+        return json.dumps(output)
+    return ""
+
 from services.memory import MemoryManager, MemoryStoreUnreadable
 from core.session_manager import SessionManager
 from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
-from src.llm_core import llm_call_async
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
@@ -257,19 +270,25 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         }
         messages = [system_msg] + sess.get_context_messages()
 
-        t_url, t_model, t_headers = resolve_task_endpoint(
+        _t_url, t_model, _t_headers = resolve_task_endpoint(
             sess.endpoint_url, sess.model, sess.headers, owner=_owner(request)
         )
 
         try:
-            suggestion_text = await llm_call_async(
-                t_url,
-                t_model,
-                messages,
-                temperature=0.2,
-                max_tokens=500,
-                headers=t_headers,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "memory-extract",
+                    temperature=0.2,
+                    token_limit=500,
+                ),
+                {
+                    "messages": messages,
+                    "model": t_model or "auto",
+                },
+                _owner(request) or "",
             )
+            suggestion_text = _model_job_text(result)
             try:
                 suggestions = json.loads(suggestion_text)
                 if isinstance(suggestions, list):
@@ -454,17 +473,24 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         )
 
         try:
-            raw = await llm_call_async(
-                endpoint_url,
-                model,
-                [
-                    {"role": "system", "content": import_prompt},
-                    {"role": "user", "content": f"Document: {filename}\n\n{text}"},
-                ],
-                temperature=0.2,
-                max_tokens=2000,
-                headers=headers,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "memory-extract",
+                    temperature=0.2,
+                    token_limit=2000,
+                ),
+                {
+                    "messages": [
+                        {"role": "system", "content": import_prompt},
+                        {"role": "user", "content": f"Document: {filename}\n\n{text}"},
+                    ],
+                    "text": text,
+                    "model": model or "auto",
+                },
+                user or "",
             )
+            raw = _model_job_text(result)
 
             # Parse JSON
             raw = raw.strip()

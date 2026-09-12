@@ -38,16 +38,16 @@ class TestCompactionSummaryFailure:
         # test is hermetic (no network, no real endpoint resolution).
         orig_ctx = cc.get_context_length
         orig_est = cc.estimate_tokens
-        orig_call = cc.llm_call_async
+        orig_call = cc.submit_model_job
         orig_resolve = cc.resolve_endpoint
         orig_update = cc._update_session_history
 
-        async def _boom(*a, **k):
+        def _boom(*a, **k):
             raise RuntimeError("summary model down")
 
         cc.get_context_length = lambda url, model: context_length
         cc.estimate_tokens = lambda msgs: 10000  # well over the threshold
-        cc.llm_call_async = _boom
+        cc.submit_model_job = _boom
         cc.resolve_endpoint = lambda *a, **k: (None, None, None)
         cc._update_session_history = lambda *a, **k: None
         try:
@@ -63,7 +63,7 @@ class TestCompactionSummaryFailure:
         finally:
             cc.get_context_length = orig_ctx
             cc.estimate_tokens = orig_est
-            cc.llm_call_async = orig_call
+            cc.submit_model_job = orig_call
             cc.resolve_endpoint = orig_resolve
             cc._update_session_history = orig_update
 

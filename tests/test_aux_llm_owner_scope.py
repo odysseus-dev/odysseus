@@ -19,10 +19,10 @@ def test_task_name_generation_uses_owner_scoped_session_endpoint():
     src = _src("routes/task/task_routes.py")
 
     assert "async def _generate_task_name(prompt: str, owner: Optional[str] = None)" in src
-    assert "q = q.filter(DbSession.owner == owner)" in src
-    assert "headers = recent.headers or {}" in src
-    assert "headers=headers" in src
+    assert "submit_model_job" in src
     assert "await _generate_task_name(req.prompt, owner=user)" in src
+    name_fn = src.split("async def _generate_task_name", 1)[1].split("async def list_tasks", 1)[0]
+    assert "llm_call_async" not in name_fn
 
 
 def test_auto_compaction_utility_endpoint_keeps_chat_owner():

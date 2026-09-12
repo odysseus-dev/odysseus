@@ -1653,18 +1653,32 @@ class TaskScheduler:
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
-            from src.task_endpoint import task_llm_call_async
+            from services.agents.legacy_bridge import stream_governed_agent
             messages: list = [{"role": "system", "content": system_prompt}]
             if _dt_msg:
                 messages.append(_dt_msg)
             messages.append({"role": "user", "content": task.prompt})
-            result = await task_llm_call_async(
-                messages,
-                fallback_url=endpoint_url,
-                fallback_model=model,
+            parts: list[str] = []
+            async for event_str in stream_governed_agent(
+                endpoint_url=endpoint_url,
+                model=model,
+                messages=messages,
+                session_id=session_id,
                 owner=task.owner,
-                timeout=120,
-            )
+                workload="background",
+                poll_timeout_s=120,
+            ):
+                if not event_str.startswith("data: ") or event_str.startswith("data: [DONE]"):
+                    continue
+                try:
+                    data = json.loads(event_str[6:])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict) and not data.get("thinking"):
+                    delta = data.get("delta")
+                    if isinstance(delta, str) and delta:
+                        parts.append(delta)
+            result = "".join(parts)
 
         # Strip the model's chain-of-thought before saving/delivering. Task
         # output is LLM-only, so prose=True (which also removes untagged
@@ -1988,25 +2002,37 @@ class TaskScheduler:
         # asking it to summarize what it did. Guarantees output.
         if not full_text.strip():
             try:
-                from src.task_endpoint import task_llm_call_async
                 grace_context = "You ran out of steps. "
                 if tool_results:
                     grace_context += "Here's what your tools returned:\n" + "\n".join(tool_results[-5:])
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                full_text = await task_llm_call_async(
+                grace_parts: list[str] = []
+                async for event_str in stream_governed_agent(
+                    endpoint_url=endpoint_url,
+                    model=model,
                     messages=[
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": grace_context},
                     ],
-                    fallback_url=endpoint_url,
-                    fallback_model=model,
-                    fallback_headers=headers,
+                    session_id=session_id,
                     owner=task.owner or None,
-                    timeout=30,
-                )
-                full_text = (full_text or "").strip()
+                    headers=headers,
+                    workload="background",
+                    poll_timeout_s=30,
+                ):
+                    if not event_str.startswith("data: ") or event_str.startswith("data: [DONE]"):
+                        continue
+                    try:
+                        data = json.loads(event_str[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict) and not data.get("thinking"):
+                        delta = data.get("delta")
+                        if isinstance(delta, str) and delta:
+                            grace_parts.append(delta)
+                full_text = "".join(grace_parts).strip()
             except Exception as e:
                 logger.warning(f"Grace summarization failed: {e}")
                 if tool_results:
@@ -2085,6 +2111,8 @@ class TaskScheduler:
             extraction_timeout=extraction_timeout,
             extraction_concurrency=extraction_concurrency,
         )
+        researcher.session_id = task.session_id
+        researcher.owner = task.owner
 
         started_ts = time.time()
         report = await researcher.research(task.prompt)

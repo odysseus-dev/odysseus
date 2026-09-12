@@ -16,8 +16,21 @@ from core.platform_compat import IS_WINDOWS, find_bash
 from core.constants import internal_api_base
 from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 from src.interactive_gate import wait_for_interactive_quiet
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_job_text(result) -> str:
+    """Return model-job prose, or JSON when the worker already parsed an object."""
+    output = getattr(result, "output", None) or {}
+    if isinstance(output, dict):
+        text = output.get("text")
+        if isinstance(text, str) and text.strip():
+            return text
+        if output:
+            return json.dumps(output)
+    return str(output or "")
 
 
 def _read_email_urgency_state(state_path):
@@ -468,7 +481,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         import re
         from difflib import SequenceMatcher
         from src.constants import DATA_DIR
-        from src.llm_core import llm_call_async_with_fallback
         from src.memory import MemoryManager
 
         manager = MemoryManager(DATA_DIR)
@@ -565,11 +577,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
             if len(group_memories) < 2:
                 return False
 
-            from src.task_endpoint import resolve_task_candidates
-            candidates = resolve_task_candidates(owner=group_owner or None)
-            if not candidates:
-                return False
-
             try:
                 items = [
                     {
@@ -596,24 +603,38 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
                 )
                 await wait_for_interactive_quiet("memory consolidation action")
-                raw = await llm_call_async_with_fallback(
-                    candidates,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0,
-                    max_tokens=4096,
-                    timeout=120,
+                import asyncio as _aio
+                result = await _aio.to_thread(
+                    submit_model_job,
+                    bounded_archetype(
+                        "memory-tidy",
+                        temperature=0.0,
+                        token_limit=4096,
+                        timeout_seconds=120,
+                    ),
+                    {"messages": [{"role": "user", "content": prompt}]},
+                    group_owner or "",
                 )
                 from src.text_helpers import strip_think
 
-                raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
-                raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
-                start = raw.find("{")
-                end = raw.rfind("}")
-                if start != -1 and end != -1 and end > start:
+                output = result.output or {}
+                if isinstance(output.get("keep"), list) and isinstance(output.get("drop"), list):
+                    decision = output
+                else:
+                    raw = strip_think(
+                        _bounded_job_text(result) or "",
+                        prose=False,
+                        prompt_echo=False,
+                    ).strip()
+                    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+                    start = raw.find("{")
+                    end = raw.rfind("}")
+                    if start == -1 or end <= start:
+                        return False
                     decision = json.loads(raw[start:end + 1])
-                    keep_items = decision.get("keep") if isinstance(decision, dict) else None
-                    drop_items = decision.get("drop") if isinstance(decision, dict) else None
-                    if isinstance(keep_items, list) and isinstance(drop_items, list):
+                keep_items = decision.get("keep") if isinstance(decision, dict) else None
+                drop_items = decision.get("drop") if isinstance(decision, dict) else None
+                if isinstance(keep_items, list) and isinstance(drop_items, list):
                         by_id = {m.get("id"): m for m in group_memories if m.get("id")}
                         cleaned_by_id = {}
                         for item in keep_items:
@@ -1068,7 +1089,6 @@ async def action_email_auto_translate(owner: str, **kwargs) -> Tuple[str, bool]:
             email_translation_body_hash,
         )
         from src.settings import load_settings
-        from src.task_endpoint import task_llm_call_async
 
         settings = load_settings()
         if not settings.get("email_auto_translate", False):
@@ -1142,34 +1162,41 @@ async def action_email_auto_translate(owner: str, **kwargs) -> Tuple[str, bool]:
                 c.close()
 
         async def _translate(body: str, subject: str, sender: str) -> tuple[str, bool]:
-            content = await task_llm_call_async(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You translate emails faithfully. Preserve meaning, names, dates, money, addresses, "
-                            "bullet structure, and tone. Do not summarize or answer the email. "
-                            "Output only the translation between <<<TRANSLATION>>> and <<<END>>>. "
-                            "If the email is already primarily in the target language, output exactly "
-                            "<<<SAME_LANGUAGE>>>."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Target language: {target_language}\n\n"
-                            f"From: {sender}\nSubject: {subject}\n\n{body[:16000]}\n\n"
-                            "Translate the email unless it is already primarily in the target language.\n"
-                            "Return only:\n<<<TRANSLATION>>>\ntranslated text\n<<<END>>>"
-                        ),
-                    },
-                ],
-                owner=owner,
-                temperature=0.2,
-                max_tokens=8192,
-                timeout=180,
+            import asyncio as _aio
+            result = await _aio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "email-translate",
+                    temperature=0.2,
+                    token_limit=8192,
+                    timeout_seconds=180,
+                ),
+                {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You translate emails faithfully. Preserve meaning, names, dates, money, addresses, "
+                                "bullet structure, and tone. Do not summarize or answer the email. "
+                                "Output only the translation between <<<TRANSLATION>>> and <<<END>>>. "
+                                "If the email is already primarily in the target language, output exactly "
+                                "<<<SAME_LANGUAGE>>>."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Target language: {target_language}\n\n"
+                                f"From: {sender}\nSubject: {subject}\n\n{body[:16000]}\n\n"
+                                "Translate the email unless it is already primarily in the target language.\n"
+                                "Return only:\n<<<TRANSLATION>>>\ntranslated text\n<<<END>>>"
+                            ),
+                        },
+                    ],
+                },
+                owner or "",
             )
-            content = (content or "").strip()
+            content = (_bounded_job_text(result) or "").strip()
             content = _extract_reply(content)
             if "<<<SAME_LANGUAGE>>>" in content:
                 return "", True
@@ -1359,7 +1386,6 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from datetime import timedelta
         from core.database import SessionLocal, CalendarEvent
-        from src.llm_core import llm_call_async_with_fallback
         import re as _re, json as _json
 
         db = SessionLocal()
@@ -1374,9 +1400,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not events:
                 return "No upcoming events to classify", True
 
-            from src.task_endpoint import resolve_task_candidates
-            llm_candidates = resolve_task_candidates(owner=owner)
-            llm_available = bool(llm_candidates)
+            llm_available = True
 
             # Pull user memories so the LLM has personal context (relationships,
             # job, hobbies). Helps it know e.g. "<name> is your spouse" so their
@@ -1453,14 +1477,20 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 )
                 try:
                     await wait_for_interactive_quiet("calendar classification action")
-                    raw = await llm_call_async_with_fallback(
-                        llm_candidates,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.1, max_tokens=16384,
-                        timeout=180,
+                    import asyncio as _aio
+                    result = await _aio.to_thread(
+                        submit_model_job,
+                        bounded_archetype(
+                            "calendar-classify",
+                            temperature=0.1,
+                            token_limit=16384,
+                            timeout_seconds=180,
+                        ),
+                        {"messages": [{"role": "user", "content": prompt}]},
+                        owner or "",
                     )
                     from src.text_helpers import strip_think as _st
-                    raw = _st(raw or "", prose=False, prompt_echo=False)
+                    raw = _st(_bounded_job_text(result) or "", prose=False, prompt_echo=False)
                     raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
                     m = _re.search(r"\[.*\]", raw, _re.DOTALL)
                     if not m:
@@ -1589,7 +1619,6 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
         from routes.email_helpers import _email_cache_owner_clause, _imap_connect, SCHEDULED_DB
-        from src.llm_core import llm_call_async_with_fallback
 
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).
         def _pull_headers():
@@ -1669,11 +1698,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         if not eligible:
             return "All sender sigs already cached (or no eligible senders)", True
 
-        from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
-        if not candidates:
-            return "No LLM endpoint available", False
-        model = candidates[0][1]
+        model = "auto"
 
         analyzed = 0
         no_sig = 0
@@ -1728,14 +1753,20 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
 
             try:
                 await wait_for_interactive_quiet("sender signature action")
-                raw = await llm_call_async_with_fallback(
-                    candidates,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0, max_tokens=600,
-                    timeout=60,
+                result = await _aio.to_thread(
+                    submit_model_job,
+                    bounded_archetype(
+                        "email-sender-sig",
+                        temperature=0.0,
+                        token_limit=600,
+                        timeout_seconds=60,
+                    ),
+                    {"messages": [{"role": "user", "content": prompt}]},
+                    owner or "",
                 )
                 from src.text_helpers import strip_think as _st
-                sig = _st(raw or "", prose=False, prompt_echo=False).strip()
+                sig = _st(_bounded_job_text(result) or "", prose=False, prompt_echo=False).strip()
+                model = str((getattr(result, "audit", None) or {}).get("resolved_model") or model)
                 # Strip surrounding code fences if the LLM added them.
                 sig = _re.sub(r"^```[\w]*\n?", "", sig)
                 sig = _re.sub(r"\n?```\s*$", "", sig)
@@ -2274,7 +2305,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, EmailAccount as _EA
         from routes.email_helpers import _imap_connect, _decode_header
-        from src.llm_core import llm_call_async_with_fallback
 
         # Per-owner state file so multi-user runs don't clobber each other's
         # notified_uids / urgency counts. Empty owner falls back to a generic
@@ -2296,11 +2326,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             "shopping", "social", "work", "personal", "legal", "support", "promo",
         }
 
-        # Resolve with the task owner as before, but defer the availability
-        # gate until after authoritative account cleanup. State retirement must
-        # still run when no model is configured.
-        from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
         target_account_id = _email_task_account_id(kwargs)
 
         # ── 1. Enumerate enabled accounts. Match this task's owner AND fall
@@ -2427,12 +2452,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             )
         if not accounts:
             raise TaskNoop("no email accounts configured")
-
-        # ── 2. Account retirement above is state maintenance and does not
-        # depend on model availability. Scanning still requires the utility
-        # primary/fallback candidates resolved for this task owner.
-        if not candidates:
-            return "No LLM endpoint available", False
 
         urgency_prompt = settings.get("urgent_email_prompt", "")
         per_uid_scores = {}   # key = "<acc_id>:<uid>" → {"score": 0-3, "reason": "..."}
@@ -2726,11 +2745,17 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 )
                 try:
                     await wait_for_interactive_quiet("email urgency action")
-                    raw = await llm_call_async_with_fallback(
-                        candidates,
-                        [{"role": "user", "content": prompt}],
-                        temperature=0.1, max_tokens=220, timeout=30,
+                    result = submit_model_job(
+                        bounded_archetype(
+                            "email-urgency",
+                            temperature=0.1,
+                            token_limit=220,
+                            timeout_seconds=30,
+                        ),
+                        {"messages": [{"role": "user", "content": prompt}]},
+                        owner or "",
                     )
+                    raw = _bounded_job_text(result)
                     # Tolerant JSON-parse: strip code fences if present.
                     txt = (raw or "").strip()
                     if txt.startswith("```"):

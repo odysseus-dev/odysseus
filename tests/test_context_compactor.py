@@ -3,6 +3,7 @@ Uses mock imports to avoid loading the full app stack."""
 
 import asyncio
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -141,15 +142,15 @@ class TestMaybeCompactFourthMessage:
         # Force compaction to trigger and stub the summary LLM call so the test
         # is hermetic (no network, no real endpoint resolution).
         orig_ctx = cc.get_context_length
-        orig_call = cc.llm_call_async
+        orig_call = cc.submit_model_job
         orig_resolve = cc.resolve_endpoint
         orig_update = cc._update_session_history
 
-        async def _fake_summary(*a, **k):
-            return "compact summary text"
+        def _fake_summary(*a, **k):
+            return SimpleNamespace(output={"text": "compact summary text"})
 
         cc.get_context_length = lambda url, model: context_length
-        cc.llm_call_async = _fake_summary
+        cc.submit_model_job = _fake_summary
         cc.resolve_endpoint = lambda which, owner=None: (None, None, None)
         cc._update_session_history = lambda *a, **k: None
         try:
@@ -164,7 +165,7 @@ class TestMaybeCompactFourthMessage:
             )
         finally:
             cc.get_context_length = orig_ctx
-            cc.llm_call_async = orig_call
+            cc.submit_model_job = orig_call
             cc.resolve_endpoint = orig_resolve
             cc._update_session_history = orig_update
 
@@ -227,10 +228,10 @@ async def test_deferred_compaction_persists_only_after_route_commit(monkeypatch)
     monkeypatch.setattr(cc, "get_context_length", lambda *args: 100)
     monkeypatch.setattr(cc, "resolve_endpoint", lambda *args, **kwargs: (None, None, None))
 
-    async def fake_summary(*args, **kwargs):
-        return "route-specific summary"
+    def fake_summary(*args, **kwargs):
+        return SimpleNamespace(output={"text": "route-specific summary"})
 
-    monkeypatch.setattr(cc, "llm_call_async", fake_summary)
+    monkeypatch.setattr(cc, "submit_model_job", fake_summary)
     monkeypatch.setattr(
         cc,
         "_update_session_history",

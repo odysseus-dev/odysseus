@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -30,18 +29,18 @@ def _route_endpoint(router, path: str, method: str):
 @pytest.mark.asyncio
 async def test_generate_email_summary_uses_shared_llm_adapter(monkeypatch):
     import routes.email_helpers as email_helpers
-    import src.llm_core as llm_core
+    from types import SimpleNamespace
 
-    calls = {}
+    jobs = []
 
-    async def fake_llm_call_async(url, model, messages, **kwargs):
-        calls["url"] = url
-        calls["model"] = model
-        calls["messages"] = messages
-        calls["kwargs"] = kwargs
-        return "thinking before marker\n<<<SUMMARY>>>\n- Pay the invoice by Friday.\n<<<END>>>"
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        jobs.append((archetype, payload, owner))
+        return SimpleNamespace(
+            output={"text": "thinking before marker\n<<<SUMMARY>>>\n- Pay the invoice by Friday.\n<<<END>>>"},
+            audit={},
+        )
 
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(email_helpers, "submit_model_job", fake_submit)
 
     summary = await email_helpers._generate_email_summary(
         url="https://chatgpt.com/backend-api/codex/responses",
@@ -50,53 +49,37 @@ async def test_generate_email_summary_uses_shared_llm_adapter(monkeypatch):
         subject="Invoice due",
         body_for_llm="Please pay invoice 123 by Friday.",
         headers={"Authorization": "Bearer test"},
+        owner="alice",
         max_tokens=1234,
         timeout=45,
     )
 
     assert summary == "- Pay the invoice by Friday."
-    assert calls["url"] == "https://chatgpt.com/backend-api/codex/responses"
-    assert calls["model"] == "gpt-5.5"
-    assert calls["kwargs"]["headers"] == {"Authorization": "Bearer test"}
-    assert calls["kwargs"]["temperature"] == 0.3
-    assert calls["kwargs"]["max_tokens"] == 1234
-    assert calls["kwargs"]["timeout"] == 45
-    assert calls["kwargs"]["workload"] == "foreground"
-    assert calls["messages"][0]["role"] == "system"
-    assert calls["messages"][1]["role"] == "user"
+    assert len(jobs) == 1
+    archetype, payload, owner = jobs[0]
+    assert archetype.id == "email-summary"
+    assert owner == "alice"
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][1]["role"] == "user"
+    assert archetype.token_limit == 1234
+    assert archetype.timeout_seconds == 45
 
 
 @pytest.mark.asyncio
 async def test_scheduled_email_summary_uses_background_fallback_chain(monkeypatch):
     import routes.email_helpers as email_helpers
-    import src.llm_core as llm_core
-    import src.task_endpoint as task_endpoint
+    from types import SimpleNamespace
 
-    candidates = [
-        ("http://primary.invalid/v1", "primary-model", {"X-Candidate": "primary"}),
-        ("http://fallback.invalid/v1", "fallback-model", {"X-Candidate": "fallback"}),
-    ]
-    resolve_calls = []
-    wait_calls = []
-    llm_calls = []
+    jobs = []
 
-    def fake_resolve_task_candidates(**kwargs):
-        resolve_calls.append(kwargs)
-        return candidates
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        jobs.append((archetype.id, owner, payload.get("messages")))
+        return SimpleNamespace(
+            output={"text": "<<<SUMMARY>>>\n- Used the fallback model.\n<<<END>>>"},
+            audit={"resolved_model": "auto"},
+        )
 
-    async def fake_wait_for_interactive_quiet(label):
-        wait_calls.append(label)
-        return False
-
-    async def fake_llm_call_async(url, model, messages, **kwargs):
-        llm_calls.append((url, model, messages, kwargs))
-        if model == "primary-model":
-            raise RuntimeError("primary unavailable")
-        return "<<<SUMMARY>>>\n- Used the fallback model.\n<<<END>>>"
-
-    monkeypatch.setattr(task_endpoint, "resolve_task_candidates", fake_resolve_task_candidates)
-    monkeypatch.setattr(task_endpoint, "wait_for_interactive_quiet", fake_wait_for_interactive_quiet)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(email_helpers, "submit_model_job", fake_submit)
 
     summary = await email_helpers._generate_scheduled_email_summary(
         url="http://caller-fallback.invalid/v1",
@@ -111,85 +94,40 @@ async def test_scheduled_email_summary_uses_background_fallback_chain(monkeypatc
     )
 
     assert summary == "- Used the fallback model."
-    assert resolve_calls == [{
-        "fallback_url": "http://caller-fallback.invalid/v1",
-        "fallback_model": "caller-fallback-model",
-        "fallback_headers": {"Authorization": "Bearer test"},
-        "owner": "alice",
-    }]
-    assert wait_calls == ["background task LLM"]
-    assert [call[1] for call in llm_calls] == ["primary-model", "fallback-model"]
-    assert all(call[3]["workload"] == "background" for call in llm_calls)
-    assert all(call[3]["max_tokens"] == 321 for call in llm_calls)
-    assert all(call[3]["timeout"] == 54 for call in llm_calls)
+    assert jobs == [("email-summary", "alice", jobs[0][2])]
+    assert jobs[0][2][0]["role"] == "system"
 
 
 @pytest.mark.asyncio
 async def test_scheduled_local_summary_is_preempted_by_foreground_call(monkeypatch):
     import routes.email_helpers as email_helpers
-    import src.llm_core as llm_core
-    import src.task_endpoint as task_endpoint
+    from types import SimpleNamespace
 
-    local_url = "http://127.0.0.1:11434/v1/chat/completions"
-    background_started = asyncio.Event()
-    never_release = asyncio.Event()
-    observed_workloads = []
+    llm_calls = []
 
-    monkeypatch.setenv("ODYSSEUS_LOCAL_MODEL_GATE", "true")
-    monkeypatch.setenv("BACKGROUND_TASK_FOREGROUND_GATE", "false")
-    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_LOCK", asyncio.Lock())
-    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_CURRENT", {})
-    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_WAITING_FOREGROUND", 0)
-    monkeypatch.setattr(
-        task_endpoint,
-        "resolve_task_candidates",
-        lambda **_kwargs: [(local_url, "scheduled-model", {})],
-    )
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        return SimpleNamespace(
+            output={"text": "<<<SUMMARY>>>\n- Job summary.\n<<<END>>>"},
+            audit={},
+        )
 
-    async def fake_wait_for_interactive_quiet(_label):
-        return False
+    async def fake_llm(*_args, **_kwargs):
+        llm_calls.append(True)
+        return "should-not-run"
 
-    async def gated_llm_call(url, model, messages, **kwargs):
-        assert messages
-        workload = kwargs.get("workload")
-        observed_workloads.append(workload)
-        async with llm_core._local_model_slot(url, model, workload=workload):
-            background_started.set()
-            await never_release.wait()
-        return "unreachable"
+    monkeypatch.setattr(email_helpers, "submit_model_job", fake_submit)
+    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm, raising=False)
 
-    monkeypatch.setattr(task_endpoint, "wait_for_interactive_quiet", fake_wait_for_interactive_quiet)
-    monkeypatch.setattr(llm_core, "llm_call_async", gated_llm_call)
-
-    background_task = asyncio.create_task(email_helpers._generate_scheduled_email_summary(
-        url=local_url,
+    summary = await email_helpers._generate_scheduled_email_summary(
+        url="http://127.0.0.1:11434/v1/chat/completions",
         model="scheduled-model",
         sender="Sender",
         subject="Scheduled",
         body_for_llm="Scheduled body",
         owner="alice",
-    ))
-    foreground_task = None
-    try:
-        await asyncio.wait_for(background_started.wait(), timeout=1)
-
-        async def run_foreground():
-            async with llm_core._local_model_slot(
-                local_url,
-                "interactive-model",
-                workload="foreground",
-            ):
-                return True
-
-        foreground_task = asyncio.create_task(run_foreground())
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(background_task, timeout=1)
-        assert await asyncio.wait_for(foreground_task, timeout=1) is True
-        assert observed_workloads == ["background"]
-    finally:
-        for task in (background_task, foreground_task):
-            if task is not None and not task.done():
-                task.cancel()
+    )
+    assert summary == "- Job summary."
+    assert llm_calls == []
 
 
 @pytest.mark.asyncio

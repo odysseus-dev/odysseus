@@ -51,21 +51,6 @@ class _Db:
         self.closed = True
 
 
-def _resolver_spy(monkeypatch, candidates=None):
-    from src import task_endpoint
-
-    calls = []
-
-    def fake_candidates(*args, **kwargs):
-        calls.append(kwargs.get("owner"))
-        if candidates is None:
-            return [("http://llm", "model", {})]
-        return list(candidates)
-
-    monkeypatch.setattr(task_endpoint, "resolve_task_candidates", fake_candidates)
-    return calls
-
-
 @pytest.mark.asyncio
 async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
     from core import database
@@ -84,7 +69,6 @@ async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
         location="",
     )
     db = _Db({FakeCalendarEvent: [event]})
-    calls = _resolver_spy(monkeypatch)
 
     monkeypatch.setattr(database, "CalendarEvent", FakeCalendarEvent)
     monkeypatch.setattr(database, "SessionLocal", lambda: db)
@@ -93,7 +77,6 @@ async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
 
     assert ok is True
     assert "Scanned 1 upcoming event" in message
-    assert calls == ["alice"]
     assert db.closed is True
 
 
@@ -117,27 +100,35 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
         def logout(self):
             return None
 
-    calls = _resolver_spy(monkeypatch, candidates=[])
+    jobs = []
     imap_owners = []
 
     def fake_imap_connect(_account_id=None, owner=""):
         imap_owners.append(owner)
         return FakeImap(owner)
 
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        jobs.append((archetype.id, owner))
+        return SimpleNamespace(output={"text": "NONE"}, audit={})
+
     monkeypatch.setattr(email_helpers, "_imap_connect", fake_imap_connect)
+    monkeypatch.setattr(
+        "src.builtin_actions.submit_model_job",
+        fake_submit,
+        raising=False,
+    )
 
     message, ok = await action_learn_sender_signatures("alice")
 
-    assert ok is False
-    assert message == "No LLM endpoint available"
-    assert calls == ["alice"]
-    assert imap_owners == ["alice"]
+    assert ok is True
+    assert imap_owners[0] == "alice"
+    assert all(name == "alice" for name in imap_owners)
+    assert all(owner == "alice" for _job_id, owner in jobs)
 
 
 @pytest.mark.asyncio
 async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tmp_path):
     from routes import email_helpers
-    from src import llm_core, task_endpoint
     from src.builtin_actions import action_learn_sender_signatures
 
     db_path = tmp_path / "scheduled_emails.db"
@@ -198,16 +189,20 @@ async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tm
         return FakeImap()
 
     monkeypatch.setattr(email_helpers, "_imap_connect", fake_imap_connect)
+
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        assert owner == "alice"
+        assert archetype.id == "email-sender-sig"
+        return SimpleNamespace(
+            output={"text": "Writer Example\nExample Co.\nwriter@example.com"},
+            audit={"resolved_model": "alice-model"},
+        )
+
     monkeypatch.setattr(
-        task_endpoint,
-        "resolve_task_candidates",
-        lambda *args, **kwargs: [("http://llm", "alice-model", {})],
+        "src.builtin_actions.submit_model_job",
+        fake_submit,
+        raising=False,
     )
-
-    async def fake_llm_call_async(_candidates, **_kwargs):
-        return "Writer Example\nExample Co.\nwriter@example.com"
-
-    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_llm_call_async)
 
     message, ok = await action_learn_sender_signatures("alice")
 
@@ -247,7 +242,6 @@ async def test_check_email_urgency_resolves_llm_candidates_for_task_owner(monkey
         from_address = _Column()
 
     db = _Db({FakeEmailAccount: []})
-    calls = _resolver_spy(monkeypatch)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(database, "EmailAccount", FakeEmailAccount)
@@ -256,5 +250,4 @@ async def test_check_email_urgency_resolves_llm_candidates_for_task_owner(monkey
     with pytest.raises(TaskNoop, match="no email accounts configured"):
         await action_check_email_urgency("alice")
 
-    assert calls == ["alice"]
     assert db.closed is True

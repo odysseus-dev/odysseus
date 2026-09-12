@@ -1,10 +1,13 @@
 """History routes — session history, truncation, fork, conversation topics."""
 
+import asyncio
 import json
 import uuid
 import logging
 import re
 from typing import Dict, Any, Optional
+
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 
@@ -724,7 +727,6 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
         try:
             from src.model_context import estimate_tokens, get_context_length
-            from src.llm_core import llm_call_async
             from src.endpoint_resolver import resolve_endpoint
 
             if len(session.history) < 6:
@@ -749,23 +751,31 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             )
 
             # Use utility model if available
-            util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner or None)
-            compact_url = util_url or session.endpoint_url
+            _util_url, util_model, _util_headers = resolve_endpoint("utility", owner=owner or None)
             compact_model = util_model or session.model
-            compact_headers = util_headers if util_url else session.headers
 
             from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT, normalize_compaction_summary
             compaction_count = sum(1 for m in session.history if isinstance(m, ChatMessage) and "[Conversation summary" in (m.content or ""))
             sys_prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace("{count}", str(len(older))).replace("{n}", str(compaction_count + 1))
-            summary = await llm_call_async(
-                compact_url, compact_model,
-                [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": convo_text},
-                ],
-                temperature=0.2, max_tokens=1024,
-                headers=compact_headers, timeout=30,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "session-compact",
+                    temperature=0.2,
+                    token_limit=1024,
+                    timeout_seconds=30,
+                ),
+                {
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": convo_text},
+                    ],
+                    "text": convo_text,
+                    "model": compact_model or "auto",
+                },
+                owner or "",
             )
+            summary = str((result.output or {}).get("text") or "")
             summary = normalize_compaction_summary(summary)
 
             # Replace session history: summary as system message + recent messages

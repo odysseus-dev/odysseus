@@ -5,13 +5,14 @@ Auto-compacts conversation history when approaching context window limits.
 Summarizes older messages via the same LLM, preserving key context.
 """
 
+import asyncio
 import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.model_context import get_context_length, estimate_tokens
-from src.llm_core import llm_call_async
 from src.endpoint_resolver import resolve_endpoint
 from core.models import ChatMessage
 
@@ -376,10 +377,8 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
-    compact_url = util_url or endpoint_url
+    _util_url, util_model, _util_headers = resolve_endpoint("utility", owner=owner)
     compact_model = util_model or model
-    compact_headers = util_headers if util_url else headers
 
     prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
         "{count}", str(len(older))
@@ -392,15 +391,22 @@ async def maybe_compact(
     ]
 
     try:
-        summary = await llm_call_async(
-            compact_url,
-            compact_model,
-            summary_messages,
-            temperature=0.2,
-            max_tokens=SUMMARY_MAX_TOKENS,
-            headers=compact_headers,
-            timeout=30,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "session-compact",
+                temperature=0.2,
+                token_limit=SUMMARY_MAX_TOKENS,
+                timeout_seconds=30,
+            ),
+            {
+                "messages": summary_messages,
+                "text": convo_text,
+                "model": compact_model or "auto",
+            },
+            owner or "",
         )
+        summary = str((result.output or {}).get("text") or "")
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")
         # Degrade gracefully: keep the conversation intact rather than

@@ -1793,17 +1793,16 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
         return {"error": "No email body available for AI reply"}
 
     try:
+        import asyncio
+
         from routes.email_helpers import (
             _EMAIL_REPLY_SYS_PROMPT_BASE,
             _apply_email_style_mechanics,
             _extract_reply,
-            _load_settings,
+            bounded_archetype,
+            mail_job_text,
+            submit_model_job,
         )
-        from src.endpoint_resolver import (
-            resolve_endpoint,
-            resolve_utility_fallback_candidates,
-        )
-        from src.llm_core import llm_call_async_with_fallback
     except Exception as exc:
         return {"error": f"AI reply helpers unavailable: {exc}"}
 
@@ -1818,44 +1817,24 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
         "Draft a reply. Return only the reply body text."
     )
 
-    candidates = []
-    seen = set()
-
-    def _add(url, model, headers):
-        key = (url or "", model or "")
-        if not url or not model or key in seen:
-            return
-        seen.add(key)
-        candidates.append((url, model, headers))
-
     try:
-        _add(*resolve_endpoint("utility", owner=None))
-    except Exception:
-        pass
-    try:
-        _add(*resolve_endpoint("default", owner=None))
-    except Exception:
-        pass
-    try:
-        utility_fallbacks = resolve_utility_fallback_candidates(owner=None) or []
-    except TypeError:
-        utility_fallbacks = resolve_utility_fallback_candidates() or []
-    for cand in utility_fallbacks:
-        _add(*cand)
-    if not candidates:
-        return {"error": "No LLM endpoint configured for AI reply"}
-
-    try:
-        raw_reply = await llm_call_async_with_fallback(
-            candidates,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
-            temperature=0.7,
-            max_tokens=1024,
-            timeout=60,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "email-reply",
+                temperature=0.7,
+                token_limit=1024,
+                timeout_seconds=60,
+            ),
+            {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            _current_owner(),
         )
+        raw_reply = mail_job_text(result)
     except Exception as exc:
         return {"error": f"AI reply generation failed: {exc}"}
 

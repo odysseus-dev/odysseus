@@ -1,5 +1,6 @@
 """Document routes — CRUD for living documents with version history."""
 
+import asyncio
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.auth_helpers import get_current_user, _auth_disabled
 from src.constants import MAIL_ATTACHMENTS_DIR
 from src.upload_handler import reserve_upload_references
@@ -968,17 +970,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
-        from src.task_endpoint import resolve_task_endpoint
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
-
         user = get_current_user(request)
-        url, model, headers = resolve_task_endpoint(owner=user or None)
-        if not url or not model:
-            # Fall back to default endpoint
-            url, model, headers = resolve_endpoint("default", owner=user or None)
-        if not url or not model:
-            raise HTTPException(500, "No endpoint configured for AI tidy")
 
         db = SessionLocal()
         try:
@@ -1011,15 +1003,24 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 + "\n".join(doc_list)
             )
 
-            response = await llm_call_async(
-                url, model,
-                [{"role": "system", "content": "You classify documents as junk or keep. Respond only with a JSON array."},
-                 {"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=200,
-                headers=headers,
-                timeout=30,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "document-ai-tidy",
+                    temperature=0.1,
+                    token_limit=200,
+                    timeout_seconds=30,
+                ),
+                {
+                    "text": prompt,
+                    "messages": [
+                        {"role": "system", "content": "You classify documents as junk or keep. Respond only with a JSON array."},
+                        {"role": "user", "content": prompt},
+                    ],
+                },
+                user or "",
             )
+            response = str((result.output or {}).get("text") or "")
 
             # Parse verdicts
             import re
@@ -1249,7 +1250,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import fitz
         from src.pdf_form_doc import find_source_upload_id
         from src.document_processor import _resolve_vl_model, _load_vl_settings
-        from src.llm_core import llm_call_async
 
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         instruction = (body or {}).get("instruction", "").strip()
@@ -1323,10 +1323,19 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     },
                 ]
                 try:
-                    raw = await llm_call_async(
-                        url, model_id, messages,
-                        temperature=0.1, max_tokens=2000, headers=headers,
+                    _ = (url, headers)
+                    result = await asyncio.to_thread(
+                        submit_model_job,
+                        bounded_archetype(
+                            "document-ai-fill",
+                            temperature=0.1,
+                            token_limit=2000,
+                            timeout_seconds=60,
+                        ),
+                        {"text": instruction, "model": model_id, "messages": messages},
+                        user or "",
                     )
+                    raw = str((result.output or {}).get("text") or "")
                 except Exception as e:
                     logger.error(f"VL call failed on page {page_index + 1}: {e}")
                     continue

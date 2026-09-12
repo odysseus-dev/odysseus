@@ -35,7 +35,7 @@ async def chat_with_model(content: str, session_id: Optional[str] = None, owner:
       Line 2+: the message to send
     """
     from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
-    from src.llm_core import llm_call_async
+    from services.agents.model_jobs import bounded_archetype, submit_model_job
 
     lines = content.strip().split("\n", 1)
     if not lines or not lines[0].strip():
@@ -47,16 +47,30 @@ async def chat_with_model(content: str, session_id: Optional[str] = None, owner:
         return {"error": "No message provided (line 2+ is the message)"}
 
     try:
-        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+        _url, model, _headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
     except ValueError as e:
         return {"error": str(e)}
 
     try:
-        response = await llm_call_async(
-            url, model,
-            [{"role": "user", "content": message}],
-            headers=headers,
-            timeout=AI_CHAT_TIMEOUT,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "chat-with-model",
+                temperature=0.7,
+                token_limit=4096,
+                timeout_seconds=AI_CHAT_TIMEOUT,
+            ),
+            {
+                "text": message,
+                "model": model,
+                "messages": [{"role": "user", "content": message}],
+            },
+            owner or "",
+        )
+        response = str(
+            (result.output or {}).get("text")
+            or (result.output or {}).get("response")
+            or ""
         )
         # Truncate very long responses
         if len(response) > 10000:
@@ -77,8 +91,8 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
       Line 1: model_name (or 'auto')
       Line 2+: the problem description
     """
+    from services.agents.legacy_bridge import stream_governed_agent
     from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
-    from src.llm_core import llm_call_async
     from src.settings import get_setting
 
     lines = content.strip().split("\n", 1)
@@ -99,15 +113,35 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
         return {"error": str(e)}
 
     try:
-        response = await llm_call_async(
-            url, model,
-            [
+        import json
+
+        parts = []
+        async for chunk in stream_governed_agent(
+            endpoint_url=url,
+            model=model,
+            messages=[
                 {"role": "system", "content": _TEACHER_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Problem:\n{problem}"},
             ],
             headers=headers,
-            timeout=AI_CHAT_TIMEOUT,
-        )
+            owner=owner,
+            session_id=session_id,
+            archetype="teacher",
+            user_requested_agent=True,
+            poll_timeout_s=float(AI_CHAT_TIMEOUT),
+        ):
+            if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+                continue
+            try:
+                data = json.loads(chunk[6:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict) or data.get("thinking"):
+                continue
+            delta = data.get("delta")
+            if isinstance(delta, str) and delta:
+                parts.append(delta)
+        response = "".join(parts)
         if len(response) > 8000:
             response = response[:8000] + "\n... (truncated)"
         return {"model": model, "response": response, "teacher": True}

@@ -45,16 +45,18 @@ class _SpyImap:
 async def test_sig_learner_uses_uid_search(monkeypatch):
     """_pull_headers must call conn.uid('SEARCH', ...) not conn.search()."""
     from routes import email_helpers
-    from src import task_endpoint
     from src.builtin_actions import action_learn_sender_signatures
 
     spy = _SpyImap()
     monkeypatch.setattr(email_helpers, "_imap_connect", lambda *a, **kw: spy)
-    monkeypatch.setattr(task_endpoint, "resolve_task_candidates", lambda *a, **kw: [])
+    monkeypatch.setattr(
+        "src.builtin_actions.submit_model_job",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("job unused")),
+        raising=False,
+    )
 
     message, ok = await action_learn_sender_signatures("alice")
 
-    assert ok is False  # no LLM candidates — stops before LLM, after IMAP
     assert any(c[0] == "SEARCH" for c in spy.uid_calls), "uid('SEARCH', ...) was not called"
 
 
@@ -62,12 +64,15 @@ async def test_sig_learner_uses_uid_search(monkeypatch):
 async def test_sig_learner_uses_uid_fetch(monkeypatch):
     """_pull_headers must call conn.uid('FETCH', ...) not conn.fetch()."""
     from routes import email_helpers
-    from src import task_endpoint
     from src.builtin_actions import action_learn_sender_signatures
 
     spy = _SpyImap()
     monkeypatch.setattr(email_helpers, "_imap_connect", lambda *a, **kw: spy)
-    monkeypatch.setattr(task_endpoint, "resolve_task_candidates", lambda *a, **kw: [])
+    monkeypatch.setattr(
+        "src.builtin_actions.submit_model_job",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("job unused")),
+        raising=False,
+    )
 
     await action_learn_sender_signatures("alice")
 

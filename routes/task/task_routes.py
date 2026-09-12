@@ -1,5 +1,6 @@
 """CRUD routes for scheduled tasks."""
 
+import asyncio
 import json
 import logging
 import secrets
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
 from core.constants import internal_api_base
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_action_policy import (
@@ -304,35 +306,30 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     async def _generate_task_name(prompt: str, owner: Optional[str] = None) -> str:
         """Use LLM to generate a short task name from the prompt."""
         try:
-            from src.llm_core import llm_call_async
-            from core.database import Session as DbSession
-            db = SessionLocal()
-            try:
-                q = db.query(DbSession).filter(
-                    DbSession.endpoint_url.isnot(None),
-                    DbSession.model.isnot(None),
-                )
-                if owner:
-                    q = q.filter(DbSession.owner == owner)
-                recent = q.order_by(DbSession.created_at.desc()).first()
-                if not recent:
-                    return prompt[:50].strip()
-                url, model = recent.endpoint_url, recent.model
-                headers = recent.headers or {}
-            finally:
-                db.close()
-
-            result = await llm_call_async(
-                url=url, model=model,
-                messages=[
-                    {"role": "system", "content": "Generate a short title (3-5 words, no quotes) for this scheduled task. Reply with ONLY the title, nothing else."},
-                    {"role": "user", "content": prompt[:500]},
-                ],
-                max_tokens=20,
-                headers=headers,
-                timeout=15,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "task-title",
+                    temperature=0.3,
+                    token_limit=20,
+                    timeout_seconds=15,
+                ),
+                {
+                    "text": prompt[:500],
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Generate a short title (3-5 words, no quotes) for this "
+                                "scheduled task. Reply with ONLY the title, nothing else."
+                            ),
+                        },
+                        {"role": "user", "content": prompt[:500]},
+                    ],
+                },
+                owner or "",
             )
-            title = result.strip().strip('"\'').strip()
+            title = str((result.output or {}).get("text") or "").strip().strip('"\'').strip()
             return title[:60] if title else prompt[:50].strip()
         except Exception:
             first = prompt.split('\n')[0].split('.')[0].strip()
@@ -1092,8 +1089,6 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         AI news and summarize it") into a structured task draft the frontend
         can pre-fill the form with. Returns a draft only — the user reviews and
         saves it, so a misread schedule never goes live unreviewed."""
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
         import json as _json, re as _re
         from datetime import datetime as _dt
@@ -1129,25 +1124,37 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "use cron '0 H * * 1-5'. Keep the prompt actionable and self-contained."
         )
         try:
-            url, model, headers = resolve_endpoint("utility", owner=user or None)
-            if not url:
-                url, model, headers = resolve_endpoint("default", owner=user or None)
-            if not (url and model):
-                return {"success": False, "message": "No model endpoint configured"}
-            raw = await llm_call_async(
-                url=url, model=model,
-                messages=[{"role": "system", "content": sys},
-                          {"role": "user", "content": desc[:1000]}],
-                temperature=0.2, max_tokens=400, headers=headers, timeout=45,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "task-parse",
+                    temperature=0.2,
+                    token_limit=400,
+                    timeout_seconds=45,
+                ),
+                {
+                    "text": desc[:1000],
+                    "messages": [
+                        {"role": "system", "content": sys},
+                        {"role": "user", "content": desc[:1000]},
+                    ],
+                },
+                user or "",
             )
-            text = _strip_think(raw or "", prose=False, prompt_echo=False).strip()
-            if text.startswith("```"):
-                text = text.strip("`")
-                if text.lower().startswith("json"):
-                    text = text[4:].lstrip()
-            # Pull the first {...} block in case the model added stray text.
-            m = _re.search(r"\{.*\}", text, _re.S)
-            draft = _json.loads(m.group(0) if m else text)
+            output = result.output or {}
+            if isinstance(output, dict) and any(
+                key in output for key in ("prompt", "task_type", "schedule", "name")
+            ):
+                draft = output
+            else:
+                raw = str(output.get("text") or "") if isinstance(output, dict) else str(output or "")
+                text = _strip_think(raw or "", prose=False, prompt_echo=False).strip()
+                if text.startswith("```"):
+                    text = text.strip("`")
+                    if text.lower().startswith("json"):
+                        text = text[4:].lstrip()
+                m = _re.search(r"\{.*\}", text, _re.S)
+                draft = _json.loads(m.group(0) if m else text)
             if not isinstance(draft, dict):
                 raise ValueError("not an object")
             # Whitelist + light validation so the frontend gets clean fields.

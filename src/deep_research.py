@@ -380,18 +380,66 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60) -> str:
-        """Call the LLM asynchronously and strip thinking tags."""
-        from src.llm_core import llm_call_async
-        response = await llm_call_async(
-            url=self.llm_endpoint,
-            model=self.llm_model,
+        """Call governed OpenHands and strip thinking tags.
+
+        Reuses the bound OpenHands conversation when one exists so this
+        helper does not open a second transcript beside the research run.
+
+        Parameters
+        ----------
+        messages : List[Dict]
+            Chat messages for this research step.
+        temperature : float
+            Unused leftover argument kept for caller compatibility.
+        max_tokens : int
+            Unused leftover argument kept for caller compatibility.
+        timeout : int
+            Wall-clock budget forwarded as the governed poll timeout.
+
+        Returns
+        -------
+        str
+            Assistant text with thinking tags stripped.
+
+        Example
+        -------
+        ``text = await researcher._llm([{"role": "user", "content": "plan"}])``
+        """
+        from services.agents.legacy_bridge import stream_governed_agent
+
+        session_id = getattr(self, "session_id", None)
+        conversation_id = getattr(self, "openhands_conversation_id", None)
+        if conversation_id and conversation_id == session_id:
+            conversation_id = None
+        parts: List[str] = []
+        async for chunk in stream_governed_agent(
             messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            headers=self.llm_headers,
-            timeout=timeout,
-        )
-        return strip_thinking(response)
+            session_id=session_id,
+            conversation_id=conversation_id,
+            owner=getattr(self, "owner", None) or "",
+            archetype="research",
+            user_requested_agent=True,
+            poll_timeout_s=float(timeout),
+        ):
+            if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+                continue
+            try:
+                data = json.loads(chunk[6:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            if data.get("type") == "execution":
+                cid = data.get("conversation_id")
+                if cid and cid != session_id:
+                    self.openhands_conversation_id = cid
+                continue
+            if data.get("thinking"):
+                continue
+            delta = data.get("delta")
+            if isinstance(delta, str) and delta:
+                parts.append(delta)
+        return strip_thinking("".join(parts))
 
     # ------------------------------------------------------------------
     # PLAN: create research strategy

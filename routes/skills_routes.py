@@ -7,6 +7,7 @@ The on-disk format is SKILL.md (frontmatter + structured body) under
 (`description`, `when_to_use`, `body_extra`, `procedure`).
 """
 
+import asyncio
 import logging
 import re
 from typing import List, Optional
@@ -16,6 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
@@ -126,7 +128,8 @@ def _skill_test_messages(md: str, task: str) -> list[dict]:
 
 
 async def _eval_skill_run(skill_md: str, task: str, transcript: str,
-                          url: str, model: str, headers: Optional[dict]) -> dict:
+                          url: str, model: str, headers: Optional[dict],
+                          owner: str = "") -> dict:
     """LLM-as-judge: grade a skill test run from its transcript. Advisory only.
 
     Robust against local reasoning models (strips <think>, lenient JSON,
@@ -134,7 +137,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
     """
     import json as _json
     import re as _re
-    from src.llm_core import llm_call_async
+    _ = (url, headers)
 
     sys_prompt = (
         "You are a strict QA reviewer judging whether an AI 'skill' (a reusable "
@@ -256,13 +259,22 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                 "must START with '{' and be ONLY the JSON object, nothing else."
             )
         try:
-            raw = await llm_call_async(
-                # Generous budget so a heavy reasoner can think AND still have
-                # room to emit the JSON afterwards (reasoning tokens come out of
-                # this same cap; the server clamps to its own max).
-                url, model, msgs,
-                temperature=0.1, max_tokens=32768, headers=headers, timeout=180,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "skill-eval-run",
+                    temperature=0.1,
+                    token_limit=32768,
+                    timeout_seconds=180,
+                ),
+                {"text": user_msg, "model": model or "", "messages": msgs},
+                owner or "",
             )
+            output = result.output or {}
+            if isinstance(output, dict) and "verdict" in output:
+                raw = _json.dumps(output)
+            else:
+                raw = str(output.get("text") or "") if isinstance(output, dict) else str(output or "")
         except Exception as e:
             # Don't give up on a transient first-attempt error — let the second
             # (no-think) attempt run before reporting failure.
@@ -280,14 +292,14 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
 
 
 async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: str,
-                                headers: Optional[dict]) -> Optional[dict]:
+                                headers: Optional[dict], owner: str = "") -> Optional[dict]:
     """Advisory judge: is this skill worth keeping, or is it redundant / trivially
     unnecessary? Sees the OTHER skills' names+descriptions so it can spot
     duplicates. Returns {necessary, redundant_with, reason} or None. Never acts —
     purely a flag the UI surfaces."""
     import json as _json
     import re as _re
-    from src.llm_core import llm_call_async
+    _ = (url, headers)
 
     catalog = "\n".join(f"- {o.get('name')}: {o.get('description', '')}" for o in others) or "(no other skills)"
     sys_prompt = (
@@ -306,11 +318,29 @@ async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: st
         f"=== OTHER SKILLS IN THE LIBRARY ===\n{catalog[:4000]}"
     )
     try:
-        raw = await llm_call_async(
-            url, model,
-            [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
-            temperature=0.1, max_tokens=8192, headers=headers, timeout=120,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "skill-eval-necessity",
+                temperature=0.1,
+                token_limit=8192,
+                timeout_seconds=120,
+            ),
+            {
+                "text": user_msg,
+                "model": model or "",
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            owner or "",
         )
+        output = result.output or {}
+        if isinstance(output, dict) and "necessary" in output:
+            raw = _json.dumps(output)
+        else:
+            raw = str(output.get("text") or "") if isinstance(output, dict) else str(output or "")
     except Exception as e:
         logger.warning(f"Necessity check failed: {e}")
         return None
@@ -361,7 +391,8 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
 
 async def _eval_skill_retrieval_precision(skill_md: str, others: list,
                                           url: str, model: str,
-                                          headers: Optional[dict]) -> Optional[dict]:
+                                          headers: Optional[dict],
+                                          owner: str = "") -> Optional[dict]:
     """Advisory judge: would this skill's metadata make retrieval over-select it?
 
     This is distinct from "does the procedure work?". It asks whether tags,
@@ -370,7 +401,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
     """
     import json as _json
     import re as _re
-    from src.llm_core import llm_call_async
+    _ = (url, headers)
 
     catalog = "\n".join(f"- {o.get('name')}: {o.get('description', '')}" for o in others[:80]) or "(no other skills)"
     sys_prompt = (
@@ -394,11 +425,29 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
         "fires for its intended scenario and not for adjacent skills above."
     )
     try:
-        raw = await llm_call_async(
-            url, model,
-            [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
-            temperature=0.1, max_tokens=4096, headers=headers, timeout=90,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "skill-eval-retrieval",
+                temperature=0.1,
+                token_limit=4096,
+                timeout_seconds=90,
+            ),
+            {
+                "text": user_msg,
+                "model": model or "",
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            owner or "",
         )
+        output = result.output or {}
+        if isinstance(output, dict) and "ok" in output:
+            raw = _json.dumps(output)
+        else:
+            raw = str(output.get("text") or "") if isinstance(output, dict) else str(output or "")
     except Exception as e:
         logger.warning(f"Retrieval precision check failed: {e}")
         return None
@@ -519,7 +568,9 @@ async def _run_skill_test_job(
     job.pop("_run", None)
     log.append({"type": "evaluating"})
     try:
-        job["verdict"] = await _eval_skill_run(md, task, "".join(transcript), url, model, headers)
+        job["verdict"] = await _eval_skill_run(
+            md, task, "".join(transcript), url, model, headers, owner=owner
+        )
     except Exception as e:
         job["verdict"] = {"verdict": "unknown", "confidence": 0, "summary": f"Eval failed: {e}", "issues": []}
     # Record the result so the card shows a 'verified' check (a manual test
@@ -799,15 +850,16 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
             ],
             "approval_required": True,
         }
-    verdict = await _eval_skill_run(md, task, text, url, model, headers)
+    verdict = await _eval_skill_run(md, task, text, url, model, headers, owner=owner)
     return text, verdict
 
 
-async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, model, headers):
+async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, model, headers,
+                            owner: str = ""):
     """Have a model rewrite SKILL.md to fix the reviewer's issues. Returns the
     corrected markdown, or None if it couldn't produce a usable change."""
     import re as _re
-    from src.llm_core import llm_call_async
+    _ = (url, headers)
     issues = "\n".join("- " + str(i) for i in (verdict.get("issues") or []))
     sys_prompt = (
         "You are improving a reusable AI SKILL written in Markdown (frontmatter + body). "
@@ -829,10 +881,25 @@ async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, 
         f"=== TEST TRANSCRIPT ===\n{(transcript or '')[:6000]}"
     )
     try:
-        raw = await llm_call_async(url, model,
-                                   [{"role": "system", "content": sys_prompt},
-                                    {"role": "user", "content": user_msg}],
-                                   temperature=0.2, max_tokens=16384, headers=headers, timeout=180)
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "skill-improve",
+                temperature=0.2,
+                token_limit=16384,
+                timeout_seconds=180,
+            ),
+            {
+                "text": user_msg,
+                "model": model or "",
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            owner or "",
+        )
+        raw = str((result.output or {}).get("text") or "")
     except Exception as e:
         logger.warning(f"Audit: improve call failed: {e}")
         return None
@@ -885,7 +952,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
             if s.get("name") and s.get("name") != name
             and (not sk_owner or not s.get("owner") or s.get("owner") == sk_owner)
         ]
-        nec = await _eval_skill_necessity(md, others, url, model, headers)
+        nec = await _eval_skill_necessity(md, others, url, model, headers, owner=owner)
         if nec is not None:
             skills_manager.set_necessity(name, nec.get("necessary", True),
                                          nec.get("redundant_with"), nec.get("reason"),
@@ -915,7 +982,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     # narrow skill over-inject, fix only metadata before the functional test.
     try:
         if _should_check_retrieval_precision(skill):
-            rp = await _eval_skill_retrieval_precision(md, others, url, model, headers)
+            rp = await _eval_skill_retrieval_precision(md, others, url, model, headers, owner=owner)
             if rp and not rp.get("ok"):
                 issues = rp.get("issues") or ["metadata: retrieval: narrow tags and when_to_use to the intended trigger"]
                 log(f"{name}: narrowing retrieval metadata — {(rp.get('summary') or issues[0])[:80]}")
@@ -924,7 +991,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
                     "confidence": 1.0,
                     "summary": rp.get("summary") or "Retrieval metadata is too broad.",
                     "issues": issues,
-                }, "Retrieval audit only: the procedure may work, but matching metadata is too broad.", url, model, headers)
+                }, "Retrieval audit only: the procedure may work, but matching metadata is too broad.", url, model, headers, owner=owner)
                 if fixed and fixed.strip() != md.strip() and _apply_skill_md(skills_manager, name, fixed, owner):
                     md = fixed
                     refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == name), None)
@@ -965,7 +1032,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         meta_issues = [i for i in (verdict.get("issues") or []) if str(i).lower().lstrip().startswith("metadata:")]
         if meta_issues:
             log(f"{name}: pass, but fixing {len(meta_issues)} metadata issue(s)…")
-            fixed = await _improve_skill_md(md, verdict, transcript, url, model, headers)
+            fixed = await _improve_skill_md(md, verdict, transcript, url, model, headers, owner=owner)
             if fixed and fixed.strip() != md.strip():
                 _apply_skill_md(skills_manager, name, fixed, owner)
         _set_conf(0.95)
@@ -982,7 +1049,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
 
     # Self-edit + retry.
     log(f"{name}: self-editing to fix issues…")
-    new_md = await _improve_skill_md(md, verdict, transcript, url, model, headers)
+    new_md = await _improve_skill_md(md, verdict, transcript, url, model, headers, owner=owner)
     if new_md and new_md.strip() != md.strip() and _apply_skill_md(skills_manager, name, new_md, owner):
         md = new_md
         transcript, verdict = await _run_skill_test_once(md, task, url, model, headers, owner)
@@ -1005,7 +1072,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         teacher_ran = True
         t_url, t_model, t_headers = teacher
         log(f"{name}: teacher {t_model} rewriting the skill…")
-        t_md = await _improve_skill_md(md, verdict, transcript, t_url, t_model, t_headers)
+        t_md = await _improve_skill_md(md, verdict, transcript, t_url, t_model, t_headers, owner=owner)
         if t_md and t_md.strip() != md.strip() and _apply_skill_md(skills_manager, name, t_md, owner):
             md = t_md
         # Re-test with the STUDENT model (the model the skill runs under in use).

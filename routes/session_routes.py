@@ -1,9 +1,12 @@
 # routes/session_routes.py
+import asyncio
 import re
 import html
 import json
 import uuid
 from datetime import datetime
+
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from fastapi import APIRouter, Form, HTTPException, Response, Request, Depends
 import logging
 
@@ -1025,12 +1028,11 @@ def setup_session_routes(
 
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
         from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
 
         owner = getattr(session, "owner", None) or effective_user(request)
-        url, model, headers = resolve_endpoint("utility", owner=owner)
+        url, model, _headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = session.endpoint_url, session.model, session.headers
+            url, model, _headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
             raise HTTPException(400, "No model configured for compaction")
 
@@ -1048,15 +1050,25 @@ def setup_session_routes(
             for m in older
         )
         try:
-            summary = await llm_call_async(
-                url,
-                model,
-                [{"role": "system", "content": prompt}, {"role": "user", "content": convo_text}],
-                temperature=0.2,
-                max_tokens=1024,
-                headers=headers,
-                timeout=60,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "session-compact",
+                    temperature=0.2,
+                    token_limit=1024,
+                    timeout_seconds=60,
+                ),
+                {
+                    "messages": [
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": convo_text},
+                    ],
+                    "text": convo_text,
+                    "model": model or "auto",
+                },
+                owner or "",
             )
+            summary = str((result.output or {}).get("text") or "")
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)
             raise HTTPException(500, "Compaction failed")
@@ -1090,7 +1102,6 @@ def setup_session_routes(
         after Phase 1 — used by the "Tidy (no AI)" UI affordance so
         users can clean junk without spending tokens.
         """
-        from src.llm_core import llm_call
         user = effective_user(request)
         single_user_mode = not user and _auth_disabled()
         user_sessions = session_manager.get_sessions_for_user(user)
@@ -1237,9 +1248,9 @@ def setup_session_routes(
 
         # Pick an endpoint — prefer admin-configured task endpoint
         from src.task_endpoint import resolve_task_endpoint
-        url, model, headers = resolve_task_endpoint(owner=user)
+        url, model, _headers = resolve_task_endpoint(owner=user)
         if not url:
-            url, model, headers = _pick_endpoint_for_sort(owner=user)
+            url, model, _headers = _pick_endpoint_for_sort(owner=user)
         if not url:
             raise HTTPException(503, "No available model endpoint for auto-sort")
 
@@ -1259,11 +1270,27 @@ def setup_session_routes(
 
         try:
             logger.info(f"Auto-sort: using model={model} at {url}")
-            # 16384 (was 4096): with many chats the folder JSON is large, and a
-            # reasoning model spends tokens thinking first — 4096 truncated the
-            # JSON mid-output, so it never parsed ("invalid JSON for auto-sort").
-            raw = llm_call(url, model, [{"role": "user", "content": prompt}],
-                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+            job = submit_model_job(
+                bounded_archetype(
+                    "session-sort",
+                    temperature=0.3,
+                    token_limit=16384,
+                    timeout_seconds=120,
+                ),
+                {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "text": prompt,
+                    "model": model or "auto",
+                },
+                user or "",
+            )
+            output = job.output or {}
+            if isinstance(output.get("folders"), dict):
+                raw = json.dumps(output)
+            else:
+                raw = str(output.get("text") or "")
+                if not raw and output:
+                    raw = json.dumps(output)
             logger.info(f"Auto-sort raw response ({len(raw)} chars): {raw[:300]}")
             # Extract JSON from response — handle markdown fences, leading text,
             # reasoning-model <think> blocks, and trailing commas.

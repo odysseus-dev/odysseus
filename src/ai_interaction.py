@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.constants import GENERATED_IMAGES_DIR
 from src.memory import MemoryStoreUnreadable
 
@@ -236,8 +237,6 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
       Line 2: step2_model | step2_instruction
       ...
     """
-    from src.llm_core import llm_call_async
-
     # Try JSON parse first
     steps = None
     try:
@@ -299,9 +298,19 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
                 {"role": "user", "content": user_content},
             ]
 
-            response = await llm_call_async(
-                url, model, messages, headers=headers, timeout=AI_CHAT_TIMEOUT
+            _ = (url, headers)
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "pipeline-step",
+                    temperature=0.3,
+                    token_limit=4096,
+                    timeout_seconds=AI_CHAT_TIMEOUT,
+                ),
+                {"text": user_content, "model": model, "messages": messages},
+                owner or "",
             )
+            response = str((result.output or {}).get("text") or "")
 
             step_outputs.append({
                 "step": i + 1,

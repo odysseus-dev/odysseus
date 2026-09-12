@@ -22,6 +22,8 @@ success, LLM exception, empty LLM result).
 This is intentionally a narrow interim/defensive fix for #4547; it does not
 replace the generated-query flow from #4557.
 """
+from types import SimpleNamespace
+
 from src.chat_processor import ChatProcessor, _clean_search_query
 
 
@@ -113,7 +115,7 @@ class _Docs:
 
 
 def _patch_flow(monkeypatch, llm_behaviour, captured):
-    """Wire both seams of the generated-query flow: the LLM call and the
+    """Wire both seams of the generated-query flow: the model job and the
     search call. ``llm_behaviour`` is either a string to return or an Exception
     instance to raise."""
 
@@ -122,13 +124,13 @@ def _patch_flow(monkeypatch, llm_behaviour, captured):
         captured["kwargs"] = kwargs
         return ("web context", [{"title": "src"}])
 
-    def _fake_llm(*args, **kwargs):
+    def _fake_job(*args, **kwargs):
         if isinstance(llm_behaviour, Exception):
             raise llm_behaviour
-        return llm_behaviour
+        return SimpleNamespace(output={"text": llm_behaviour})
 
     monkeypatch.setattr("src.chat_processor.comprehensive_web_search", _fake_search)
-    monkeypatch.setattr("src.llm_core.llm_call", _fake_llm)
+    monkeypatch.setattr("src.chat_processor.submit_model_job", _fake_job, raising=False)
 
 
 def test_generated_query_is_used_and_sanitized(monkeypatch):
