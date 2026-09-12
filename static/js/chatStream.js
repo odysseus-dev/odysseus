@@ -55,6 +55,9 @@ export function handleUIControl(uiData) {
       var ts2 = Storage.getJSON(Storage.KEYS.TOGGLES, {});
       ts2.mode = modeVal;
       Storage.setJSON(Storage.KEYS.TOGGLES, ts2);
+      // Also pin the CURRENT conversation specifically — an agent-driven
+      // set_mode event should not leak into other open tabs/conversations.
+      Storage.setSessionMode(sessionModule.getCurrentSessionId(), modeVal);
       document.querySelectorAll('[data-mode-tool]').forEach(function(b) {
         b.style.display = modeVal === 'agent' ? '' : 'none';
       });

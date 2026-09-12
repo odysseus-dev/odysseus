@@ -25,7 +25,8 @@ export const KEYS = {
   ADMIN_LAST_TAB: 'admin-last-tab',
   DENSITY: 'odysseus-density',
   UI_SCALE: 'odysseus-ui-scale',
-  WORKSPACE: 'odysseus-workspace'
+  WORKSPACE: 'odysseus-workspace',
+  SESSION_MODES: 'odysseus-session-modes'
 };
 
 /**
@@ -109,6 +110,30 @@ export function setToggle(name, value) {
   saveToggleState(state);
 }
 
+// ── Per-session Agent/Chat mode ──
+// The global 'mode' toggle above is a single localStorage key shared by
+// every open tab and conversation. Flipping it anywhere (another tab, a
+// tool-error auto-fallback, an agent-driven set_mode event) silently
+// changed which mode an unrelated, already-open conversation would send
+// next — a real conversation with tools actually attached could be
+// followed by a message sent with zero tools attached, with no visible
+// cause. Once a conversation has an explicit mode recorded here, that
+// value wins over the global default for that conversation specifically.
+
+export function getSessionMode(sessionId, fallback) {
+  const globalDefault = getToggle('mode', fallback !== undefined ? fallback : 'chat');
+  if (!sessionId) return globalDefault;
+  const perSession = getJSON(KEYS.SESSION_MODES, {});
+  return perSession[sessionId] !== undefined ? perSession[sessionId] : globalDefault;
+}
+
+export function setSessionMode(sessionId, mode) {
+  if (!sessionId) { setToggle('mode', mode); return; }
+  const perSession = getJSON(KEYS.SESSION_MODES, {});
+  perSession[sessionId] = mode;
+  setJSON(KEYS.SESSION_MODES, perSession);
+}
+
 const Storage = {
   KEYS,
   getJSON,
@@ -119,7 +144,9 @@ const Storage = {
   loadToggleState,
   saveToggleState,
   getToggle,
-  setToggle
+  setToggle,
+  getSessionMode,
+  setSessionMode
 };
 
 export default Storage;

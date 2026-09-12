@@ -1389,6 +1389,41 @@ def setup_chat_routes(
 
             messages = _ensure_current_request_is_latest_user(ctx.messages, message)
 
+            # If this turn is plain chat mode (zero tools attached to THIS
+            # message) but the session history already contains a real prior
+            # tool call, the model has no way to distinguish "I have no tools
+            # right now" from "I never had them" unless told explicitly. Left
+            # alone, it can correctly notice the former and wrongly conclude
+            # the latter — retracting/denying an action that actually
+            # happened instead of just saying it can't check right now.
+            # Confirmed live 2026-09-12 (see
+            # project_odysseus_agent_hetzner.md): a real firecrawl_agent call
+            # succeeded in one turn, then a chat-mode follow-up asking for its
+            # status incorrectly declared the whole thing fabricated.
+            if chat_mode == "chat" and any(
+                (getattr(m, "metadata", None) or {}).get("tool_events")
+                for m in getattr(sess, "history", [])
+            ):
+                messages = [{
+                    "role": "system",
+                    "content": (
+                        "You have no tools attached to this specific message. "
+                        "This says nothing about earlier turns in this "
+                        "conversation — if the history above shows you already "
+                        "ran a tool and reported a result (a job ID, a search "
+                        "result, a file written, etc.), that action genuinely "
+                        "happened and is not something to second-guess or "
+                        "retract now. Do not claim a previous tool call was "
+                        "fake, hallucinated, or fabricated just because you "
+                        "lack tool access in this message. If the user is "
+                        "asking you to check on or continue that earlier "
+                        "action and you cannot because you have no tools "
+                        "right now, say exactly that — and suggest switching "
+                        "to Agent mode — instead of disowning something you "
+                        "already did."
+                    ),
+                }] + messages
+
             # Auto-compact notification
             if ctx.was_compacted:
                 yield f"data: {json.dumps({'type': 'compacted', 'context_length': ctx.context_length})}\n\n"

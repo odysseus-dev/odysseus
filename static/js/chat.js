@@ -24,6 +24,23 @@ import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
 
+  // Agent/Chat mode is a single global localStorage toggle, shared by every
+  // open tab and conversation. Clicking it in one conversation (or any other
+  // tab on the same browser) used to silently change which mode the NEXT
+  // message in a totally different, already-open conversation would use —
+  // a real prior tool call could be followed by a message sent with zero
+  // tools attached, with no visible cause. Record an explicit per-session
+  // override on every click so this conversation keeps using whatever mode
+  // was last chosen for it specifically, regardless of what happens
+  // elsewhere. Delegated on `document` (not the buttons directly) since the
+  // toolbar can be re-rendered after this listener is registered.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('#mode-agent-btn, #mode-chat-btn');
+    if (!btn) return;
+    const mode = btn.id === 'mode-agent-btn' ? 'agent' : 'chat';
+    Storage.setSessionMode(sessionModule.getCurrentSessionId(), mode);
+  });
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -1664,7 +1681,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 	      // intent gate.
 	      const toggleState = Storage.loadToggleState();
 	      const isPlanMode = !!toggleState.plan_mode && !(el('research-toggle') && el('research-toggle').checked);
-	      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
+	      // Per-conversation mode (see storage.js getSessionMode) overrides the
+	      // global toggle so switching Agent/Chat in another tab or session
+	      // can't silently strip tools from this conversation's next message.
+	      let isAgentMode = Storage.getSessionMode(sessionId, toggleState.mode || 'chat') === 'agent';
       const isIncognito = isIncognitoForSend;
 	      const workspaceAgentIntent = !isIncognito && /\b(fix|debug|implement|change|update|refactor|patch|review|test|run|execute|start|launch|build|lint|typecheck|benchmark|eval|terminal[- ]bench|tbench|repo|repository|codebase|project|app|server|api|frontend|backend|bug|issue|pr|file|folder|directory|source|logs?|trace|stacktrace|traceback|docker|container|tmux|terminal|shell|git|branch|commit|diff|pytest|process|port|endpoint|computer|machine|laptop|device|system)\b/i.test(String(msg || ''));
 	      if (isPlanMode || _pendingApprovedPlan) {
@@ -1876,6 +1896,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             const _st = Storage.getJSON(Storage.KEYS.TOGGLES, {});
             _st.mode = 'chat';
             Storage.setJSON(Storage.KEYS.TOGGLES, _st);
+            // Also pin this specific conversation to chat mode — this model
+            // genuinely can't take tools, so the override should stick to
+            // THIS session regardless of what other tabs/conversations do.
+            Storage.setSessionMode(sessionId, 'chat');
           }
         }
         typewriterInto(holder.querySelector('.body'), errText);
