@@ -37,6 +37,9 @@ services:
       - ${APP_DATA_DIR:-./data}/openhands-opencode-home:/home/opencode
       - ${APP_DATA_DIR:-./data}/openhands-hermes-home:/home/hermes
       - ${APP_DATA_DIR:-./data}/openhands-runtime-bin:/opt/oh-bin:ro
+      # TEMPORARY BRIDGE. Preferred: Agent Server → supported 9router control/API
+      # → scoped virtual key. Deletion condition: mint exclusively via
+      # POST /api/keys (or another official control API) and drop this mount.
       - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
       - ./deploy/openhands/bootstrap_native_llm.py:/opt/odysseus/bootstrap_native_llm.py:ro
       - ./deploy/openhands/agent-server-entrypoint.sh:/opt/odysseus/agent-server-entrypoint.sh:ro
@@ -144,9 +147,10 @@ services:
     # In-network OpenAI-compatible base URL: http://9router:20128/v1
     # Overlay health target for Agent Server / ACP: http://9router:20128/api/health
     # Host publish of the provider port is not required.
-    # Virtual inference keys are created later in the 9router dashboard
-    # (Endpoint & Key) and stored under DATA_DIR. Later units inject that
-    # key into Agent Server / ACP only. Odysseus must never receive it.
+    # Virtual inference keys stay in 9router DATA_DIR. Agent Server and the
+    # model-job worker currently mint them through a TEMPORARY BRIDGE sqlite
+    # mount. Preferred: those runtimes → supported 9router control/API →
+    # scoped virtual key. Odysseus must never receive the inference key.
     image: decolua/9router:0.5.69@sha256:47c17576ad49f0918d1a455dd412ae4509ee8bc742f17ba0b3327ddc70f35a40
     pull_policy: never
     env_file: deploy/openhands/versions.env
@@ -175,6 +179,9 @@ services:
       - MODEL_JOB_WORKER_PORT=8091
       - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
     volumes:
+      # TEMPORARY BRIDGE. Preferred: Agent Server → supported 9router control/API
+      # → scoped virtual key. Deletion condition: mint exclusively via
+      # POST /api/keys (or another official control API) and drop this mount.
       - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
     depends_on:
       9router:

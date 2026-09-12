@@ -238,10 +238,10 @@ The OpenHands overlay is isolated from normal Compose startup. It adds Agent
 Server, Automation, Agent Canvas, Odysseus MCP, and 9router without publishing
 their internal APIs; only configured Odysseus and Canvas ports reach the host.
 9router is reachable on the overlay network at `http://9router:20128/v1`
-(health `GET /api/health`). Create a virtual inference key later in the 9router
-dashboard (Endpoint & Key). That key stays in 9router `DATA_DIR` and is injected
-into Agent Server / ACP in later units. Odysseus overlay environment must not
-receive it.
+(health `GET /api/health`). Virtual inference keys stay in 9router `DATA_DIR`.
+Agent Server and the model-job worker currently mint them through a temporary
+sqlite mount; that is a temporary bridge, not the long-term control API.
+Odysseus overlay environment must not receive the inference key.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.openhands.yml config --quiet

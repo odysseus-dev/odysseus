@@ -2,6 +2,11 @@
 
 Persisted ``auth_type: subscription`` at chatgpt.com/backend-api/codex must not
 remain the silent default. Compose OPENAI_API_KEY cannot switch that route.
+
+TEMPORARY BRIDGE: ``_mint_virtual_key`` writes 9router sqlite ``apiKeys``.
+Preferred path is Agent Server → supported 9router control/API → scoped
+virtual key. Deletion condition: mint exclusively via POST /api/keys (or
+another official control API) and drop the DATA_DIR mount.
 """
 
 from __future__ import annotations

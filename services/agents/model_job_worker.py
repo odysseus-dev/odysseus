@@ -1,4 +1,11 @@
-"""Isolated bounded-job worker. Holds the 9router virtual key. Not an agent runtime."""
+"""Isolated bounded-job worker. Holds the 9router virtual key. Not an agent runtime.
+
+TEMPORARY BRIDGE: ``mint_jobs_virtual_key`` writes 9router sqlite ``apiKeys``.
+Preferred path is worker → supported 9router control/API → scoped virtual key.
+Deletion condition: mint exclusively via POST /api/keys (or another official
+control API) and drop the DATA_DIR mount. Custody is not settled while the
+mount remains.
+"""
 
 from __future__ import annotations
 
