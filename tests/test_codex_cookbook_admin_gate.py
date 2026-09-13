@@ -5,14 +5,13 @@ routes (tasks, servers, output, stop, adopt, presets, etc.) through
 normal cookie sessions because _scope_owner only checked login status,
 not admin privileges.
 
-After the fix, cookie-session callers must be admin; API-token callers
-are still governed by scope checks only.
+After the fix, cookie-session callers and API-token owners must be admin.
 """
 import pytest
 from types import SimpleNamespace
 from fastapi import HTTPException
 
-from routes.codex_routes import _require_cookbook_scope
+from routes.codex_routes import _require_cookbook_scope, setup_codex_routes
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -35,8 +34,9 @@ def _cookie_request(*, current_user="bob", is_admin=False):
     )
 
 
-def _api_token_request(*, scopes=None, owner="alice"):
+def _api_token_request(*, scopes=None, owner="alice", is_admin=False):
     """Simulate an API-token request."""
+    auth_mgr = SimpleNamespace(is_admin=lambda user: is_admin and user == owner)
     return SimpleNamespace(
         state=SimpleNamespace(
             current_user="api",
@@ -44,7 +44,7 @@ def _api_token_request(*, scopes=None, owner="alice"):
             api_token_scopes=scopes or [],
             api_token_owner=owner,
         ),
-        app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=auth_mgr)),
         headers={},
     )
 
@@ -80,20 +80,42 @@ class TestCookieSessionAdminGate:
 
 
 class TestApiTokenScopeGate:
-    """API-token callers are governed by scope, not admin status."""
+    """API-token callers need both a matching scope and an admin owner."""
 
-    def test_token_with_scope_allowed(self, monkeypatch):
+    def test_admin_token_with_scope_allowed(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
-        req = _api_token_request(scopes=["cookbook:read"])
+        req = _api_token_request(scopes=["cookbook:read"], is_admin=True)
         owner = _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
         assert owner == "alice"
 
-    def test_token_missing_scope_rejected(self, monkeypatch):
+    @pytest.mark.parametrize("scopes", [["cookbook:read"], ["cookbook:launch"]])
+    def test_non_admin_token_with_scope_rejected(self, monkeypatch, scopes):
         monkeypatch.setenv("AUTH_ENABLED", "true")
-        req = _api_token_request(scopes=["unrelated:scope"])
+        req = _api_token_request(scopes=scopes, is_admin=False)
         with pytest.raises(HTTPException) as exc:
             _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
         assert exc.value.status_code == 403
+
+    def test_token_missing_scope_rejected(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        req = _api_token_request(scopes=["unrelated:scope"], is_admin=True)
+        with pytest.raises(HTTPException) as exc:
+            _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
+        assert exc.value.status_code == 403
+
+    def test_non_admin_token_does_not_advertise_cookbook_capabilities(self):
+        router = setup_codex_routes()
+        endpoint = next(
+            route.endpoint for route in router.routes
+            if route.path == "/api/codex/capabilities"
+        )
+        result = endpoint(_api_token_request(
+            scopes=["cookbook:read", "cookbook:launch"],
+            is_admin=False,
+        ))
+
+        assert result["tools"]["cookbook"]["read"] is False
+        assert result["tools"]["cookbook"]["launch"] is False
 
 
 class TestSourceCodeGate:
