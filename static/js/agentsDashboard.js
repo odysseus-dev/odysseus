@@ -27,6 +27,7 @@ const KIND_ICON = { run_started: '▸', run_finished: '■', message: '›', too
 const state = {
   open: false, rows: [], totals: {}, profiles: [], chats: [], approvals: [], selected: null,
   events: new Map(), es: null, pollTimer: null, tick: null, launchOpen: false, filter: '',
+  error: '', refreshing: false, refreshQueued: false,
 };
 
 async function api(path, opts = {}) {
@@ -48,17 +49,31 @@ function chip(source) { return `<span class="wb-chip wb-src-${esc(source)}">${es
 
 // ── data ──────────────────────────────────────────────────────────────────
 async function refresh() {
+  if (state.refreshing) { state.refreshQueued = true; return; }
+  state.refreshing = true;
   try {
     const [ov, ap] = await Promise.all([api('/api/agents/overview'), api('/api/agents/approvals')]);
     state.rows = ov.rows || []; state.totals = ov.totals || {}; state.profiles = ov.profiles || []; state.chats = ov.chats || [];
     state.approvals = ap.approvals || [];
+    state.error = '';
     if (state.selected && !state.rows.some((r) => r.session_id === state.selected)) state.selected = null;
     if (!state.selected && state.rows.length) state.selected = state.rows[0].session_id;
   } catch (e) {
     if (e.status === 401 || e.status === 403) { close(); return; }
+    state.error = e.message || 'Agents are temporarily unavailable';
+  } finally {
+    state.refreshing = false;
   }
   updateBadges();
-  if (state.open) render();
+  // Do not replace the dashboard shell here. A run finishing used to rebuild
+  // the entire page, which stole focus, erased half-written steer/reply text,
+  // closed the launch form, and visibly flashed the UI. Refresh only the data
+  // regions and preserve the controls the user is working in.
+  if (state.open) updateOpenView();
+  if (state.refreshQueued) {
+    state.refreshQueued = false;
+    queueMicrotask(refresh);
+  }
 }
 function connect() {
   if (state.es) return;
@@ -137,14 +152,6 @@ function render() {
   const root = $('agents-dashboard');
   if (!root || !state.open) return;
   const t = state.totals;
-  const q = state.filter.trim().toLowerCase();
-  const rows = state.rows.filter((r) => !q || (r.name || '').toLowerCase().includes(q) || (r.latest || '').toLowerCase().includes(q));
-  const groups = [['waiting_approval', 'Needs you'], ['running', 'Running'], ['failed', 'Failed'], ['finished', 'Finished'], ['stopped', 'Stopped'], ['idle', 'Workers & recent']];
-  const fleet = groups.map(([key, label]) => {
-    const items = rows.filter((r) => r.status === key);
-    if (!items.length) return '';
-    return `<div class="ag-group"><div class="wb-group-h"><span class="wb-group-title">${label}</span><span class="wb-count">${items.length}</span></div>${items.map(rowHtml).join('')}</div>`;
-  }).join('') || `<div class="wb-empty">${state.rows.length ? 'No chats match.' : 'Nothing is running. Send a chat a task, or launch a worker.'}</div>`;
   root.innerHTML = `
     <div class="ag-head">
       <div class="ag-title"><span class="ag-title-text">Agents</span><span class="ag-sub">every chat and worker you're running</span></div>
@@ -157,14 +164,16 @@ function render() {
       </div>
       <div class="ag-head-actions">
         <button type="button" class="wb-btn wb-btn-primary" data-ag="launch">Launch worker</button>
+        <button type="button" class="wb-btn" data-ag="refresh" title="Refresh agent status">Refresh</button>
         <button type="button" class="wb-btn" data-ag="workbench" title="Repository changes, commits and PRs (admin)">Workbench</button>
         <button type="button" class="wb-icon-btn" data-ag="close" aria-label="Close" title="Close (Esc)">✕</button>
       </div>
     </div>
+    <div class="ag-refresh-error" id="ag-refresh-error" role="status"${state.error ? '' : ' hidden'}>${esc(state.error)}</div>
     <div class="ag-body">
       <aside class="ag-fleet wb-card">
         <div class="ag-fleet-tools"><input type="search" class="wb-input" id="ag-filter" placeholder="Filter chats…" value="${esc(state.filter)}" aria-label="Filter chats"></div>
-        <div class="ag-fleet-list" data-wb-scroll="fleet">${fleet}</div>
+        <div class="ag-fleet-list" data-wb-scroll="fleet">${fleetHtml()}</div>
       </aside>
       <section class="ag-detail wb-card" id="ag-detail"></section>
       ${state.launchOpen ? `<aside class="ag-launch wb-card" id="ag-launch">${launchHtml()}</aside>` : ''}
@@ -172,12 +181,50 @@ function render() {
   renderDetail();
   $('ag-filter')?.addEventListener('input', (e) => { state.filter = e.target.value; renderFleetOnly(); });
 }
-function renderFleetOnly() { const list = $('agents-dashboard')?.querySelector('.ag-fleet-list'); if (list) { const top = list.scrollTop; render(); const l2 = $('agents-dashboard').querySelector('.ag-fleet-list'); if (l2) l2.scrollTop = top; $('ag-filter')?.focus(); } }
+function filteredRows() {
+  const q = state.filter.trim().toLowerCase();
+  return state.rows.filter((r) => !q || (r.name || '').toLowerCase().includes(q) || (r.latest || '').toLowerCase().includes(q));
+}
+function fleetHtml() {
+  const rows = filteredRows();
+  const groups = [['waiting_approval', 'Needs you'], ['running', 'Running'], ['failed', 'Failed'], ['finished', 'Finished'], ['stopped', 'Stopped'], ['idle', 'Workers & recent']];
+  return groups.map(([key, label]) => {
+    const items = rows.filter((r) => r.status === key);
+    if (!items.length) return '';
+    return `<div class="ag-group"><div class="wb-group-h"><span class="wb-group-title">${label}</span><span class="wb-count">${items.length}</span></div>${items.map(rowHtml).join('')}</div>`;
+  }).join('') || `<div class="wb-empty">${state.rows.length ? 'No chats match.' : 'Nothing is running. Send a chat a task, or launch a worker.'}</div>`;
+}
+function renderFleetOnly() {
+  const list = $('agents-dashboard')?.querySelector('.ag-fleet-list');
+  if (!list) return;
+  const top = list.scrollTop;
+  list.innerHTML = fleetHtml();
+  list.scrollTop = top;
+}
+function updateStats() {
+  const box = $('agents-dashboard')?.querySelector('.ag-stats');
+  if (!box) return;
+  const t = state.totals;
+  box.innerHTML = `
+    <button type="button" class="ag-stat${t.waiting_approval ? ' attn' : ''}" data-ag="filter-status" data-status="waiting_approval"><b>${t.waiting_approval || 0}</b><span>need approval</span></button>
+    <button type="button" class="ag-stat" data-ag="filter-status" data-status="running"><b>${t.running || 0}</b><span>running</span></button>
+    <div class="ag-stat"><b>${t.workers_running || 0}</b><span>workers live</span></div>
+    <div class="ag-stat"><b>${t.finished_24h || 0}</b><span>finished · 24h</span></div>
+    <div class="ag-stat${t.failed_24h ? ' bad' : ''}"><b>${t.failed_24h || 0}</b><span>failed · 24h</span></div>`;
+}
+function updateOpenView() {
+  if (!state.open || !$('agents-dashboard')?.querySelector('.ag-body')) return;
+  updateStats();
+  renderFleetOnly();
+  renderDetail();
+  const error = $('ag-refresh-error');
+  if (error) { error.textContent = state.error; error.hidden = !state.error; }
+}
 function rowHtml(r) {
   const sel = r.session_id === state.selected;
   const dur = r.status === 'running' && r.started_at ? fmtDur(r.started_at) : '';
-  return `<div class="ag-row${sel ? ' active' : ''}" data-sid="${esc(r.session_id)}" role="button" tabindex="0">
-    <div class="ag-row-top">${pill(r.status)}<span class="ag-row-name" title="${esc(r.name)}">${esc(r.name)}</span>${dur ? `<span class="ag-row-dur">${esc(dur)}</span>` : ''}</div>
+  return `<div class="ag-row${sel ? ' active' : ''}" data-sid="${esc(r.session_id)}" role="button" tabindex="0" aria-selected="${sel ? 'true' : 'false'}">
+    <div class="ag-row-top">${pill(r.status)}<span class="ag-row-name" title="${esc(r.name)}">${esc(r.name)}</span>${dur ? `<span class="ag-row-dur" data-started="${r.started_at}">${esc(dur)}</span>` : ''}</div>
     <div class="ag-row-meta">${r.profile ? `<span class="wb-chip wb-src-session">${esc(r.profile)}</span>` : ''}${r.model ? `<span class="wb-meta-item">${esc(String(r.model).split('/').pop())}</span>` : ''}${r.children_running ? `<span class="wb-meta-item">${r.children_running} worker${r.children_running === 1 ? '' : 's'}</span>` : ''}${r.pending_approvals ? `<span class="wb-meta-item wb-text-bad">${r.pending_approvals} approval${r.pending_approvals === 1 ? '' : 's'}</span>` : ''}</div>
     ${r.latest ? `<div class="ag-row-latest" title="${esc(r.latest)}">${esc(r.latest)}</div>` : ''}
   </div>`;
@@ -185,8 +232,15 @@ function rowHtml(r) {
 function renderDetail() {
   const box = $('ag-detail');
   if (!box) return;
+  const active = box.contains(document.activeElement) ? document.activeElement : null;
+  const activeId = active?.id || '';
+  const selection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+  const draft = {};
+  const sameSelection = box.dataset.sessionId === state.selected;
+  if (sameSelection) box.querySelectorAll('textarea[id]').forEach((el) => { draft[el.id] = el.value; });
   const r = state.rows.find((x) => x.session_id === state.selected);
-  if (!r) { box.innerHTML = '<div class="wb-empty">Select a chat to see what its agent is doing.</div>'; return; }
+  if (!r) { delete box.dataset.sessionId; box.innerHTML = '<div class="wb-empty">Select a chat to see what its agent is doing.</div>'; return; }
+  box.dataset.sessionId = r.session_id;
   const scroll = box.querySelector('[data-wb-scroll="events"]');
   const keep = scroll ? scroll.scrollTop : null;
   const approvals = state.approvals.filter((a) => a.session_id === r.session_id);
@@ -216,6 +270,14 @@ function renderDetail() {
       <div class="wb-ev-list ag-ev-list" data-wb-scroll="events">${events.map(eventHtml).join('') || '<div class="wb-empty">No events yet.</div>'}</div>
     </div>`;
   if (keep != null) { const s2 = box.querySelector('[data-wb-scroll="events"]'); if (s2) s2.scrollTop = keep; }
+  Object.entries(draft).forEach(([id, value]) => { const el = $(id); if (el) el.value = value; });
+  if (sameSelection && activeId) {
+    const next = $(activeId);
+    if (next) {
+      next.focus({ preventScroll: true });
+      if (selection && next.setSelectionRange) next.setSelectionRange(selection[0], selection[1]);
+    }
+  }
   if (!state.events.has(r.session_id)) loadHistory(r.session_id).then(() => { if (state.selected === r.session_id) renderDetail(); });
 }
 function approvalHtml(a) {
@@ -227,8 +289,9 @@ function childHtml(c) {
   const live = c.status === 'running';
   const s = c.summary || {};
   const title = String(c.title || '').replace(/^(Sub-agent|Claude Code|Background job|Worker)\s*[·:]\s*/, '');
-  return `<div class="ag-child${live ? '' : ' done'}">${pill(c.status === 'completed' ? 'finished' : c.status)}${chip(c.source)}<span class="ag-child-title" title="${esc(c.title)}">${esc(title)}</span><span class="ag-row-dur">${esc(fmtDur(c.started_at, c.finished_at))}</span>
+  return `<div class="ag-child${live ? '' : ' done'}">${pill(c.status === 'completed' ? 'finished' : c.status)}${chip(c.source)}<span class="ag-child-title" title="${esc(c.title)}">${esc(title)}</span><span class="ag-row-dur" data-started="${c.started_at || ''}" data-finished="${c.finished_at || ''}">${esc(fmtDur(c.started_at, c.finished_at))}</span>
     ${s.target_session ? `<button type="button" class="wb-btn wb-btn-sm wb-btn-ghost" data-ag="open-chat" data-sid="${esc(s.target_session)}">Open</button>` : ''}
+    <button type="button" class="wb-btn wb-btn-sm wb-btn-ghost" data-ag="inspect-run" data-run="${esc(c.run_id)}" data-sid="${esc(state.selected || '')}">Inspect</button>
     ${live ? `<button type="button" class="wb-btn wb-btn-sm" data-ag="stop-run" data-run="${esc(c.run_id)}">Stop</button>` : ''}</div>`;
 }
 function eventHtml(ev) {
@@ -251,16 +314,37 @@ function launchHtml() {
 async function onClick(e) {
   const row = e.target.closest('.ag-row[data-sid]');
   const b = e.target.closest('[data-ag]');
-  if (!b && row) { state.selected = row.dataset.sid; render(); return; }
+  if (!b && row) {
+    state.selected = row.dataset.sid;
+    renderFleetOnly();
+    renderDetail();
+    return;
+  }
   if (!b) return;
   const act = b.dataset.ag;
   try {
     if (act === 'close') close();
-    else if (act === 'workbench') { close(); window.workbenchModule?.open?.(); }
+    else if (act === 'workbench') {
+      if (!window.workbenchModule?.open) throw new Error('Workbench is unavailable');
+      close(); window.workbenchModule.open();
+    }
+    else if (act === 'refresh') { b.disabled = true; await refresh(); if (b.isConnected) b.disabled = false; }
     else if (act === 'launch') { state.launchOpen = true; render(); $('ag-task')?.focus(); }
     else if (act === 'launch-close') { state.launchOpen = false; render(); }
-    else if (act === 'filter-status') { const s = b.dataset.status; state.filter = ''; state.selected = (state.rows.find((r) => r.status === s) || {}).session_id || state.selected; render(); }
-    else if (act === 'open-chat') { close(); await window.sessionModule?.selectSession?.(b.dataset.sid); }
+    else if (act === 'filter-status') {
+      const s = b.dataset.status;
+      state.filter = '';
+      const input = $('ag-filter'); if (input) input.value = '';
+      state.selected = (state.rows.find((r) => r.status === s) || {}).session_id || state.selected;
+      renderFleetOnly(); renderDetail();
+    }
+    else if (act === 'open-chat') { await openChat(b.dataset.sid); }
+    else if (act === 'inspect-run') {
+      if (!window.workbenchModule?.openRun) throw new Error('Workbench inspection is unavailable');
+      close();
+      await selectChat(b.dataset.sid);
+      await window.workbenchModule.openRun(b.dataset.run, b.dataset.sid);
+    }
     else if (act === 'stop-chat') {
       b.disabled = true;
       const r = await post(`/api/chat/stop/${encodeURIComponent(b.dataset.sid)}`);
@@ -307,11 +391,24 @@ async function onClick(e) {
  *  becomes a normal turn with the chat's own settings. */
 async function sendToChat(sid, text, { open = true } = {}) {
   if (open) close();
-  await window.sessionModule?.selectSession?.(sid);
-  const ta = $('message'); if (!ta) return;
+  await selectChat(sid);
+  const ta = $('message');
+  if (!ta) throw new Error('Chat composer is unavailable');
   ta.value = text;
   try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-  document.querySelector('.send-btn')?.click();
+  const send = document.querySelector('.send-btn');
+  if (!send) throw new Error('Chat send control is unavailable');
+  send.click();
+}
+async function selectChat(sid) {
+  if (!window.sessionModule?.selectSession) throw new Error('Chat navigation is unavailable');
+  await window.sessionModule.selectSession(sid);
+  const current = window.sessionModule.getCurrentSessionId?.();
+  if (current && current !== sid) throw new Error('Could not open the selected chat');
+}
+async function openChat(sid) {
+  close();
+  await selectChat(sid);
 }
 
 // ── open / close ──────────────────────────────────────────────────────────
@@ -322,7 +419,14 @@ export function open() {
   const cur = window.sessionModule?.getCurrentSessionId?.();
   if (cur && state.rows.some((r) => r.session_id === cur)) state.selected = cur;
   render(); refresh(); connect();
-  if (!state.tick) state.tick = setInterval(() => { if (state.open) { root.querySelectorAll('.ag-row-dur').forEach(() => {}); render(); } }, 5000);
+  if (!state.tick) state.tick = setInterval(() => {
+    if (!state.open) return;
+    root.querySelectorAll('.ag-row-dur[data-started]').forEach((el) => {
+      const started = Number(el.dataset.started);
+      const finished = Number(el.dataset.finished) || undefined;
+      if (started) el.textContent = fmtDur(started, finished);
+    });
+  }, 1000);
 }
 export function close() {
   const root = $('agents-dashboard'); if (!root) return;

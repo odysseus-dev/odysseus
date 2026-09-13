@@ -41741,6 +41741,8 @@ button.csl-item:hover { color: var(--fg); background: var(--wb-hover); }
 button.ag-stat { cursor: pointer; }
 button.ag-stat:hover { background: var(--wb-hover); }
 .ag-head-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.ag-refresh-error { flex-shrink: 0; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--wb-bad) 45%, var(--border)); border-radius: var(--wb-r-sm); background: color-mix(in srgb, var(--wb-bad) 8%, var(--panel)); color: var(--wb-bad); }
+.ag-refresh-error[hidden] { display: none; }
 .ag-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 10px; }
 .agents-dashboard:has(.ag-launch) .ag-body { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(280px, 360px); }
 .ag-fleet { display: flex; flex-direction: column; overflow: hidden; }
