@@ -122,22 +122,24 @@ def migrate_settings(path: Path) -> bool:
     try:
         # chmod before chown: the Compose cap set is `cap_drop: ALL` plus
         # CHOWN/SETGID/SETUID/DAC_OVERRIDE, with no FOWNER. Once the temporary
-        # file belongs to searxng:searxng — which every retained settings file
-        # does, because searxng's entrypoint chowns /etc/searxng — root can no
+        # file belongs to searxng:searxng -- which every retained settings file
+        # does, because searxng's entrypoint chowns /etc/searxng -- root can no
         # longer chmod it and the migration dies with EPERM.
         os.fchmod(fd, stat.S_IMODE(source_stat.st_mode))
-        os.fchown(fd, source_stat.st_uid, source_stat.st_gid)
+        if sys.platform != "win32":
+            os.fchown(fd, source_stat.st_uid, source_stat.st_gid)
         with os.fdopen(fd, "wb") as handle:
             fd = -1
             handle.write(updated)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if sys.platform != "win32":
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         if fd >= 0:
             os.close(fd)
