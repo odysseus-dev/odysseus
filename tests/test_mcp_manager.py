@@ -92,6 +92,39 @@ def test_dead_transport_errors_are_distinguished_from_tool_errors():
     assert _is_dead_transport_error(_ClosedResourceError())
     assert _is_dead_transport_error(BrokenPipeError())
     assert not _is_dead_transport_error(RuntimeError("tool said no"))
+
+
+def _connected(server_id: str, name: str, tool_names) -> McpManager:
+    mgr = McpManager()
+    mgr._tools = {
+        server_id: [
+            {"name": n, "description": f"{n} tool.", "input_schema": {}}
+            for n in tool_names
+        ]
+    }
+    mgr._connections = {server_id: {"status": "connected", "name": name, "identity": ""}}
+    return mgr
+
+
+def test_gated_tool_names_excludes_user_added_external_servers():
+    # Regression for the Penpot MCP incident: a user-added server (any id not
+    # in the hardcoded embedded-catalog set) must not be gated behind RAG/
+    # intent tool selection -- it's a handful of tools the user explicitly
+    # connected, not a large ambient catalog like the browser/GitHub ones.
+    mgr = _connected("penpot", "Penpot", ["execute_code", "get_page", "list_boards"])
+    assert mgr.gated_tool_names() == set()
+
+
+def test_gated_tool_names_includes_large_embedded_catalogs():
+    # The browser (Playwright, ~30 tools) and similar embedded catalogs stay
+    # gated so a single semantic match doesn't flood a small model's schema
+    # list with every tool in that catalog.
+    mgr = _connected("builtin_browser", "Browser", ["click", "navigate", "screenshot"])
+    assert mgr.gated_tool_names() == {
+        "mcp__builtin_browser__click",
+        "mcp__builtin_browser__navigate",
+        "mcp__builtin_browser__screenshot",
+    }
     assert not _is_dead_transport_error(None)
 
 
