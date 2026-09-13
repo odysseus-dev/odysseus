@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from src.request_models import PresetUpdateRequest
 from core.middleware import require_admin
 from src.auth_helpers import effective_user
+from core.guard_deco import content_type
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return preset_manager.presets
 
     @router.post("/api/presets/custom")
+    @content_type(["application/json"])
     async def update_custom_preset(preset_update: PresetUpdateRequest, _admin: None = Depends(require_admin)) -> Dict[str, Any]:
         try:
             success = preset_manager.update_custom(
@@ -54,6 +56,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return preset_manager.get_user_templates()
 
     @router.post("/api/presets/templates")
+    @content_type(["application/json"])
     async def save_user_template(req: UserTemplateRequest, _admin: None = Depends(require_admin)) -> Dict[str, Any]:
         template = req.model_dump()
         if not template["id"]:
@@ -71,6 +74,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return {"success": False, "message": "Failed to delete template"}
 
     @router.post("/api/presets/expand")
+    @content_type(["application/json"])
     async def expand_character_prompt(request: Request) -> Dict[str, Any]:
         """Use AI to expand a rough character description into a full system prompt."""
         from src.ai_interaction import _resolve_model
@@ -117,6 +121,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return {"groups": preset_manager.get_group_presets()}
 
     @router.post("/api/presets/groups")
+    @content_type(["application/json"])
     async def save_group_presets(request: Request, _admin: None = Depends(require_admin)):
         """Save group chat presets."""
         data = await request.json()

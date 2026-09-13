@@ -23,6 +23,7 @@ from fastapi import APIRouter, Query, Depends, Response, HTTPException
 from typing import List, Dict, Optional
 
 from core.middleware import require_admin
+from core.guard_deco import content_type, usage_monitor
 from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -763,6 +764,7 @@ def setup_contacts_routes():
         return {"results": results[:10]}
 
     @router.post("/add")
+    @content_type(["application/json"])
     async def add_contact(data: dict, _admin: str = Depends(require_admin)):
         """Add a new contact."""
         name = (data.get("name") or "").strip()
@@ -810,6 +812,7 @@ def setup_contacts_routes():
         return {"success": ok}
 
     @router.post("/import")
+    @content_type(["application/json"])
     async def import_vcf(data: dict, _admin: str = Depends(require_admin)):
         """Import contacts from .vcf or CSV. Body: {"vcf": "..."} or {"csv": "..."}."""
         # Coerce defensively: a non-string vcf/text/csv (e.g. a number or list
@@ -858,6 +861,8 @@ def setup_contacts_routes():
         return cfg
 
     @router.put("/config")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def update_config(data: dict, _admin: str = Depends(require_admin)):
         settings = _load_settings()
         for key in ("carddav_url", "carddav_username", "carddav_password"):
@@ -888,6 +893,7 @@ def setup_contacts_routes():
     # (/list, /search, /add, /config) win — otherwise PUT /config would
     # match PUT /{uid} with uid="config".
     @router.put("/{uid}")
+    @content_type(["application/json"])
     async def edit_contact(uid: str, data: dict, _admin: str = Depends(require_admin)):
         """Edit an existing contact — name / emails / phones / address."""
         name = (data.get("name") or "").strip()

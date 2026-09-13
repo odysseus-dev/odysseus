@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from core.database import EditorDraft, SessionLocal
 from src.auth_helpers import get_current_user
+from core.guard_deco import content_type, suspicious_frequency
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/editor-drafts")
+    @content_type(["application/json"])
     async def create_draft(request: Request, body: DraftCreate) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
@@ -135,6 +137,8 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.put("/api/editor-drafts/{draft_id}")
+    @content_type(["application/json"])
+    @suspicious_frequency(0.5, 60, "log")
     async def update_draft(request: Request, draft_id: str, body: DraftUpdate) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()

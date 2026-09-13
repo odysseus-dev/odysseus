@@ -2,6 +2,7 @@
 """Routes for cleanup operations."""
 import logging
 from fastapi import APIRouter, HTTPException, Request
+from core.guard_deco import usage_monitor
 from src.cleanup_service import get_cleanup_preview, cleanup_sessions
 from src.auth_helpers import get_current_user
 
@@ -36,6 +37,7 @@ def setup_cleanup_routes(session_manager):
             raise HTTPException(500, "Cleanup preview generation failed")
 
     @router.post("")
+    @usage_monitor(10, 3600, "log")
     async def cleanup_endpoint(request: Request):
         """
         Perform cleanup operations:

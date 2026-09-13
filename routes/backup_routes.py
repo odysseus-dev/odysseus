@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request, Response
 from core.middleware import require_admin
 from services.memory import MemoryStoreUnreadable
+from core.guard_deco import content_type, usage_monitor
 from src.auth_helpers import get_current_user
 from src.settings import load_settings, save_settings, load_features, save_features
 
@@ -17,6 +18,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
     router = APIRouter(tags=["backup"])
 
     @router.get("/api/export")
+    @usage_monitor(10, 3600, "log")
     async def export_data(request: Request):
         """Export all user data as a downloadable JSON file."""
         require_admin(request)
@@ -61,6 +63,8 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         )
 
     @router.post("/api/import")
+    @usage_monitor(10, 3600, "log")
+    @content_type(["application/json"])
     async def import_data(request: Request):
         """Import user data from a previously exported JSON file. Merges with existing data."""
         require_admin(request)

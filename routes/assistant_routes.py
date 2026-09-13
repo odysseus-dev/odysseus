@@ -18,6 +18,7 @@ from core.database import SessionLocal, CrewMember, ScheduledTask
 from src.auth_helpers import get_current_user
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.task_scheduler import compute_next_run
+from core.guard_deco import content_type, suspicious_frequency
 
 
 class CheckInUpdate(BaseModel):
@@ -155,6 +156,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             db.close()
 
     @router.patch("/settings")
+    @content_type(["application/json"])
     async def update_assistant_settings(payload: AssistantSettingsUpdate, request: Request):
         """Update CrewMember fields and/or check-in tasks in one call."""
         owner = _owner(request)
@@ -267,6 +269,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             db.close()
 
     @router.post("/run/{task_id}")
+    @suspicious_frequency(0.5, 60, "log")
     async def run_check_in_now(task_id: str, request: Request):
         """Trigger one of the assistant's check-ins immediately (manual test)."""
         owner = _owner(request)
