@@ -1197,5 +1197,20 @@ export async function init() {
 }
 
 export function refreshSettings() { return probeSettings(); }
+/** Open one run from the Agents dashboard. Align the Workbench stream with
+ * the selected chat before focusing so its history is available immediately,
+ * rather than waiting for the session watcher to notice the navigation. */
+export async function openRun(runId, sessionId) {
+  if (!state.enabled) throw new Error('Workbench is disabled');
+  open();
+  if (sessionId && sessionId !== state.sessionId) {
+    state.sessionId = sessionId;
+    state.prefs.scope = 'session';
+    savePrefs();
+    await connect(true);
+  }
+  state.focusRun = runId || null;
+  setTab('activity');
+}
 export const _state = state;
-export default { init, open, close, toggle, refreshSettings };
+export default { init, open, close, toggle, refreshSettings, openRun };

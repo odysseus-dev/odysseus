@@ -44,6 +44,12 @@ latest review comments into the composer.
 
 ![Pull request review](workbench-prs.png)
 
+## Agents dashboard
+
+The Agents rail/sidebar entry opens the owner-scoped fleet view. It groups chats by approval, running, failed, finished, and stopped state. Select a chat to approve or deny tool calls, steer an active turn, stop a chat or child run, send the next message, or launch a worker profile. Every child run also has an **Inspect** action that opens its event history in the Workbench.
+
+Status updates replace only the fleet, counters, and selected detail data. They do not rebuild the dashboard shell. Search state, scroll position, launch settings, and a partially written steer or reply remain intact when a run finishes. Use **Refresh** for an immediate status check; connection failures appear inline without closing the dashboard.
+
 ## Runs inside the chat
 
 When a Claude Code run, sub-agent, pipeline or background job starts for the
