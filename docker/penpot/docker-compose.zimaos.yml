@@ -1,0 +1,243 @@
+# Penpot 2.17 on ZimaOS (CasaOS-style compose).
+#
+# Import via ZimaOS > App Store > "Install a customized app" > Import, or drop
+# it in as the compose for the existing "penpot-backend" app. `name:` and
+# `store_app_id` are kept identical to the app ZimaOS already installed so the
+# reinstall reuses the same /DATA/AppData/big-bear-penpot bind mounts.
+#
+# What the previous ZimaOS export got wrong (and why exports were broken):
+#   * penpot-exporter had no PENPOT_SECRET_KEY. The 2.x exporter config schema
+#     REQUIRES it, so the container died on boot and the frontend's nginx
+#     answered every /api/export with 502.
+#   * penpot-exporter's PENPOT_PUBLIC_URI was http://big-bear-penpot-frontend:9001.
+#     9001 is the port published on the NAS; inside the Docker network the
+#     frontend listens on 8080. The headless browser used PUBLIC_URI as its
+#     fallback internal URI and dialled the wrong port. PENPOT_INTERNAL_URI
+#     now names the internal address explicitly.
+#   * penpot-backend's PENPOT_PUBLIC_URI was an internal hostname. It must be
+#     the URL users open in their browser.
+#   * penpot-frontend had no PENPOT_FLAGS / PENPOT_PUBLIC_URI, so config.js
+#     shipped with no flags and the UI could not see the login/registration
+#     settings the backend was running with.
+#   * The exporter published 4403 -> 19403. Nothing listens there (the
+#     exporter serves 6061 and is only reached through the frontend). Removed.
+#
+# Keep PENPOT_FLAGS, PENPOT_PUBLIC_URI and PENPOT_SECRET_KEY identical across
+# the services that declare them. YAML anchors are avoided on purpose because
+# the ZimaOS importer re-serialises the file.
+#
+# Secrets are placeholders in this committed copy. Before importing, replace
+#   __PENPOT_SECRET_KEY__   (2 places: backend + exporter, MUST be identical)
+#   __PENPOT_DB_PASSWORD__  (2 places: backend + postgres, MUST match the
+#                            password the existing pgdata was initialised with)
+#
+# Reference: https://raw.githubusercontent.com/penpot/penpot/2.17.0/docker/images/docker-compose.yaml
+
+name: penpot-backend
+
+services:
+  penpot-frontend:
+    container_name: big-bear-penpot-frontend
+    image: penpotapp/frontend:2.17.0
+    restart: unless-stopped
+    depends_on:
+      penpot-backend:
+        condition: service_started
+      penpot-exporter:
+        condition: service_started
+    environment:
+      PENPOT_FLAGS: enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies enable-smtp enable-mcp
+      PENPOT_PUBLIC_URI: http://homelab.nas:9001
+      PENPOT_HTTP_SERVER_MAX_BODY_SIZE: "367001600"
+      # Internal upstreams nginx proxies to. Service names resolve on the
+      # compose network; these are the image defaults, spelled out.
+      PENPOT_BACKEND_URI: http://penpot-backend:6060
+      PENPOT_EXPORTER_URI: http://penpot-exporter:6061
+      PENPOT_MCP_URI: http://penpot-mcp:4401
+      PENPOT_MCP_URI_WS: http://penpot-mcp:4402
+    ports:
+      - target: 8080
+        published: "9001"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: /DATA/AppData/big-bear-penpot/assets
+        target: /opt/data/assets
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+  penpot-backend:
+    container_name: big-bear-penpot-backend
+    image: penpotapp/backend:2.17.0
+    restart: unless-stopped
+    depends_on:
+      penpot-postgres:
+        condition: service_healthy
+      penpot-redis:
+        condition: service_healthy
+    environment:
+      PENPOT_FLAGS: enable-registration enable-login-with-password disable-email-verification disable-secure-session-cookies enable-smtp enable-mcp
+      PENPOT_PUBLIC_URI: http://homelab.nas:9001
+      PENPOT_HTTP_SERVER_MAX_BODY_SIZE: "367001600"
+      # Master key; sessions/invitations/export tokens derive from it, so the
+      # exporter MUST carry the same value. Rotating it logs everyone out.
+      # Generate a strong one with:
+      #   python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+      PENPOT_SECRET_KEY: __PENPOT_SECRET_KEY__
+      PENPOT_DATABASE_URI: postgresql://penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: bigbear
+      PENPOT_DATABASE_PASSWORD: __PENPOT_DB_PASSWORD__
+      PENPOT_REDIS_URI: redis://penpot-redis/0
+      # 2.11+ names; the old PENPOT_ASSETS_STORAGE_BACKEND=assets-fs pair is
+      # deprecated and only logs a warning.
+      PENPOT_OBJECTS_STORAGE_BACKEND: fs
+      PENPOT_OBJECTS_STORAGE_FS_DIRECTORY: /opt/data/assets
+      PENPOT_TELEMETRY_ENABLED: "false"
+      # Mail goes to the bundled mailcatcher (read it at http://homelab.nas:1080).
+      PENPOT_SMTP_DEFAULT_FROM: no-reply@homelab.nas
+      PENPOT_SMTP_DEFAULT_REPLY_TO: no-reply@homelab.nas
+      PENPOT_SMTP_HOST: penpot-mailcatch
+      PENPOT_SMTP_PORT: "1025"
+      PENPOT_SMTP_TLS: "false"
+      PENPOT_SMTP_SSL: "false"
+    volumes:
+      - type: bind
+        source: /DATA/AppData/big-bear-penpot/assets
+        target: /opt/data/assets
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+  penpot-exporter:
+    container_name: big-bear-penpot-exporter
+    image: penpotapp/exporter:2.17.0
+    restart: unless-stopped
+    depends_on:
+      penpot-redis:
+        condition: service_healthy
+    environment:
+      # Required by the exporter's config schema. Must match penpot-backend.
+      PENPOT_SECRET_KEY: __PENPOT_SECRET_KEY__
+      PENPOT_PUBLIC_URI: http://homelab.nas:9001
+      # Where the exporter's headless browser loads the app from. Docker
+      # network address, container port -- NOT the port published on the NAS.
+      PENPOT_INTERNAL_URI: http://penpot-frontend:8080
+      PENPOT_REDIS_URI: redis://penpot-redis/0
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+  penpot-mcp:
+    # Penpot's MCP server + plugin server, run from the npm package so the
+    # plugin build can bake in the NAS websocket address (WS_URI).
+    # 4400 plugin server, 4401 MCP HTTP (/mcp, /sse), 4402 plugin websocket.
+    container_name: big-bear-penpot-mcp
+    image: node:22-bookworm-slim
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    command:
+      - sh
+      - -lc
+      - npx -y @penpot/mcp@2.17.0
+    environment:
+      PENPOT_MCP_SERVER_HOST: 0.0.0.0
+      PENPOT_MCP_PLUGIN_SERVER_HOST: 0.0.0.0
+      PENPOT_MCP_SERVER_PORT: "4401"
+      PENPOT_MCP_WEBSOCKET_PORT: "4402"
+      WS_URI: ws://homelab.nas:19402
+    ports:
+      - target: 4400
+        published: "19400"
+        protocol: tcp
+      - target: 4401
+        published: "19401"
+        protocol: tcp
+      - target: 4402
+        published: "19402"
+        protocol: tcp
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+  penpot-postgres:
+    container_name: big-bear-penpot-postgres
+    # Stay on 14: /DATA/AppData/big-bear-penpot/pgdata was initialised by 14
+    # and a major bump needs a dump/restore.
+    image: postgres:14
+    restart: unless-stopped
+    stop_signal: SIGINT
+    environment:
+      POSTGRES_DB: penpot
+      POSTGRES_USER: bigbear
+      POSTGRES_PASSWORD: __PENPOT_DB_PASSWORD__
+      POSTGRES_INITDB_ARGS: --data-checksums
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bigbear -d penpot"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - type: bind
+        source: /DATA/AppData/big-bear-penpot/pgdata
+        target: /var/lib/postgresql/data
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+  penpot-redis:
+    container_name: big-bear-penpot-redis
+    image: redis:7.4.6
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+  penpot-mailcatch:
+    container_name: big-bear-penpot-mailcatch
+    image: sj26/mailcatcher:latest
+    restart: unless-stopped
+    expose:
+      - "1025"
+    ports:
+      - target: 1080
+        published: "1080"
+        protocol: tcp
+    labels:
+      icon: https://icon.casaos.io/main/all/penpot-backend.png
+    networks:
+      big-bear-penpot-network: null
+
+networks:
+  big-bear-penpot-network:
+    name: big-bear-penpot_big-bear-penpot-network
+    driver: bridge
+
+x-casaos:
+  author: self
+  category: self
+  hostname: ""
+  icon: https://icon.casaos.io/main/all/penpot-backend.png
+  index: /
+  is_uncontrolled: false
+  main: penpot-frontend
+  port_map: "9001"
+  scheme: http
+  store_app_id: penpot-backend
+  title:
+    custom: Penpot
+    en_us: penpot-backend
