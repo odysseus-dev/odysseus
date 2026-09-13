@@ -26,6 +26,9 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "write_file": ("path",),
     "edit_file": ("path",),
     "apply_patch": ("patch_text", "patchText", "patch"),
+    # Without this, a prompt-less call falls through to the line parser in
+    # tool_execution and the whole JSON blob becomes the image prompt.
+    "generate_image": ("prompt",),
 }
 
 # ---------------------------------------------------------------------------
@@ -1027,6 +1030,23 @@ FUNCTION_TOOL_SCHEMAS = [
                     "filter": {"type": "string", "description": "For action=endpoints: substring to filter paths/summaries (e.g. 'cookbook', 'gallery')"}
                 },
                 "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an image from a text prompt. Art, illustrations, photos.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Image description prompt"},
+                    "model": {"type": "string", "description": "Model name (auto-detects if omitted)"},
+                    "size": {"type": "string", "description": "Image size (default 1024x1024)"},
+                    "quality": {"type": "string", "description": "Quality: low, medium, high, auto (default medium)"},
+                },
+                "required": ["prompt"]
             }
         }
     },
