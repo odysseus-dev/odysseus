@@ -3254,13 +3254,19 @@ async def action_cookbook_serve(
          if isinstance(s, dict) and (s.get("host") == host or s.get("name") == host)),
         {},
     )
+    task_ssh_port = str(srv.get("port") or srv.get("sshPort") or cfg.get("ssh_port") or "")
+    task_platform = str(
+        srv.get("platform")
+        or cfg.get("platform")
+        or ("windows" if IS_WINDOWS and not host else "linux")
+    ).strip().lower()
     if srv.get("env") == "venv" and srv.get("envPath"):
         body["env_prefix"] = f"source {srv['envPath']}/bin/activate"
     elif srv.get("env") == "conda" and srv.get("envPath"):
         body["env_prefix"] = f"conda activate {srv['envPath']}"
     if srv.get("hfToken"): body["hf_token"] = srv["hfToken"]
-    if srv.get("port"): body["ssh_port"] = str(srv["port"])
-    if srv.get("platform"): body["platform"] = srv["platform"]
+    if task_ssh_port: body["ssh_port"] = task_ssh_port
+    if task_platform: body["platform"] = task_platform
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -3274,6 +3280,17 @@ async def action_cookbook_serve(
 
     sid = data.get("session_id") or ""
     endpoint_id = data.get("endpoint_id") or ""
+    raw_effective_cmd = data.get("effective_cmd")
+    effective_cmd = raw_effective_cmd.strip() if isinstance(raw_effective_cmd, str) else ""
+    if not effective_cmd:
+        effective_cmd = cmd
+    runtime_port = None
+    try:
+        candidate_port = int(data.get("runtime_port"))
+        if 1 <= candidate_port <= 65535:
+            runtime_port = candidate_port
+    except (TypeError, ValueError):
+        pass
     # Scheduled serves are usually meant to become the active local model for
     # chat/tools while their time window is open. Persist both endpoint and
     # model so task/utility/default resolution does not keep routing to a stale
@@ -3339,13 +3356,11 @@ async def action_cookbook_serve(
             )
             if existing is None:
                 display_name = repo_id.split("/")[-1] if "/" in repo_id else repo_id
-                ssh_port = str(srv.get("port") or cfg.get("ssh_port") or "")
-                platform = str(srv.get("platform") or cfg.get("platform") or "linux")
                 placeholder = (
                     f"Launched by scheduled task {task_name!r} — waiting for tmux output…\n"
                     f"  session: {sid}\n"
                     f"  target:  {host or 'local'}\n"
-                    f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
+                    f"  cmd:     {effective_cmd[:200]}{'…' if len(effective_cmd) > 200 else ''}"
                 )
                 existing = {
                     "id": sid,
@@ -3356,14 +3371,29 @@ async def action_cookbook_serve(
                     "status": "running",
                     "output": placeholder,
                     "ts": int(_time.time() * 1000),
-                    "payload": {"repo_id": repo_id, "remote_host": host or "", "_cmd": cmd},
+                    "payload": {"repo_id": repo_id, "remote_host": host or "", "_cmd": effective_cmd},
                     "remoteHost": host or "",
-                    "sshPort": ssh_port or "",
-                    "platform": platform or "linux",
+                    "sshPort": task_ssh_port,
+                    "platform": task_platform or "linux",
                     "_serveReady": False,
                     "_endpointAdded": bool(endpoint_id),
                 }
                 tasks.append(existing)
+            task_payload = existing.get("payload") if isinstance(existing.get("payload"), dict) else {}
+            task_payload.update({
+                "repo_id": repo_id,
+                "remote_host": host or "",
+                "_cmd": effective_cmd,
+                "platform": task_platform or "linux",
+            })
+            if task_ssh_port:
+                task_payload["ssh_port"] = task_ssh_port
+            if runtime_port is not None:
+                task_payload["runtime_port"] = str(runtime_port)
+            existing["payload"] = task_payload
+            existing["remoteHost"] = host or ""
+            existing["sshPort"] = task_ssh_port
+            existing["platform"] = task_platform or "linux"
             # Stamp ownership + end-at on the task entry.
             existing["_scheduledByTask"] = task_name or ""
             existing["_scheduledByOwner"] = owner or ""
