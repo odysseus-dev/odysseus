@@ -1445,7 +1445,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("ui")
     if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
         domains.add("sessions")
-    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash)\b"):
+    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|zsh|powershell|cli|command[-\s]?line|cmd|console)\b"):
         domains.add("files")
     if has(
         r"\b(run|execute|test|debug|fix|save|create|edit|read|open)\b.{0,40}\b("
@@ -1623,6 +1623,100 @@ def _resolved_tool_event_name(event: dict[str, Any]) -> str:
         if m:
             return m.group(0)
     return tool
+
+
+def _iter_recent_tool_events(messages: List[Dict], max_user_turns: int = 2):
+    """Yield persisted tool_events from the most recent turns, newest first.
+
+    Walks assistant ``metadata.tool_events`` backwards, stopping once
+    ``max_user_turns`` older user turns have been crossed. Injected-context
+    rows (uploads, research context — ``role: "user"`` with
+    ``metadata.trusted: False``) are not real turns and do not count toward
+    the window. Skips malformed shapes defensively.
+    """
+    user_turns = 0
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "")
+        if role == "user":
+            metadata = message.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("trusted") is False:
+                continue
+            user_turns += 1
+            if user_turns > max_user_turns:
+                break
+            continue
+        if role != "assistant":
+            continue
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        raw_events = metadata.get("tool_events")
+        if not isinstance(raw_events, list):
+            continue
+        for event in raw_events:
+            if isinstance(event, dict):
+                yield event
+
+
+def _recently_used_tools(messages: List[Dict], max_user_turns: int = 2, max_tools: int = 16) -> Set[str]:
+    """Tool names the agent actually executed in the most recent turns.
+
+    Per-turn tool selection keys off the latest user message only, so a
+    follow-up like "now show the diff" — which no longer names `bash` —
+    would otherwise drop the shell/file tools the previous turn used, and
+    the model reports them "not available this turn" mid-task. Persisted
+    tool_events carry the executed tool names; feed the recent ones back
+    into selection so consecutive requests keep their working toolset.
+    """
+    used: List[str] = []
+    seen: Set[str] = set()
+    for event in _iter_recent_tool_events(messages, max_user_turns):
+        name = _resolved_tool_event_name(event)
+        if name and name != "mcp" and name not in seen:
+            seen.add(name)
+            used.append(name)
+            if len(used) >= max_tools:
+                return set(used)
+    return set(used)
+
+
+def _recently_viewed_skill_names(messages: List[Dict], max_user_turns: int = 2) -> Set[str]:
+    """Skill names the model fetched via ``manage_skills action=view`` recently.
+
+    A fetched skill's frontmatter declares the tools its procedure needs
+    (``requires_toolsets`` — often the shell). The Jaccard skill matcher keys
+    off the latest user message, so on a follow-up turn the skill usually
+    stops matching and its declared tools vanish. The persisted view event
+    carries the skill name, letting the next turn re-attach them.
+    """
+    names: Set[str] = set()
+    for event in _iter_recent_tool_events(messages, max_user_turns):
+        if str(event.get("tool") or "") != "manage_skills":
+            continue
+        command = str(event.get("command") or "")
+        # Accept JSON (`{"action": "view", "name": ...}`), key=value
+        # (`action=view name=...`), and the bare imperative form the prompt
+        # documents (`view name=...`, anchored at command start). A bare
+        # "view" mid-command is deliberately NOT accepted: a search call like
+        # `{"action": "search", "query": "how to view logs"}` must not read
+        # as a skill view.
+        if not (
+            re.search(r'"?action"?\s*[:=]\s*"?view(?:_ref)?"?', command)
+            or re.match(r"\s*view(?:_ref)?\b", command)
+        ):
+            continue
+        m = re.search(r'"name"\s*:\s*"([^"]+)"', command) or re.search(
+            r"\bname\s*[:=]\s*([A-Za-z0-9_\- ]+)", command
+        )
+        if m:
+            # The event record is model-influenced — drop control characters
+            # (log forgery) before it reaches logs or the SkillsManager lookup.
+            name = re.sub(r"[\x00-\x1f\x7f]", "", m.group(1)).strip().strip('"').strip()
+            if name:
+                names.add(name)
+    return names
 
 
 def _minimal_recent_notes_tool_context_message(messages: List[Dict]) -> Optional[Dict]:
@@ -3987,6 +4081,40 @@ async def stream_agent_loop(
         ):
             _relevant_tools = set(_WORKSPACE_TERMINUS_TOOLS)
             logger.info("[tool-rag] Workspace file/terminal request; using Odysseus Terminus toolset")
+
+    # Carry tools the agent actually executed in recent turns back into this
+    # turn's selection (see _recently_used_tools). Follow-ups rarely re-name
+    # the tool, and retrieval keys only off the latest message — without this
+    # the shell/file tools used one turn ago silently vanish and the model
+    # reports them "not available this turn" mid-task.
+    if not guide_only and _relevant_tools is not None:
+        _recent_tools = {t for t in _recently_used_tools(messages) if t not in disabled_tools}
+        # A skill the model fetched in a recent turn declares the tools its
+        # procedure needs via requires_toolsets (often the shell). The Jaccard
+        # skill matcher keys off the latest user message, so on a follow-up
+        # ("do step 3 now") the skill stops matching and its tools vanish —
+        # re-attach them from the persisted view events.
+        _recent_skills = _recently_viewed_skill_names(messages)
+        if _recent_skills:
+            try:
+                from services.memory.skills import SkillsManager as _RecentSkM
+                from src.constants import DATA_DIR as _RecentDataDir
+                from src.tool_policy import known_tool_names as _known_tool_names
+                _known_recent = _known_tool_names()
+                for _rsk in _RecentSkM(_RecentDataDir).load(owner=owner):
+                    if _rsk.get("name") in _recent_skills:
+                        _recent_tools.update(
+                            t for t in (_rsk.get("requires_toolsets") or [])
+                            if t in _known_recent and t not in disabled_tools
+                        )
+            except Exception as _e:
+                logger.debug(f"[tool-rag] recent-skill tool carry skipped: {_e}")
+        if _recent_tools:
+            _relevant_tools.update(_recent_tools)
+            logger.info(
+                f"[tool-rag] Carried forward recent tools: {sorted(_recent_tools)}"
+                + (f" (viewed skills: {sorted(_recent_skills)})" if _recent_skills else "")
+            )
 
     # If this turn targets the open document, keep editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran.

@@ -74,6 +74,20 @@ def test_polish_internet_search_request_classifies_as_web():
     assert "web" in intent["domains"]
 
 
+def test_explicit_cli_requests_classify_as_files():
+    for text in (
+        "run this in the CLI",
+        "use the command line for that",
+        "check it from the terminal",
+        "open a shell and kill the process",
+        "do it in the console",
+        "run it with powershell",
+    ):
+        intent = _classify_agent_request([], text)
+        assert "files" in intent["domains"], text
+        assert intent["low_signal"] is False, text
+
+
 def test_insert_before_latest_user_places_context_before_last_user_turn():
     messages = [
         {"role": "user", "content": "first"},
