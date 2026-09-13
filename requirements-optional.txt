@@ -69,9 +69,14 @@ fastapi-guard>=8.0.0
 # some other, unlisted non-loopback address is not refused at all: guard-core
 # bans that private IP outright instead, a pre-existing misconfiguration risk
 # 4.0.1 does not change. That refusal path is live here: enable_ip_banning and
-# enable_rate_limit_auto_ban are both on below.
+# enable_rate_limit_auto_ban are both on below. >= 4.0.2 bounds several
+# built-in detection matchers that were quadratic (file-upload, XML/XXE,
+# cmd-injection, sqli comment terminator), hardens the ReDoS validator against
+# the remaining quadratic shapes, and scales the custom-pattern verdict
+# deadline by measured host load, so a hostile pattern is verdicted instead of
+# stalling the perimeter on a busy host.
 # >= 8.0.0 floors guard-core>=4.0.0.
-guard-core>=4.0.1
+guard-core>=4.0.2
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
