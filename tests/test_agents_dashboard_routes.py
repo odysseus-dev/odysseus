@@ -148,3 +148,25 @@ async def test_launch_starts_a_worker_chat_and_stop_ends_it(env, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await eps[("POST", "/api/agents/launch")](_req({"task": "x", "parent_session": "b1"}))
     assert exc.value.status_code == 404
+
+
+async def test_finished_worker_hands_its_result_to_the_parent_chat_which_continues(env, monkeypatch):
+    mgr, eps = env
+    parent = mgr.sessions["a1"]
+    parent.get_context_messages = lambda: [{"role": m.role, "content": m.content} for m in parent.history]
+    calls = []
+
+    async def fake_loop(url, model, messages, **kwargs):
+        calls.append([m["content"] for m in messages])
+        yield 'data: {"delta": "' + ("worker result" if len(calls) == 1 else "parent continued") + '"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(agent_loop, "stream_agent_loop", fake_loop)
+    out = await eps[("POST", "/api/agents/launch")](_req({"task": "find prices", "parent_session": "a1"}))
+    await asyncio.wait_for(agent_control._WORKERS[out["run_id"]], 5)
+    roles = [(m.role, m.metadata.get("source")) for m in parent.history]
+    assert roles == [("user", "worker"), ("assistant", "worker_followup")]
+    assert "Result:\nworker result" in parent.history[0].content
+    assert parent.history[1].content == "parent continued"
+    assert calls[1][-1].startswith("[Worker")
+    assert act.list_runs(session_id="a1")[0]["status"] == "completed"

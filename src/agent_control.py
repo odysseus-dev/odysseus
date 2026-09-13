@@ -185,7 +185,64 @@ async def launch_worker(*, owner: Optional[str], task: str, profile_name: Option
             activity.publish(parent_session, "message", f"← worker {sess.name}: {text[:160]}", source="session",
                              run_id=run_id, owner=owner, detail=text[:2000],
                              level="error" if status == "failed" else "info")
+            try:
+                await _hand_off(manager, parent_session, sess, task, text, status, owner)
+            except Exception:
+                logger.warning("worker hand-off to %s failed", parent_session, exc_info=True)
         _WORKERS.pop(run_id, None)
 
     _WORKERS[run_id] = asyncio.create_task(_run())
     return {"session_id": sess.id, "session_name": sess.name, "run_id": run_id, "model": sess.model}
+
+
+_HANDOFF_MAX_ROUNDS = 12
+
+
+async def _hand_off(manager, parent_id: str, worker, task: str, text: str, status: str,
+                    owner: Optional[str]) -> None:
+    """Deliver a finished worker's result to the chat it reports to.
+
+    The result is saved into the parent chat as a message from the worker,
+    so the parent's next turn has it. If the parent is idle, its agent
+    continues right away (like a background job's follow-up) so a plan that
+    delegated a piece of work picks the piece up without the user relaying it.
+    """
+    from core.models import ChatMessage
+    from src import agent_runs
+    from src.headless_agent import run_headless
+
+    parent = manager.get_session(parent_id)
+    if parent is None:
+        return
+    headline = "finished" if status == "completed" else status
+    inject = (f"[Worker {worker.name} {headline}]\nTask: {task[:1500]}\n\nResult:\n{text[:12000]}\n\n"
+              "Continue the task using this result. Don't repeat work the worker already did. "
+              "If the task is now complete, give the user the final result.")
+    parent.add_message(ChatMessage("user", inject, {"source": "worker", "from_session": worker.id,
+                                                    "from_session_name": worker.name, "direction": "inbound"}))
+    manager.save_sessions()
+    if agent_runs.is_busy(parent_id):
+        # Mid-turn: the message waits in history for the next turn.
+        activity.publish(parent_id, "note", f"Worker result saved for the next turn: {worker.name}",
+                         source="session", owner=owner)
+        return
+    run_id = activity.run_started(parent_id, "session", f"Continuing after worker {worker.name}", owner=owner,
+                                  data={"target_session": worker.id, "target_session_name": worker.name,
+                                        "mode": "agent"})
+    reply, events = "", []
+    try:
+        with agent_runs.track_external(parent_id, source="worker", owner=owner):
+            reply, events = await run_headless(parent, parent.get_context_messages(), max_rounds=_HANDOFF_MAX_ROUNDS,
+                                               disabled_tools=None, activity_session_id=parent_id, run_id=run_id,
+                                               source="session", owner=owner)
+        status = "completed"
+    except Exception as exc:
+        reply, status = f"Could not continue after the worker: {exc}", "failed"
+    meta: Dict[str, Any] = {"model": parent.model, "source": "worker_followup", "worker_session": worker.id}
+    if events:
+        meta["tool_events"] = events
+    parent.add_message(ChatMessage("assistant", reply or "(no reply)", meta))
+    manager.save_sessions()
+    activity.run_finished(parent_id, "session", run_id, f"Continued after worker {worker.name}", status=status,
+                          owner=owner, data={"target_session": worker.id, "steps": len(events),
+                                             "result_excerpt": reply[:400]})

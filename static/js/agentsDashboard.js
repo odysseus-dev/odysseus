@@ -70,9 +70,34 @@ function connect() {
     const list = state.events.get(ev.session_id) || [];
     list.push(ev); if (list.length > 400) list.splice(0, list.length - 400);
     state.events.set(ev.session_id, list);
+    notifyFor(ev);
     if (['run_started', 'run_finished', 'status', 'note'].includes(ev.kind)) scheduleRefresh();
     else if (state.open && ev.session_id === state.selected) renderDetail();
   };
+}
+/** Desktop notifications for the two things worth interrupting for: an agent
+ *  blocked on an approval, and a worker finishing — only when the user isn't
+ *  already looking at that chat or the dashboard. */
+const _notified = new Set();
+function chatName(sid) { return (state.rows.find((r) => r.session_id === sid) || state.chats.find((c) => c.id === sid) || {}).name || 'a chat'; }
+function notifyFor(ev) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const d = ev.data || {};
+  let title = '', body = '', key = '';
+  if (ev.kind === 'status' && d.approval_id) {
+    title = 'Approval needed'; body = `${d.tool || 'A tool'} in ${chatName(ev.session_id)}: ${String(ev.title || '').replace(/^Waiting for approval:\s*/, '')}`; key = `ap:${d.approval_id}`;
+  } else if (ev.kind === 'run_finished' && ev.source === 'session' && /^Worker/.test(ev.title || '')) {
+    title = d.status === 'failed' ? 'Worker failed' : 'Worker finished'; body = ev.title; key = `run:${ev.run_id}`;
+  } else if (ev.kind === 'run_finished' && ev.source === 'claude_code') {
+    title = d.status === 'failed' ? 'Claude Code failed' : 'Claude Code finished'; body = ev.title; key = `run:${ev.run_id}`;
+  }
+  if (!title || _notified.has(key)) return;
+  _notified.add(key);
+  const viewing = !document.hidden && (state.open || window.sessionModule?.getCurrentSessionId?.() === ev.session_id);
+  if (viewing && !d.approval_id) return;
+  const n = new Notification(title, { body: String(body).slice(0, 180), tag: key });
+  n.onclick = () => { window.focus(); if (d.approval_id) { state.selected = ev.session_id; open(); } else window.sessionModule?.selectSession?.(ev.session_id); n.close(); };
+  setTimeout(() => n.close(), 15000);
 }
 function disconnect() { if (state.es) { try { state.es.close(); } catch (_) {} state.es = null; } }
 let _refreshTimer = null;
@@ -293,6 +318,7 @@ async function sendToChat(sid, text, { open = true } = {}) {
 export function open() {
   const root = $('agents-dashboard'); if (!root) return;
   state.open = true; root.hidden = false; document.body.classList.add('agents-dashboard-open');
+  if ('Notification' in window && Notification.permission === 'default') { try { Notification.requestPermission(); } catch (_) {} }
   const cur = window.sessionModule?.getCurrentSessionId?.();
   if (cur && state.rows.some((r) => r.session_id === cur)) state.selected = cur;
   render(); refresh(); connect();
