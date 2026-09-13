@@ -1,6 +1,7 @@
 """User preferences API — per-user key/value store backed by a JSON file."""
 import json
-from typing import Optional
+import threading
+from typing import Iterable, Optional
 from fastapi import APIRouter, Request
 from core.atomic_io import atomic_write_json
 from src.auth_helpers import get_current_user
@@ -11,6 +12,11 @@ _FOREGROUND_POLICY_KEYS = (
     "foreground_fallback_enabled",
     "foreground_model_fallbacks",
 )
+
+# Serializes the read-modify-write in _update_for_user against itself and
+# against a whole-map _save_for_user. Reentrant because _update_for_user
+# calls _save_for_user while already holding it.
+_PREFS_LOCK = threading.RLock()
 
 
 def _load():
@@ -28,7 +34,17 @@ def _save(prefs):
 
 
 def _load_for_user(user: Optional[str] = None) -> dict:
-    """Load preferences for a specific user."""
+    """Load preferences for a specific user.
+
+    Reads take the lock so they cannot observe a write in progress. That
+    matters on Windows, where os.replace onto a path another thread currently
+    holds open raises PermissionError rather than swapping the file silently.
+    """
+    with _PREFS_LOCK:
+        return _load_for_user_locked(user)
+
+
+def _load_for_user_locked(user: Optional[str] = None) -> dict:
     all_prefs = _load()
     users = all_prefs.get("_users")
     if isinstance(users, dict):
@@ -54,7 +70,16 @@ def _load_for_user(user: Optional[str] = None) -> dict:
 
 
 def _save_for_user(user: Optional[str], prefs: dict):
-    """Save preferences for a specific user."""
+    """Replace a user's stored preferences with `prefs`.
+
+    This publishes the caller's map wholesale. Prefer _update_for_user when
+    you only mean to change some of the keys.
+    """
+    with _PREFS_LOCK:
+        _save_for_user_locked(user, prefs)
+
+
+def _save_for_user_locked(user: Optional[str], prefs: dict):
     all_prefs = _load()
     if user is None:
         # Auth disabled. If the store is already multi-user (e.g. auth was
@@ -100,6 +125,34 @@ def _save_for_user(user: Optional[str], prefs: dict):
     _save(all_prefs)
 
 
+def _update_for_user(
+    user: Optional[str],
+    patch: Optional[dict] = None,
+    *,
+    remove: Iterable[str] = (),
+) -> dict:
+    """Merge `patch` into a user's stored preferences and return the result.
+
+    Callers used to load a snapshot, change one key in it, and hand the whole
+    map back to _save_for_user. Two overlapping updates to different keys then
+    raced: the second save republished a snapshot taken before the first one
+    landed, so a write that had reported success disappeared. The file stayed
+    valid JSON and nothing was logged, which is what made it silent.
+
+    Re-reading and merging inside the lock means an update only ever publishes
+    its own keys against whatever is persisted at that moment, so independent
+    changes survive each other regardless of ordering.
+    """
+    with _PREFS_LOCK:
+        current = _load_for_user_locked(user)
+        for key in remove:
+            current.pop(key, None)
+        if patch:
+            current.update(patch)
+        _save_for_user_locked(user, current)
+        return current
+
+
 def setup_prefs_routes():
     router = APIRouter(prefix="/api/prefs", tags=["preferences"])
 
@@ -117,9 +170,7 @@ def setup_prefs_routes():
     @router.put("/{key}")
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
-        prefs = _load_for_user(user)
-        prefs[key] = body.get("value")
-        _save_for_user(user, prefs)
-        return {"key": key, "value": prefs[key]}
+        prefs = _update_for_user(user, {key: body.get("value")})
+        return {"key": key, "value": prefs.get(key)}
 
     return router

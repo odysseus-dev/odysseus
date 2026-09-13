@@ -207,10 +207,8 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
 
         # ── Preferences ──
         if "preferences" in body and isinstance(body["preferences"], dict):
-            from routes.prefs_routes import _load_for_user, _save_for_user
-            current = _load_for_user(user)
-            current.update(body["preferences"])
-            _save_for_user(user, current)
+            from routes.prefs_routes import _update_for_user
+            _update_for_user(user, body["preferences"])
             imported.append("preferences")
 
         if not imported:

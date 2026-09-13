@@ -3308,14 +3308,16 @@ async def action_cookbook_serve(
                 _settings["utility_model"] = selected_model
             _save_settings(_settings)
             if owner:
-                from routes.prefs_routes import _load_for_user, _save_for_user
+                from routes.prefs_routes import _load_for_user, _update_for_user
                 _prefs = _load_for_user(owner)
-                _prefs["default_endpoint_id"] = endpoint_id
-                _prefs["default_model"] = selected_model
+                _patch = {
+                    "default_endpoint_id": endpoint_id,
+                    "default_model": selected_model,
+                }
                 if not (_prefs.get("utility_endpoint_id") or "").strip():
-                    _prefs["utility_endpoint_id"] = endpoint_id
-                    _prefs["utility_model"] = selected_model
-                _save_for_user(owner, _prefs)
+                    _patch["utility_endpoint_id"] = endpoint_id
+                    _patch["utility_model"] = selected_model
+                _update_for_user(owner, _patch)
         except Exception as e:
             logger.warning(f"cookbook_serve: default endpoint update failed: {e}")
     # Register the new task in cookbook_state.json + stamp it with our

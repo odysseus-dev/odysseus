@@ -20,7 +20,7 @@ from src.task_action_policy import (
     owner_has_admin_task_privileges,
 )
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
-from routes.prefs_routes import _load_for_user, _save_for_user
+from routes.prefs_routes import _load_for_user, _update_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -382,12 +382,11 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     @router.post("/onboarding")
     async def update_tasks_onboarding(request: Request, body: dict):
         user = _owner(request)
-        prefs = _load_for_user(user) or {}
-        prefs["tasks_opened"] = True
         enable = bool(body.get("enabled"))
+        patch = {"tasks_opened": True}
         if enable:
-            prefs["tasks_enabled"] = True
-        _save_for_user(user, prefs)
+            patch["tasks_enabled"] = True
+        prefs = _update_for_user(user, patch)
         if user:
             await task_scheduler.ensure_defaults(user)
 
