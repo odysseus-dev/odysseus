@@ -191,7 +191,7 @@ export function showScoreboard() {
     confirmLabel.textContent = 'Clear all vote history?';
     const yesBtn = document.createElement('button');
     yesBtn.textContent = 'Clear';
-    yesBtn.style.cssText = 'padding:4px 12px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
+    yesBtn.style.cssText = 'padding:4px 12px;background:var(--red);color:var(--on-accent);border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
     yesBtn.addEventListener('click', () => {
       Storage.setJSON(VOTES_STORAGE_KEY, []);
       overlay.remove();
