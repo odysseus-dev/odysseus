@@ -4046,12 +4046,21 @@ def _tool_schemas_for_round(
     ody_qwen_finetune_model: bool,
     last_user: str,
     admin_tools: Optional[Set[str]] = None,
+    mcp_gated_names: Optional[Set[str]] = None,
 ) -> List[Dict]:
     """Return the exact schema list sent for one model round.
 
     Centralising this keeps the schema token reserve/accounting in lockstep
     with the payload. Previously the schema decision lived only inside the
     round loop, after context trimming had already decided the request fit.
+
+    ``mcp_gated_names`` is the (small) set of qualified MCP tool names that
+    belong to a large embedded catalog (browser, GitHub, Todoist, ...) and
+    must still win RAG/intent-based tool selection like a builtin tool would.
+    Every other MCP schema is a server the user explicitly connected via MCP
+    settings and stays bound once connected -- root cause of issue where a
+    connected server's tools vanished from the schema on any turn whose
+    wording did not happen to score well against the RAG tool index.
     """
     if force_answer:
         return []
@@ -4067,9 +4076,11 @@ def _tool_schemas_for_round(
                 schema for schema in FUNCTION_TOOL_SCHEMAS
                 if schema.get("function", {}).get("name") in schema_names
             ]
+            _gated = mcp_gated_names or set()
             mcp_filtered = [
                 schema for schema in mcp_schemas
                 if schema.get("function", {}).get("name") in relevant_tools
+                or schema.get("function", {}).get("name") not in _gated
             ]
             selected = base_schemas + mcp_filtered
         else:
@@ -5070,6 +5081,7 @@ async def stream_agent_loop(
         disabled_tools=disabled_tools,
         ody_qwen_finetune_model=_ody_qwen_finetune_model,
         last_user=_last_user,
+        mcp_gated_names=mcp_mgr.gated_tool_names() if mcp_mgr else None,
     )
     _initial_schema_tokens = _estimate_tool_schema_tokens(_initial_tool_schemas)
 
@@ -5337,6 +5349,12 @@ async def stream_agent_loop(
             disabled_tools=disabled_tools,
             ody_qwen_finetune_model=_ody_qwen_finetune_model,
             last_user=_last_user,
+            # Recomputed each round (not just once) so a mid-loop MCP
+            # reconnect (crashed server auto-restart, see
+            # McpManager._reconnect_server) is reflected immediately instead
+            # of the round after it, and a server that dropped/re-added tools
+            # mid-stream doesn't leave stale gating decisions in place.
+            mcp_gated_names=mcp_mgr.gated_tool_names() if mcp_mgr else None,
         )
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 

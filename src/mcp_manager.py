@@ -1050,6 +1050,31 @@ class McpManager:
 
         return schemas
 
+    def gated_tool_names(self) -> Set[str]:
+        """Qualified names of MCP tools that must still win RAG/intent-based
+        tool selection to appear in a turn's schema list.
+
+        These are the large, embedded catalogs (the browser, GitHub, Todoist,
+        Lotus, pi_worker connectors) where showing every tool on every turn
+        would flood small models with ~30 irrelevant schemas (issue tracked
+        alongside the Terminus toolset swap).
+
+        Every other connected server is one the user explicitly added via
+        MCP settings, is typically a handful of tools, and must remain
+        callable on every turn regardless of how the RAG tool-selection
+        heuristic scores that turn's wording -- otherwise a real, connected
+        tool silently disappears from the schema the moment a follow-up
+        message ("continue", "now run it") does not semantically resemble
+        its description. See root-cause note in agent_loop._tool_schemas_for_round.
+        """
+        names: Set[str] = set()
+        for server_id, tools in self._tools.items():
+            if server_id not in _BUILTIN_FUNCTION_CALLING_SERVERS:
+                continue
+            for tool in tools:
+                names.add(f"mcp__{server_id}__{tool['name']}")
+        return names
+
     def get_all_tools(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
         """Return a flat list of all discovered tools with server info."""
         result = []
