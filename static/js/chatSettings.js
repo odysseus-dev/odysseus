@@ -139,10 +139,10 @@ function render() {
     const tone = pct >= 85 ? ' danger' : pct >= 70 ? ' warn' : '';
     items.push(`<button type="button" class="csl-item csl-ctx${tone}" data-csl="context" title="${esc(`${ctx.used_tokens || 0} / ${ctx.context_length} tokens in context`)}"><span class="csl-meter"><i style="width:${Math.min(100, pct)}%"></i></span>${pct}%</button>`);
   }
-  items.push(`<button type="button" class="csl-item csl-approval csl-mode-${esc(mode)}" data-csl="panel" title="${esc(MODE_INFO[mode]?.desc || '')}">Approvals: ${esc(MODE_INFO[mode]?.label || mode)}</button>`);
+  items.push(`<button type="button" class="csl-item csl-approval csl-mode-${esc(mode)}" data-csl="mode-menu" title="${esc((MODE_INFO[mode]?.desc || '') + ' Click to change.')}">Approvals: ${esc(MODE_INFO[mode]?.label || mode)}</button>`);
   if (s.workspace) items.push(`<span class="csl-item csl-workspace" title="${esc(`Workspace: ${s.workspace}`)}">${esc(basename(s.workspace))}</span>`);
   const off = (s.disabled_tools || []).length;
-  items.push(`<button type="button" class="csl-item${off ? ' csl-attn' : ''}" data-csl="panel" title="Tools available in this chat">${off ? `${off} tool${off === 1 ? '' : 's'} off` : 'All tools'}</button>`);
+  items.push(`<button type="button" class="csl-item${off ? ' csl-attn' : ''}" data-csl="panel-tools" title="Choose which tools this chat may use">${off ? `${off} tool${off === 1 ? '' : 's'} off` : 'All tools'}</button>`);
   const always = d.always_allowed_tools || [];
   if (always.length) items.push(`<button type="button" class="csl-item csl-attn" data-csl="revoke" title="${esc(`Always allowed here: ${always.join(', ')}. Click to ask again.`)}">${always.length} always allowed ×</button>`);
   if (d.parent_session && d.parent_session.id) {
@@ -162,6 +162,8 @@ async function onLineClick(e) {
   if (!b) return;
   const act = b.dataset.csl;
   if (act === 'panel') togglePanel();
+  else if (act === 'panel-tools') togglePanel('tools');
+  else if (act === 'mode-menu') toggleModeMenu(b);
   else if (act === 'context') document.getElementById('chat-context-pill')?.click();
   else if (act === 'fork') window.sessionModule?.selectSession?.(b.dataset.id);
   else if (act === 'revoke') {
@@ -172,6 +174,35 @@ async function onLineClick(e) {
       render();
     } catch (err) { uiModule.showToast(`Could not reset approvals: ${err.message}`, 'error'); }
   }
+}
+
+// ── approval mode quick menu ──────────────────────────────────────────────
+function closeModeMenu() { $('csl-mode-menu')?.remove(); }
+function toggleModeMenu(anchor) {
+  if ($('csl-mode-menu')) { closeModeMenu(); return; }
+  closePanel();
+  const d = state.data || {};
+  const current = (d.settings || {}).approval_mode || '';
+  const menu = document.createElement('div');
+  menu.id = 'csl-mode-menu';
+  menu.className = 'csl-mode-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = ['', ...Object.keys(MODE_INFO)].map((key) => {
+    const info = key ? MODE_INFO[key] : { label: 'App default', desc: `Currently ${MODE_INFO[d.approval_mode]?.label || 'Auto'}.` };
+    return `<button type="button" role="menuitemradio" aria-checked="${current === key}" data-mode="${esc(key)}"><b>${esc(info.label)}</b><small>${esc(info.desc)}</small></button>`;
+  }).join('');
+  menu.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    closeModeMenu();
+    await save({ approval_mode: b.dataset.mode || null }, b.dataset.mode ? `Approvals: ${MODE_INFO[b.dataset.mode].label}` : 'Approvals follow the app default');
+  });
+  anchor.parentNode.insertBefore(menu, anchor);
+  const r = anchor.getBoundingClientRect();
+  const line = anchor.closest('#chat-status-line').getBoundingClientRect();
+  menu.style.left = `${Math.max(0, r.left - line.left)}px`;
+  const close = (e) => { if (!menu.contains(e.target) && e.target !== anchor) { closeModeMenu(); document.removeEventListener('mousedown', close, true); } };
+  document.addEventListener('mousedown', close, true);
 }
 
 // ── settings panel ────────────────────────────────────────────────────────
@@ -187,9 +218,10 @@ function outsideClose(e) {
 }
 function escClose(e) { if (e.key === 'Escape') { e.stopPropagation(); closePanel(); } }
 
-async function togglePanel() {
+async function togglePanel(section) {
   if ($('chat-settings-panel')) { closePanel(); return; }
   if (!state.sessionId) return;
+  closeModeMenu();
   const line = ensureLine();
   const panel = document.createElement('div');
   panel.id = 'chat-settings-panel';
@@ -204,6 +236,7 @@ async function togglePanel() {
     try { state.tools = ((await api('/api/tools')).tools || []); } catch (_) { state.tools = []; }
   }
   renderPanel();
+  if (section === 'tools') $('chat-settings-panel')?.querySelector('.csp-tools')?.scrollIntoView({ block: 'start' });
 }
 
 function renderPanel() {

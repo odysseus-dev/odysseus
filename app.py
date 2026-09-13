@@ -865,6 +865,9 @@ app.include_router(setup_claude_code_routes())
 # Workbench: unified agent activity feed, repository changes, PR feedback.
 from routes.workbench_routes import setup_workbench_routes
 app.include_router(setup_workbench_routes())
+# Agents dashboard: owner-scoped fleet view, steer/stop/launch.
+from routes.agents_routes import setup_agents_routes
+app.include_router(setup_agents_routes(session_manager))
 
 from routes.vault.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())

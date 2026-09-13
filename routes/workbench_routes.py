@@ -108,37 +108,14 @@ def setup_workbench_routes() -> APIRouter:
         parent), a Claude Code background task, a background shell job, or a
         chat turn itself."""
         _admin(request)
-        rec = activity.get_run(run_id)
-        if rec is None:
-            raise HTTPException(404, "Run not found")
-        if rec.get("status") != "running":
-            return {"stopped": False, "status": rec.get("status"), "reason": "not running"}
-        summary = rec.get("summary") or {}
-        source = rec.get("source")
-        from src.headless_agent import request_stop
+        from src.agent_control import stop_run
 
-        if request_stop(run_id):
-            return {"stopped": True, "how": "headless"}
-        if source == "claude_code":
-            from src.agent_tools.claude_code_tools import get_task_runner
-
-            task_id = summary.get("task_id") or run_id
-            record = await get_task_runner().cancel(task_id)
-            if record is None:
-                raise HTTPException(409, "This Claude Code run is part of a chat turn; stop the chat to stop it")
-            return {"stopped": True, "how": "claude_code", "status": record.get("status")}
-        if source == "bg_job" and summary.get("job_id"):
-            from src import bg_jobs
-
-            job = bg_jobs.kill(str(summary["job_id"]))
-            if job is None:
-                raise HTTPException(404, "Background job not found")
-            return {"stopped": True, "how": "bg_job", "status": job.get("status")}
-        if source == "odysseus" and rec.get("session_id"):
-            from src import agent_runs
-
-            return {"stopped": agent_runs.stop(rec["session_id"]), "how": "chat"}
-        raise HTTPException(409, f"{source or 'This'} runs can't be stopped individually")
+        try:
+            return await stop_run(run_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
 
     # ── repository inspection ───────────────────────────────────────────────
 

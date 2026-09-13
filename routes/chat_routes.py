@@ -1803,6 +1803,15 @@ def setup_chat_routes(
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
+                                elif data.get("type") == "steer_applied":
+                                    # Keep the mid-task instruction in history so
+                                    # the next turn (and the transcript) has it.
+                                    try:
+                                        sess.add_message(ChatMessage("user", str(data.get("text") or ""),
+                                                                     {"source": "steer"}))
+                                    except Exception:
+                                        logger.debug("steer persist failed", exc_info=True)
+                                    yield chunk
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
                                     yield chunk

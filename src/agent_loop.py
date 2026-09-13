@@ -25,6 +25,7 @@ from src.model_context import estimate_tokens, is_local_endpoint
 from src.settings import get_setting
 from src import agent_activity as _activity
 from src import tool_approvals as _tool_approvals
+from src import agent_control as _agent_control
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
@@ -5276,6 +5277,15 @@ async def stream_agent_loop(
     _last_tool_debug_sig = None
 
     for round_num in range(1, max_rounds + 1):
+        # A steer from the Agents dashboard lands here, between rounds, as a
+        # user message — the correction reaches the model mid-task instead of
+        # after the turn. The route persists it when it sees steer_applied.
+        for _steer_text in _agent_control.drain_steer(session_id):
+            _steer_msg = f"[Mid-task instruction from the user] {_steer_text}"
+            messages.append({"role": "user", "content": _steer_msg})
+            yield f'data: {json.dumps({"type": "steer_applied", "text": _steer_text, "round": round_num})}\n\n'
+            _activity.publish(session_id, "status", f"Steer applied: {_steer_text[:160]}", source="odysseus",
+                              run_id=_activity_run_id, owner=owner, detail=_steer_text)
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         round_reasoning_items = []  # opaque Responses reasoning items, replayed next round

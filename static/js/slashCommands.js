@@ -6127,6 +6127,13 @@ const COMMANDS = {
     handler: _cmdModel,
     usage: '/model  ·  /model <name>  ·  /model list'
   },
+  agents: {
+    alias: ['fleet', 'dashboard'],
+    category: 'Agent',
+    help: 'Open the Agents dashboard (every running chat and worker)',
+    handler: async () => { window.agentsDashboard?.open?.(); return true; },
+    usage: '/agents'
+  },
   stop: {
     alias: ['cancel', 'abort'],
     category: 'Agent',

@@ -322,6 +322,8 @@
       </div>
     </div>
   </div>
+  <!-- Agents dashboard: full-page fleet view (js/agentsDashboard.js) -->
+  <div id="agents-dashboard" class="agents-dashboard" role="dialog" aria-label="Agents" hidden></div>
   <div id="workbench-diff-modal" class="modal hidden">
     <div class="modal-content workbench-diff-content" role="dialog" aria-label="Diff" style="background:var(--bg)">
       <div class="modal-header"><h4 class="wb-popout-title">Diff</h4><button class="close-btn" id="close-workbench-diff-modal" aria-label="Close diff">✖</button></div>
@@ -775,6 +777,7 @@
     <button class="icon-rail-btn" id="rail-gallery" title="Gallery"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
     <button class="icon-rail-btn" id="rail-archive" title="Library"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></button>
     <button class="icon-rail-btn" id="rail-memory" title="Brain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
+    <button class="icon-rail-btn" id="rail-agents" title="Agents — every running chat and worker (Ctrl+Shift+A)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg><span class="rail-agents-badge" id="rail-agents-badge" hidden></span></button>
     <button class="icon-rail-btn" id="rail-workbench" title="Workbench — agent activity, changes, PRs"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M6 8l3 3-3 3M11 14h5"/></svg></button>
     <button class="icon-rail-btn" id="rail-notes" title="Notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
     <button class="icon-rail-btn" id="rail-tasks" title="Tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg></button>
@@ -993,6 +996,15 @@
             <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
           </svg>
           <span class="grow">Theme</span>
+        </div>
+        <div class="list-item" id="tool-agents-btn" title="Every running chat and worker: steer, stop, approve, launch">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>
+          </svg>
+          <span class="grow">Agents</span>
+          <span id="tool-agents-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
         <div class="list-item" id="tool-workbench-btn" title="Agent activity, changes and pull requests">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"

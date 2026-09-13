@@ -134,6 +134,15 @@ def get_pending(pid: str) -> Optional[dict]:
     return _PENDING.get(pid)
 
 
+def pending_for(session_ids) -> list:
+    """Undecided requests for these chats, oldest first."""
+    _prune(time.time())
+    ids = set(session_ids or ())
+    rows = [dict(rec) for rec in _PENDING.values() if rec["session_id"] in ids and rec["decision"] is None]
+    rows.sort(key=lambda r: r["created_at"])
+    return rows
+
+
 def decide(session_id: str, pid: str, decision: str) -> Optional[dict]:
     """Apply the user's decision: ``once``, ``always`` (this tool in this chat)
     or ``deny``. Returns the updated record, or None when unknown."""

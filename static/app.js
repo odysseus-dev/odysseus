@@ -22,6 +22,8 @@ import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import workbenchModule from './js/workbench.js';
 // Per-chat settings + the status line under the composer (self-initialising).
 import './js/chatSettings.js';
+// Agents dashboard: fleet view, approvals hub, steer/stop/launch (self-initialising).
+import './js/agentsDashboard.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
@@ -179,6 +181,7 @@ function initRailHoverLabels() {
     'rail-archive': 'Library',
     'rail-memory': 'Brain',
     'rail-workbench': 'Workbench',
+    'rail-agents': 'Agents',
     'rail-notes': 'Notes',
     'rail-tasks': 'Tasks',
     'rail-theme': 'Theme',
@@ -1059,11 +1062,9 @@ function initializeEventListeners() {
   // Tasks tool button
   const toolTasksBtn = el('tool-tasks-btn');
   if (toolTasksBtn) {
-  // Agents buttons (sidebar + rail)
-  const agentsBtns = [el("rail-agents"), el("tool-agents-btn")].filter(Boolean);
-  agentsBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-    });
+  // Agents dashboard (sidebar + rail) — js/agentsDashboard.js
+  [el("rail-agents"), el("tool-agents-btn")].filter(Boolean).forEach(btn => {
+    btn.addEventListener("click", () => { if (window.agentsDashboard) window.agentsDashboard.toggle(); });
   });
     toolTasksBtn.addEventListener('click', () => {
       if (tasksModule) {

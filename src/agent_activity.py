@@ -353,6 +353,12 @@ def run_finished(session_id: Optional[str], source: str, run_id: str, title: str
                 _active_turns.pop(str(session_id), None)
 
 
+def active_turn(session_id: Optional[str]) -> Optional[str]:
+    """The run id of the session's live chat turn, if one is in progress."""
+    with _lock:
+        return _active_turns.get(str(session_id or ""))
+
+
 def close_turn(session_id: Optional[str], *, status: str = "completed", title: Optional[str] = None) -> bool:
     """Finish the session's live chat turn if it never reported its own end.
 
