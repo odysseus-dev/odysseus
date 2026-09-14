@@ -25060,6 +25060,87 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   width: 0;
   max-width: 100%;
 }
+.settings-foreground-fallback-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+.settings-foreground-fallback-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.settings-foreground-fallback-help,
+.settings-foreground-fallback-state,
+.settings-foreground-fallback-message {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  line-height: 1.45;
+}
+.settings-foreground-fallback-state {
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.settings-foreground-fallback-editor[hidden] {
+  display: none;
+}
+.settings-foreground-fallback-order {
+  align-items: flex-start;
+}
+.settings-foreground-fallback-order > .settings-label {
+  margin-top: 6px;
+}
+.settings-foreground-fallback-list {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-fallback-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.settings-fallback-remove:disabled,
+.settings-fallback-add:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  background: transparent;
+}
+@media (max-width: 768px) {
+  .settings-foreground-fallback-toggle {
+    align-items: flex-start;
+  }
+  .settings-foreground-fallback-order {
+    display: block;
+  }
+  .settings-foreground-fallback-order > .settings-label {
+    display: block;
+    margin: 0 0 6px;
+  }
+  .settings-foreground-fallback-block .settings-fallback-row {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1fr);
+    padding-left: 6px;
+  }
+  .settings-foreground-fallback-block .settings-fallback-row .settings-select {
+    width: 100%;
+    max-width: none;
+  }
+  .settings-foreground-fallback-block .settings-fallback-actions {
+    grid-column: 2 / 4;
+    justify-self: end;
+  }
+}
 /* Cookbook Serve Advanced fold — wraps the rarely-touched tuning rows
    (KV/Attention/Swap/Env for vLLM, llama.cpp batch/cache/split, VRAM
    monitor, speculative, extra args). Matches the existing .hwfit-panel-
@@ -25253,7 +25334,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
-.settings-fallback-remove:hover {
+.settings-fallback-remove:not(:disabled):hover {
   border-color: var(--red);
   color: var(--red);
   background: color-mix(in srgb, var(--red) 10%, transparent);
@@ -25270,7 +25351,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s;
 }
-.settings-fallback-add:hover {
+.settings-fallback-add:not(:disabled):hover {
   border-color: var(--red);
   color: var(--red);
 }
