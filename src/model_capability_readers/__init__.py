@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
+from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter, orcarouter
 from src.model_capability_readers.base import (
     ModelCapabilityRecord,
     VENDOR_ANTHROPIC,
@@ -17,6 +17,7 @@ from src.model_capability_readers.base import (
     VENDOR_OLLAMA,
     VENDOR_OPENAI,
     VENDOR_OPENROUTER,
+    VENDOR_ORCAROUTER,
     VENDOR_SGLANG,
     VENDOR_UNKNOWN,
     VENDOR_VLLM,
@@ -29,6 +30,7 @@ READER_MODULES = {
     VENDOR_GENERIC_OPENAI: generic_openai,
     VENDOR_OPENAI: openai,
     VENDOR_OPENROUTER: openrouter,
+    VENDOR_ORCAROUTER: orcarouter,
     VENDOR_GOOGLE: google,
     VENDOR_LLAMACPP: llamacpp,
     VENDOR_OLLAMA: ollama,
@@ -85,6 +87,7 @@ __all__ = [
     "VENDOR_OLLAMA",
     "VENDOR_OPENAI",
     "VENDOR_OPENROUTER",
+    "VENDOR_ORCAROUTER",
     "VENDOR_SGLANG",
     "VENDOR_UNKNOWN",
     "VENDOR_VLLM",

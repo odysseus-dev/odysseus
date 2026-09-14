@@ -335,6 +335,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if provider == "openrouter":
         headers.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "orcarouter":
+        headers.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
+        headers.setdefault("X-OrcaRouter-Title", "Odysseus")
     if _is_kimi_code_url(base):
         headers.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
     return headers

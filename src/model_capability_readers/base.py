@@ -20,6 +20,7 @@ from src import model_capabilities as mc
 VENDOR_GENERIC_OPENAI = "generic_openai"
 VENDOR_OPENAI = "openai"
 VENDOR_OPENROUTER = "openrouter"
+VENDOR_ORCAROUTER = "orcarouter"
 VENDOR_GOOGLE = "google"
 VENDOR_ANTHROPIC = "anthropic"
 VENDOR_OLLAMA = "ollama"
@@ -299,6 +300,8 @@ def detect_vendor(base_url: Any = "", endpoint_kind: Any = "") -> str:
 
     if host_matches("openrouter.ai"):
         return VENDOR_OPENROUTER
+    if host_matches("orcarouter.ai"):
+        return VENDOR_ORCAROUTER
     if host_matches("openai.com"):
         return VENDOR_OPENAI
     if host_matches("anthropic.com"):

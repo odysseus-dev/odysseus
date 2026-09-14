@@ -982,6 +982,8 @@ def _detect_provider(url: str) -> str:
         return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
+    if _host_match(url, "orcarouter.ai"):
+        return "orcarouter"
     if _host_match(url, "groq.com"):
         return "groq"
     if _host_match(url, "nvidia.com"):
@@ -1101,6 +1103,9 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if provider == "openrouter":
         h.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
         h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "orcarouter":
+        h.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
+        h.setdefault("X-OrcaRouter-Title", "Odysseus")
     if provider == "copilot":
         # Ensure the Copilot-required headers are present even when the caller
         # didn't pass pre-built headers (e.g. model listing). build_headers()
@@ -1121,6 +1126,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "orcarouter.ai"): return "OrcaRouter"
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
