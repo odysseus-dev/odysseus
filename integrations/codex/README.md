@@ -40,12 +40,26 @@ data["plugins"] = [item for item in plugins if item.get("name") != "odysseus"] +
 p.write_text(json.dumps(data, indent=2) + "\n")
 PY
 codex plugin add odysseus@personal
+python3 ~/plugins/odysseus/scripts/setup_mcp.py
 ```
 
-6. Verify:
+The setup script creates or updates only the Codex MCP entry named `odysseus`.
+Other MCP servers remain unchanged. It uses Streamable HTTP with the bearer
+token read from `ODYSSEUS_API_TOKEN`; the token value is not copied into Codex
+configuration.
+
+6. Verify both the scoped REST helper and native MCP registration:
 
 ```bash
 python3 ~/plugins/odysseus/scripts/odysseus_api.py capabilities
+codex mcp get odysseus --json
 ```
 
-Codex must use `/api/codex/*` endpoints. SSH, Docker, direct Python imports, database queries, and MCP internals bypass Odysseus Settings and must not be used for user data access.
+Enable `MCP tools` to discover user-configured external servers and `MCP call`
+to execute their tools. The bridge reflects server enable/disable and per-tool
+toggles on each request. Restart the Codex session after changing MCP access if
+its tool list is already cached.
+
+Codex must use `/api/codex/*` endpoints. SSH, Docker, direct Python imports,
+database queries, and MCP internals bypass Odysseus Settings and must not be
+used for user data access.

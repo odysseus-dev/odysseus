@@ -222,6 +222,11 @@ def test_cookbook_launch_scope_implies_read(monkeypatch, token_routes_mod):
     assert resp["scopes"] == ["cookbook:read", "cookbook:launch"]
 
 
+def test_mcp_call_scope_implies_read(monkeypatch, token_routes_mod):
+    mod = token_routes_mod
+    assert mod._normalize_scopes("mcp:call") == ["mcp:read", "mcp:call"]
+
+
 # ---------------------------------------------------------------------------
 # 3. GET /api/tokens — safe display fields only, no hash or raw token
 # ---------------------------------------------------------------------------

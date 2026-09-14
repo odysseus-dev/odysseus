@@ -1,6 +1,6 @@
 {
   "name": "odysseus",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Connect Codex to a scoped Odysseus instance.",
   "author": {
     "name": "Odysseus"
@@ -15,6 +15,7 @@
     "capabilities": [
       "todos",
       "email",
+      "mcp",
       "scoped-api"
     ],
     "defaultPrompt": "Use Odysseus only through configured scoped access. Check capabilities before reading or writing data."
