@@ -150,6 +150,77 @@ def test_agent_loop_forced_web_tools_filtered_by_disabled_tools(monkeypatch):
     assert WEB_TOOL_NAMES.isdisjoint(_schema_names(sent_tools[0]))
 
 
+def test_overnight_profile_adds_web_schemas_only_to_profiled_textual_route(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    profile_tools = {
+        "web_search",
+        "web_fetch",
+        "mcp__5fc31d2c__Read",
+        "mcp__5fc31d2c__Write",
+        "mcp__5fc31d2c__Edit",
+        "mcp__5fc31d2c__Glob",
+        "mcp__5fc31d2c__Grep",
+    }
+    clawcodes_schemas = [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        for name in sorted(profile_tools)
+        if name.startswith("mcp__")
+    ]
+    mcp_mgr = SimpleNamespace(
+        get_all_openai_schemas=lambda disabled_map: clawcodes_schemas,
+        get_tool_descriptions_for_prompt=lambda disabled_map: "",
+        get_all_tools=lambda: [],
+    )
+    monkeypatch.setattr(al, "get_mcp_manager", lambda: mcp_mgr, raising=False)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+    monkeypatch.setattr(
+        al,
+        "_agent_route_tool_mode",
+        lambda *args, **kwargs: (False, False, False),
+        raising=False,
+    )
+    sent_tools = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_tools.append(kwargs.get("tools"))
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    def _run(allowed_tools):
+        sent_tools.clear()
+        _collect(
+            al.stream_agent_loop(
+                "http://banglebip.test/v1",
+                "banglebip",
+                [{"role": "user", "content": "Use mcp tools and search the web."}],
+                max_rounds=1,
+                relevant_tools=set(profile_tools),
+                forced_tools=set(WEB_TOOL_NAMES),
+                allowed_tools=allowed_tools,
+                owner="admin",
+            )
+        )
+        assert sent_tools
+        return _schema_names(sent_tools[0])
+
+    assert _run(set(profile_tools)) == profile_tools
+
+    unprofiled_names = _run(None)
+    assert WEB_TOOL_NAMES.isdisjoint(unprofiled_names)
+    assert unprofiled_names == {
+        name for name in profile_tools if name.startswith("mcp__")
+    }
+
+
 def test_agent_loop_policy_blocks_disabled_web_tool_call_before_execution(monkeypatch):
     _patch_loop_basics(monkeypatch)
     called = False
