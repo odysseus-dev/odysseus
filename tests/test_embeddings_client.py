@@ -93,3 +93,103 @@ def test_embedding_retry_path_preserves_api_key_header():
 
     assert vecs.tolist() == [[1.0, 0.0]]
     assert seen_headers == [{"Authorization": "Bearer secret-key"}]
+
+
+# ---------------------------------------------------------------- GPU providers
+
+from src.embeddings import select_gpu_providers
+
+
+def test_gpu_provider_selection_nvidia_tensorrt_first():
+    """NVIDIA hosts with TensorRT get the optimized path, CUDA fallback, CPU last."""
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider",
+             "TensorrtExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "TensorrtExecutionProvider", "CUDAExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_nvidia_cuda_only():
+    """NVIDIA hosts without TensorRT fall back to CUDA, then CPU."""
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_amd_migraphx():
+    """AMD hosts use MIGraphX (the current provider, ORT >= 1.23)."""
+    provs = ["CPUExecutionProvider", "MIGraphXExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "MIGraphXExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_amd_prefers_migraphx_over_legacy_rocm():
+    """When both AMD providers are present, MIGraphX wins over legacy ROCm."""
+    provs = ["CPUExecutionProvider", "ROCmExecutionProvider",
+             "MIGraphXExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "MIGraphXExecutionProvider", "ROCmExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_amd_legacy_rocm():
+    """Older AMD installs (ORT < 1.23) still use ROCmExecutionProvider."""
+    provs = ["CPUExecutionProvider", "ROCmExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "ROCmExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_apple_coreml():
+    """Apple Silicon uses CoreML."""
+    provs = ["CPUExecutionProvider", "CoreMLExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CoreMLExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_windows_directml():
+    """Windows with any GPU uses DirectML."""
+    provs = ["CPUExecutionProvider", "DirectMLExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "DirectMLExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_gpu_provider_selection_no_gpu_cpu_only():
+    """GPU-less hosts degrade to CPU only — never crash."""
+    assert select_gpu_providers(["CPUExecutionProvider"]) == [
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_force_cpu(monkeypatch):
+    """EMBEDDING_GPU_PROVIDER=cpu disables GPU even when available."""
+    monkeypatch.setenv("EMBEDDING_GPU_PROVIDER", "cpu")
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider",
+             "TensorrtExecutionProvider"]
+    assert select_gpu_providers(provs) == ["CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_force_nvidia(monkeypatch):
+    """EMBEDDING_GPU_PROVIDER=nvidia picks NVIDIA over any other GPU."""
+    monkeypatch.setenv("EMBEDDING_GPU_PROVIDER", "nvidia")
+    provs = ["CPUExecutionProvider", "MIGraphXExecutionProvider",
+             "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CUDAExecutionProvider", "MIGraphXExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_force_amd(monkeypatch):
+    """EMBEDDING_GPU_PROVIDER=amd picks AMD even when NVIDIA is available."""
+    monkeypatch.setenv("EMBEDDING_GPU_PROVIDER", "amd")
+    provs = ["CPUExecutionProvider", "MIGraphXExecutionProvider",
+             "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "MIGraphXExecutionProvider", "CUDAExecutionProvider",
+        "CPUExecutionProvider"]
+
+
+def test_gpu_provider_override_auto_is_default(monkeypatch):
+    """Auto (default) picks the best provider; override unset behaves the same."""
+    monkeypatch.delenv("EMBEDDING_GPU_PROVIDER", raising=False)
+    provs = ["CPUExecutionProvider", "CUDAExecutionProvider"]
+    assert select_gpu_providers(provs) == [
+        "CUDAExecutionProvider", "CPUExecutionProvider"]
