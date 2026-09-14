@@ -1,5 +1,14 @@
 services:
   odysseus:
+    # Official multi-arch GHCR image (linux/amd64 + linux/arm64), published by
+    # the "ci / docker publish" workflow on every push to main and dev.
+    # Docker pulls this image when it is reachable, and only falls back to the
+    # local build below when the pull fails (e.g. no network on the host), so
+    # hosts without a build toolchain (Portainer stacks, etc.) get the
+    # registry build. For production, pin an immutable tag via ODYSSEUS_IMAGE
+    # — e.g. ghcr.io/odysseus-dev/odysseus:1.0.2-7c8070f (X.Y.Z-<sha>) — since
+    # :latest and bare :X.Y.Z tags move on every main push.
+    image: ${ODYSSEUS_IMAGE:-ghcr.io/odysseus-dev/odysseus:latest}
     build: .
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
