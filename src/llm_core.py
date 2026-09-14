@@ -1068,6 +1068,19 @@ def _is_local_minimax_mlx_request(url: str, model: str) -> bool:
 
 
 def _apply_local_generation_stability(payload: Dict, url: str, model: str) -> None:
+    model_id = (model or "").strip().lower()
+
+    if model_id == "qwen3.8-27b":
+        if "temperature" in payload:
+            try:
+                payload["temperature"] = min(
+                    float(payload.get("temperature") or 0.2),
+                    0.2,
+                )
+            except (TypeError, ValueError):
+                payload["temperature"] = 0.2
+        return
+
     if not _is_local_minimax_mlx_request(url, model):
         return
     if "temperature" in payload:
