@@ -513,6 +513,14 @@ class ToolIndex:
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
+        # Shell/terminal/bash intent — covers common English and
+        # Portuguese terms so the keyword fallback path can surface
+        # bash when RAG retrieval fails or times out.
+        frozenset({"bash", "shell", "terminal", "command", "cmd",
+                   "execute", "exec", "sh",
+                   "rodar", "rode", "roda", "comando", "comandos",
+                   "executar", "execute", "terminal", "terminais"}):
+            {"bash"},
     }
 
     def get_tools_for_query(
