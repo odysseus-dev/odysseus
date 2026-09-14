@@ -2374,6 +2374,20 @@ body.bg-pattern-sparkles {
       max-height: 60px;
       overflow: hidden;
     }
+    /* Provenance chips (project/org) for a RAG source — reuse the neutral
+       --fg mixes the surrounding .rag-* styles use, so no new palette. */
+    .rag-source-tag {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 0 6px;
+      font-size: 10px;
+      line-height: 16px;
+      border-radius: 8px;
+      vertical-align: middle;
+      color: color-mix(in srgb, var(--fg) 65%, transparent);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+    }
     .rag-file-delete {
       background: none;
       border: 1px solid var(--border);
