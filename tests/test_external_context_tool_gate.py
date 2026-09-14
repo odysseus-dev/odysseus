@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import src.tool_capabilities as tool_capabilities
 from src.tool_capabilities import (
     KNOWN_CAPABILITY_TOOLS,
     ResultIntegrity,
@@ -20,6 +21,16 @@ from src.tool_capabilities import (
 
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
+
+
+@pytest.fixture(autouse=True)
+def _enable_disabled_gate_for_legacy_coverage(monkeypatch):
+    """Keep the removal-bound gate covered without enabling it in production."""
+    monkeypatch.setattr(
+        tool_capabilities,
+        "AGENT_ACTION_APPROVAL_GATE_ENABLED",
+        True,
+    )
 
 
 def _collect_agent_events(generator):
