@@ -842,6 +842,18 @@ import { loadPanel } from './panels.js';
   var hideWelcomeScreen = chatRenderer.hideWelcomeScreen;
   var showWelcomeScreen = chatRenderer.showWelcomeScreen;
 
+  function _restoreComposerFocus(messageInput) {
+    // Keep the mobile keyboard policy unchanged: focusing a textarea opens the
+    // on-screen keyboard over the response even when preventScroll is set.
+    if (!messageInput || messageInput.disabled || window.innerWidth <= 768) return false;
+    try {
+      messageInput.focus({ preventScroll: true });
+    } catch (_) {
+      messageInput.focus();
+    }
+    return true;
+  }
+
   /**
    * Update submit button state
    */
@@ -1275,7 +1287,10 @@ import { loadPanel } from './panels.js';
     const _releaseSendFlag = () => {
       _sendInFlight = false;
       _syncForegroundStreamGlobals();
-      if (_earlyMessageInput) _earlyMessageInput.disabled = false;
+      if (_earlyMessageInput) {
+        _earlyMessageInput.disabled = false;
+        _restoreComposerFocus(_earlyMessageInput);
+      }
       if (submitBtn) submitBtn.classList.remove('send-pending');
     };
 
@@ -1617,26 +1632,15 @@ import { loadPanel } from './panels.js';
       messageInput.value = approvalForSend ? (approvalForSend.draft || '') : '';
       messageInput.style.height = '';
       messageInput.dispatchEvent(new Event('input'));
-      // Mobile: dismiss the on-screen keyboard after sending. iOS in
-      // particular ignores a bare blur() in some cases (or some other
-      // listener refocuses straight after), so we temporarily mark the
-      // input readonly which forces the keyboard to retract, then blur,
-      // then drop the readonly attribute after the keyboard is gone so
-      // typing still works for the next message.
+      // Mobile intentionally dismisses the on-screen keyboard after sending.
+      // iOS may ignore a bare blur, so readonly forces the keyboard down until
+      // the next deliberate tap.
       if (window.innerWidth <= 768) {
         try {
           messageInput.setAttribute('readonly', 'readonly');
           messageInput.blur();
           const _dropReadonly = () => { try { messageInput.removeAttribute('readonly'); } catch {} };
           setTimeout(() => {
-            // If the blur stuck, the input is no longer the active element —
-            // safe to drop readonly now so the next message can be typed.
-            // If it did NOT stick (some mobile browsers keep the textarea
-            // focused after a programmatic blur), removing readonly here would
-            // re-summon the keyboard mid-stream — the "bounce up" that then
-            // lingers until the end-of-stream blur. In that case keep readonly
-            // on (keyboard stays down) and drop it the moment the user taps to
-            // type again, so typing still works without the bounce.
             if (document.activeElement === messageInput) {
               messageInput.addEventListener('pointerdown', _dropReadonly, { once: true });
               messageInput.addEventListener('focus', _dropReadonly, { once: true });
@@ -1646,6 +1650,10 @@ import { loadPanel } from './panels.js';
           }, 120);
         } catch {}
       }
+      // Disabling the textarea during preflight drops desktop focus. Restore
+      // it without scrolling the transcript so the next prompt can be typed
+      // while this response streams.
+      _restoreComposerFocus(messageInput);
 
       let ids = [];
       if (!approvalForSend) {
@@ -4591,14 +4599,11 @@ import { loadPanel } from './panels.js';
         // Reset button to idle state
         updateSubmitButton('idle', submitBtn);
 
-        // Re-enable message input; on mobile blur to dismiss keyboard
+        // Re-enable without stealing desktop focus from wherever the user
+        // moved while streaming. Preserve the mobile keyboard dismissal.
         if (messageInput) {
           messageInput.disabled = false;
-          if (window.innerWidth <= 768) {
-            messageInput.blur();
-          } else {
-            messageInput.focus();
-          }
+          if (window.innerWidth <= 768) messageInput.blur();
         }
 
         // Clear tracking variables
