@@ -808,6 +808,32 @@ KIMI_CODE_USER_AGENT = KIMI_CODE_USER_AGENTS[0]
 _kimi_code_ua_cache: dict[str, str] = {}
 
 
+# OpenCode Go (opencode.ai/zen/go) requires a stable per-conversation
+# `x-opencode-session` header for routing/prompt-caching, plus its own
+# User-Agent (not a generic SDK/HTTP-library name). See
+# https://opencode.ai/docs/go/#where-can-i-use-it
+OPENCODE_GO_USER_AGENT = "Odysseus/1.0"
+OPENCODE_GO_FALLBACK_SESSION = "odysseus-global"
+
+
+def _apply_opencode_go_headers(h: Dict[str, str], session_id: Optional[str] = None) -> Dict[str, str]:
+    """Ensure OpenCode Go routing headers are present, in place."""
+    h.setdefault("User-Agent", OPENCODE_GO_USER_AGENT)
+    existing_key = next(
+        (k for k in list(h.keys()) if isinstance(k, str) and k.lower() == "x-opencode-session"),
+        None,
+    )
+    sid = str(session_id).strip() if session_id else ""
+    if sid:
+        if existing_key:
+            h[existing_key] = sid
+        else:
+            h["x-opencode-session"] = sid
+    elif not existing_key:
+        h["x-opencode-session"] = OPENCODE_GO_FALLBACK_SESSION
+    return h
+
+
 def _is_kimi_code_url(url: str) -> bool:
     if not url or not _host_match(url, "kimi.com"):
         return False
@@ -815,6 +841,26 @@ def _is_kimi_code_url(url: str) -> bool:
         return "/coding" in (urlparse(url).path or "")
     except Exception:
         return False
+
+
+def _is_opencode_go_url(url: str) -> bool:
+    if not url or not _host_match(url, "opencode.ai"):
+        return False
+    try:
+        path = (urlparse(url).path or "").rstrip("/")
+    except Exception:
+        return False
+    return path == "/zen/go" or path.startswith("/zen/go/")
+
+
+def _is_opencode_zen_url(url: str) -> bool:
+    if not url or not _host_match(url, "opencode.ai"):
+        return False
+    try:
+        path = (urlparse(url).path or "").rstrip("/")
+    except Exception:
+        return False
+    return path == "/zen" or path.startswith("/zen/")
 
 
 def _kimi_code_base_key(url: str) -> str:
@@ -976,9 +1022,9 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
-    if _host_match(url, "opencode.ai/zen/go"):
+    if _is_opencode_go_url(url):
         return "opencode-go"
-    if _host_match(url, "opencode.ai/zen"):
+    if _is_opencode_zen_url(url):
         return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
@@ -1094,7 +1140,7 @@ def _apply_local_generation_stability(payload: Dict, url: str, model: str) -> No
         payload["max_tokens"] = 2048
 
 
-def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+def _provider_headers(provider: str, headers: Optional[Dict] = None, session_id: Optional[str] = None) -> Dict[str, str]:
     h = {"Content-Type": "application/json"}
     if isinstance(headers, dict):
         h.update(headers)
@@ -1109,6 +1155,8 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
         from src.copilot import copilot_headers
         for k, v in copilot_headers(None).items():
             h.setdefault(k, v)
+    if provider == "opencode-go":
+        _apply_opencode_go_headers(h, session_id)
     return h
 
 
@@ -1121,8 +1169,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
-    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
-    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
+    if _is_opencode_go_url(url): return "OpenCode Go"
+    if _is_opencode_zen_url(url): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
@@ -2378,7 +2426,7 @@ async def llm_call_async(
         )
     else:
         target_url = _normalize_openai_chat_url(url)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, session_id)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -2659,7 +2707,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, session_id)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
