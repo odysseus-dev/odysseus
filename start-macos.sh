@@ -174,7 +174,13 @@ ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 MACHINE_ARCH="$(uname -m)"
 APFEL_PID=""
 if [ "$MACHINE_ARCH" = "arm64" ]; then
-    if command -v apfel >/dev/null 2>&1; then
+    if (exec 3<>"/dev/tcp/127.0.0.1/11435") 2>/dev/null; then
+        # An Apfel from a previous run can outlive it (nohup'd child + a trap
+        # that never fires on force-quit). Adopt it instead of blindly racing
+        # for the port — same policy as ChromaDB below. APFEL_PID stays empty,
+        # so the EXIT trap won't kill a server this run didn't start.
+        echo "▶ Apfel already running on 127.0.0.1:11435 — using it."
+    elif command -v apfel >/dev/null 2>&1; then
         APFEL_LOG="${TMPDIR:-/tmp}/odysseus-apfel.log"
         echo "▶ Starting Apfel server in the background on port 11435…"
         echo "  logging to $APFEL_LOG"
