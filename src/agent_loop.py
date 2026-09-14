@@ -842,6 +842,39 @@ def _compact_tool_line(name: str, section: str) -> str:
     return f"- `{name}` — " + lines[0][:160]
 
 
+def _strip_disabled_tool_rules(text: str, disabled: set) -> str:
+    """Drop rule lines that tell the model to use a tool it does not have.
+
+    `_assemble_prompt` filters TOOL_SECTIONS through `included`, but the static
+    rule blocks (_AGENT_RULES, _API_AGENT_RULES, _DOMAIN_RULES) are appended
+    whole. A disabled tool therefore loses its schema and its description while
+    keeping its behavioural rule. With `manage_memory` disabled, for example,
+    the prompt still carries
+
+        - User identity facts/preferences ("my name is X", ...) use
+          `manage_memory`, not contacts.
+
+    Observed with local models: pointed at a tool that is absent from the
+    toolset, the model does nothing at all for that case rather than reaching
+    for a tool it does have. A rule naming an unavailable tool is worse than no
+    rule, so drop those lines and leave everything else untouched.
+
+    No-op when nothing is disabled.
+    """
+    if not disabled or not text:
+        return text
+    kept, dropped = [], []
+    for line in text.split("\n"):
+        stripped = line.lstrip()
+        if stripped.startswith("- ") and any(f"`{name}`" in line for name in disabled):
+            dropped.append(stripped[:70])
+            continue
+        kept.append(line)
+    if dropped:
+        logger.debug("[prompt] dropped %d rule line(s) for disabled tools: %s", len(dropped), dropped)
+    return "\n".join(kept)
+
+
 def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
     """Build the system prompt with only the specified tools included."""
     disabled = disabled_tools or set()
@@ -860,7 +893,7 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
             _API_AGENT_RULES,
         ]
         parts.extend(_domain_rules_for_tools(included))
-        return "\n\n".join(parts)
+        return _strip_disabled_tool_rules("\n\n".join(parts), disabled)
 
     parts = [_AGENT_PREAMBLE]
 
@@ -887,7 +920,7 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
 
     parts.append(_AGENT_RULES)
     parts.extend(_domain_rules_for_tools(included))
-    return "\n\n".join(parts)
+    return _strip_disabled_tool_rules("\n\n".join(parts), disabled)
 
 
 # Legacy: full prompt with all tools (fallback when RAG unavailable)
