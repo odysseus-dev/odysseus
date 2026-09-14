@@ -4454,14 +4454,43 @@ async def stream_agent_loop(
     # Match the common phrasings + an action verb that maps to an available
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
+    #
+    # The detector is language-specific: a model replying in the user's own
+    # language announces the action in that language too, so an English-only
+    # pattern never fires and the turn ends silently instead of nudging.
+    # German is covered below; other languages can be added the same way.
+    _DE_FIN = (
+        r"rufe|pr\u00fcfe|schaue|sehe|lese|hole|frage|starte|suche|nutze|verwende|"
+        r"\u00fcberpr\u00fcfe|f\u00fchre|liste|ermittle|checke|greife|lade|\u00f6ffne|"
+        r"durchsuche|analysiere|kontrolliere"
+    )
+    _DE_INF = (
+        r"abrufen|pr\u00fcfen|schauen|nachsehen|lesen|holen|abfragen|starten|"
+        r"suchen|verwenden|nutzen|ausf\u00fchren|auflisten|ermitteln|checken|"
+        r"laden|\u00f6ffnen|durchsuchen|analysieren|kontrollieren"
+    )
+    _DE_MOD = (
+        r"werde|werden|muss|m\u00fcssen|sollte|sollten|kann|k\u00f6nnen|"
+        r"m\u00f6chte|will|wollen"
+    )
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
+        r"(?:^|\n)\s*(?:"
+        # English: intent phrase + action verb
+        r"(?:let me|i'?ll|i will|i need to|we need to|need to|"
         r"i should|we should|i must|we must|going to|let's)\s+"
         r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
         r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
-        r"\b[^.\n]{0,140}",
+        # German: "Ich rufe den Kalender ab", "Jetzt pr\u00fcfe ich ..."
+        rf"|(?:jetzt\s+)?(?:ich|wir)\s+(?:{_DE_FIN})"
+        # German: modal + trailing infinitive ("Ich werde den Kalender abrufen")
+        rf"|(?:ich|wir)\s+(?:{_DE_MOD})\b[^.\n]{{0,80}}?\b(?:{_DE_INF})"
+        # German: inversion ("Jetzt schaue ich ...")
+        rf"|(?:jetzt|nun|dann)\s+(?:{_DE_FIN})\s+(?:ich|wir)"
+        # German: "Lass mich ..." / "Lassen Sie uns ..."
+        r"|(?:lass|lassen)\s+(?:mich|uns)\s+"
+        r")\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
