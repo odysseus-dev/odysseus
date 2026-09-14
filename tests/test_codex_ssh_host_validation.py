@@ -8,6 +8,7 @@ These pin validation on the host/port before they reach the ssh string, matching
 the validators the rest of the cookbook routes already apply.
 """
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import APIRouter, HTTPException
@@ -25,6 +26,30 @@ def _route_endpoint(path: str, method: str, router=None):
 
 
 def _launch_request() -> Request:
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            auth_manager=SimpleNamespace(
+                is_configured=True,
+                is_admin=lambda username: username == "alice",
+            )
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/codex/cookbook/adopt",
+            "headers": [],
+            "state": {},
+            "app": app,
+        }
+    )
+    request.state.current_user = "alice"
+    request.state.api_token = False
+    return request
+
+
+def _bearer_launch_request() -> Request:
     request = Request(
         {
             "type": "http",
@@ -34,6 +59,7 @@ def _launch_request() -> Request:
             "state": {},
         }
     )
+    request.state.current_user = "api"
     request.state.api_token = True
     request.state.api_token_owner = "alice"
     request.state.api_token_scopes = ["cookbook:launch"]
@@ -200,7 +226,7 @@ async def test_documents_pagination_out_of_range_offset_returns_empty_page():
 
 
 @pytest.mark.parametrize("host_field", ["host", "remote_host"])
-def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch, host_field):
+def test_adopt_handler_rejects_ssh_option_host_before_shell(monkeypatch, host_field):
     calls = []
 
     async def fail_if_shell_runs(*args, **kwargs):
@@ -219,7 +245,36 @@ def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch, host_field):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(endpoint(_launch_request(), body))
 
+    # Direct endpoint extraction intentionally bypasses FastAPI's shared
+    # router dependency; request-level bearer denial is covered separately.
     assert exc.value.status_code == 400
+    assert calls == []
+
+
+def test_direct_adopt_endpoint_rejects_bearer_before_body_or_shell(monkeypatch):
+    calls = []
+
+    async def fail_if_shell_runs(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("shell should not run for a bearer caller")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", fail_if_shell_runs)
+    endpoint = _route_endpoint("/api/codex/cookbook/adopt", "POST")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            endpoint(
+                _bearer_launch_request(),
+                {
+                    "tmux_session": "serve_abc123",
+                    "model": "org/model",
+                    "host": "box",
+                },
+            )
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Forbidden"
     assert calls == []
 
 
