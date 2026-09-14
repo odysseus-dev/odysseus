@@ -150,6 +150,104 @@ def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
     return _refresh_google_token(account_id)
 
 
+# --- Microsoft / Office 365 OAuth (device flow + XOAUTH2) ------------------
+#
+# Microsoft removed basic auth for IMAP/SMTP on Exchange Online, so Outlook /
+# Office 365 mailboxes authenticate with OAuth2 XOAUTH2 exactly like Google.
+# The connect flow uses the device-code grant (no redirect URI / public
+# callback URL needed) — see routes/email_routes.py.
+
+_MS_IMAP_SCOPE = "https://outlook.office365.com/IMAP.AccessAsUser.All"
+_MS_SMTP_SCOPE = "https://outlook.office365.com/SMTP.Send"
+# openid/email/profile ride along so the ID token carries the signing user's
+# UPN (preferred_username), which the connect flow checks against the
+# configured IMAP username — same wrong-mailbox guard the Google flow uses.
+MICROSOFT_OAUTH_SCOPES = (
+    f"{_MS_IMAP_SCOPE} {_MS_SMTP_SCOPE} openid email profile offline_access"
+)
+
+
+def microsoft_oauth_tenant() -> str:
+    """Azure AD tenant for the OAuth endpoints.
+
+    'common' (work/school + personal), 'organizations' (work/school only),
+    'consumers' (personal only), or a specific tenant GUID.
+    """
+    return os.environ.get("MICROSOFT_OAUTH_TENANT", "").strip() or "common"
+
+
+def microsoft_oauth_configured() -> bool:
+    return bool(os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip())
+
+
+def _microsoft_token_endpoint() -> str:
+    return (
+        "https://login.microsoftonline.com/"
+        f"{microsoft_oauth_tenant()}/oauth2/v2.0/token"
+    )
+
+
+def _refresh_microsoft_token(account_id: str) -> str | None:
+    """Exchange the stored refresh token for a new access token and persist it.
+
+    The v2 endpoint rotates refresh tokens; when the response carries a new
+    one it replaces the stored token so the grant chain never expires out
+    from under a long-lived account row.
+    """
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
+    if not client_id:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or row.oauth_provider != "microsoft" or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        resp = httpx.post(
+            _microsoft_token_endpoint(),
+            data={
+                "client_id": client_id,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+                "scope": MICROSOFT_OAUTH_SCOPES,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        if data.get("refresh_token"):
+            row.oauth_refresh_token = _enc(data["refresh_token"])
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        db.commit()
+        return access_token
+    except Exception:
+        logger.warning(f"Microsoft token refresh failed for account {account_id}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_microsoft_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Microsoft access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_microsoft_token(account_id)
+
+
 def _smtp_security_mode(cfg: dict) -> str:
     raw = str(cfg.get("smtp_security") or "").strip().lower()
     if raw in {"ssl", "starttls", "none"}:
@@ -168,10 +266,17 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     password = cfg.get("smtp_password") or ""
 
     def _auth_smtp(smtp):
-        if cfg.get("oauth_provider") == "google":
+        oauth_provider = cfg.get("oauth_provider")
+        if oauth_provider == "google":
             token = _get_valid_google_token(cfg.get("account_id"), cfg)
             if not token:
                 raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+            smtp.ehlo()
+            smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
+        elif oauth_provider == "microsoft":
+            token = _get_valid_microsoft_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Microsoft OAuth token unavailable — reconnect the account")
             smtp.ehlo()
             smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
         elif user and password:
@@ -1232,6 +1337,11 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
             token = _get_valid_google_token(cfg.get("account_id"), cfg)
             if not token:
                 raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        elif cfg.get("oauth_provider") == "microsoft":
+            token = _get_valid_microsoft_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Microsoft OAuth token unavailable — reconnect the account in Settings → Integrations")
             conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
         else:
             conn.login(cfg["imap_user"], cfg["imap_password"])
