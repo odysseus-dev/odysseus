@@ -4989,6 +4989,25 @@ import { loadPanel } from './panels.js';
     spinner.start();
     uiModule.scrollHistory();
 
+    // Restore streaming state (#6233). After a mid-stream refresh this reader
+    // is the foreground stream, so it must own the same state the live path
+    // registers at send time: the composer flips to Stop (and the send gate
+    // blocks a second turn over the live run), and Stop resolves through the
+    // abortCtrl below plus the run id captured from X-Odysseus-Run-Id above.
+    // Without this the composer stayed in idle: Send instead of Stop, and the
+    // run could not be stopped from the UI.
+    const resumeAbortCtrl = new AbortController();
+    _activeStreams.set(sessionId, {
+      abortCtrl: resumeAbortCtrl,
+      holder,
+      query: '',
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+    });
+    _syncForegroundStreamGlobals();
+    const submitBtn = document.querySelector('.send-btn');
+    if (submitBtn) updateSubmitButton('streaming', submitBtn);
+
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -5007,6 +5026,20 @@ import { loadPanel } from './panels.js';
     const cleanup = () => {
       try { spinner.destroy(); } catch (_) {}
       _resumingStreams.delete(sessionId);
+      // Release the streaming state restored on attach (#6233): the run is
+      // over (or its terminal paths follow below), so the composer must not
+      // stay pinned to Stop. Only the current session's composer is touched —
+      // if the user moved on, the new session's own re-entry owns the button.
+      const resumeEntry = _activeStreams.get(sessionId);
+      if (resumeEntry && resumeEntry.abortCtrl === resumeAbortCtrl) {
+        _activeStreams.delete(sessionId);
+      }
+      _syncForegroundStreamGlobals();
+      if (sessionModule.getCurrentSessionId &&
+          sessionModule.getCurrentSessionId() === sessionId) {
+        const submitBtn = document.querySelector('.send-btn');
+        if (submitBtn) updateSubmitButton('idle', submitBtn);
+      }
     };
 
     const renderDelta = () => {
@@ -5030,6 +5063,7 @@ import { loadPanel } from './panels.js';
           break;
         }
         const { done, value } = await reader.read();
+        _touchStreamActivity(sessionId);
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split('\n\n');
