@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import ipaddress
 import logging
+import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -252,6 +253,24 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
         return _context_cache[cache_key]
 
     ctx, known = _query_context_length(endpoint_url, model)
+    # Large local context windows can make an otherwise healthy model appear
+    # hung: every turn must prefill the conversation before producing a token.
+    # Cloud/API endpoints keep their advertised window.
+    if is_local:
+        raw_cap = os.getenv("ODYSSEUS_LOCAL_CONTEXT_CAP", "").strip()
+        try:
+            local_cap = int(raw_cap) if raw_cap else 0
+        except ValueError:
+            logger.warning("Ignoring invalid ODYSSEUS_LOCAL_CONTEXT_CAP=%r", raw_cap)
+            local_cap = 0
+        if local_cap > 0 and ctx > local_cap:
+            logger.info(
+                "Capping local context for %s from %s to %s tokens",
+                model,
+                ctx,
+                local_cap,
+            )
+            ctx = local_cap
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.

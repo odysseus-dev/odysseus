@@ -206,6 +206,7 @@ class TestGetContextLength:
         model_context._catalog_ctx_cache.clear()
 
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
+        monkeypatch.delenv("ODYSSEUS_LOCAL_CONTEXT_CAP", raising=False)
         calls = []
 
         def fake_query(endpoint_url, model):
@@ -242,6 +243,32 @@ class TestGetContextLength:
         assert first == 200000
         assert second == 200000
         assert len(calls) == 1
+
+    def test_local_context_can_be_capped_for_interactive_latency(self, monkeypatch):
+        monkeypatch.setenv("ODYSSEUS_LOCAL_CONTEXT_CAP", "8192")
+        monkeypatch.setattr(
+            model_context, "_query_context_length", lambda *_: (32768, True)
+        )
+
+        result = model_context.get_context_length_known(
+            "http://host.docker.internal:11434/v1/chat/completions",
+            "qwen3-coder:30b",
+        )
+
+        assert result == (8192, True)
+
+    def test_local_context_cap_does_not_reduce_remote_models(self, monkeypatch):
+        monkeypatch.setenv("ODYSSEUS_LOCAL_CONTEXT_CAP", "8192")
+        monkeypatch.setattr(
+            model_context, "_query_context_length", lambda *_: (200000, True)
+        )
+
+        result = model_context.get_context_length(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5",
+        )
+
+        assert result == 200000
 
     def _proxy_db(self, monkeypatch):
         _install_endpoint_db(monkeypatch, [
