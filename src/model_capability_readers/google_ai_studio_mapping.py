@@ -13,7 +13,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from src import model_capabilities as mc
-from src.model_capability_readers.base import as_list, compact_str, int_limit
+from src.model_capability_readers.base import (
+    as_list,
+    compact_str,
+    identity_str,
+    int_limit,
+)
 
 
 METHOD_GENERATE_CONTENT = "generateContent"
@@ -55,7 +60,7 @@ MODEL_FIELD_MAP = {
 
 
 def google_model_id(raw: Mapping[str, Any]) -> str:
-    value = compact_str(raw.get("baseModelId")) or compact_str(raw.get("name"))
+    value = identity_str(raw.get("baseModelId")) or identity_str(raw.get("name"))
     return value.removeprefix("models/")
 
 

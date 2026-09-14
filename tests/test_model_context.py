@@ -204,6 +204,7 @@ class TestGetContextLength:
     def setup_method(self):
         model_context._context_cache.clear()
         model_context._catalog_ctx_cache.clear()
+        model_context._ollama_runtime_endpoints.clear()
 
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
         calls = []
@@ -252,6 +253,75 @@ class TestGetContextLength:
                 is_enabled=True,
             )
         ])
+
+    def _api_db(self, monkeypatch, base_url="http://127.0.0.1:11434/v1"):
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url=base_url,
+                endpoint_kind="api",
+                api_key=None,
+                is_enabled=True,
+            )
+        ])
+
+    def test_configured_api_ollama_uses_loaded_runtime_allocation(self, monkeypatch):
+        self._api_db(monkeypatch)
+        fetches = []
+
+        def fake_get(url, *args, **kwargs):
+            fetches.append(url)
+            assert url == "http://127.0.0.1:11434/api/ps"
+            return _FakeResp({
+                "models": [
+                    {"model": "qwen3:latest", "context_length": 65536},
+                ]
+            })
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "qwen3") == 65536
+        assert fetches == ["http://127.0.0.1:11434/api/ps"]
+
+    def test_configured_api_ollama_retries_after_model_load(self, monkeypatch):
+        self._api_db(monkeypatch)
+        responses = [
+            {"models": []},
+            {"models": [{"model": "qwen3", "context_length": 32768}]},
+        ]
+
+        def fake_get(url, *args, **kwargs):
+            assert url == "http://127.0.0.1:11434/api/ps"
+            return _FakeResp(responses.pop(0))
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+        assert model_context.get_context_length_known(endpoint, "qwen3") == (
+            model_context.DEFAULT_CONTEXT,
+            False,
+        )
+        assert model_context.get_context_length_known(endpoint, "qwen3") == (32768, True)
+        assert responses == []
+
+    @pytest.mark.parametrize(
+        ("endpoint", "expected"),
+        [
+            ("http://localhost:11434", "http://localhost:11434/api/ps"),
+            ("http://ollama:11434/v1", "http://ollama:11434/api/ps"),
+            ("http://localhost:11434/api/chat", "http://localhost:11434/api/ps"),
+            ("http://localhost:11434/v1/chat/completions", "http://localhost:11434/api/ps"),
+            ("http://localhost:11434/ollama/v1", "http://localhost:11434/ollama/api/ps"),
+        ],
+    )
+    def test_ollama_ps_url_preserves_supported_prefixes(self, endpoint, expected):
+        assert model_context._ollama_ps_url(endpoint, "api") == expected
+
+    def test_ollama_ps_url_excludes_remote_and_configured_proxy(self):
+        assert model_context._ollama_ps_url("https://api.openai.com/v1", "api") is None
+        assert model_context._ollama_ps_url("https://ollama.example.com/v1", "api") is None
+        assert model_context._ollama_ps_url("http://127.0.0.1:11434/v1", "proxy") is None
+        assert model_context._ollama_ps_url("http://127.0.0.1:8080/v1", None) is None
 
     def test_configured_proxy_known_model_skips_model_listing(self, monkeypatch):
         # A model covered by the known-context table must still resolve without
