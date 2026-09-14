@@ -64,6 +64,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _allowed_models_for_request,
     _enforce_chat_privileges,
+    _stable_prefix_len,
 )
 from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
 from src.image_model_ids import looks_like_image_generation_model
@@ -850,10 +851,14 @@ def setup_chat_routes(
                     message, _r_ep, _r_model, llm_headers=_r_headers
                 )
                 research_message = untrusted_context_message("research context", research_ctx)
-                ctx.messages.insert(len(ctx.preface), research_message)
+                # The dynamic preface is no longer at the front of messages
+                # (KV prefix stability, issue #4317) — insert after the stable
+                # static-preface portion instead.
+                _stable_prefix = _stable_prefix_len(ctx.messages)
+                ctx.messages.insert(_stable_prefix, research_message)
                 if foreground_policy.enabled:
                     getattr(ctx, "route_messages", ctx.messages).insert(
-                        len(ctx.preface),
+                        _stable_prefix,
                         research_message,
                     )
             except Exception as e:

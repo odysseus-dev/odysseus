@@ -602,6 +602,22 @@ def _session_is_research_spinoff(sess) -> bool:
     return False
 
 
+def _stable_prefix_len(messages: list) -> int:
+    """Length of the byte-stable prefix of a context message list.
+
+    The prompt layout built by build_chat_context is
+    ``[static preface][history][dynamic preface][date/time][latest user]``,
+    so everything before the first dynamic (trusted=False) preface message is
+    the stable KV-cache prefix. Used as the insertion point for route-level
+    context messages that must land after the static system prefix without
+    disturbing the cached history.
+    """
+    for i, m in enumerate(messages):
+        if not (m.get("metadata") or {}).get("trusted", True):
+            return i
+    return 0
+
+
 async def build_chat_context(
     sess,
     request,
@@ -760,7 +776,21 @@ async def build_chat_context(
     # Build messages. In Nobody/incognito mode, never read saved session
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
-    messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+    #
+    # Layout (KV-cache prefix stability, issue #4317): the byte-stable prefix
+    # of a request is the static preface (preset + policy system messages,
+    # consolidated to the front by llm_core) followed by the session history.
+    # Per-turn dynamic context — retrieved memory, RAG, web/skill lookups, the
+    # UNTRUSTED_SOURCE_DATA blocks — is appended AFTER the history, and the
+    # date/time + latest user turn sit at the very tail. With the old
+    # preface-first layout, any change in retrieved memory invalidated the
+    # entire cached prefix, forcing a full re-prefill on every turn.
+    messages = _incognito_messages(session_id) if incognito else sess.get_context_messages()
+
+    latest_messages = []
+    if messages and messages[-1].get("role") == "user":
+        latest_messages.append(messages[-1])
+        messages.pop()
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
@@ -769,18 +799,20 @@ async def build_chat_context(
     # system message byte-for-byte; mixing ever-changing timestamp text into
     # it would invalidate the cached prefix on every request (issue #2927).
     # Placing it at the tail also keeps it out of the stable
-    # preface+history prefix, so that prefix stays byte-identical turn over
+    # system+history prefix, so that prefix stays byte-identical turn over
     # turn (modulo the genuinely new history entries) and the cache survives.
     if not agent_mode:
         try:
             from src.user_time import current_datetime_context_message
             _dt_msg = current_datetime_context_message()
-            if messages and messages[-1].get("role") == "user":
-                messages.insert(len(messages) - 1, _dt_msg)
+            if len(latest_messages) > 0:
+                latest_messages.insert(len(latest_messages) - 1, _dt_msg)
             else:
-                messages.append(_dt_msg)
+                latest_messages.append(_dt_msg)
         except Exception:
             logger.debug("Failed to add current date/time context", exc_info=True)
+
+    messages = messages + preface + latest_messages
 
     route_messages = list(messages)
     # Explicit fallback routing must shape from the same route-neutral prompt
