@@ -337,6 +337,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
     if _is_kimi_code_url(base):
         headers.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
+    if provider == "opencode-go":
+        from src.llm_core import _apply_opencode_go_headers
+        _apply_opencode_go_headers(headers)
     return headers
 
 

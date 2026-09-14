@@ -725,6 +725,24 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         h = _safe_build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         payload = _build_ollama_payload(model_id, messages, 0.0, 5, stream=False, tools=_test_tools)
+    elif provider == "opencode-go":
+        from src.llm_core import _is_opencode_go_responses_model, _normalize_opencode_go_url
+        from src.llm_core import _build_opencode_go_responses_payload
+        target_url = _normalize_opencode_go_url(base, model_id)
+        h = _safe_build_headers(api_key, base)
+        h["Content-Type"] = "application/json"
+        if _is_opencode_go_responses_model(model_id):
+            payload = _build_opencode_go_responses_payload(model_id, messages, 0.0, 5)
+        else:
+            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+            _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
+            payload = {"model": model_id, "messages": messages, _max_key: 5}
+            # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature, so a
+            # probe that hardcodes one falsely reports a working endpoint as failing.
+            if not _restricts_temperature(model_id):
+                payload["temperature"] = 0.0
+            if _test_tools:
+                payload["tools"] = _test_tools
     else:
         target_url = build_chat_url(base)
         h = _safe_build_headers(api_key, base)
