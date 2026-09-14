@@ -9,6 +9,7 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
+import { captureArchiveAction, runArchiveFallback } from './emailArchiveFallback.js';
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
@@ -435,11 +436,18 @@ export async function loadEmails(append = false) {
   }
 }
 
-async function loadFolders() {
+async function loadFolders({
+  accountId = window.__odysseusActiveEmailAccount || '',
+  refresh = false,
+} = {}) {
+  const accountAtStart = String(accountId || '');
   try {
-    const accountQS = _acct().replace(/^&/, '');
-    const res = await fetch(`${API_BASE}/api/email/folders${accountQS ? `?${accountQS}` : ''}`);
+    const res = await fetch(emailApiUrl('/api/email/folders', {
+      account_id: accountAtStart || undefined,
+      refresh: refresh ? 1 : undefined,
+    }));
     const data = await res.json();
+    if (accountAtStart !== String(window.__odysseusActiveEmailAccount || '')) return;
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
     _populateFolderSelect(select, data.folders);
@@ -455,7 +463,7 @@ export function sortedFolders(folders) {
     if (f.includes('sent')) return 'sent';
     if (f.includes('starred') || f.includes('flagged')) return 'starred';
     if (f.includes('draft')) return 'drafts';
-    if (f.includes('all mail') || f.includes('archive')) return 'archive';
+    if (isArchiveFolder(f)) return 'archive';
     if (f.includes('spam') || f.includes('junk')) return 'junk';
     if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return 'trash';
     return '';
@@ -469,6 +477,11 @@ export function sortedFolders(folders) {
     else others.push(f);
   }
   return { priority: roleOrder.map(role => found.get(role)).filter(Boolean), others };
+}
+
+export function isArchiveFolder(folder) {
+  const f = String(folder || '').toLowerCase();
+  return f.includes('all mail') || f.includes('archive');
 }
 
 export function folderDisplayName(folder) {
@@ -689,7 +702,7 @@ function _createEmailItem(em) {
   });
 
   // Swipe left to archive (mobile). Mirrors sidebar-layout.js swipe pattern.
-  if ('ontouchstart' in window) {
+  if ('ontouchstart' in window && !isArchiveFolder(_currentFolder)) {
     let startX = 0, startY = 0, dx = 0, dy = 0, swiping = false, swiped = false;
     const HORIZ_THRESHOLD = 70; // px to trigger archive
     const VERT_CANCEL = 30;     // px vertical motion cancels swipe (treat as scroll)
@@ -731,7 +744,7 @@ function _createEmailItem(em) {
         item.style.transform = 'translateX(-100%)';
         item.style.opacity = '0';
         setTimeout(() => {
-          _archiveEmail(em);
+          _archiveEmail(em, item);
           delete item.dataset.swipeBlock;
         }, 200);
       } else {
@@ -1109,9 +1122,11 @@ function _showEmailMenu(em, anchor, itemEl) {
   const actions = [
     { label: 'Open', icon: _replyIcon, action: () => _openEmail(em, itemEl) },
     { label: 'Remind to reply', icon: _bellIcon, submenu: 'remind' },
-    { label: 'Archive', icon: _archiveIcon, action: () => _archiveEmail(em) },
-    { label: 'Delete', icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) },
   ];
+  if (!isArchiveFolder(_currentFolder)) {
+    actions.push({ label: 'Archive', icon: _archiveIcon, action: () => _archiveEmail(em, itemEl) });
+  }
+  actions.push({ label: 'Delete', icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) });
 
   for (const a of actions) {
     const menuItem = document.createElement('div');
@@ -1249,13 +1264,86 @@ async function _createReplyReminder(em, dueDate) {
   }
 }
 
-async function _archiveEmail(em) {
+async function _archiveEmailWithFallback(em, capturedScope = null) {
+  const action = captureArchiveAction(
+    em.uid,
+    capturedScope?.accountId ?? window.__odysseusActiveEmailAccount ?? '',
+    capturedScope?.sourceFolder ?? _currentFolder,
+  );
+  const result = await runArchiveFallback(action, {
+    getActiveAccountId: () => window.__odysseusActiveEmailAccount || '',
+    archiveOnce: async (captured) => {
+      const res = await fetch(emailApiUrl(`/api/email/archive/${encodeURIComponent(captured.uid)}`, {
+        folder: captured.sourceFolder,
+        account_id: captured.accountId || undefined,
+      }), { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      return { ...data, success: res.ok && data.success !== false };
+    },
+    confirmCreate: async (folderName) => {
+      const { styledConfirm } = await import('./ui.js');
+      return styledConfirm(
+        `No Archive folder was found for this account. Create one named ${folderName}?`,
+        { confirmText: 'Create Archive', cancelText: 'Cancel' },
+      );
+    },
+    createFolder: async (folderName, captured) => {
+      const res = await fetch(emailApiUrl('/api/email/archive-folder', {
+        account_id: captured.accountId || undefined,
+      }), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: folderName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ...data, success: res.ok && data.success !== false };
+    },
+    refreshFolders: async (captured) => {
+      await loadFolders({ accountId: captured.accountId, refresh: true });
+    },
+    onFolderReady: async (data) => {
+      const { showToast } = await import('./ui.js');
+      showToast(data?.created ? 'Created Archive folder' : 'Archive folder is ready');
+    },
+  });
+
+  if (!result.success && !result.canceled && !result.stale) {
+    const { showToast } = await import('./ui.js');
+    showToast(result.error || 'Failed to archive email');
+  }
+  return { ...result, archiveContext: action };
+}
+
+function _restoreArchiveSwipeItem(itemEl) {
+  if (!itemEl) return;
+  itemEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+  itemEl.style.transform = '';
+  itemEl.style.opacity = '';
+  itemEl.style.background = '';
+  delete itemEl.dataset.swipeBlock;
+}
+
+async function _archiveEmail(em, itemEl = null) {
   try {
-    await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
+    const result = await _archiveEmailWithFallback(em);
+    if (!result.success) {
+      _restoreArchiveSwipeItem(itemEl);
+      return false;
+    }
+    if (
+      result.archiveContext.accountId !== String(window.__odysseusActiveEmailAccount || '')
+      || result.archiveContext.sourceFolder !== String(_currentFolder || 'INBOX')
+    ) {
+      return true;
+    }
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();
+    return true;
   } catch (e) {
     console.error('Failed to archive:', e);
+    _restoreArchiveSwipeItem(itemEl);
+    return false;
   }
 }
 

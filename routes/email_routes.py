@@ -456,11 +456,8 @@ def _list_imap_folders(conn) -> tuple[list, list[str]]:
         return [], []
 
 
-def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
-    """Resolve provider-specific names such as Gmail's [Gmail]/Bin/Spam."""
+def _find_mail_folder(conn, role: str) -> str | None:
     folders, names = _list_imap_folders(conn)
-    if preferred and preferred in names:
-        return preferred
     role_flags = {
         "trash": ("\\Trash",),
         "archive": ("\\Archive", "\\All"),
@@ -468,7 +465,8 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
     }.get(role, ())
     for f in folders:
         decoded = f.decode() if isinstance(f, bytes) else str(f)
-        if any(flag in decoded for flag in role_flags):
+        decoded_lower = decoded.lower()
+        if any(flag.lower() in decoded_lower for flag in role_flags):
             name = _folder_name_from_list_line(f)
             if name:
                 return name
@@ -482,7 +480,45 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
         found = lower_map.get(candidate.lower())
         if found:
             return found
+    return None
+
+
+def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
+    """Resolve provider-specific names such as Gmail's [Gmail]/Bin/Spam."""
+    _, names = _list_imap_folders(conn)
+    if preferred and preferred in names:
+        return preferred
+    found = _find_mail_folder(conn, role)
+    if found:
+        return found
     return preferred
+
+
+def _create_archive_mail_folder(conn, folder_name: str = "Archive") -> tuple[bool, dict]:
+    folder = str(folder_name or "Archive").strip() or "Archive"
+    if folder.casefold() != "archive":
+        return False, {"error": "Archive setup can only create a folder named Archive"}
+    existing = _find_mail_folder(conn, "archive")
+    if existing:
+        return True, {"folder": existing, "created": False}
+
+    status, data = conn.create(_q("Archive"))
+    if status != "OK":
+        msg = " ".join(
+            item.decode(errors="replace") if isinstance(item, bytes) else str(item)
+            for item in (data or [])
+            if item is not None
+        ).strip()
+        if "exist" in msg.lower():
+            return True, {"folder": "Archive", "created": False}
+        return False, {"error": msg or "Failed to create Archive folder"}
+
+    try:
+        conn.subscribe(_q("Archive"))
+    except Exception:
+        logger.debug("Failed to subscribe newly created Archive folder", exc_info=True)
+
+    return True, {"folder": "Archive", "created": True}
 
 
 def _folder_role_from_name(name: str) -> str:
@@ -1630,6 +1666,17 @@ def setup_email_routes():
         _FOLDER_CACHE[(account_id or "", owner or "")] = (_time.monotonic() + _FOLDER_TTL, value)
         if len(_FOLDER_CACHE) > 32:
             for k in list(_FOLDER_CACHE.keys())[:-16]:
+                _FOLDER_CACHE.pop(k, None)
+
+    def _invalidate_folder_cache(account_id=None, owner=None):
+        if account_id is None and owner is None:
+            _FOLDER_CACHE.clear()
+            return
+        for k in list(_FOLDER_CACHE.keys()):
+            k_acct = k[0] if len(k) > 0 else ""
+            k_owner = k[1] if len(k) > 1 else ""
+            if (account_id is None or k_acct == (account_id or "")) and \
+               (owner is None or k_owner == (owner or "")):
                 _FOLDER_CACHE.pop(k, None)
 
     def _invalidate_list_cache(account_id=None, folder=None):
@@ -3784,11 +3831,19 @@ def setup_email_routes():
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder))
-                if not _move_email_message(conn, uid, "Archive", role="archive"):
+                archive_folder = _find_mail_folder(conn, "archive")
+                if not archive_folder:
+                    return {
+                        "success": False,
+                        "needs_archive_folder": True,
+                        "suggested_folder": "Archive",
+                        "error": "No archive folder found",
+                    }
+                if not _move_email_message(conn, uid, archive_folder, role="archive"):
                     return {"success": False, "error": "Email not found"}
             _email_index_delete(owner, account_id, folder, uid)
             _invalidate_list_cache(account_id)
-            return {"success": True}
+            return {"success": True, "folder": archive_folder}
         except Exception as e:
             logger.error(f"Failed to archive email {uid}: {e}")
             return {"success": False, "error": "Mail operation failed"}
@@ -3918,19 +3973,30 @@ def setup_email_routes():
     async def list_folders(
         account_id: str | None = Query(None),
         cached_only: int = Query(0),
+        refresh: bool = Query(False),
         owner: str = Depends(require_owner),
     ):
         """List IMAP folders."""
         if _fixture_email_enabled():
             return {"folders": ["INBOX", "Archive", "Sent"], "sync": {"source": "fixture"}}
-        cached = _folder_cache_get(account_id, owner)
+        try:
+            cached_only_enabled = bool(int(cached_only or 0))
+        except (TypeError, ValueError):
+            cached_only_enabled = False
+        if isinstance(refresh, str):
+            refresh_enabled = refresh.strip().lower() in {"1", "true", "yes", "on"}
+        elif isinstance(refresh, (bool, int)):
+            refresh_enabled = bool(refresh)
+        else:
+            refresh_enabled = False
+        cached = None if refresh_enabled else _folder_cache_get(account_id, owner)
         if cached is not None:
             payload = dict(cached)
             sync_meta = dict(payload.get("sync") or {})
             sync_meta["source"] = "folder_cache"
             payload["sync"] = sync_meta
             return payload
-        if cached_only:
+        if cached_only_enabled:
             stale = _folder_cache_get_stale(account_id, owner)
             if stale:
                 payload = dict(stale)
@@ -3984,6 +4050,25 @@ def setup_email_routes():
         except Exception as e:
             logger.error(f"list_folders failed: {e}")
             return {"folders": [], "error": "Mail operation failed"}
+
+    @router.post("/archive-folder")
+    async def create_archive_folder(payload: dict | None = None, account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Create the account's explicit Archive folder after user confirmation."""
+        folder_name = (payload or {}).get("folder") or (payload or {}).get("name") or "Archive"
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _create_archive_mail_folder(conn, folder_name)
+                if not ok:
+                    return {"success": False, **result}
+                _, names = _list_imap_folders(conn)
+            if result["folder"] not in names:
+                names.append(result["folder"])
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, **result, "folders": names}
+        except Exception as e:
+            logger.error(f"create_archive_folder failed for {folder_name!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
 
     @router.post("/mark-answered/{uid}")
     async def mark_answered(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
