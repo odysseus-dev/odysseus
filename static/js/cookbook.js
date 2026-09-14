@@ -9,6 +9,14 @@ import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
 import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
+import {
+  dependencyCandidateKeys,
+  depInstallKey,
+  findActiveDepTask,
+  isActiveDepTask,
+  sameDependencyTarget,
+  taskDepInstallKeys,
+} from './cookbookDepTasks.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
 
 // Sub-modules
@@ -1067,10 +1075,110 @@ export function _persistEnvState() {
 // ── Dependencies ──
 
 // Category colors removed — using theme CSS classes instead
+const _pendingDepInstalls = new Set();
 
-async function _fetchDependencies() {
+function _selectedDependencyTarget() {
+  let host = '', port = '', envPath = '', platform = '';
+  const select = document.getElementById('hwfit-deps-server');
+  const server = select && select.value !== 'local' ? _serverByVal(select.value) : null;
+  if (server) {
+    host = server.host || '';
+    port = server.port || _getPort(host) || '';
+    envPath = server.envPath || '';
+    platform = server.platform || '';
+  } else if (_envState.remoteHost) {
+    host = _envState.remoteHost;
+    port = _getPort(_envState.remoteHost) || '';
+    envPath = _envState.envPath || '';
+    platform = _envState.platform || '';
+  }
+  return { host, port, envPath, platform };
+}
+
+function _setDependencyButtonState(element, active, idleText = 'Install') {
+  if (!element) return;
+  element.textContent = active ? 'downloading' : idleText;
+  element.disabled = active;
+  element.classList.toggle('cookbook-dep-downloading', active);
+  element.title = active ? 'Dependency install is already running' : '';
+}
+
+async function _launchDependencyTask(options) {
+  const {
+    pipSpec, catalogName, command, target = {}, envPrefix = '', requestRepoId,
+    taskName, statusEl = null, idleText = 'Install', action = 'install',
+    successMessage = '', failureLabel = 'Install failed',
+  } = options;
+  const candidateKeys = dependencyCandidateKeys(pipSpec, catalogName, target);
+  const activeKey = candidateKeys[0] || depInstallKey(pipSpec || catalogName, target.host, target.port, target.envPath);
+  const activeTask = findActiveDepTask(_loadTasks(), candidateKeys);
+  if (candidateKeys.some(key => _pendingDepInstalls.has(key)) || activeTask) {
+    uiModule.showToast(`${catalogName || pipSpec} is already downloading on ${target.host || 'this server'}.`);
+    _setDependencyButtonState(statusEl, true, idleText);
+    return { ok: false, duplicate: true };
+  }
+
+  _pendingDepInstalls.add(activeKey);
+  _setDependencyButtonState(statusEl, true, idleText);
+  try {
+    const reqBody = {
+      repo_id: requestRepoId || String(catalogName || pipSpec || 'dependency').trim().replace(/\s+/g, '_'),
+      cmd: command,
+      remote_host: target.host || undefined,
+      ssh_port: target.port || undefined,
+      env_prefix: envPrefix || undefined,
+      platform: target.platform || undefined,
+    };
+    const response = await fetch('/api/model/serve', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      const reason = data.detail || data.error || `HTTP ${response.status}`;
+      uiModule.showToast(`${failureLabel}: ${String(reason).slice(0, 400)}`, {
+        duration: 20000, action: 'OK', onAction: () => {},
+      });
+      _setDependencyButtonState(statusEl, false, idleText);
+      return { ok: false, duplicate: false };
+    }
+    const payload = {
+      repo_id: reqBody.repo_id,
+      _cmd: command,
+      remote_host: target.host || '',
+      ssh_port: target.port || '',
+      _dep: true,
+      _dep_key: activeKey,
+      _dep_pip_spec: String(pipSpec || '').trim(),
+      _dep_catalog_name: String(catalogName || '').trim(),
+      _dep_action: action,
+      env_path: target.envPath || '',
+      platform: target.platform || '',
+    };
+    _addTask(data.session_id, taskName || `pip ${catalogName || pipSpec}`, 'download', payload);
+    if (successMessage) uiModule.showToast(successMessage);
+    return { ok: true, duplicate: false, task: data.session_id };
+  } catch (error) {
+    uiModule.showToast(`${failureLabel}: ${error.message}`, {
+      duration: 20000, action: 'OK', onAction: () => {},
+    });
+    _setDependencyButtonState(statusEl, false, idleText);
+    return { ok: false, duplicate: false };
+  } finally {
+    _pendingDepInstalls.delete(activeKey);
+  }
+}
+
+async function _fetchDependencies(requestedTarget = null) {
   const list = document.getElementById('cookbook-deps-list');
   if (!list) return;
+  const _dsel = document.getElementById('hwfit-deps-server');
+  const selectedTarget = _selectedDependencyTarget();
+  if (requestedTarget && !sameDependencyTarget(selectedTarget, requestedTarget)) return false;
+  const effectiveTarget = requestedTarget
+    ? { ...selectedTarget, ...requestedTarget, envPath: requestedTarget.envPath || requestedTarget.venv || '' }
+    : selectedTarget;
   // Use the shared whirlpool spinner so the user sees the request is in
   // flight (the package list takes a few seconds to enumerate on slow links).
   list.innerHTML = '';
@@ -1092,14 +1200,10 @@ async function _fetchDependencies() {
   try {
     // Resolve the target server from the deps dropdown so remote-target
     // packages are checked on THAT server's venv (not just the local host).
-    let _depHost = '', _depPort = '', _depVenv = '', _depPlatform = '';
-    const _dsel = document.getElementById('hwfit-deps-server');
-    const _depSrv = _dsel && _dsel.value !== 'local' ? _serverByVal(_dsel.value) : null;
-    if (_depSrv) {
-      _depHost = _depSrv.host || ''; _depPort = _depSrv.port || ''; _depVenv = _depSrv.envPath || ''; _depPlatform = _depSrv.platform || '';
-    } else if (_envState.remoteHost) {
-      _depHost = _envState.remoteHost; _depPort = _getPort(_envState.remoteHost) || ''; _depVenv = _envState.envPath || ''; _depPlatform = _envState.platform || '';
-    }
+    const _depHost = effectiveTarget.host || '';
+    const _depPort = effectiveTarget.port || '';
+    const _depVenv = effectiveTarget.envPath || '';
+    const _depPlatform = effectiveTarget.platform || '';
     const _pkgParams = new URLSearchParams();
     if (_depHost) {
       _pkgParams.set('host', _depHost);
@@ -1128,9 +1232,33 @@ async function _fetchDependencies() {
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
     const _systemInstallable = new Set(['tmux']);
+    const _activeDepTasks = new Map();
+    _loadTasks().forEach(task => {
+      if (!isActiveDepTask(task)) return;
+      taskDepInstallKeys(task).forEach(key => {
+        if (key && !_activeDepTasks.has(key)) _activeDepTasks.set(key, task);
+      });
+    });
+    _pendingDepInstalls.forEach(key => {
+      if (key && !_activeDepTasks.has(key)) _activeDepTasks.set(key, { _pending: true });
+    });
 
-    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
+    const _depTarget = (isLocal) => isLocal
+      ? { host: '', port: '', envPath: '' }
+      : { host: _depHost, port: _depPort, envPath: _depVenv };
+    const _activeDepFor = (pkg, isLocal) => {
+      if (!pkg?.pip) return null;
+      const target = _depTarget(isLocal);
+      const keys = dependencyCandidateKeys(pkg.pip, pkg.name, target);
+      return keys.map(key => _activeDepTasks.get(key)).find(Boolean) || null;
+    };
+
+    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked, activeDep) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
+      if (activeDep) {
+        const session = activeDep.sessionId ? ` (${activeDep.sessionId})` : '';
+        return `<span class="cookbook-dep-tag cookbook-dep-downloading" title="Dependency install is already running${esc(session)}">downloading</span>`;
+      }
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
       if (pkg.installed && pkg.pip_update_available === false && pkg.name !== 'llama_cpp') {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
@@ -1174,6 +1302,7 @@ async function _fetchDependencies() {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const activeDep = _activeDepFor(pkg, isLocal);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       // Inline rebuild/reinstall tag. Styled as a .cookbook-dep-tag so it
@@ -1183,7 +1312,11 @@ async function _fetchDependencies() {
       // diagnosis-style `_launchServeTask` with `pip install --force-reinstall`
       // so the user can watch the pip install in the Running tab.
       let _rebuildBtn = '';
-      if (pkg.name === 'vllm' && pkg.installed) {
+      if (activeDep) {
+        _rebuildBtn = '';
+      } else if (pkg.name === 'llama_cpp') {
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`;
+      } else if (pkg.name === 'vllm' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
       } else if (pkg.name === 'sglang' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
@@ -1229,7 +1362,7 @@ async function _fetchDependencies() {
         + _rebuildBtn
         + _buildDepsBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
-        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
+        + _statusTag(pkg, isLocal, isSystemDep, winBlocked, activeDep)
         + recipeCaret
         + `</div>`
         + recipePanel;
@@ -1417,6 +1550,7 @@ async function _fetchDependencies() {
       }
       const targetPlatform = isLocalOnly ? (_envState.hostPlatform || _envState.platform || '') : (targetServer?.platform || _envState.platform || '');
       const targetRemoteHost = isLocalOnly ? '' : (targetServer?.host || _envState.remoteHost || '');
+      const targetPort = isLocalOnly ? '' : (targetServer?.port || _getPort(targetRemoteHost) || '');
       // Always go through `python -m pip` so the leading token is `python`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
       // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
@@ -1461,56 +1595,27 @@ async function _fetchDependencies() {
           envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(targetEnvPath);
         }
       }
-      try {
-        const reqBody = {
-          repo_id: depTaskId,
-          cmd: cmd,
-          remote_host: targetRemoteHost || undefined,
-          ssh_port: _getPort(targetRemoteHost) || undefined,
-          env_prefix: envPrefix || undefined,
-          platform: targetPlatform || undefined,
-        };
-        const res = await fetch('/api/model/serve', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reqBody),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          // FastAPI HTTPException returns {detail: …}; the route's own
-          // path returns {ok:false, error:…}. Surface whichever we get.
-          // Long duration + an OK button — the default 1.2s toast was
-          // disappearing before the user could read multi-clause errors
-          // like "tmux missing on remote".
-          const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Install failed: ' + String(reason).slice(0, 400), {
-            duration: 20000,
-            action: 'OK',
-            onAction: () => {},
-          });
-          return;
-        }
-        // _dep flags this as a pip dependency/driver install (not a servable
-        // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: depTaskId, _cmd: cmd, remote_host: targetRemoteHost || '', _dep: true, env_path: targetEnvPath || '', platform: targetPlatform || '' };
-        _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
-        if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
-        uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
-      } catch (err) {
-        uiModule.showToast('Install failed: ' + err.message, {
-          duration: 20000,
-          action: 'OK',
-          onAction: () => {},
-        });
-      }
+      return _launchDependencyTask({
+        pipSpec: pipName,
+        catalogName: pkgName,
+        command: cmd,
+        target: { host: targetRemoteHost, port: targetPort, envPath: targetEnvPath, platform: targetPlatform },
+        envPrefix,
+        requestRepoId: depTaskId,
+        taskName: 'pip ' + pkgName,
+        statusEl,
+        idleText: upgrade ? 'Update' : 'Install',
+        action: upgrade ? 'update' : 'install',
+        successMessage: `${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`,
+      });
     }
 
     // Wire install buttons (not-installed packages)
-    list.querySelectorAll('.cookbook-dep-install:not(.cookbook-dep-recipe-run):not(.cookbook-dep-install-sysdeps)').forEach(btn => {
+    list.querySelectorAll('.cookbook-dep-install:not(.cookbook-dep-recipe-run):not(.cookbook-dep-install-sysdeps):not(.cookbook-dep-install-gpu-wheel)').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const pipName = btn.dataset.depPip;
-        const pkgName = btn.closest('.cookbook-dep-row')?.querySelector('.memory-item-title')?.textContent || pipName;
+        const pkgName = btn.closest('.cookbook-dep-row')?.dataset.pkgName || pipName;
         await _installDep(pipName, pkgName, btn.dataset.depTarget === 'local', !!btn.dataset.upgrade, btn);
       });
     });
@@ -1526,44 +1631,36 @@ async function _fetchDependencies() {
     // forces pip install with the abetlen CUDA wheel index to add GPU
     // offload). Same install flow used at launch-time auto-fix, but
     // user-initiated here so they don't have to launch + wait + retry.
-    list.querySelectorAll('.cookbook-dep-partial').forEach(btn => {
+    list.querySelectorAll('.cookbook-dep-install-gpu-wheel').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const action = btn.dataset.depPartialAction || '';
-        if (action !== 'reinstall_llama_cpp_cuda') return;
         const isLocal = btn.dataset.depTarget === 'local';
+        let targetServer = null;
         if (!isLocal) {
           const depsServerSel = document.getElementById('hwfit-deps-server');
-          if (depsServerSel) _applyServerSelection(depsServerSel.value);
+          if (depsServerSel) {
+            targetServer = _serverByVal(depsServerSel.value);
+            _applyServerSelection(depsServerSel.value);
+          }
         }
         const targetLabel = isLocal ? 'this server' : (_envState.remoteHost || 'remote');
-        const cmd = 'CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --user --break-system-packages --force-reinstall --no-cache-dir "llama-cpp-python[server]" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124';
-        try {
-          const reqBody = {
-            repo_id: 'llama-cpp-python-cuda',
-            cmd,
-            remote_host: _envState.remoteHost || undefined,
-            ssh_port: _getPort(_envState.remoteHost) || undefined,
-            platform: _envState.platform || undefined,
-          };
-          const res = await fetch('/api/model/serve', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(reqBody),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            const payload = { repo_id: 'pip llama-cpp-python[CUDA]', _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
-            _addTask(data.session_id, 'pip llama-cpp-python[CUDA]', 'download', payload);
-            uiModule.showToast(`Reinstalling llama-cpp-python with CUDA wheels on ${targetLabel} (~1-3 min)…`, 4000);
-          } else {
-            uiModule.showToast('Upgrade failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 300), {
-              duration: 20000, action: 'OK', onAction: () => {},
-            });
-          }
-        } catch (err) {
-          uiModule.showToast('Upgrade request failed: ' + err.message, { duration: 20000, action: 'OK', onAction: () => {} });
-        }
+        const cmd = btn.dataset.depGpuCmd || '';
+        const host = isLocal ? '' : (targetServer?.host || _envState.remoteHost || '');
+        const port = isLocal ? '' : (targetServer?.port || _getPort(host) || '');
+        const envPath = isLocal ? '' : (targetServer?.envPath || _envState.envPath || '');
+        await _launchDependencyTask({
+          pipSpec: 'llama-cpp-python[server]',
+          catalogName: 'llama_cpp',
+          command: cmd,
+          target: { host, port, envPath, platform: isLocal ? (_envState.hostPlatform || '') : (targetServer?.platform || _envState.platform || '') },
+          requestRepoId: 'llama-cpp-python-cuda',
+          taskName: 'pip llama-cpp-python[CUDA]',
+          statusEl: btn,
+          idleText: 'Install GPU wheel',
+          action: 'reinstall_gpu_wheel',
+          failureLabel: 'Upgrade failed',
+          successMessage: `Reinstalling llama-cpp-python with CUDA wheels on ${targetLabel} (~1-3 min)…`,
+        });
       });
     });
 
@@ -1748,31 +1845,27 @@ async function _fetchDependencies() {
         } else if (recipeEnv === 'conda' && _envState.envPath) {
           envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
         }
-        const reqBody = {
-          repo_id: `${backend} setup`,
-          cmd: cmd,
-          remote_host: _envState.remoteHost || undefined,
-          ssh_port: _getPort(_envState.remoteHost) || undefined,
-          env_prefix: envPrefix || undefined,
-          platform: _envState.platform || undefined,
-        };
-        try {
-          const res = await fetch('/api/model/serve', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(reqBody),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data.ok) {
-            uiModule.showToast('Run failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 200));
-            return;
-          }
-          const payload = { repo_id: `${backend} setup`, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
-          _addTask(data.session_id, `${backend} setup`, 'download', payload);
-          uiModule.showToast(`Running ${backend} setup on ${targetHost}…`);
-        } catch (err) {
-          uiModule.showToast('Run failed: ' + err.message);
-        }
+        const requestRepoId = `${backend} setup`;
+        const row = btn.closest('.cookbook-dep-row');
+        await _launchDependencyTask({
+          pipSpec: row?.dataset.depPip || backend,
+          catalogName: row?.dataset.pkgName || backend,
+          command: cmd,
+          target: {
+            host: _envState.remoteHost || '',
+            port: _getPort(_envState.remoteHost) || '',
+            envPath: _envState.envPath || '',
+            platform: _envState.platform || '',
+          },
+          envPrefix,
+          requestRepoId,
+          taskName: `${backend} setup`,
+          statusEl: btn,
+          idleText: 'Run',
+          action: 'recipe',
+          failureLabel: 'Run failed',
+          successMessage: `Running ${backend} setup on ${targetHost}…`,
+        });
       });
     });
 
@@ -2228,14 +2321,35 @@ function _wireTabEvents(body) {
       ev.preventDefault();
       ev.stopPropagation();
       const sel = document.getElementById('hwfit-deps-server');
+      const server = sel && sel.value !== 'local' ? _serverByVal(sel.value) : null;
       if (sel) _applyServerSelection(sel.value);
-      const host = _envState.remoteHost || '';
+      const host = server?.host || _envState.remoteHost || '';
       const where = host || 'this server';
       if (!confirm(`Reinstall ${pkg} on ${where}?\n\nRuns "pip install --force-reinstall --no-deps ${pkg}" as a tmux task. Watch progress in the Running tab.`)) return;
-      const _venvPy = (_envState.env === 'venv' && _envState.envPath)
-        ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
+      const envPath = server?.envPath || _envState.envPath || '';
+      const envKind = server?.env || _envState.env || '';
+      const _venvPy = (envKind === 'venv' && envPath)
+        ? `${envPath.replace(/\/+$/, '')}/bin/python3`
         : 'python3';
-      _launchServeTask(`reinstall-${pkg}`, 'pip-reinstall', `${_venvPy} -m pip install --force-reinstall --no-deps ${pkg}`);
+      const row = btn.closest('.cookbook-dep-row');
+      await _launchDependencyTask({
+        pipSpec: row?.dataset.depPip || pkg,
+        catalogName: row?.dataset.pkgName || pkg,
+        command: `${_venvPy} -m pip install --force-reinstall --no-deps ${pkg}`,
+        target: {
+          host,
+          port: server?.port || _getPort(host) || '',
+          envPath,
+          platform: server?.platform || _envState.platform || '',
+        },
+        requestRepoId: `reinstall-${pkg}`,
+        taskName: `reinstall-${pkg}`,
+        statusEl: btn,
+        idleText: 'Reinstall',
+        action: 'reinstall',
+        failureLabel: 'Reinstall failed',
+        successMessage: `Reinstalling ${pkg} on ${where}…`,
+      });
     }, true);
   }
 
