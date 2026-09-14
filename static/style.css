@@ -1912,7 +1912,7 @@ body.bg-pattern-sparkles {
       min-height:0;
       --chat-max: 800px;
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
-      padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
+      padding-right: max(0px, calc((100% - var(--chat-max)) / 2));
     }
     .chat-history > * {
       flex: 0 0 auto;

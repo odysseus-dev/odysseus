@@ -9,18 +9,16 @@ import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import { createChatAutoScroller } from './chatAutoScroll.js';
 
 let toastEl = null;
-let autoScrollEnabled = true;
 let hoveredToggleCard = null;
 let hoveredToggleWindow = null;
 let hoveredDockChip = null;
 let _lastPointerClientX = null;
 let _lastPointerClientY = null;
 
-// Smooth scroll state
-let _scrollRafId = null;
-let _scrollBox = null;
+const _chatAutoScroller = createChatAutoScroller();
 
 function _isTextEditingTarget(target) {
   const el = target && target.nodeType === 1 ? target : target?.parentElement;
@@ -450,49 +448,10 @@ export function showError(msg) {
 }
 
 /**
- * Smooth-scroll chat history to bottom using rAF lerp.
- * Throttled during streaming so it doesn't fight user scrolling.
+ * Smooth-scroll chat history to bottom using the shared rAF controller.
  */
-let _scrollThrottleTimer = null;
 export function scrollHistory() {
-  if (!autoScrollEnabled) return;
-  if (!_scrollBox) {
-    _scrollBox = document.getElementById('chat-history');
-  }
-  // Throttle: only start a new scroll animation every 500ms
-  if (_scrollThrottleTimer) return;
-  _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
-  if (!_scrollRafId) {
-    _scrollRafId = requestAnimationFrame(_smoothScrollStep);
-  }
-}
-
-function _smoothScrollStep() {
-  const box = _scrollBox;
-  if (!box || !autoScrollEnabled) {
-    _scrollRafId = null;
-    return;
-  }
-  const target = box.scrollHeight - box.clientHeight;
-  const current = box.scrollTop;
-  const diff = target - current;
-
-  // If user scrolled up significantly, don't force them down
-  if (diff > 300) {
-    _scrollRafId = null;
-    return;
-  }
-
-  if (diff <= 1) {
-    box.scrollTop = target;
-    _scrollRafId = null;
-    return;
-  }
-
-  // Lerp: gentle catch-up
-  const factor = window.innerWidth <= 768 ? 0.4 : 0.2;
-  box.scrollTop = current + diff * factor;
-  _scrollRafId = requestAnimationFrame(_smoothScrollStep);
+  _chatAutoScroller.scroll();
 }
 
 /**
@@ -500,26 +459,25 @@ function _smoothScrollStep() {
  * like loading history or switching sessions.
  */
 export function scrollHistoryInstant() {
-  if (!_scrollBox) {
-    _scrollBox = document.getElementById('chat-history');
-  }
-  if (_scrollBox) {
-    _scrollBox.scrollTop = _scrollBox.scrollHeight;
-  }
+  _chatAutoScroller.scrollInstant();
 }
 
 /**
  * Enable/disable auto-scroll
  */
 export function setAutoScroll(enabled) {
-  autoScrollEnabled = enabled;
+  _chatAutoScroller.setEnabled(enabled);
 }
 
 /**
  * Get auto-scroll state
  */
 export function getAutoScroll() {
-  return autoScrollEnabled;
+  return _chatAutoScroller.isEnabled();
+}
+
+export function isAutoScrollAnimating() {
+  return _chatAutoScroller.isAnimating();
 }
 
 /**
@@ -865,6 +823,7 @@ const uiModule = {
   scrollHistoryInstant,
   setAutoScroll,
   getAutoScroll,
+  isAutoScrollAnimating,
   autoResize,
   debounce,
   el,
