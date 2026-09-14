@@ -10,6 +10,7 @@ import os
 import hashlib
 import re
 import logging
+import time
 import numpy as np
 from typing import List, Dict, Any, Optional, Set
 
@@ -24,6 +25,7 @@ from src.embedding_lanes import (
     collection_name,
     dedupe_results,
     lane_count,
+    lanes_unreachable,
     migrate_legacy_collection,
     query_lanes,
 )
@@ -43,6 +45,11 @@ VECTOR_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
 
 COLLECTION_NAME = "odysseus_rag"
+
+# Throttle for rebuilding a stale ChromaDB client. Mirrors the retry interval
+# src.rag_singleton already uses for failed initialization, so a backend that
+# stays down cannot turn every query into a reconnect attempt.
+RECONNECT_THROTTLE_SECONDS = 30
 
 
 def _generate_doc_id(text: str, owner: str = "") -> str:
@@ -81,6 +88,7 @@ class VectorRAG:
         self._model = None
         self._lanes = []
         self._healthy = False
+        self._last_reconnect = 0.0
 
         Path(self.persist_directory).mkdir(parents=True, exist_ok=True)
         self._initialize_system()
@@ -345,62 +353,102 @@ class VectorRAG:
     # Search — hybrid: vector similarity + keyword overlap
     # ------------------------------------------------------------------
 
+    def _reconnect_backend(self) -> bool:
+        """Rebuild the ChromaDB client and lanes, once per throttle window.
+
+        Lane collection handles are bound both to the process-wide cached HTTP
+        client and to the collection ids that existed when they were resolved.
+        Recreating the ChromaDB container invalidates both, and nothing else in
+        the process notices, so without this the store stays dead until the app
+        restarts. A heartbeat is not a useful guard here: the recreated service
+        answers it happily while every cached handle still points at the
+        previous container's collections.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_last_reconnect", 0.0) < RECONNECT_THROTTLE_SECONDS:
+            return False
+        self._last_reconnect = now
+        try:
+            from src.chroma_client import get_chroma_client, reset_client
+
+            reset_client()
+            get_chroma_client()
+        except Exception as e:
+            logger.warning(f"ChromaDB reconnect failed: {e}")
+            return False
+        return self._initialize_system()
+
     def search(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
-        if not self.healthy:
-            return []
         if not query or not isinstance(query, str):
             return []
-        if lane_count(self._lanes) == 0:
-            return []
+        if not self.healthy or lanes_unreachable(self._lanes):
+            # A store that lost its backend stayed unusable for the rest of the
+            # process: nothing re-initialized it, and rag_singleton keeps
+            # handing out this same cached instance once it has one. An index
+            # that is simply empty still counts, so it falls through to the
+            # search below and returns [] without touching the client.
+            if not self._reconnect_backend():
+                return []
 
         try:
-            where_filter = {"owner": owner} if owner else None
-            query_words = set(query.lower().split())
-            candidates = []
-
-            for lane, results in query_lanes(
-                self._lanes,
-                query,
-                n_results=lambda lane: min(
-                    (k * 6 if owner else k * 3),
-                    max(k, 20),
-                    lane.count(),
-                ),
-                where=where_filter,
-                include=["documents", "metadatas", "distances"],
-                raise_if_all_failed=True,
-            ):
-                for idx in range(len(results["ids"][0])):
-                    doc_id = results["ids"][0][idx]
-                    distance = results["distances"][0][idx]
-                    doc_text = results["documents"][0][idx]
-                    meta = results["metadatas"][0][idx]
-
-                    vector_sim = 1.0 - distance
-                    doc_words = set(doc_text.lower().split())
-                    overlap = len(query_words & doc_words)
-                    keyword_score = overlap / len(query_words) if query_words else 0.0
-                    hybrid_score = (VECTOR_WEIGHT * vector_sim) + (KEYWORD_WEIGHT * keyword_score)
-
-                    candidates.append({
-                        "id": doc_id,
-                        "document": doc_text,
-                        "metadata": meta,
-                        "distance": round(distance, 4),
-                        "similarity": round(hybrid_score, 4),
-                        "vector_similarity": round(vector_sim, 4),
-                        "keyword_score": round(keyword_score, 4),
-                        "embedding_lane": lane.name,
-                    })
-
-            candidates.sort(key=lambda c: c["similarity"], reverse=True)
-            top = dedupe_results(candidates, limit=k)
-            logger.info(f"Hybrid search for '{query[:60]}': {len(top)} results")
-            return top
-
+            return self._hybrid_search(query, k, owner)
         except Exception as e:
             logger.error(f"search failed: {e}")
+            # Stale handles fail the keyword fallback too, and that returns []
+            # — which reads to every caller as "nothing matched". Rebuild the
+            # client and retry once so a recreated ChromaDB container does not
+            # silently disable retrieval for the life of the process.
+            if self._reconnect_backend():
+                try:
+                    return self._hybrid_search(query, k, owner)
+                except Exception as retry_error:
+                    logger.error(f"search failed after reconnect: {retry_error}")
             return self._keyword_search_fallback(query, k, owner=owner)
+
+    def _hybrid_search(self, query: str, k: int, owner: Optional[str]) -> List[Dict[str, Any]]:
+        where_filter = {"owner": owner} if owner else None
+        query_words = set(query.lower().split())
+        candidates = []
+
+        for lane, results in query_lanes(
+            self._lanes,
+            query,
+            n_results=lambda lane: min(
+                (k * 6 if owner else k * 3),
+                max(k, 20),
+                lane.count(),
+            ),
+            where=where_filter,
+            include=["documents", "metadatas", "distances"],
+            raise_if_all_failed=True,
+        ):
+            for idx in range(len(results["ids"][0])):
+                doc_id = results["ids"][0][idx]
+                distance = results["distances"][0][idx]
+                doc_text = results["documents"][0][idx]
+                meta = results["metadatas"][0][idx]
+
+                vector_sim = 1.0 - distance
+                doc_words = set(doc_text.lower().split())
+                overlap = len(query_words & doc_words)
+                keyword_score = overlap / len(query_words) if query_words else 0.0
+                hybrid_score = (VECTOR_WEIGHT * vector_sim) + (KEYWORD_WEIGHT * keyword_score)
+
+                candidates.append({
+                    "id": doc_id,
+                    "document": doc_text,
+                    "metadata": meta,
+                    "distance": round(distance, 4),
+                    "similarity": round(hybrid_score, 4),
+                    "vector_similarity": round(vector_sim, 4),
+                    "keyword_score": round(keyword_score, 4),
+                    "embedding_lane": lane.name,
+                })
+
+        candidates.sort(key=lambda c: c["similarity"], reverse=True)
+        top = dedupe_results(candidates, limit=k)
+        logger.info(f"Hybrid search for '{query[:60]}': {len(top)} results")
+        return top
 
     def _keyword_search_fallback(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
