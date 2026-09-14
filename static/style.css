@@ -4629,7 +4629,7 @@ body.bg-pattern-sparkles {
     }
     @media (max-width:768px){
       .box { max-height:none; }
-      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
+      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:calc(42px + env(safe-area-inset-top, 0px)); min-height:0; }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
       .send-btn { width:48px; height:48px !important; border-radius:12px; }
       .send-btn svg { width:22px; height:22px; }
@@ -4702,9 +4702,9 @@ body.bg-pattern-sparkles {
       .sidebar:not(.hidden) {
         overscroll-behavior: auto;
       }
-      /* Sidebar header — room for hamburger */
+      /* Sidebar header — room for hamburger + safe area for notched devices */
       .sidebar-header {
-        padding: 18px 12px 8px 12px;
+        padding: calc(18px + env(safe-area-inset-top, 0px)) 12px 8px 12px;
         min-height: 44px;
       }
       .sidebar-brand-title {
@@ -4767,7 +4767,7 @@ body.bg-pattern-sparkles {
       .section-header-flex h4::before {
         height: 18px;
       }
-      /* Compact top bar on mobile — align with sidebar header */
+      /* Compact top bar on mobile — align with sidebar header + safe area */
       .chat-top-bar {
         padding: 1px 8px;
         min-height: 14px;
@@ -4785,7 +4785,7 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(6px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 48px !important;
         transform: none;
@@ -4847,7 +4847,7 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: env(safe-area-inset-top, 0px);
         left: auto !important;
         right: 4px !important;
         -webkit-tap-highlight-color: transparent;
@@ -4862,7 +4862,7 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: 8px;
         z-index: 210;
         width: 32px;
@@ -7431,14 +7431,27 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         height: 100vh !important;
         height: 100dvh !important;
       }
-      /* Anchor those modals to the top so the full height is usable */
+      /* Email modal content has position:fixed (set by JS bottom:0),
+         so the parent's padding-top doesn't shift it. Set top +
+         padding-top so the *entire* slideover (rounded corners included)
+         shifts below the status bar. */
+      #email-lib-modal .modal-content {
+        top: env(safe-area-inset-top, 0px) !important;
+      }
+      #notes-pane {
+        top: env(safe-area-inset-top, 0px) !important;
+      }
+      /* Anchor those modals to the top so the full height is usable,
+         but shift below the iOS status bar / dynamic island. */
+      #memory-modal,
+      #settings-modal,
       #cookbook-modal,
       #calendar-modal,
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
       #tasks-modal {
-        padding-top: 0 !important;
+        padding-top: env(safe-area-inset-top, 0px) !important;
         align-items: stretch !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the
@@ -14584,7 +14597,7 @@ mark.doc-find-mark.current {
        render it as a narrow side pane ("sidebar") on a phone. */
     position: fixed !important;
     inset: 0 !important;
-    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    top: env(safe-area-inset-top, 0px) !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
     max-width: 100% !important;
     width: 100% !important;
     flex: none !important;
@@ -28911,7 +28924,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   .ge-image-menu,
   .ge-filter-menu {
     position: fixed;
-    top: 44px;
+    top: 28907;
     right: 8px;
     z-index: 500;
     max-width: calc(100vw - 16px);
