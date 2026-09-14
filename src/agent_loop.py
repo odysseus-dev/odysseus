@@ -9,6 +9,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 import asyncio
 import collections
 import json
+import os
 import re
 import time
 import logging
@@ -922,7 +923,20 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "create_session", "list_sessions", "send_to_session", "pipeline",
     "ask_teacher", "list_models", "search_chats",
 ])
-_TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
+# Budget for the three tool-selection steps (index init, MCP indexing, retrieval).
+#
+# 1.5s suits a warm index on quick hardware. It is tight anywhere else: the steps
+# run during a request, while the app may also be loading FastEmbed, reaching
+# ChromaDB and spawning MCP servers. When it expires, selection falls back to
+# ALWAYS_AVAILABLE — which contains no MCP tool at all, so every MCP server
+# silently disappears for that turn. The agent then reports it lacks tools it is
+# in fact connected to, and nothing in the logs ties the two together.
+#
+# Overridable so slower or busier deployments can buy headroom without a patch.
+# The default is unchanged.
+_TOOL_SELECTION_TIMEOUT_SECONDS = float(
+    os.environ.get("ODYSSEUS_TOOL_SELECTION_TIMEOUT", "1.5")
+)
 
 
 def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
