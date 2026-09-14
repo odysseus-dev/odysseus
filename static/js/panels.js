@@ -16,6 +16,7 @@
 
 const LOADERS = {
   editor: () => import('./galleryEditor.js'),
+  gallery: () => import('./gallery.js'),
 };
 
 /**
