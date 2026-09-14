@@ -132,6 +132,19 @@ def mcp_tool_is_readonly(tool: Dict) -> bool:
     return name.startswith(_MCP_READONLY_VERBS)
 
 
+def _describe_exception(e: BaseException) -> str:
+    """Readable text for an exception whose str() may be empty.
+
+    anyio's ClosedResourceError / BrokenResourceError — raised when a stdio
+    session's streams are gone — carry no message at all. Reported verbatim
+    they produce "MCP tool call failed: <tool>:" with nothing after the colon,
+    both in the log and in the tool result handed to the model, which then
+    invents a cause.
+    """
+    text = str(e).strip()
+    return text or e.__class__.__name__
+
+
 class McpManager:
     """Manages MCP server connections and tool routing."""
 
@@ -483,26 +496,36 @@ class McpManager:
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
-            # Auto-reconnect for builtin servers whose subprocess may have died
+            # Auto-reconnect for ANY server whose subprocess or streams are gone.
+            # This used to be builtin-only, which left every user-configured
+            # server permanently broken once its session went stale — the usual
+            # cause being that it was registered from a request task that has
+            # since ended, taking the stdio streams' scope with it.
+            detail = _describe_exception(e)
+            logger.warning(
+                f"MCP call failed for {qualified_name}, attempting reconnect: {detail}"
+            )
             if self.is_builtin(server_id):
-                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
                 reconnected = await self._reconnect_builtin(server_id)
-                if reconnected:
-                    session = self._sessions.get(server_id)
-                    if session:
-                        try:
-                            result = await self._do_call(session, tool_name, arguments)
-                        except Exception as e2:
-                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
-                            return {"error": str(e2), "exit_code": 1}
-                    else:
-                        return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
-                else:
-                    logger.error(f"MCP reconnect failed for {server_id}")
-                    return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
             else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+                reconnected = await self._reconnect_configured(server_id)
+
+            if not reconnected:
+                logger.error(f"MCP reconnect failed for {server_id}: {detail}")
+                return {
+                    "error": f"MCP server unavailable and reconnect failed: {server_id} ({detail})",
+                    "exit_code": 1,
+                }
+
+            session = self._sessions.get(server_id)
+            if not session:
+                return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
+            try:
+                result = await self._do_call(session, tool_name, arguments)
+            except Exception as e2:
+                detail2 = _describe_exception(e2)
+                logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {detail2}")
+                return {"error": detail2, "exit_code": 1}
 
         return result
 
@@ -535,6 +558,28 @@ class McpManager:
         if images:
             result_dict["images"] = images
         return result_dict
+
+    async def _reconnect_configured(self, server_id: str) -> bool:
+        """Tear down and reconnect a user-configured MCP server from its DB row.
+
+        Mirrors _reconnect_builtin for servers registered through the UI. They
+        are connected the same way at startup, so the same recovery applies.
+        """
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if srv is None or not srv.is_enabled:
+                return False
+            await self.disconnect_server(server_id)
+            await self._connect_with_timeout(srv)
+        except Exception as e:
+            logger.warning(
+                f"MCP reconnect failed for {server_id}: {_describe_exception(e)}"
+            )
+            return False
+        finally:
+            db.close()
+        return server_id in self._sessions
 
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
