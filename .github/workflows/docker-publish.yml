@@ -1,8 +1,8 @@
 name: ci / docker publish
 
 # Build the Odysseus image and publish to GHCR.
-#   push to main -> :latest, :X.Y.Z            (curated release; main is fast-forwarded at releases)
-#   push to dev  -> :dev,    :X.Y.Z-dev.<sha>  (rolling dev + an immutable, traceable pin)
+#   push to main -> :latest, :X.Y.Z, :X.Y.Z-<sha>  (curated release + immutable pin)
+#   push to dev  -> :dev,    :X.Y.Z-dev.<sha>      (rolling dev + an immutable, traceable pin)
 # Multi-arch (linux/amd64 + linux/arm64): each arch builds on its own native
 # runner and pushes by digest, then a merge job stitches the digests into one
 # manifest list and applies the tags (faster + cleaner than QEMU emulation).
@@ -120,6 +120,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.short }},enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=raw,value=${{ steps.ver.outputs.version }}-dev.${{ steps.ver.outputs.short }},enable=${{ github.ref == 'refs/heads/dev' }}
       - name: Create manifest list + push tags
