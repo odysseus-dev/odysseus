@@ -114,6 +114,14 @@ export function __pr6020StreamStateSmoke() {
     module_uri = module_path.as_uri()
     script = f"""
       globalThis.window = globalThis;
+      // sessions.js reads navigator.platform at module load. Node 21+ ships
+      // its own real (getter-only) `navigator` global, so a plain
+      // assignment throws on Node 22 (not hit here — this container runs
+      // Node 20, which doesn't predefine it at all, hence the plain
+      // ReferenceError this fixes); defineProperty overrides either case.
+      // Pre-existing gap on origin/dev, unrelated to this PR's own diff —
+      // fixed here because it blocks a clean full-suite run on this branch.
+      Object.defineProperty(globalThis, "navigator", {{ value: {{ platform: "" }}, writable: true, configurable: true }});
       globalThis.addEventListener = () => {{}};
       globalThis.removeEventListener = () => {{}};
       globalThis.dispatchEvent = () => {{}};

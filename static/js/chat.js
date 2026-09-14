@@ -5603,6 +5603,24 @@ import { loadPanel } from './panels.js';
    * Resend a user message. Normal resend appends a fresh copy at the end of
    * the current thread; regenerate flows can opt into replacing from here.
    */
+  // Both "regenerate" flows below permanently delete everything after the
+  // point being regenerated via POST /api/session/{id}/truncate — a real,
+  // unrecoverable server-side delete, not just a UI change. Regenerating
+  // the most recent exchange (nothing exists after it) is the everyday
+  // case and shouldn't need a prompt; `extraCount` is 0 there. Anything
+  // earlier does: the button's own label ("Regenerate message") doesn't
+  // say it also erases the rest of the conversation, so a click anywhere
+  // but the very last exchange would otherwise do that silently, with no
+  // way to get it back.
+  async function _confirmTruncateIfDestructive(extraCount) {
+    if (extraCount <= 0) return true;
+    return uiModule.styledConfirm(
+      `Regenerating here will also permanently delete the ${extraCount} ` +
+      `message${extraCount === 1 ? '' : 's'} after it. This can't be undone.`,
+      { confirmText: 'Delete and regenerate', cancelText: 'Cancel', danger: true }
+    );
+  }
+
   export async function resendUserMessage(userMsgElement, opts = {}) {
     const replaceFromHere = Boolean(opts && opts.replaceFromHere);
     const box = document.getElementById('chat-history');
@@ -5652,6 +5670,11 @@ import { loadPanel } from './panels.js';
 
     try {
       if (replaceFromHere) {
+        // Everything strictly after the immediate AI reply to this user
+        // message would also be destroyed — that's the part a click on
+        // "Regenerate message" doesn't expect to lose.
+        const extraCount = allMsgs.length - msgIndex - 2;
+        if (!(await _confirmTruncateIfDestructive(extraCount))) return;
         // Regenerate flows intentionally trim history to this point before
         // resubmitting. The plain "Resend message" action must not do this.
         const keepCount = msgIndex;
@@ -5714,6 +5737,12 @@ import { loadPanel } from './panels.js';
       if (uiModule) uiModule.showError('Could not find the user message to regenerate');
       return;
     }
+
+    // Everything strictly after the AI reply being regenerated would also
+    // be destroyed — that's the part a click on "Regenerate from here"
+    // doesn't expect to lose.
+    const extraCount = allMsgs.length - aiIndex - 1;
+    if (!(await _confirmTruncateIfDestructive(extraCount))) return;
 
     // Collect any file_ids attached to the original user message so the
     // regenerated send re-uses them. Without this the AI is regenerated on
