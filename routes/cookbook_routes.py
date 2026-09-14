@@ -1544,8 +1544,16 @@ def setup_cookbook_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            # Check for existing endpoint with same base_url — update it
-            existing = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url).first()
+            # Check for existing image endpoint with same base_url -- update it.
+            # Include model_type in the key so an LLM endpoint at the same URL
+            # is not silently retyped to "image" (mirrors the dedup fix in
+            # model_routes.py for issue #6077).
+            existing = (
+                db.query(ModelEndpoint)
+                .filter(ModelEndpoint.base_url == base_url)
+                .filter(ModelEndpoint.model_type == "image")
+                .first()
+            )
             if existing:
                 existing.is_enabled = True
                 existing.model_type = "image"
