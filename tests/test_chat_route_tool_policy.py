@@ -11,16 +11,15 @@ Fix: (1) Read from JSON body as fallback.
 import ast
 from pathlib import Path
 
-import pytest
-
-from src.action_intents import classify_tool_intent
 from src.tool_policy import (
     WEB_TOOL_NAMES,
+    explicit_tool_names_for_turn,
     is_web_search_explicitly_denied,
     web_search_enabled_for_turn,
 )
 
 _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
+_AGENT_LOOP = Path(__file__).resolve().parent.parent / "src" / "agent_loop.py"
 
 
 # ── Source-level guards ─────────────────────────────────────────
@@ -79,13 +78,19 @@ def test_allow_web_search_reads_from_body_as_fallback():
     )
 
 
-def test_browser_form_followups_include_approval_and_send_phrases():
-    """Short approval replies after a form/browser turn must keep browser tools available."""
+def test_server_does_not_infer_run_mode_or_permissions_from_prompt_text():
     source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert "approved" in source
-    assert "proceed" in source
-    assert "send(?:\\s+it)?" in source
-    assert "submit(?:\\s+it)?" in source
+    assert "src.action_intents" not in source
+    assert "chat→agent auto-escalation" not in source
+    assert "_explicit_web_intent" not in source
+    assert "_resolve_workspace_from_message_path" not in source
+
+
+def test_agent_selection_does_not_turn_active_email_relevance_into_a_deny():
+    source = _AGENT_LOOP.read_text(encoding="utf-8")
+
+    assert "_active_email_draft_relevant" not in source
+    assert "_is_email_document_obj" not in source
 
 
 def test_agent_loop_expands_browser_mcp_tools_from_connected_server():
@@ -114,17 +119,15 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
     assert "disabled_tools.update(WEB_TOOL_NAMES)" in source, (
         "disabled_tools must add web_search/web_fetch when web is not explicitly enabled"
     )
-    assert "_forced_tools = set(WEB_TOOL_NAMES)" in source, (
-        "web tools should only be forced visible from the explicit web setting"
+    assert "explicit_tool_names_for_turn(" in source, (
+        "explicit request controls must seed additive selection"
     )
+    assert "explicit_tools=_explicit_tools" in source
 
 
-def test_workspace_auto_escalation_keeps_shell_tools():
-    """Workspace/shell auto-routing must not use the light typed-tool clamp."""
+def test_json_mode_reads_from_the_explicit_request_body():
     source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    assert '_workspace_agent_intent = _tool_intent.category in {"shell", "workspace"}' in source
-    assert "allow_bash = \"true\"" in source
-    assert "if auto_escalated and not _workspace_agent_intent:" in source
+    assert '(body or {}).get("mode")' in source
 
 
 # ── Functional tests of the disabled-tools logic ───────────────
@@ -136,7 +139,6 @@ def _build_disabled_tools(
     use_web=None,
     can_use_bash=True,
     can_use_browser=True,
-    explicit_web_intent=False,
     global_disabled=None,
 ):
     """Replicate the disabled-tools logic from chat_stream for unit testing.
@@ -151,21 +153,7 @@ def _build_disabled_tools(
     search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
     if is_web_search_explicitly_denied(allow_web_search) or not search_enabled:
         disabled_tools.update(WEB_TOOL_NAMES)
-    if explicit_web_intent:
-        disabled_tools.update({
-            "bash", "python",
-            "search_chats", "manage_skills", "manage_memory",
-            "read_file", "write_file", "edit_file",
-            "create_document", "edit_document", "update_document",
-            "send_email", "reply_to_email",
-            "manage_notes", "manage_calendar", "manage_tasks",
-            "api_call", "builtin_browser",
-        })
-        if search_enabled:
-            disabled_tools.difference_update(WEB_TOOL_NAMES)
-        else:
-            disabled_tools.update(WEB_TOOL_NAMES)
-    elif search_enabled:
+    if search_enabled:
         disabled_tools.difference_update(WEB_TOOL_NAMES)
 
     # Enforce per-user privileges
@@ -219,39 +207,18 @@ def test_allow_web_search_false_wins_over_use_web_true():
     assert "web_fetch" in disabled
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "please use web search for current CVEs",
-        "search the web for current CVEs",
-        "can you look up the latest docs",
-    ],
-)
-def test_explicit_false_disables_web_despite_prompt_web_intent(message):
-    """Explicit allow_web_search=false is a hard deny even when the prompt
-    asks for web search."""
-    intent = classify_tool_intent(message)
-    assert intent is not None
-    assert intent.category == "web"
-
+def test_explicit_false_disables_web():
     disabled = _build_disabled_tools(
         allow_web_search="false",
-        explicit_web_intent=True,
     )
     assert "web_search" in disabled
     assert "web_fetch" in disabled
 
 
-def test_prompt_web_intent_does_not_enable_web_without_setting():
-    """Prompt-derived web intent alone must not expose web tools."""
-    intent = classify_tool_intent("look up the latest docs")
-    assert intent is not None
-    assert intent.category == "web"
-
+def test_prompt_content_cannot_enable_web_without_setting():
     disabled = _build_disabled_tools(
         allow_web_search=None,
         use_web=None,
-        explicit_web_intent=True,
     )
     assert "web_search" in disabled
     assert "web_fetch" in disabled
@@ -298,19 +265,34 @@ def test_global_disabled_web_wins_over_explicit_web_enable():
     assert "web_fetch" in disabled
 
 
+def test_url_turn_keeps_bash_and_web_as_additive_explicit_tools():
+    selected = explicit_tool_names_for_turn(
+        allow_bash="true",
+        allow_web_search="true",
+    )
+
+    assert selected == {"bash", "web_search", "web_fetch"}
+
+
 def test_form_data_none_body_true_works():
-    """Simulates: form_data has no allow_bash, body has allow_bash=true.
-    After the fallback (`form_data.get(...) or body.get(...)`), allow_bash
-    should be "true".
-    """
-    # Simulate the fallback logic
-    form_data_val = None  # not in form_data
-    body_val = "true"     # from JSON body
-    allow_bash = form_data_val or body_val
+    """A missing form value falls back to the JSON request body."""
+    form_data_val = None
+    body_val = "true"
+    allow_bash = form_data_val if form_data_val is not None else body_val
     assert str(allow_bash).lower() == "true"
 
     disabled = _build_disabled_tools(allow_bash=allow_bash)
     assert "bash" not in disabled
+
+
+def test_json_false_is_not_lost_by_request_fallback():
+    form_data_val = None
+    body_val = False
+
+    allow_bash = form_data_val if form_data_val is not None else body_val
+
+    assert allow_bash is False
+    assert "bash" in _build_disabled_tools(allow_bash=allow_bash)
 
 
 def test_explicit_false_disables_even_for_admin():
@@ -334,6 +316,13 @@ def test_frontend_always_sends_explicit_allow_bash():
            "allow_bash', 'false'" in source, (
         "Frontend must send explicit allow_bash=false when toggle is off"
     )
+
+
+def test_frontend_does_not_infer_mode_or_bash_permission_from_message_text():
+    source = _CHAT_JS.read_text(encoding="utf-8")
+
+    assert "workspaceAgentIntent" not in source
+    assert "fd.set('allow_bash', 'true')" not in source
 
 
 def test_frontend_sends_explicit_allow_web_search_false_in_agent_mode():

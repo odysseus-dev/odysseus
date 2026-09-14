@@ -358,6 +358,7 @@ class ToolIndex:
         frozenset({"background job", "background jobs", "bg job", "bg jobs",
                    "background task", "is the job done", "check the job",
                    "check on that job", "job output", "kill the job",
+                   "kill that job", "stop the job", "list my jobs", "bg task",
                    "kill the background", "stop the background", "running job"}):
             {"manage_bg_jobs"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
@@ -380,7 +381,7 @@ class ToolIndex:
                    "cron", "periodically", "on a schedule", "set up a task",
                    "create a task", "summarize my inbox every", "remind me every"}):
             {"manage_tasks"},
-        frozenset({"contact", "address", "phone", "who is"}):
+        frozenset({"contact", "contacts", "address", "phone", "who is"}):
             {"resolve_contact", "manage_contact"},
         frozenset({"save contact", "add contact", "new contact", "update contact",
                    "edit contact", "delete contact", "remove contact",
@@ -518,79 +519,55 @@ class ToolIndex:
     def get_tools_for_query(
         self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
     ) -> Set[str]:
-        """Get the set of tool names to include for a given user query."""
+        """Get an additive set of tool names for a user query."""
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
+        base.update(self.get_additive_hints(query))
+        return base
+
+    @classmethod
+    def get_additive_hints(cls, query: str) -> Set[str]:
+        """Return deterministic selection hints without removing candidates.
+
+        Prompt inspection belongs here, in the tool selector.  These hints can
+        make schemas visible, but cannot change run mode, override an explicit
+        deny, or authorize execution.
+        """
+
+        hints: Set[str] = set()
         # Keyword-based force-include for common intents. Match on word
         # boundaries, not raw substrings, so short hints like "fix", "line",
         # "serve", "reply" or "unread" don't fire inside unrelated words
         # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
         # "unreadable"). Same word-boundary matching used in topic_analyzer.
+        query = str(query or "")
         ql = query.lower()
-        for keywords, tools in self._KEYWORD_HINTS.items():
+        for keywords, tools in cls._KEYWORD_HINTS.items():
             if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
-                base.update(tools)
+                hints.update(tools)
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",
         # daily/nightly/etc., or a clock time like "at 7:30 am" / "7am", which
         # all signal a recurring/scheduled task. Force-include manage_tasks so
         # the agent can actually create the cron job instead of fumbling.
-        if self._SCHEDULE_RE.search(ql):
-            base.add("manage_tasks")
+        if cls._SCHEDULE_RE.search(ql):
+            hints.add("manage_tasks")
         # URL/site requests need web tools even when embedding retrieval is
         # stubbed/unavailable. Keep this structural, not always-on, so trivial
         # prompts do not drag web schemas into the agent context.
-        if self._WEB_RE.search(query):
-            base.update({"web_search", "web_fetch"})
-        # Hard steering: when the query is a clear "save info about a specific
-        # person" pattern (address paste + name, phone next to a name, etc.),
-        # the model has been observed defaulting to manage_memory even with
-        # manage_contact in the toolset. Pull memory out for these queries so
-        # the model literally cannot pick it. ALWAYS_AVAILABLE includes
-        # manage_memory by default; we override that here.
-        # The "for/to <word>" check needs to allow lowercase names (users
-        # don't always capitalize) but filter out timing/pronoun stopwords
-        # so "save this for later" / "save for tomorrow" don't trigger.
-        _CONTACT_STOPWORDS_AFTER_FOR = {
-            "later", "tomorrow", "yesterday", "now", "then", "today",
-            "tonight", "me", "us", "you", "him", "her", "them", "myself",
-            "yourself", "next", "this", "that", "the", "a", "an", "future",
-            "real", "use", "uses", "another", "future", "reference",
-        }
-        # Regex catches "save (this|it|the|her|...|<noun>) for <name>" / "to my
-        # contacts" patterns. More forgiving than literal-keyword matching —
-        # 'save this address for Alex' uses one extra word between 'save' and
-        # 'for' that breaks the contiguous 'save this for' phrase.
-        save_for_match = re.search(
-            r"\bsave\b(?:\s+\w+){0,3}\s+(?:for|to)\s+([A-Za-z]+)",
+        if cls._WEB_RE.search(query):
+            hints.update({"web_search", "web_fetch"})
+        # Possessive contact details are a strong additive hint even without
+        # the literal word "contact". Do not remove manage_memory or any other
+        # candidate here; selection is deliberately monotonic.
+        if re.search(
+            r"\bsave\b(?:\s+\w+){0,2}\s+(?:his|her|their)\s+"
+            r"(?:address|phone|number|email|contact|details)",
             ql,
-        )
-        # "to my contacts", "into my contacts", "in my address book", etc.
-        to_contacts = re.search(r"\b(?:to|in|into)\s+(?:my\s+)?(?:contacts|address\s+book)\b", ql)
-        # Possessive: "save (his|her|their) (address|phone|email|number) ..."
-        # — strong contact signal even without "for <name>". Force-include
-        # manage_contact here too since the keyword fallback misses this
-        # construction.
-        possessive_contact = re.search(
-            r"\bsave\b(?:\s+\w+){0,2}\s+(?:his|her|their)\s+(?:address|phone|number|email|contact|details)",
-            ql,
-        )
-        word_after = (
-            save_for_match.group(1).lower() if save_for_match else None
-        )
-        contact_only_signal = (
-            (save_for_match is not None
-             and word_after is not None
-             and word_after not in _CONTACT_STOPWORDS_AFTER_FOR)
-            or to_contacts is not None
-            or possessive_contact is not None
-        )
-        if possessive_contact is not None:
-            base.add("manage_contact")
-        if contact_only_signal and "manage_contact" in base:
-            base.discard("manage_memory")
-        return base
+        ):
+            hints.add("manage_contact")
+        return hints
 
 
 # ── Singleton ──

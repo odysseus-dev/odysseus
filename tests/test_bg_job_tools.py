@@ -140,10 +140,7 @@ def test_action_aliases(store):
     assert "Killed" in _run({"action": "stop", "job_id": "job0001"})["output"]
 
 
-# ── intent classifier: short bg-job commands must not be dropped as low-signal ─
-# A short imperative ("kill that job") otherwise trips the low-signal gate, which
-# skips tool retrieval entirely and never surfaces manage_bg_jobs (the live bug
-# this feature hit). These lock in that bg-job control reaches the files domain.
+# ── additive hints: short bg-job commands must surface manage_bg_jobs ─
 
 
 @pytest.mark.parametrize("msg", [
@@ -155,20 +152,17 @@ def test_action_aliases(store):
     "list my jobs",
     "kill the bg task",
 ])
-def test_bg_job_commands_are_not_low_signal(msg):
-    from src.agent_loop import _classify_agent_request, _DOMAIN_TOOL_MAP
-    r = _classify_agent_request([{"role": "user", "content": msg}], msg)
-    assert r["low_signal"] is False
-    assert "files" in r["domains"]
-    # files domain seeds manage_bg_jobs, so it gets offered to the model.
-    assert "manage_bg_jobs" in _DOMAIN_TOOL_MAP["files"]
+def test_bg_job_commands_add_manage_bg_jobs(msg):
+    from src.tool_index import ToolIndex
+
+    assert "manage_bg_jobs" in ToolIndex.get_additive_hints(msg)
 
 
 @pytest.mark.parametrize("msg", [
     "run this in the background",   # launching, not managing
     "find me a job listing",        # unrelated use of "job"
 ])
-def test_non_bg_messages_do_not_trip_files_domain(msg):
-    from src.agent_loop import _classify_agent_request
-    r = _classify_agent_request([{"role": "user", "content": msg}], msg)
-    assert "files" not in r["domains"]
+def test_non_bg_messages_do_not_add_manage_bg_jobs(msg):
+    from src.tool_index import ToolIndex
+
+    assert "manage_bg_jobs" not in ToolIndex.get_additive_hints(msg)
