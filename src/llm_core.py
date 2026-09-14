@@ -764,6 +764,17 @@ def _build_ollama_payload(
         payload["options"] = options
     if tools:
         payload["tools"] = _alias_harmony_tools(tools, model)
+    # Mirror of the /v1 injection below, for the native endpoint — and the only
+    # one that currently has an effect.
+    #
+    # Measured on Ollama 0.32.4 with qwen3:14b, same short question: think=false
+    # here produced 4 generated tokens with an empty `thinking` field, against
+    # 395 on /v1/chat/completions, where the flag is accepted and ignored.
+    # Without it the model reasons on every turn, and when the budget runs out
+    # before the conclusion the round returns empty content — no text, no tool
+    # call — which reads as the agent silently doing nothing.
+    if _supports_thinking(model):
+        payload["think"] = False
     return payload
 
 
