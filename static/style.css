@@ -32266,6 +32266,174 @@ body.doc-find-active mark.doc-find-mark.current {
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border-color: color-mix(in srgb, var(--accent, var(--red)) 36%, transparent);
 }
+.email-urgency-pill {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--email-urgency-color, var(--accent, var(--red))) 18%, transparent);
+  color: var(--email-urgency-color, var(--accent, var(--red)));
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  height: 17px;
+  line-height: 1;
+  max-width: 128px;
+  overflow: hidden;
+  padding: 2px 6px !important;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.email-urgency-pill:hover { filter: brightness(1.12); }
+.email-urgency-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--email-urgency-color, currentColor);
+  flex-shrink: 0;
+}
+.email-reader-urgency-row .email-urgency-pill {
+  height: 20px;
+  font-size: 10px;
+}
+.email-urgency-manager-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.36);
+}
+.email-urgency-manager {
+  width: min(720px, 94vw);
+  max-height: min(720px, 90vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.email-urgency-manager-body {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(260px, 1.2fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+.email-urgency-level-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.email-urgency-level-row {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  min-width: 0;
+  padding: 7px 9px;
+  text-align: left;
+}
+.email-urgency-level-row.active,
+.email-urgency-level-row:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.email-urgency-level-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.email-urgency-level-name {
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-urgency-level-desc {
+  font-size: 10px;
+  opacity: 0.65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-urgency-level-rank {
+  font-size: 10px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.email-urgency-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.email-urgency-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 700;
+}
+.email-urgency-form textarea {
+  resize: vertical;
+  min-height: 70px;
+}
+.email-urgency-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+.email-urgency-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  font-weight: 600 !important;
+  line-height: 1.2;
+  min-height: 16px;
+  transform: none;
+  transition: none;
+}
+.email-urgency-check input[type="checkbox"] {
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  transform: none;
+  transition: none;
+}
+.email-urgency-check:hover,
+.email-urgency-check:hover input[type="checkbox"] {
+  transform: none;
+}
+.email-urgency-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+@media (max-width: 720px) {
+  .email-urgency-manager-body {
+    grid-template-columns: 1fr;
+  }
+}
 .email-tag {
   display: inline-block;
   font-size: 9px;
@@ -33309,9 +33477,9 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-ai-reply-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 /* Align select/new buttons in popup library toolbar */
-#email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn, #email-lib-compose-btn { position: relative; top: -4px; }
+#email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn, #email-urgency-manage-btn, #email-lib-compose-btn { position: relative; top: -4px; }
 /* Select + Refresh sit slightly lower than Compose on desktop. */
-#email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn { top: -2px; }
+#email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn, #email-urgency-manage-btn { top: -2px; }
 #email-lib-settings-btn { top: -1px; }
 #email-lib-settings-btn svg { position: relative; top: 2px; }
 /* New (Compose) button gets a slightly taller, slightly lower variant
@@ -33327,7 +33495,7 @@ body.doc-find-active mark.doc-find-mark.current {
 #email-lib-compose-btn svg { color: var(--accent, var(--red)); }
 @media (max-width: 768px) {
   /* On mobile they're 1px higher than desktop. */
-  #email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn { top: -3px; }
+  #email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn, #email-urgency-manage-btn { top: -3px; }
   #email-lib-settings-btn { top: -2px; }
 }
 
@@ -33634,7 +33802,6 @@ body.doc-find-active mark.doc-find-mark.current {
     flex-direction: column;
   }
 }
-
 /* On mobile, the "New" (compose) button deserves a touch-friendly size
    so it stands out from the smaller toolbar buttons next to it. Lift
    it slightly visually with a bigger SVG, padding, and font. */

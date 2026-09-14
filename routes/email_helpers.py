@@ -29,10 +29,11 @@ from email.mime.base import MIMEBase
 from email import encoders
 import mimetypes
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
@@ -563,6 +564,46 @@ COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = Path(SCHEDULED_EMAILS_DB)
 
 
+DEFAULT_EMAIL_URGENCY_LEVELS = [
+    {
+        "slug": "urgent",
+        "name": "Urgent",
+        "description": "Needs action now or blocks someone else.",
+        "examples": ["Someone is waiting", "Hard deadline today", "Account or access blocker"],
+        "color": "red",
+        "rank": 300,
+        "notify": True,
+    },
+    {
+        "slug": "reply-soon",
+        "name": "Reply soon",
+        "description": "Needs a response soon, usually within a day.",
+        "examples": ["Scheduling request", "Question that needs a timely answer"],
+        "color": "orange",
+        "rank": 200,
+        "notify": True,
+    },
+    {
+        "slug": "info",
+        "name": "Info",
+        "description": "Useful information with no immediate response required.",
+        "examples": ["Status update", "Reference material"],
+        "color": "blue",
+        "rank": 100,
+        "notify": False,
+    },
+    {
+        "slug": "ignore",
+        "name": "Ignore",
+        "description": "No user action is needed.",
+        "examples": ["Promotional email", "No personal action required"],
+        "color": "muted",
+        "rank": 0,
+        "notify": False,
+    },
+]
+
+
 OWNER_SCOPED_EMAIL_CACHE_TABLES = {
     "email_summaries",
     "email_ai_replies",
@@ -694,6 +735,456 @@ def attachment_extract_dir(folder: str, uid: str) -> Path:
     if target != base and base not in target.parents:
         raise HTTPException(400, "Invalid attachment location")
     return target
+
+
+def normalize_email_urgency_slug(value: str) -> str:
+    """Normalize user-facing urgency names into stable local identifiers."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return slug[:48]
+
+
+def _coerce_email_urgency_examples(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw = [line.strip() for line in value.replace(";", "\n").splitlines()]
+    elif isinstance(value, list):
+        raw = [str(v or "").strip() for v in value]
+    else:
+        raw = []
+    out: list[str] = []
+    for item in raw:
+        if item and item not in out:
+            out.append(item[:180])
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _coerce_email_urgency_color(value: str) -> str:
+    color = str(value or "").strip().lower()
+    if re.fullmatch(r"#[0-9a-f]{3}(?:[0-9a-f]{3})?", color):
+        return color
+    if re.fullmatch(r"[a-z][a-z0-9_-]{0,24}", color):
+        return color
+    return "muted"
+
+
+def _email_urgency_row_to_dict(row) -> dict:
+    try:
+        examples = json.loads(row["examples"] or "[]")
+    except Exception:
+        examples = []
+    if not isinstance(examples, list):
+        examples = []
+    return {
+        "slug": row["slug"],
+        "name": row["name"],
+        "description": row["description"] or "",
+        "examples": [str(x) for x in examples if str(x).strip()],
+        "color": row["color"] or "muted",
+        "rank": int(row["rank"] or 0),
+        "notify": bool(row["notify"]),
+        "active": bool(row["active"]),
+        "created_at": row["created_at"] or "",
+        "updated_at": row["updated_at"] or "",
+    }
+
+
+def ensure_email_urgency_defaults(owner: str = "") -> None:
+    """Seed the default urgency levels for a user if they do not exist."""
+    import sqlite3
+    owner = (owner or "").strip()
+    now = datetime.utcnow().isoformat()
+    conn = sqlite3.connect(SCHEDULED_DB)
+    try:
+        conn.row_factory = sqlite3.Row
+        for level in DEFAULT_EMAIL_URGENCY_LEVELS:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO email_urgency_levels
+                (owner, slug, name, description, examples, color, rank, notify, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    owner,
+                    level["slug"],
+                    level["name"],
+                    level["description"],
+                    json.dumps(level.get("examples") or []),
+                    level["color"],
+                    int(level["rank"]),
+                    1 if level.get("notify") else 0,
+                    now,
+                    now,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_email_urgency_levels(owner: str = "", include_inactive: bool = False) -> list[dict]:
+    import sqlite3
+    ensure_email_urgency_defaults(owner)
+    conn = sqlite3.connect(SCHEDULED_DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        where = "owner=?"
+        params: list[Any] = [(owner or "").strip()]
+        if not include_inactive:
+            where += " AND active=1"
+        rows = conn.execute(
+            f"SELECT * FROM email_urgency_levels WHERE {where} ORDER BY rank DESC, name COLLATE NOCASE ASC",
+            params,
+        ).fetchall()
+        return [_email_urgency_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def save_email_urgency_level(owner: str = "", data: dict | None = None, existing_slug: str | None = None) -> dict:
+    import sqlite3
+    owner = (owner or "").strip()
+    data = data or {}
+    ensure_email_urgency_defaults(owner)
+    current_slug = normalize_email_urgency_slug(existing_slug or "")
+    raw_name = str(data.get("name") or "").strip()
+    raw_slug = str(data.get("slug") or "").strip()
+    slug = normalize_email_urgency_slug(raw_slug or raw_name or current_slug)
+    if not slug:
+        raise HTTPException(400, "Urgency level name is required")
+    name = raw_name or slug.replace("-", " ").title()
+    description = str(data.get("description") or "").strip()[:600]
+    examples = _coerce_email_urgency_examples(data.get("examples"))
+    color = _coerce_email_urgency_color(data.get("color") or "")
+    try:
+        rank = int(data.get("rank", 0))
+    except Exception:
+        raise HTTPException(400, "Urgency rank must be a whole number")
+    rank = max(-1000, min(1000, rank))
+    notify = 1 if bool(data.get("notify")) else 0
+    active = 0 if data.get("active") is False else 1
+    now = datetime.utcnow().isoformat()
+    conn = sqlite3.connect(SCHEDULED_DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        if current_slug and current_slug != slug:
+            exists = conn.execute(
+                "SELECT 1 FROM email_urgency_levels WHERE owner=? AND slug=?",
+                (owner, slug),
+            ).fetchone()
+            if exists:
+                raise HTTPException(409, "An urgency level with that name already exists")
+            conn.execute(
+                "UPDATE email_urgency_assignments SET urgency_slug=?, updated_at=? WHERE owner=? AND urgency_slug=?",
+                (slug, now, owner, current_slug),
+            )
+            cur = conn.execute(
+                """
+                UPDATE email_urgency_levels
+                SET slug=?, name=?, description=?, examples=?, color=?, rank=?, notify=?, active=?, updated_at=?
+                WHERE owner=? AND slug=?
+                """,
+                (
+                    slug, name, description, json.dumps(examples), color, rank, notify, active, now,
+                    owner, current_slug,
+                ),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(404, "Urgency level not found")
+        else:
+            conn.execute(
+                """
+                INSERT INTO email_urgency_levels
+                (owner, slug, name, description, examples, color, rank, notify, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(owner, slug) DO UPDATE SET
+                  name=excluded.name,
+                  description=excluded.description,
+                  examples=excluded.examples,
+                  color=excluded.color,
+                  rank=excluded.rank,
+                  notify=excluded.notify,
+                  active=excluded.active,
+                  updated_at=excluded.updated_at
+                """,
+                (owner, slug, name, description, json.dumps(examples), color, rank, notify, active, now, now),
+            )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM email_urgency_levels WHERE owner=? AND slug=?",
+            (owner, slug),
+        ).fetchone()
+        return _email_urgency_row_to_dict(row)
+    finally:
+        conn.close()
+
+
+def archive_email_urgency_level(owner: str = "", slug: str = "") -> dict:
+    import sqlite3
+    owner = (owner or "").strip()
+    slug = normalize_email_urgency_slug(slug)
+    if not slug:
+        raise HTTPException(400, "Urgency level is required")
+    ensure_email_urgency_defaults(owner)
+    now = datetime.utcnow().isoformat()
+    conn = sqlite3.connect(SCHEDULED_DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM email_urgency_levels WHERE owner=? AND slug=?",
+            (owner, slug),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Urgency level not found")
+        conn.execute(
+            "UPDATE email_urgency_levels SET active=0, updated_at=? WHERE owner=? AND slug=?",
+            (now, owner, slug),
+        )
+        conn.execute(
+            "DELETE FROM email_urgency_assignments WHERE owner=? AND urgency_slug=?",
+            (owner, slug),
+        )
+        conn.commit()
+        return {"success": True, "slug": slug}
+    finally:
+        conn.close()
+
+
+def email_urgency_message_key(message_id: str = "", folder: str = "", uid: str = "") -> str:
+    message_id = str(message_id or "").strip()
+    if message_id:
+        return f"mid:{message_id}"
+    folder_key = str(folder or "INBOX").strip() or "INBOX"
+    uid_key = str(uid or "").strip()
+    if uid_key:
+        return f"uid:{folder_key}:{uid_key}"
+    return ""
+
+
+def email_urgency_slug_for_score(owner: str = "", score: int = 0) -> str:
+    """Map the existing 0-3 urgency scanner score into the configured levels."""
+    try:
+        score_i = int(score or 0)
+    except Exception:
+        score_i = 0
+    levels = {level["slug"]: level for level in list_email_urgency_levels(owner)}
+    if score_i >= 3 and "urgent" in levels:
+        return "urgent"
+    if score_i >= 2 and "reply-soon" in levels:
+        return "reply-soon"
+    if score_i >= 1 and "info" in levels:
+        return "info"
+    if "ignore" in levels:
+        return "ignore"
+    active = sorted(levels.values(), key=lambda level: int(level.get("rank") or 0), reverse=True)
+    if not active:
+        return ""
+    if score_i <= 0:
+        return active[-1]["slug"]
+    if score_i >= 3:
+        return active[0]["slug"]
+    idx = min(len(active) - 1, max(0, 3 - score_i))
+    return active[idx]["slug"]
+
+
+def _upsert_email_urgency_assignment_row(
+    conn,
+    *,
+    owner: str = "",
+    account_id: str | None = None,
+    message_id: str = "",
+    uid: str = "",
+    folder: str = "INBOX",
+    urgency_slug: str = "",
+    reason: str = "",
+    confidence: float | None = None,
+    source: str = "manual",
+    subject: str = "",
+    sender: str = "",
+    now: str | None = None,
+) -> str:
+    """Write one assignment without letting classifier output replace a manual choice."""
+    owner = (owner or "").strip()
+    account_id = (account_id or "").strip()
+    folder = (folder or "INBOX").strip() or "INBOX"
+    urgency_slug = normalize_email_urgency_slug(urgency_slug)
+    message_key = email_urgency_message_key(message_id, folder, uid)
+    if not message_key:
+        return ""
+    try:
+        confidence_value = float(confidence) if confidence is not None else 1.0
+    except Exception:
+        confidence_value = 1.0
+    confidence_value = max(0.0, min(1.0, confidence_value))
+    source_value = str(source or "manual").strip().lower()[:40] or "manual"
+    timestamp = now or datetime.utcnow().isoformat()
+    conn.execute(
+        """
+        INSERT INTO email_urgency_assignments
+        (owner, account_id, message_key, message_id, uid, folder, urgency_slug, confidence,
+         reason, source, subject, sender, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(owner, account_id, message_key) DO UPDATE SET
+          message_id=excluded.message_id,
+          uid=excluded.uid,
+          folder=excluded.folder,
+          urgency_slug=excluded.urgency_slug,
+          confidence=excluded.confidence,
+          reason=excluded.reason,
+          source=excluded.source,
+          subject=excluded.subject,
+          sender=excluded.sender,
+          updated_at=excluded.updated_at
+        WHERE LOWER(COALESCE(email_urgency_assignments.source, '')) != 'manual'
+           OR excluded.source != 'classifier'
+        """,
+        (
+            owner, account_id, message_key, str(message_id or "").strip(), str(uid or "").strip(), folder,
+            urgency_slug, confidence_value, str(reason or "")[:500], source_value,
+            str(subject or "")[:300], str(sender or "")[:300], timestamp, timestamp,
+        ),
+    )
+    return message_key
+
+
+def upsert_email_urgency_assignment(
+    *,
+    owner: str = "",
+    account_id: str | None = None,
+    message_id: str = "",
+    uid: str = "",
+    folder: str = "INBOX",
+    urgency_slug: str = "",
+    reason: str = "",
+    confidence: float | None = None,
+    source: str = "manual",
+    subject: str = "",
+    sender: str = "",
+) -> dict:
+    import sqlite3
+    owner = (owner or "").strip()
+    account_id = (account_id or "").strip()
+    folder = (folder or "INBOX").strip() or "INBOX"
+    urgency_slug = normalize_email_urgency_slug(urgency_slug)
+    message_key = email_urgency_message_key(message_id, folder, uid)
+    if not message_key:
+        raise HTTPException(400, "Message identity is required")
+    ensure_email_urgency_defaults(owner)
+    levels = {level["slug"]: level for level in list_email_urgency_levels(owner)}
+    if urgency_slug not in levels:
+        raise HTTPException(404, "Urgency level not found")
+    conn = sqlite3.connect(SCHEDULED_DB)
+    try:
+        _upsert_email_urgency_assignment_row(
+            conn,
+            owner=owner,
+            account_id=account_id,
+            message_id=message_id,
+            uid=uid,
+            folder=folder,
+            urgency_slug=urgency_slug,
+            reason=reason,
+            confidence=confidence,
+            source=source,
+            subject=subject,
+            sender=sender,
+        )
+        row = conn.execute(
+            """
+            SELECT urgency_slug, confidence, reason, source
+            FROM email_urgency_assignments
+            WHERE owner=? AND account_id=? AND message_key=?
+            """,
+            (owner, account_id, message_key),
+        ).fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    actual_slug = row[0] if row and row[0] in levels else urgency_slug
+    level = dict(levels[actual_slug])
+    return {
+        **level,
+        "reason": str((row[2] if row else reason) or "")[:500],
+        "confidence": float((row[1] if row else confidence) or 0),
+        "source": str((row[3] if row else source) or "manual")[:40],
+        "message_key": message_key,
+    }
+
+
+def clear_email_urgency_assignment(
+    *,
+    owner: str = "",
+    account_id: str | None = None,
+    message_id: str = "",
+    uid: str = "",
+    folder: str = "INBOX",
+) -> dict:
+    import sqlite3
+    owner = (owner or "").strip()
+    account_id = (account_id or "").strip()
+    message_key = email_urgency_message_key(message_id, folder, uid)
+    if not message_key:
+        raise HTTPException(400, "Message identity is required")
+    conn = sqlite3.connect(SCHEDULED_DB)
+    try:
+        conn.execute(
+            "DELETE FROM email_urgency_assignments WHERE owner=? AND account_id=? AND message_key=?",
+            (owner, account_id, message_key),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"success": True, "cleared": True, "message_key": message_key}
+
+
+def load_email_urgency_assignments(
+    *,
+    owner: str = "",
+    account_id: str | None = None,
+    folder: str = "INBOX",
+    emails: list[dict] | None = None,
+) -> dict[str, dict]:
+    import sqlite3
+    emails = emails or []
+    owner = (owner or "").strip()
+    account_id = (account_id or "").strip()
+    keys = []
+    for e in emails:
+        key = email_urgency_message_key(e.get("message_id") or "", e.get("folder") or folder, e.get("uid") or "")
+        if key and key not in keys:
+            keys.append(key)
+    if not keys:
+        return {}
+    ensure_email_urgency_defaults(owner)
+    conn = sqlite3.connect(SCHEDULED_DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        placeholders = ",".join("?" * len(keys))
+        rows = conn.execute(
+            f"""
+            SELECT a.message_key, a.reason, a.confidence, a.source, a.updated_at AS assigned_at,
+                   l.slug, l.name, l.description, l.examples, l.color, l.rank, l.notify, l.active,
+                   l.created_at, l.updated_at
+            FROM email_urgency_assignments a
+            JOIN email_urgency_levels l
+              ON l.owner=a.owner AND l.slug=a.urgency_slug
+            WHERE a.owner=? AND a.account_id=? AND a.message_key IN ({placeholders}) AND l.active=1
+            """,
+            (owner, account_id, *keys),
+        ).fetchall()
+        out = {}
+        for row in rows:
+            level = _email_urgency_row_to_dict(row)
+            level.update({
+                "reason": row["reason"] or "",
+                "confidence": float(row["confidence"] or 0),
+                "source": row["source"] or "",
+                "assigned_at": row["assigned_at"] or "",
+            })
+            out[row["message_key"]] = level
+        return out
+    finally:
+        conn.close()
 
 
 def _init_scheduled_db():
@@ -858,6 +1349,53 @@ def _init_scheduled_db():
             PRIMARY KEY (message_id, owner)
         )
     """, ["message_id", "owner", "uid", "folder", "subject", "sender", "urgency", "reason", "alerted", "created_at"])
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_urgency_levels (
+            owner TEXT NOT NULL DEFAULT '',
+            slug TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            examples TEXT DEFAULT '[]',
+            color TEXT DEFAULT 'muted',
+            rank INTEGER DEFAULT 0,
+            notify INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner, slug)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_urgency_levels_owner_active_rank
+        ON email_urgency_levels(owner, active, rank)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_urgency_assignments (
+            owner TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            message_key TEXT NOT NULL,
+            message_id TEXT DEFAULT '',
+            uid TEXT DEFAULT '',
+            folder TEXT NOT NULL DEFAULT 'INBOX',
+            urgency_slug TEXT NOT NULL,
+            confidence REAL DEFAULT 1.0,
+            reason TEXT DEFAULT '',
+            source TEXT DEFAULT 'manual',
+            subject TEXT DEFAULT '',
+            sender TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner, account_id, message_key)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_urgency_assignments_filter
+        ON email_urgency_assignments(owner, account_id, folder, urgency_slug)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_urgency_assignments_message
+        ON email_urgency_assignments(owner, account_id, message_id)
+    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS email_event_seen (
             owner TEXT NOT NULL,
