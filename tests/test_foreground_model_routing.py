@@ -1136,6 +1136,7 @@ def _chat_endpoint(
             max_tokens=128,
             character_name=None,
         ),
+        preprocessed=SimpleNamespace(attachment_meta=[]),
     )
 
     async def fake_build_context(*args, **kwargs):
