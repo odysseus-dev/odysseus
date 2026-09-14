@@ -737,6 +737,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
+        _VALID_VALUES = {
+            "tool_approval_mode": {"ask", "auto"},
+        }
         for key in DEFAULT_SETTINGS:
             if key in RETIRED_SETTING_KEYS:
                 continue
@@ -750,6 +753,15 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+
+            if key in _VALID_VALUES:
+                allowed = _VALID_VALUES[key]
+                if not isinstance(val, str) or val not in allowed:
+                    raise HTTPException(
+                        400,
+                        f"{key} must be one of {sorted(allowed)}",
+                    )
+
             current[key] = val
         _save_settings(current)
         return without_retired_settings(current)

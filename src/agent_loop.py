@@ -6,6 +6,7 @@ Wraps stream_llm() with multi-round tool execution.
 The LLM decides when to use tools by writing fenced code blocks.
 """
 
+import os
 import asyncio
 import collections
 import json
@@ -3414,6 +3415,17 @@ def _detect_runaway_call(call_freq, threshold=15):
     sig = next((s for s, n in call_freq.items() if n >= threshold), None)
     return sig.split(":", 1)[0] if sig else None
 
+def _tool_approval_gate_bypassed(
+    exact_approval: Optional[ExactToolApproval] = None,
+) -> bool:
+    """Return whether the tool approval prompt should be skipped."""
+    return (
+        os.getenv("ODYSSEUS_AUTO_APPROVE_TOOLS", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        or get_setting("tool_approval_mode", "ask") == "auto"
+        or bool(exact_approval and exact_approval.allow_remaining_actions)
+    )
+
 
 async def stream_agent_loop(
     endpoint_url: str,
@@ -3470,9 +3482,7 @@ async def stream_agent_loop(
             )
             or messages_contain_external_untrusted_context(messages)
         ),
-        approval_gate_bypassed=bool(
-            exact_approval and exact_approval.allow_remaining_actions
-        ),
+        approval_gate_bypassed=_tool_approval_gate_bypassed(exact_approval),
         delegated_credential=bool(delegated_credential),
     )
     mcp_mgr = get_mcp_manager()
