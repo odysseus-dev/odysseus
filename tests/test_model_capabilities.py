@@ -199,7 +199,7 @@ def test_capability_probe_result_converts_pass_and_fail_to_assertions():
 
 def test_deterministic_controls_are_normalized_as_claims_not_capabilities():
     controls = mc.deterministic_controls_from_values(
-        ["temp", "top-p", "top-k", "seed", "unknown"],
+        ["temp", "top-p", "top-k", "seed", "reasoning_effort", "verbosity", "unknown"],
         source=mc.SOURCE_PROVIDER_READER,
     )
 
@@ -208,6 +208,8 @@ def test_deterministic_controls_are_normalized_as_claims_not_capabilities():
         mc.CONTROL_TOP_P,
         mc.CONTROL_TOP_K,
         mc.CONTROL_SEED,
+        mc.CONTROL_REASONING_EFFORT,
+        mc.CONTROL_VERBOSITY,
     ]
     assert {control.status for control in controls} == {mc.ASSERTION_CLAIMED}
     assert {control.source for control in controls} == {mc.SOURCE_PROVIDER_READER}

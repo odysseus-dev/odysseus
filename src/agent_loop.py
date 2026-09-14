@@ -3446,6 +3446,8 @@ async def stream_agent_loop(
     external_untrusted_context_seen: bool = False,
     delegated_credential: bool = False,
     exact_approval: Optional[ExactToolApproval] = None,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
     _is_teacher_run: bool = False,
     history_session=None,
     defer_context_shaping: bool = False,
@@ -4954,6 +4956,8 @@ async def stream_agent_loop(
             fallback_on_empty=fallback_on_empty,
             candidate_request_factory=_candidate_request,
             candidate_route_descriptors=_candidate_route_descriptors,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
         ):
             if not _round_first_event_logged:
                 _round_first_event_logged = True

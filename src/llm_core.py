@@ -193,8 +193,17 @@ def _cache_header_identity(headers) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def _get_cache_key(url: str, model: str, messages: List[Dict],
-                   temperature: float, max_tokens: int, headers=None) -> str:
+def _get_cache_key(
+    url: str,
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    headers=None,
+    *,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
+) -> str:
     """Generate a cache key partitioned by endpoint and credential identity."""
     hashable_messages = []
     for msg in messages:
@@ -211,6 +220,8 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
         # digest only prevents responses from one configured account/route
         # being returned under another route with the same URL and model.
         'header_identity': _cache_header_identity(headers),
+        'reasoning_effort': _normalize_reasoning_effort(reasoning_effort),
+        'verbosity': _normalize_verbosity(verbosity),
     }, sort_keys=True)
     return hashlib.sha256(content.encode()).hexdigest()
 
@@ -736,6 +747,7 @@ def _build_ollama_payload(
     stream: bool = False,
     tools: Optional[List[Dict]] = None,
     num_ctx: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Dict:
     """Build the JSON payload for Ollama's /api/chat endpoint.
 
@@ -1280,6 +1292,9 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
+    model_capability: Optional[Dict] = None,
 ) -> Dict:
     from src.chatgpt_subscription import build_responses_input
 
@@ -1293,6 +1308,21 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
+    from src import model_capabilities as mc
+    from src.model_control_capabilities import allowed_control_values
+
+    if not isinstance(model_capability, dict) or model_capability.get("model_id") != model:
+        model_capability = None
+    normalized_effort = _normalize_reasoning_effort(reasoning_effort)
+    if normalized_effort == "off":
+        normalized_effort = "none"
+    allowed_efforts = allowed_control_values(model_capability, mc.CONTROL_REASONING_EFFORT)
+    if normalized_effort and normalized_effort in allowed_efforts:
+        payload["reasoning"] = {"effort": normalized_effort}
+    normalized_verbosity = _normalize_verbosity(verbosity)
+    allowed_verbosity = allowed_control_values(model_capability, mc.CONTROL_VERBOSITY)
+    if normalized_verbosity and normalized_verbosity in allowed_verbosity:
+        payload["text"] = {"verbosity": normalized_verbosity}
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
@@ -1437,8 +1467,8 @@ _MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
-    "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "deepseek-v4",
-    "minimax", "m2-reap", "gemma", "stepfun", "step-3", "step3",
+    "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "deepseek-v4", "minimax",
+    "m2-reap", "gemma", "stepfun", "step-3", "step3",
     "magistral", "mistral-small", "mistral-medium",
 )
 
@@ -1479,6 +1509,55 @@ def _normalize_mistral_content(content):
             elif isinstance(inner, str):
                 thinking_parts.append(inner)
     return "".join(text_parts), "".join(thinking_parts)
+
+
+_REASONING_AUTO = {"", "auto", "default"}
+_REASONING_OFF = {"off", "false", "disabled", "disable", "no"}
+_REASONING_NONE = {"none"}
+_REASONING_ON = {"on", "true", "enabled", "enable", "yes"}
+_VERBOSITY_VALUES = {"low", "medium", "high"}
+
+
+def _normalize_reasoning_effort(value: Optional[str]) -> Optional[str]:
+    """Return a normalized reasoning control, or None for provider default."""
+    if value is None:
+        return None
+    effort = str(value).strip().lower().replace("-", "_")
+    if effort in _REASONING_AUTO:
+        return None
+    if effort in _REASONING_NONE:
+        return "none"
+    if effort in _REASONING_OFF:
+        return "off"
+    if effort in _REASONING_ON:
+        return "on"
+    if effort == "x_high":
+        return "xhigh"
+    return effort
+
+
+def _normalize_verbosity(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    verbosity = str(value).strip().lower()
+    if verbosity in {"", "auto", "default"}:
+        return None
+    if verbosity in _VERBOSITY_VALUES:
+        return verbosity
+    return None
+
+
+def _apply_ollama_openai_compat_think(
+    payload: Dict,
+    url: str,
+    model: str,
+    reasoning_effort: Optional[str],
+) -> None:
+    """Preserve the existing tool-safe default for recognized Ollama /v1 paths."""
+    del reasoning_effort
+    if not _is_ollama_openai_compat_url(url) or not _supports_thinking(model):
+        return
+    payload["think"] = False
 
 
 def _convert_openai_content_to_anthropic(content):
@@ -1968,7 +2047,8 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             reasoning_effort: Optional[str] = None, verbosity: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -1999,7 +2079,14 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
 
     provider = _detect_provider(url)
     cache_key = _get_cache_key(
-        url, model, messages_copy, temperature, max_tokens, headers=headers,
+        url,
+        model,
+        messages_copy,
+        temperature,
+        max_tokens,
+        headers=headers,
+        reasoning_effort=reasoning_effort,
+        verbosity=verbosity,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2015,6 +2102,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
+            reasoning_effort=reasoning_effort,
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2031,6 +2119,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        _apply_ollama_openai_compat_think(payload, url, model, reasoning_effort)
         _apply_local_generation_stability(payload, target_url, model)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
@@ -2273,6 +2362,9 @@ async def llm_call_async(
     workload: str = "foreground",
     availability_only_transport: bool = False,
     return_model_metadata: bool = False,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2292,7 +2384,14 @@ async def llm_call_async(
         messages_copy = non_sys
 
     cache_key = _get_cache_key(
-        url, model, messages_copy, temperature, max_tokens, headers=headers,
+        url,
+        model,
+        messages_copy,
+        temperature,
+        max_tokens,
+        headers=headers,
+        reasoning_effort=reasoning_effort,
+        verbosity=verbosity,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2316,6 +2415,9 @@ async def llm_call_async(
             headers=headers,
             timeout=timeout,
             workload=workload,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
+            endpoint_id=endpoint_id,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2375,6 +2477,7 @@ async def llm_call_async(
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
+            reasoning_effort=reasoning_effort,
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2392,9 +2495,8 @@ async def llm_call_async(
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
-        # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
-            payload["think"] = False
+        # Ollama /v1 accepts boolean thinking controls and GPT-OSS effort levels.
+        _apply_ollama_openai_compat_think(payload, url, model, reasoning_effort)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_local_cache_affinity(payload, url, session_id)
@@ -2560,7 +2662,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     tool_choice_none: bool = False, workload: str = "foreground"):
+                     tool_choice_none: bool = False, workload: str = "foreground",
+                     reasoning_effort: Optional[str] = None, verbosity: Optional[str] = None,
+                     endpoint_id: Optional[str] = None):
     target_url = _stream_target_url(url)
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
@@ -2575,6 +2679,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tools=tools,
             session_id=session_id,
             tool_choice_none=tool_choice_none,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
+            endpoint_id=endpoint_id,
         ):
             yield chunk
 
@@ -2583,7 +2690,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                            tool_choice_none: bool = False):
+                            tool_choice_none: bool = False,
+                            reasoning_effort: Optional[str] = None, verbosity: Optional[str] = None,
+                            endpoint_id: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -2621,11 +2730,22 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
+            reasoning_effort=reasoning_effort,
         )
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        from src.model_control_capabilities import resolve_cached_model_record
+        model_capability = resolve_cached_model_record(
+            endpoint_id=endpoint_id,
+            endpoint_url=url,
+            model=model,
+        )
+        payload = _build_chatgpt_responses_payload(
+            model, messages_copy, temperature, max_tokens, stream=True,
+            reasoning_effort=reasoning_effort, verbosity=verbosity,
+            model_capability=model_capability,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2651,11 +2771,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         # (high / medium / low / none); default "high".
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
-        # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
-        # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
-        # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
-            payload["think"] = False
+        # Keep the existing tool-safe default for boolean-thinking Ollama models,
+        # while preserving GPT-OSS's required level-based behavior.
+        _apply_ollama_openai_compat_think(payload, url, model, reasoning_effort)
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)
@@ -3589,6 +3707,8 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     continue
                 yield error_chunk
                 return
+        candidate_kwargs = dict(candidate_kwargs)
+        candidate_kwargs.setdefault("endpoint_id", route_descriptors[i].get("endpoint_id"))
         candidate_stream = stream_llm(
             url,
             model,

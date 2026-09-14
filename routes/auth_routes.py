@@ -737,6 +737,22 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
+        _CHOICE_VALUES = {"default_verbosity": {"", "auto", "low", "medium", "high"}}
+
+        def validate_model_control_default(key: str, value: str) -> None:
+            if not value:
+                return
+            from src import model_capabilities as mc
+            from src.model_control_capabilities import allowed_control_values, resolve_cached_model_record
+
+            endpoint_id = str(current.get("default_endpoint_id", "") or "").strip()
+            model = str(current.get("default_model", "") or "").strip()
+            record = resolve_cached_model_record(endpoint_id=endpoint_id, endpoint_url="", model=model)
+            control = mc.CONTROL_REASONING_EFFORT if key == "default_reasoning_effort" else mc.CONTROL_VERBOSITY
+            provider_value = "none" if key == "default_reasoning_effort" and value == "off" else value
+            if provider_value not in allowed_control_values(record, control):
+                raise HTTPException(400, f"Unsupported value for {key} on the selected model endpoint")
+
         for key in DEFAULT_SETTINGS:
             if key in RETIRED_SETTING_KEYS:
                 continue
@@ -750,7 +766,24 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+            if key == "default_reasoning_effort":
+                val = str(val or "").strip().lower().replace("-", "_")
+                if val == "x_high":
+                    val = "xhigh"
+                if val in ("auto", "default"):
+                    val = ""
+                if val and not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", val):
+                    raise HTTPException(400, f"Unsupported value for {key}")
+            elif key in _CHOICE_VALUES:
+                val = str(val or "").strip().lower().replace("-", "_")
+                if val in ("auto", "default"):
+                    val = ""
+                if val not in _CHOICE_VALUES[key]:
+                    raise HTTPException(400, f"Unsupported value for {key}")
             current[key] = val
+        if {"default_endpoint_id", "default_model", "default_reasoning_effort", "default_verbosity"}.intersection(body):
+            validate_model_control_default("default_reasoning_effort", current.get("default_reasoning_effort", ""))
+            validate_model_control_default("default_verbosity", current.get("default_verbosity", ""))
         _save_settings(current)
         return without_retired_settings(current)
 

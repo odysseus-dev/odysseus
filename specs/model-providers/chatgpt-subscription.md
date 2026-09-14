@@ -1,23 +1,30 @@
 # ChatGPT Subscription Provider Shape
 
-Last updated: dev@e57f60b | 2026-07-20
+Last updated: PR #5849 | 2026-08-25
 
 ## Scope
 
 Canonical provider ID `chatgpt_subscription`; Codex Responses transport;
 auth and runtime code in `src/chatgpt_subscription.py`,
 `routes/chatgpt_subscription_routes.py`, and `src/llm_core.py`.
-There is no dedicated ChatGPT Subscription canonical reader on current `dev`.
+A dedicated `chatgpt_subscription` reader normalizes the native account
+catalog into endpoint-scoped canonical records.
 
 ## Catalog Shape
 
 The account-scoped Codex models endpoint returns root `models[]`; `slug` is the
 request identity and `visibility`/`priority` control availability/order. These
-fields do not prove tools, reasoning, vision, or context. Null/malformed model
-lists fail soft rather than crashing discovery (#5280/#5281).
+fields do not prove tools, reasoning, vision, or context. The catalog's
+`supported_reasoning_levels`, `default_reasoning_level`, `support_verbosity`,
+and `default_verbosity` fields are explicit per-model control evidence.
+Null/malformed model lists fail soft rather than crashing discovery
+(#5280/#5281).
 
-The canonical generic reader does not accept `slug`-only items, so this runtime
-catalog is not currently normalized into `ModelCapabilityRecord` values.
+The dedicated reader keeps the general capability card unknown while mapping
+only those explicit native control fields into `DeterministicControl` values.
+Records are cached with the endpoint catalog and exposed to the picker; both
+the browser and Responses payload builder reject values absent from that same
+record. Model names, prefixes, and endpoint URLs do not enable controls.
 
 ## Request And Response Shape
 
@@ -42,6 +49,5 @@ identity-only unless account-scoped fields or probes supply capability.
 ## Current Gaps
 
 - Comprehensive Responses tool/reasoning parity is still evolving.
-- Account model slugs are not consumed by the canonical reader package.
 - The account catalog does not currently provide a complete canonical
   capability card for every slug.

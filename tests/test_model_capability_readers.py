@@ -1,8 +1,9 @@
 import src.model_capabilities as mc
 import src.model_capability_readers as readers
-from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
+from src.model_capability_readers import chatgpt_subscription, generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
 from src.model_capability_readers.base import (
     VENDOR_GENERIC_OPENAI,
+    VENDOR_CHATGPT_SUBSCRIPTION,
     VENDOR_GOOGLE,
     VENDOR_LLAMACPP,
     VENDOR_LMSTUDIO,
@@ -19,6 +20,7 @@ def surfaces(record):
 
 
 def test_detect_vendor_uses_endpoint_kind_then_host_and_common_local_ports():
+    assert detect_vendor("https://example.test", endpoint_kind="chatgpt-subscription") == VENDOR_CHATGPT_SUBSCRIPTION
     assert detect_vendor("https://example.test/v1", endpoint_kind="ollama") == VENDOR_OLLAMA
     assert detect_vendor("http://127.0.0.1:8080", endpoint_kind="llama_cpp") == VENDOR_LLAMACPP
     assert detect_vendor("https://openrouter.ai/api/v1") == VENDOR_OPENROUTER
@@ -105,6 +107,64 @@ def test_openai_reader_keeps_official_model_shape_identity_only():
     assert record.capability_assertions == ()
     assert record.deterministic_controls == ()
     assert surfaces(record) == set()
+
+
+def test_chatgpt_reader_uses_native_control_metadata_without_model_name_inference():
+    records = chatgpt_subscription.records_from_payload(
+        {
+            "models": [
+                {
+                    "slug": "opaque-provider-slug",
+                    "display_name": "Opaque model",
+                    "priority": 2,
+                    "supported_reasoning_levels": [
+                        {"effort": "low", "description": "Fast"},
+                        {"effort": "xhigh", "description": "Deep"},
+                        {"effort": "ultra", "description": "Provider-added level"},
+                    ],
+                    "default_reasoning_level": "low",
+                    "support_verbosity": True,
+                    "default_verbosity": "medium",
+                }
+            ]
+        },
+        endpoint_id="ep-1",
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.vendor == VENDOR_CHATGPT_SUBSCRIPTION
+    assert record.model_id == "opaque-provider-slug"
+    assert record.stable_model_id == "chatgpt_subscription|endpoint:ep-1|opaque-provider-slug"
+    controls = {control.control: control.to_dict() for control in record.deterministic_controls}
+    assert controls[mc.CONTROL_REASONING_EFFORT]["evidence"] == {
+        "allowed_values": ["low", "xhigh", "ultra"],
+        "default": "low",
+    }
+    assert controls[mc.CONTROL_VERBOSITY]["evidence"] == {
+        "allowed_values": ["low", "medium", "high"],
+        "default": "medium",
+    }
+
+
+def test_chatgpt_reader_keeps_unknown_models_and_malformed_controls_conservative():
+    records = readers.records_from_payload(
+        {
+            "models": [
+                {
+                    "slug": "gpt-looking-name",
+                    "supported_reasoning_levels": [{"effort": "not valid!"}, {"description": "missing"}],
+                    "support_verbosity": "yes",
+                },
+                {"slug": 123, "supported_reasoning_levels": [{"effort": "high"}]},
+            ]
+        },
+        vendor=VENDOR_CHATGPT_SUBSCRIPTION,
+    )
+
+    assert len(records) == 1
+    assert records[0].capability.family == mc.FAMILY_UNKNOWN
+    assert records[0].deterministic_controls == ()
 
 
 def test_registry_passes_endpoint_context_to_vendor_reader():

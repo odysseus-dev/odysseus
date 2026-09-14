@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from core.database import Base, ModelEndpoint, ProviderAuthSession
 import routes.chatgpt_subscription_routes as csr
+from src.model_capability_readers import chatgpt_subscription as capability_reader
 
 
 def _mem_db(monkeypatch):
@@ -70,6 +71,62 @@ def test_provision_refreshes_existing_auth_session_and_endpoint(monkeypatch):
         assert auth_rows[0].access_token == "NEW"
         assert auth_rows[0].refresh_token == "NEW-RT"
         assert ep_rows[0].provider_auth_id == auth_rows[0].id
+    finally:
+        db.close()
+
+
+def test_native_catalog_returns_list_compatible_models_with_canonical_records(monkeypatch):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "models": [
+                    {"slug": "hidden", "visibility": "hidden", "priority": 0},
+                    {
+                        "slug": "opaque",
+                        "priority": 1,
+                        "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}],
+                        "support_verbosity": True,
+                    },
+                ]
+            }
+
+    monkeypatch.setattr(csr.chatgpt_subscription.httpx, "get", lambda *args, **kwargs: Response())
+
+    models = csr.chatgpt_subscription.fetch_available_models("AT", endpoint_id="ep-1")
+
+    assert models == ["opaque"]
+    assert len(models.capability_records) == 1
+    assert models.capability_records[0].stable_model_id == "chatgpt_subscription|endpoint:ep-1|opaque"
+    controls = {control.control: control for control in models.capability_records[0].deterministic_controls}
+    assert dict(controls["reasoning_effort"].evidence)["allowed_values"] == ["low", "ultra"]
+
+
+def test_provision_persists_provider_capability_records(monkeypatch):
+    TestSessionLocal = _mem_db(monkeypatch)
+    records = capability_reader.records_from_payload({
+        "models": [{
+            "slug": "opaque-model",
+            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
+            "support_verbosity": True,
+        }],
+    })
+    catalog = csr.chatgpt_subscription.ModelCatalog(records)
+    monkeypatch.setattr(csr.chatgpt_subscription, "fetch_available_models", lambda token: catalog)
+
+    res = csr._provision_endpoint({"access_token": "AT", "refresh_token": "RT"}, "alice")
+
+    db = TestSessionLocal()
+    try:
+        ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == res["id"]).one()
+        cached = json.loads(ep.cached_model_capabilities)
+        assert cached[0]["model_id"] == "opaque-model"
+        assert {control["control"] for control in cached[0]["deterministic_controls"]} == {
+            "reasoning_effort",
+            "verbosity",
+        }
     finally:
         db.close()
 

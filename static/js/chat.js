@@ -1398,6 +1398,10 @@ import { loadPanel } from './panels.js';
             if (dc && dc.endpoint_url && dc.model) {
               try {
                 window.__odysseusDefaultChat = dc;
+                window.__odysseusModelControlDefaults = {
+                  reasoning_effort: dc.default_reasoning_effort || 'auto',
+                  verbosity: dc.default_verbosity || 'auto',
+                };
                 localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
               } catch (_) {}
             }
@@ -1407,7 +1411,11 @@ import { loadPanel } from './panels.js';
         }
         if (dc.endpoint_url && dc.model) {
           _sendPerf.mark('direct_chat_create_begin');
-          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+            source: 'default',
+            reasoning_effort: dc.default_reasoning_effort || '',
+            verbosity: dc.default_verbosity || '',
+          });
           _sendPerf.mark('direct_chat_create_done');
           const ok = await sessionModule.materializePendingSession();
           _sendPerf.mark('direct_chat_materialize_done');
@@ -1894,6 +1902,14 @@ import { loadPanel } from './panels.js';
 	        isAgentMode = true;
 	      }
 	      fd.append('mode', isAgentMode ? 'agent' : 'chat');
+	      const reasoningEffort = (toggleState.reasoning_effort || 'auto').toLowerCase();
+	      if (reasoningEffort && reasoningEffort !== 'auto') {
+	        fd.append('reasoning_effort', reasoningEffort);
+	      }
+	      const verbosity = (toggleState.verbosity || 'auto').toLowerCase();
+	      if (verbosity && verbosity !== 'auto') {
+	        fd.append('verbosity', verbosity);
+	      }
 	      fd.append('plan_mode', isPlanMode ? 'true' : 'false');
 	      if (!isPlanMode && _pendingApprovedPlan) {
 	        fd.append('approved_plan', _pendingApprovedPlan.slice(0, 8192));

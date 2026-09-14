@@ -177,6 +177,8 @@ CONTROL_PROMPT_CACHING = "prompt_caching"
 CONTROL_BATCH = "batch"
 CONTROL_REQUEST_HASH_CACHE = "request_hash_cache"
 CONTROL_SYSTEM_FINGERPRINT = "system_fingerprint"
+CONTROL_REASONING_EFFORT = "reasoning_effort"
+CONTROL_VERBOSITY = "verbosity"
 
 # Canonical reasoning control mechanisms describe how a serving path accepts
 # reasoning controls. They are provider/engine evidence, not user preferences.
@@ -229,6 +231,8 @@ DETERMINISTIC_CONTROLS = frozenset(
         CONTROL_BATCH,
         CONTROL_REQUEST_HASH_CACHE,
         CONTROL_SYSTEM_FINGERPRINT,
+        CONTROL_REASONING_EFFORT,
+        CONTROL_VERBOSITY,
     }
 )
 

@@ -1285,9 +1285,18 @@ def _patch_create_deps(monkeypatch, db, settings=None):
 
 
 def test_list_model_endpoints_returns_key_fingerprint(monkeypatch):
+    visible_record = {
+        "model_id": "m1",
+        "deterministic_controls": [{
+            "control": "reasoning_effort",
+            "status": "claimed",
+            "evidence": {"allowed_values": ["low", "ultra"]},
+        }],
+    }
     endpoint_with_key = _make_endpoint(
         api_key="key-one",
         cached_models=json.dumps(["m1"]),
+        cached_model_capabilities=json.dumps([visible_record]),
     )
     endpoint_without_key = _make_endpoint(
         id="ep2",
@@ -1303,6 +1312,7 @@ def test_list_model_endpoints_returns_key_fingerprint(monkeypatch):
 
     assert result[0]["has_key"] is True
     assert result[0]["api_key_fingerprint"] == _api_key_fingerprint("key-one")
+    assert result[0]["model_capabilities"] == [visible_record]
     assert result[1]["has_key"] is False
     assert result[1]["api_key_fingerprint"] == ""
 
@@ -1666,6 +1676,7 @@ def _route_ep(
     base_url,
     *,
     cached_models=None,
+    cached_model_capabilities=None,
     endpoint_kind="auto",
     api_key=None,
     name=None,
@@ -1681,6 +1692,11 @@ def _route_ep(
         api_key=api_key,
         is_enabled=True,
         cached_models=json.dumps(cached_models) if cached_models is not None else None,
+        cached_model_capabilities=(
+            json.dumps(cached_model_capabilities)
+            if cached_model_capabilities is not None
+            else None
+        ),
         hidden_models=None,
         pinned_models=json.dumps(pinned_models) if pinned_models is not None else None,
         model_type="llm",
@@ -1848,6 +1864,81 @@ def test_api_models_openrouter_defaults_cached_models_visible(monkeypatch):
 
     assert result["items"][0]["endpoint_name"] == "openrouter"
     assert result["items"][0]["models"] == ["m1", "m2", "m3"]
+
+
+def test_api_models_exposes_only_visible_canonical_records(monkeypatch):
+    visible_record = {
+        "model_id": "visible-model",
+        "deterministic_controls": [{
+            "control": "reasoning_effort",
+            "status": "claimed",
+            "evidence": {"allowed_values": ["low", "high"]},
+        }],
+    }
+    hidden_record = {"model_id": "hidden-model", "deterministic_controls": []}
+    row = _route_ep(
+        "subscription",
+        "https://chatgpt.com/backend-api/codex",
+        cached_models=["visible-model", "hidden-model"],
+        cached_model_capabilities=[visible_record, hidden_record],
+        endpoint_kind="api",
+    )
+    row.hidden_models = json.dumps(["hidden-model"])
+    db = _RouteDb([row])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    result = _route_endpoint(router, "/api/models")(_route_request())
+
+    assert result["items"][0]["model_capabilities"] == [visible_record]
+
+
+def test_endpoint_probe_target_resolves_session_backed_provider_credentials(monkeypatch):
+    import src.endpoint_resolver as endpoint_resolver
+
+    endpoint = SimpleNamespace(
+        id="subscription",
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_key=None,
+        provider_auth_id="auth-1",
+        owner="alice",
+    )
+    captured = {}
+
+    def fake_resolve(ep, owner=None):
+        captured.update({"ep": ep, "owner": owner})
+        return "https://chatgpt.com/backend-api/codex", "fresh-token"
+
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint_runtime", fake_resolve)
+
+    base, api_key = model_routes._endpoint_probe_target(endpoint)
+
+    assert captured == {"ep": endpoint, "owner": "alice"}
+    assert base == "https://chatgpt.com/backend-api/codex"
+    assert api_key == "fresh-token"
+
+
+def test_plain_catalog_refresh_clears_stale_capability_evidence():
+    endpoint = SimpleNamespace(
+        cached_models=json.dumps(["old-model"]),
+        cached_model_capabilities=json.dumps([{
+            "model_id": "old-model",
+            "deterministic_controls": [{
+                "control": "reasoning_effort",
+                "status": "claimed",
+                "evidence": {"allowed_values": ["high"]},
+            }],
+        }]),
+    )
+
+    model_routes._set_cached_model_catalog(endpoint, ["unknown-model"])
+
+    assert json.loads(endpoint.cached_models) == ["unknown-model"]
+    assert endpoint.cached_model_capabilities is None
 
 
 @pytest.mark.asyncio

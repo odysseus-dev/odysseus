@@ -1,6 +1,6 @@
 # Canonical Provider And Model Capability Layer
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: PR #5849 | 2026-08-25
 
 ## Scope
 
@@ -11,15 +11,14 @@ This spec covers the implementation introduced on current `dev` in:
   `src/model_capability_readers/base.py`;
 - reader dispatch in `src/model_capability_readers/__init__.py`;
 - concrete readers for generic OpenAI-compatible, OpenAI, OpenRouter, Google,
-  Ollama, LM Studio, and llama.cpp payloads;
+  Ollama, LM Studio, llama.cpp, and ChatGPT Subscription payloads;
 - regression coverage in `tests/test_model_capabilities.py` and
   `tests/test_model_capability_readers.py`.
 
-The layer normalizes already-fetched JSON-compatible values. It performs no
-network I/O, does not shape provider requests, does not persist its output, and
-does not authorize model or tool use. No production caller currently consumes
-the canonical records outside this package; runtime integration remains later
-work.
+The reader layer normalizes already-fetched JSON-compatible values and performs
+no network I/O. ChatGPT Subscription discovery now caches its records and uses
+the same deterministic-control evidence in the picker and Responses request
+shaping. Other providers remain outside that narrow runtime integration.
 
 There is no `src/provider_capability_schemas.py`, capability-specific
 diagnostics module, or runtime model-quirk registry on current `dev`.
@@ -35,7 +34,8 @@ diagnostics module, or runtime model-quirk registry on current `dev`.
 - `CapabilityAssertion` records claimed, verified, unsupported, or unknown
   status for one capability. Missing evidence is not an unsupported claim.
 - `DeterministicControl` records support evidence for controls such as
-  temperature, top-p, seed, tool choice, or prompt caching. A supported
+  temperature, top-p, seed, tool choice, prompt caching, reasoning effort, or
+  verbosity. A supported
   request control is not itself a model capability.
 - `CapabilityProbeResult` is an in-memory evidence shape that converts pass,
   fail, or partial probe state into an assertion. No current runtime probe
@@ -95,7 +95,7 @@ Current detection order and behavior are:
 These are normalization hints, not authorization. Hostname checks accept an exact domain or its dot-delimited subdomains after lowercasing and removing a trailing dot, so names such as `notopenai.com` do not match `openai.com`; local-port mappings remain intentionally covered by tests. Callers must not treat any result as proof of endpoint trust.
 
 Implemented reader modules are `generic_openai`, `openai`, `openrouter`,
-`google`, `llamacpp`, `ollama`, and `lmstudio`. Anthropic, Hugging Face,
+`google`, `llamacpp`, `ollama`, `lmstudio`, and `chatgpt_subscription`. Anthropic, Hugging Face,
 SGLang, and vLLM have placeholder vendor IDs but currently dispatch through the
 generic identity-only reader. Other explicitly supplied vendor strings are
 also preserved while using that generic reader.
@@ -121,6 +121,9 @@ capability-looking booleans, or token limits.
 ## Provider-Native Readers
 
 - OpenAI keeps the official Models API identity-only.
+- ChatGPT Subscription maps native per-model `supported_reasoning_levels`,
+  defaults, and verbosity support into deterministic controls. Slugs and
+  display fields remain identity/presentation data and never imply controls.
 - OpenRouter maps explicit architecture modalities, supported parameters,
   limits, voices, and default parameters into family/capability/control state.
 - Google maps the native Models resource. Embedding-only methods map to the
@@ -167,10 +170,13 @@ Focused tests pin:
 
 ## Current Gaps
 
-- Canonical records are not yet used by runtime discovery, endpoint resolution, model context, request shaping, or frontend pickers.
-- Reader output is not persisted, refreshed, merged, or expired.
+- Canonical records are used by ChatGPT Subscription discovery, its reasoning
+  and verbosity picker controls, and the matching Responses request fields.
+  Other runtime/provider surfaces are not yet wired to this layer.
+- ChatGPT Subscription reader output is cached with its endpoint catalog.
+  Cross-provider persistence, merge, and expiry policies are not yet defined.
 - Provider detection still uses common-port hints; consumers must not promote normalization hints into trust decisions.
-- Only seven concrete readers exist; placeholder and other providers use the
+- Placeholder and other providers without a concrete reader use the
   identity-only generic reader.
 - Generic fallback does not accept bare-list or `key`/`slug`-only payloads.
 - There is no capability-specific diagnostic/logging path.

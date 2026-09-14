@@ -16,6 +16,7 @@ from routes.device_flow import (
 )
 from src.auth_helpers import get_current_user
 from src import chatgpt_subscription
+from src.model_control_capabilities import serialize_catalog_records
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         ep.endpoint_kind = "api"
         ep.model_refresh_mode = "manual"
         ep.cached_models = json.dumps(models)
+        ep.cached_model_capabilities = serialize_catalog_records(models)
         db.commit()
         result = {
             "id": ep.id,
