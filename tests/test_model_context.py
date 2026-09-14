@@ -257,6 +257,51 @@ class TestGetContextLength:
 
         assert result == (8192, True)
 
+    @pytest.mark.parametrize(
+        "configured_cap",
+        [None, "", "0", "-1", "invalid", "65536"],
+    )
+    def test_local_context_ignores_disabled_or_non_reducing_caps(
+        self, monkeypatch, configured_cap
+    ):
+        if configured_cap is None:
+            monkeypatch.delenv("ODYSSEUS_LOCAL_CONTEXT_CAP", raising=False)
+        else:
+            monkeypatch.setenv("ODYSSEUS_LOCAL_CONTEXT_CAP", configured_cap)
+        monkeypatch.setattr(
+            model_context, "_query_context_length", lambda *_: (32768, True)
+        )
+
+        result = model_context.get_context_length_known(
+            "http://host.docker.internal:11434/v1/chat/completions",
+            "qwen3-coder:30b",
+        )
+
+        assert result == (32768, True)
+
+    def test_context_cap_does_not_reduce_configured_private_proxy(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("ODYSSEUS_LOCAL_CONTEXT_CAP", "8192")
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url="http://100.117.136.97:34521/v1",
+                endpoint_kind="proxy",
+                api_key="fake-key",
+                is_enabled=True,
+            )
+        ])
+        monkeypatch.setattr(
+            model_context, "_query_context_length", lambda *_: (32768, True)
+        )
+
+        result = model_context.get_context_length_known(
+            "http://100.117.136.97:34521/v1/chat/completions",
+            "proxied-model",
+        )
+
+        assert result == (32768, True)
+
     def test_local_context_cap_does_not_reduce_remote_models(self, monkeypatch):
         monkeypatch.setenv("ODYSSEUS_LOCAL_CONTEXT_CAP", "8192")
         monkeypatch.setattr(
