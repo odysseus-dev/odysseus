@@ -5,18 +5,15 @@ routes (tasks, servers, output, stop, adopt, presets, etc.) through
 normal cookie sessions because _scope_owner only checked login status,
 not admin privileges.
 
-After the fix, cookie-session callers must be admin; API-token callers
-are still governed by scope checks only.
+After retirement of Cookbook bearer access, cookie-session callers must be
+admin and API-token callers must always be rejected.
 """
 import pytest
 from types import SimpleNamespace
 from fastapi import HTTPException
 
-from routes.codex_routes import _require_cookbook_scope
-
-
-COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
-COOKBOOK_LAUNCH_SCOPES = {"cookbook:launch"}
+from routes.codex_routes import _require_cookbook_admin, setup_codex_routes
+from src.api_token_capabilities import API_TOKEN_FORBIDDEN_ERROR
 
 
 def _cookie_request(*, current_user="bob", is_admin=False):
@@ -56,48 +53,66 @@ class TestCookieSessionAdminGate:
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _cookie_request(is_admin=False)
         with pytest.raises(HTTPException) as exc:
-            _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
+            _require_cookbook_admin(req)
         assert exc.value.status_code == 403
 
     def test_non_admin_rejected_launch(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _cookie_request(is_admin=False)
         with pytest.raises(HTTPException) as exc:
-            _require_cookbook_scope(req, COOKBOOK_LAUNCH_SCOPES)
+            _require_cookbook_admin(req)
         assert exc.value.status_code == 403
 
     def test_admin_allowed_read(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _cookie_request(is_admin=True)
-        owner = _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
+        owner = _require_cookbook_admin(req)
         assert owner == "bob"
 
     def test_admin_allowed_launch(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _cookie_request(is_admin=True)
-        owner = _require_cookbook_scope(req, COOKBOOK_LAUNCH_SCOPES)
+        owner = _require_cookbook_admin(req)
         assert owner == "bob"
 
 
-class TestApiTokenScopeGate:
-    """API-token callers are governed by scope, not admin status."""
+class TestApiTokenGate:
+    """API-token callers cannot reach Cookbook through retired scopes."""
 
-    def test_token_with_scope_allowed(self, monkeypatch):
+    def test_token_with_retired_scope_rejected(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _api_token_request(scopes=["cookbook:read"])
-        owner = _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
-        assert owner == "alice"
+        with pytest.raises(HTTPException) as exc:
+            _require_cookbook_admin(req)
+        assert exc.value.status_code == 403
+        assert exc.value.detail == API_TOKEN_FORBIDDEN_ERROR
 
     def test_token_missing_scope_rejected(self, monkeypatch):
         monkeypatch.setenv("AUTH_ENABLED", "true")
         req = _api_token_request(scopes=["unrelated:scope"])
         with pytest.raises(HTTPException) as exc:
-            _require_cookbook_scope(req, COOKBOOK_READ_SCOPES)
+            _require_cookbook_admin(req)
         assert exc.value.status_code == 403
+        assert exc.value.detail == API_TOKEN_FORBIDDEN_ERROR
+
+
+def test_capabilities_omit_cookbook_and_retired_scopes():
+    router = setup_codex_routes()
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/codex/capabilities" and "GET" in route.methods
+    )
+    request = _api_token_request(scopes=["chat", "cookbook:read", "cookbook:launch"])
+
+    result = endpoint(request)
+
+    assert result["token_scopes"] == ["chat"]
+    assert "cookbook" not in result["tools"]
 
 
 class TestSourceCodeGate:
-    """Static checks: all cookbook routes use _require_cookbook_scope."""
+    """Static checks: all Cookbook routes use the cookie/admin gate."""
 
     def test_no_raw_scope_owner_in_cookbook_routes(self):
         from pathlib import Path
@@ -114,5 +129,7 @@ class TestSourceCodeGate:
             if in_cookbook and "_scope_owner(request" in line:
                 violations.append((i, line.strip()))
         assert violations == [], (
-            f"Cookbook routes still use _scope_owner instead of _require_cookbook_scope: {violations}"
+            f"Cookbook routes still use _scope_owner instead of _require_cookbook_admin: {violations}"
         )
+        assert source.count("_require_cookbook_admin(request)") == 9
+        assert "_require_cookbook_scope" not in source

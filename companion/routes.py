@@ -5,9 +5,8 @@ offers and pair to it, without duplicating any LLM logic.
 
 Auth is enforced globally by AuthMiddleware (app.py), so reaching a handler here
 means the caller is authenticated by either a cookie session or a Bearer `ody_`
-API token. Ping/info accept either credential type, models requires a chat-
-scoped API token for bearer callers, and the pairing endpoints are admin-cookie
-only.
+API token. Read endpoints accept cookie sessions or chat-scoped bearer tokens;
+the pairing endpoints remain admin-cookie only.
 
 Pairing CSRF posture: minting happens ONLY on POST. The session cookie is
 SameSite=Lax (routes/auth_routes.py), which a browser does not send on a
@@ -53,8 +52,8 @@ def owner_can_see(row_owner, owner) -> bool:
     return row_owner is None or row_owner == owner
 
 
-def require_models_scope(request: Request) -> None:
-    """Require the companion chat scope for bearer-token model inventory."""
+def require_companion_scope(request: Request) -> None:
+    """Require the existing chat scope for companion bearer reads."""
     if not getattr(request.state, "api_token", False):
         return
     scopes = getattr(request.state, "api_token_scopes", None) or []
@@ -86,6 +85,7 @@ def setup_companion_routes() -> APIRouter:
     def ping(request: Request):
         """Cheap, auth-validated health check. A 200 with ok=true confirms the
         host/port and credential are valid; middleware returns 401 otherwise."""
+        require_companion_scope(request)
         from core.constants import APP_VERSION
         return {
             "ok": True,
@@ -98,6 +98,7 @@ def setup_companion_routes() -> APIRouter:
     def info(request: Request):
         """Server identity + coarse capability flags. `owner` is the caller's own
         identity (the token's owner for bearer callers)."""
+        require_companion_scope(request)
         from core.constants import APP_VERSION
         return {
             "name": "odysseus",
@@ -117,7 +118,7 @@ def setup_companion_routes() -> APIRouter:
         the stock route's single-user all-endpoints view. Read-only; never
         returns api_key material.
         """
-        require_models_scope(request)
+        require_companion_scope(request)
         import json as _json
 
         from core.database import SessionLocal, ModelEndpoint
