@@ -203,11 +203,23 @@ class ChatProcessor:
             return score
 
         # ── Score all candidates ──
-        has_vector = self.memory_vector and self.memory_vector.healthy
+        has_vector = bool(self.memory_vector and self.memory_vector.healthy)
         vector_scores = {}
 
         if has_vector:
-            results = self.memory_vector.search(message, k=min(k * 3, 20))
+            try:
+                search_with_status = getattr(self.memory_vector, "search_with_status", None)
+                if callable(search_with_status):
+                    results, has_vector = search_with_status(
+                        message,
+                        k=min(k * 3, 20),
+                    )
+                else:
+                    results = self.memory_vector.search(message, k=min(k * 3, 20))
+            except Exception as e:
+                logger.warning("Vector memory query failed; using keyword scoring: %s", e)
+                results = []
+                has_vector = False
             mem_by_id = {m["id"]: m for m in mem_entries}
             for r in results:
                 if r["memory_id"] in mem_by_id:
