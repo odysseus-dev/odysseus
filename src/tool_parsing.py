@@ -197,6 +197,10 @@ _QWEN_BARE_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+_QWEN_KV_RE = re.compile(
+    r"""(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^,]+))"""
+)
+
 
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
 # models can't emit structured tool_calls (e.g. we sent no tool schemas
@@ -1154,6 +1158,323 @@ def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
     return function_call_to_tool_block(tool_name, json.dumps(params))
 
 
+_BUILTIN_POSITIONAL_ARGS = {
+    "bash": ["command"],
+    "python": ["code"],
+    "web_search": ["query", "time_filter"],
+    "web_fetch": ["url", "full"],
+    "read_file": ["path", "offset", "limit"],
+    "write_file": ["path", "content"],
+    "edit_file": ["path", "old_string", "new_string", "replace_all"],
+    "grep": ["pattern", "path", "glob", "ignore_case", "max_results"],
+    "glob": ["pattern", "path"],
+    "ls": ["path"],
+    "create_document": ["title", "language", "content"],
+}
+
+_BUILTIN_PRIMARY_ARG = {
+    "bash": "command",
+    "python": "code",
+    "web_search": "query",
+    "web_fetch": "url",
+    "read_file": "path",
+    "write_file": "path",
+    "edit_file": "path",
+    "grep": "pattern",
+    "glob": "pattern",
+    "ls": "path",
+    "create_document": "title",
+}
+
+# Tools whose argument is freeform text (a command, code snippet, etc.)
+# rather than structured keyword arguments. The regex KV fallback must not
+# run for these tools because '=' characters inside the freeform value would
+# be misinterpreted as keyword separators (e.g. `bash(echo x=y)` would
+# wrongly extract {"x": "y"} instead of treating the whole string as a
+# single command).
+_FREEFORM_ARG_TOOLS = frozenset({"bash", "python"})
+
+
+def _scan_qwen_args(text: str, start_pos: int) -> Optional[Tuple[str, int]]:
+    """
+    Scans Qwen arguments starting from start_pos (the character after the opening '(').
+    Respects string literals, escapes, parentheses, and brackets.
+    Returns (args_str, end_pos) if a valid closing ')]' is found, where end_pos is the index after ')]'.
+    Otherwise, returns None.
+    """
+    n = len(text)
+    pos = start_pos
+    quote_char = None
+    escaped = False
+    paren_nesting = 1
+    bracket_nesting = 0
+
+    while pos < n:
+        char = text[pos]
+        if quote_char:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == quote_char:
+                quote_char = None
+        else:
+            if char in ('"', "'"):
+                # Detect triple-quoted strings
+                if pos + 2 < n and text[pos + 1] == char and text[pos + 2] == char:
+                    triple = char * 3
+                    pos += 3
+                    while pos < n:
+                        if text[pos] == '\\':
+                            pos += 2
+                            continue
+                        if text[pos:pos + 3] == triple:
+                            pos += 3
+                            break
+                        pos += 1
+                    continue
+                quote_char = char
+                escaped = False
+            elif char == '(':
+                paren_nesting += 1
+            elif char == ')':
+                paren_nesting -= 1
+                if paren_nesting == 0:
+                    # Found the closing parenthesis!
+                    # The next character must be ']' to close the tool call wrapper.
+                    if pos + 1 < n and text[pos + 1] == ']':
+                        args_str = text[start_pos:pos]
+                        return args_str, pos + 2
+                    else:
+                        # Parenthesis closed but not followed by ']'. This is invalid.
+                        return None
+            elif char == '[':
+                bracket_nesting += 1
+            elif char == ']':
+                bracket_nesting -= 1
+                if bracket_nesting < 0:
+                    # Unbalanced bracket inside arguments (closed too early)
+                    return None
+        pos += 1
+    return None
+
+
+def find_qwen_tool_call_spans(text: str) -> List[Tuple[int, int, str, str]]:
+    """
+    Finds all complete Qwen tool call spans in the text.
+    Returns a list of tuples: (start_idx, end_idx, tool_name, args_str)
+    where the span in the text is text[start_idx:end_idx].
+    """
+    spans = []
+    if not text:
+        return spans
+
+    n = len(text)
+    start_tag = "<|tool_call_start|>"
+    end_tag = "<|tool_call_end|>"
+
+    # Use re.finditer to find all start_tag occurrences case-insensitively
+    for m in re.finditer(re.escape(start_tag), text, re.IGNORECASE):
+        start_idx = m.start()
+        # The '[' must follow start_idx + len(start_tag)
+        bracket_pos = start_idx + len(start_tag)
+        if bracket_pos >= n or text[bracket_pos] != '[':
+            continue
+
+        # Parse the tool name (word characters starting at bracket_pos + 1)
+        name_start = bracket_pos + 1
+        name_pos = name_start
+        while name_pos < n and (text[name_pos].isalnum() or text[name_pos] == '_'):
+            name_pos += 1
+
+        if name_pos == name_start or name_pos >= n or text[name_pos] != '(':
+            continue
+
+        tool_name = text[name_start:name_pos]
+
+        # Scan arguments starting from name_pos + 1
+        res = _scan_qwen_args(text, name_pos + 1)
+        if not res:
+            continue
+
+        args_str, end_pos = res
+
+        # Check for matching <|tool_call_end|> after end_pos (which is after ']')
+        close_pos = end_pos
+        while close_pos < n and text[close_pos].isspace():
+            close_pos += 1
+
+        if text[close_pos:close_pos + len(end_tag)].lower() == end_tag:
+            final_pos = close_pos + len(end_tag)
+            spans.append((start_idx, final_pos, tool_name, args_str))
+
+    return spans
+
+
+def _validate_tool_arguments(name: str, args: dict) -> bool:
+    """Validate argument dictionary against the tool's FUNCTION_TOOL_SCHEMAS definition."""
+    if not isinstance(args, dict):
+        return False
+
+    # Check that all values are JSON-serializable (rejects sets/tuples/etc.)
+    for k, v in args.items():
+        try:
+            json.dumps(v)
+        except (TypeError, OverflowError):
+            return False
+
+    # Import schemas at runtime to avoid circular imports
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+
+    tool_type = _TOOL_NAME_MAP.get(name, name)
+    schema = None
+    for s in FUNCTION_TOOL_SCHEMAS:
+        if s.get("type") == "function" and s.get("function", {}).get("name") == tool_type:
+            schema = s["function"]
+            break
+    if not schema:
+        for s in FUNCTION_TOOL_SCHEMAS:
+            if s.get("type") == "function" and s.get("function", {}).get("name") == name:
+                schema = s["function"]
+                break
+
+    if not schema:
+        # Unknown/MCP tools
+        return True
+
+    parameters = schema.get("parameters", {})
+    properties = parameters.get("properties", {})
+    required = parameters.get("required", [])
+
+    for req in required:
+        if req not in args:
+            return False
+
+    for arg_name, arg_val in args.items():
+        if arg_name not in properties:
+            continue
+        prop_schema = properties[arg_name]
+        prop_type = prop_schema.get("type")
+
+        if prop_type == "string":
+            if not isinstance(arg_val, str):
+                return False
+        elif prop_type == "integer":
+            if not isinstance(arg_val, int) or isinstance(arg_val, bool):
+                return False
+        elif prop_type == "number":
+            if not isinstance(arg_val, (int, float)) or isinstance(arg_val, bool):
+                return False
+        elif prop_type == "boolean":
+            if not isinstance(arg_val, bool):
+                return False
+        elif prop_type == "array":
+            if not isinstance(arg_val, list):
+                return False
+        elif prop_type == "object":
+            if not isinstance(arg_val, dict):
+                return False
+
+    return True
+
+
+def _parse_qwen_tool_call(tool_name: str, args_str: str) -> Optional[ToolBlock]:
+    """Parse a Qwen-style call: <|tool_call_start|>[tool_name(args_str)]<|tool_call_end|>."""
+    tool_name = tool_name.strip().lower().replace("-", "_")
+    canonical_name = _TOOL_NAME_MAP.get(tool_name, tool_name)
+    args_str = args_str.strip()
+
+    is_email_tool = (
+        canonical_name.startswith("mcp__email__")
+        or canonical_name in BUILTIN_EMAIL_TOOLS
+        or tool_name in BUILTIN_EMAIL_TOOLS
+    )
+
+    params = {}
+    if args_str:
+        try:
+            tree = ast.parse(f"dummy({args_str})")
+            call_node = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    call_node = node
+                    break
+            if call_node:
+                # For email tools, reject positional arguments
+                if is_email_tool and call_node.args:
+                    logger.warning(f"Positional arguments not allowed for email tool {tool_name}: {args_str}")
+                    return None
+
+                # Map positional arguments if we know the tool's signature
+                pos_names = _BUILTIN_POSITIONAL_ARGS.get(canonical_name)
+                if pos_names:
+                    if len(call_node.args) > len(pos_names):
+                        logger.warning(
+                            f"Too many positional args for {tool_name} "
+                            f"(expected {len(pos_names)}, got {len(call_node.args)}): {args_str}"
+                        )
+                        return None
+                    for idx, arg_val in enumerate(call_node.args):
+                        try:
+                            params[pos_names[idx]] = ast.literal_eval(arg_val)
+                        except Exception:
+                            logger.warning(f"Failed to evaluate positional arg {idx} for {tool_name}: {args_str}")
+                            return None
+                # Map keyword arguments
+                for kw in call_node.keywords:
+                    try:
+                        params[kw.arg] = ast.literal_eval(kw.value)
+                    except Exception:
+                        logger.warning(f"Failed to evaluate keyword argument {kw.arg} for {tool_name}")
+                        return None
+        except Exception:
+            # If parsing failed and it's an email tool, fail closed
+            if is_email_tool:
+                logger.warning(f"Malformed arguments for email tool {tool_name}: {args_str}")
+                return None
+
+            params = {}
+            # Fallback 1: regex key-value extraction that handles spaces and quotes.
+            # Skip for freeform-arg tools (bash, python) where '=' in the command
+            # string would be misinterpreted as a keyword separator.
+            if canonical_name not in _FREEFORM_ARG_TOOLS:
+                for m in _QWEN_KV_RE.finditer(args_str):
+                    k = m.group(1)
+                    v = (m.group(2) or m.group(3) or m.group(4) or "").strip()
+                    if v == "True":
+                        v = True
+                    elif v == "False":
+                        v = False
+                    elif v == "None":
+                        v = None
+                    else:
+                        try:
+                            if "." in v:
+                                v = float(v)
+                            else:
+                                v = int(v)
+                        except ValueError:
+                            pass
+                    params[k] = v
+
+            # Fallback 2: single argument fallback if no key-value pairs matched
+            if not params:
+                primary_arg = _BUILTIN_PRIMARY_ARG.get(canonical_name)
+                if primary_arg:
+                    val = args_str.strip()
+                    if len(val) >= 2 and ((val[0] == '"' and val[-1] == '"') or (val[0] == "'" and val[-1] == "'")):
+                        val = val[1:-1]
+                    params[primary_arg] = val
+
+    # Validate arguments against schemas before constructing tool block
+    if not _validate_tool_arguments(tool_name, params):
+        logger.warning(f"Invalid arguments for Qwen tool call {tool_name}: {params}")
+        return None
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(tool_name, json.dumps(params))
+
+
 def _parse_function_model_call(body: str) -> Optional[ToolBlock]:
     """Parse <function_model><function_call>tool</...><parameters>...</...>."""
     name_match = _FUNCTION_MODEL_NAME_RE.search(body or "")
@@ -1444,6 +1765,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 4b_qwen: Qwen-style <|tool_call_start|> blocks
+    if not blocks:
+        spans = find_qwen_tool_call_spans(text)
+        for _, _, tool_name, args_str in spans:
+            block = _parse_qwen_tool_call(tool_name, args_str)
+            if block:
+                blocks.append(block)
+
     # Pattern 4c: <function_model> wrapper from local MLX/Exo models.
     if not blocks:
         for _ms, inner_start, inner_end, _me in _iter_delimited(
@@ -1506,6 +1835,10 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
     cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
+    # Strip Qwen tool calls using the scanner spans in reverse order
+    spans = find_qwen_tool_call_spans(cleaned)
+    for start_idx, end_idx, _, _ in reversed(spans):
+        cleaned = cleaned[:start_idx] + cleaned[end_idx:]
     cleaned = _strip_delimited(cleaned, _FUNCTION_MODEL_OPEN_RE, _FUNCTION_MODEL_CLOSE_RE)
     cleaned = _strip_raw_openai_tool_call_json(cleaned)
     cleaned = _QWEN_ROLE_MARKER_RE.sub('', cleaned)
