@@ -225,8 +225,7 @@ def test_sync_chat_gate_accepts_matching_owner():
 # was an unscoped `.first()`, so a token for "alice" could fall back onto
 # "bob"'s PRIVATE endpoint and silently spend bob's API key / reach bob's
 # internal base_url. The fallback must be owner-scoped (own rows + legacy
-# null-owner shared rows), exactly like routes/model_routes.py and
-# companion/routes.py.
+# null-owner shared rows), exactly like routes/model_routes.py.
 
 class _Predicate:
     def __init__(self, check):
