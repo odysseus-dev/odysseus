@@ -87,6 +87,23 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  agent-mesh:
+    build:
+      context: ./local-tools/odysseus-agent-mesh
+    env_file:
+      - ./local-tools/odysseus-agent-mesh/.env
+    environment:
+      - MESH_GATEWAY_HOST=0.0.0.0
+      - MESH_GATEWAY_PORT=7331
+      - ODYSSEUS_TELEMETRY_URL=${ODYSSEUS_TELEMETRY_URL:-}
+      - ODYSSEUS_TELEMETRY_TOKEN=${ODYSSEUS_TELEMETRY_TOKEN:-}
+      - ODYSSEUS_TELEMETRY_TIMEOUT_MS=${ODYSSEUS_TELEMETRY_TIMEOUT_MS:-250}
+    ports:
+      - "${MESH_BIND:-127.0.0.1}:${MESH_HOST_PORT:-7331}:7331"
+    volumes:
+      - ./local-tools/odysseus-agent-mesh/.odysseus-agent-mesh:/app/.odysseus-agent-mesh
+    restart: unless-stopped
+
   chromadb:
     image: docker.io/chromadb/chroma:latest
     ports:
