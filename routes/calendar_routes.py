@@ -55,6 +55,28 @@ def _ensure_positive_duration(start_dt, end_dt, all_day):
     return end_dt
 
 
+def _parse_date_only(s: str) -> datetime:
+    """Midnight of the calendar date named by ``s``, in its own offset.
+
+    All-day events are date-only in RFC 5545: they name a day, not an
+    instant. ``_parse_dt_pair`` normalises tz-aware input to UTC, so a local
+    midnight becomes 22:00 or 23:00 the previous day. Timed rows carry
+    ``is_utc=True`` and read back correctly; all-day rows deliberately force
+    that flag off, so the shifted value is re-read as local and the event
+    lands one day early -- in the DB, in the UI, and in the
+    ``DTSTART;VALUE=DATE`` pushed to CalDAV.
+    """
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("empty datetime string")
+    try:
+        _s2 = s.replace("Z", "+00:00") if s.endswith("Z") else s
+        parsed = datetime.fromisoformat(_s2)
+    except ValueError:
+        parsed = _parse_dt(s)
+    return datetime(parsed.year, parsed.month, parsed.day)
+
+
 # Single-user fallback identity. Used only when:
 #   1. The app is configured for single-user (no auth middleware), AND
 #   2. The request didn't resolve to an authenticated user.
@@ -1225,16 +1247,23 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             # Use the tz-detecting parser so events posted with an offset
             # (e.g. "2026-05-13T10:00:00+09:00" or "...Z") get stored as UTC
             # and flagged for proper Z-suffix on read-back.
-            dtstart, _is_utc = _parse_dt_pair(data.dtstart)
-            if data.dtend:
-                dtend, _end_utc = _parse_dt_pair(data.dtend)
-                # If start was tz-aware but end was naive (or vice-versa),
-                # trust whichever flag is True — they should match.
-                _is_utc = _is_utc or _end_utc
-            elif data.all_day:
-                dtend = dtstart + timedelta(days=1)
+            if data.all_day:
+                # Date-only: keep the day the caller named, never the UTC
+                # instant derived from it.
+                dtstart = _parse_date_only(data.dtstart)
+                dtend = (_parse_date_only(data.dtend) if data.dtend
+                         else dtstart + timedelta(days=1))
+                dtend = _ensure_positive_duration(dtstart, dtend, True)
+                _is_utc = False
             else:
-                dtend = dtstart + timedelta(hours=1)
+                dtstart, _is_utc = _parse_dt_pair(data.dtstart)
+                if data.dtend:
+                    dtend, _end_utc = _parse_dt_pair(data.dtend)
+                    # If start was tz-aware but end was naive (or vice-versa),
+                    # trust whichever flag is True — they should match.
+                    _is_utc = _is_utc or _end_utc
+                else:
+                    dtend = dtstart + timedelta(hours=1)
 
             ev = CalendarEvent(
                 uid=uid,
@@ -1281,21 +1310,36 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 ev.description = data.description
             if data.location is not None:
                 ev.location = data.location
-            if data.dtstart is not None:
-                ev.dtstart, _s_utc = _parse_dt_pair(data.dtstart)
-                # When the incoming payload carries tz info, mark the row as
-                # UTC-stored so the serializer adds Z. Don't flip the flag
-                # off if start arrives naive but end was UTC — only escalate.
-                if _s_utc:
-                    ev.is_utc = True
-            if data.dtend is not None:
-                ev.dtend, _e_utc = _parse_dt_pair(data.dtend)
-                if _e_utc:
-                    ev.is_utc = True
+            # Resolve the effective all-day flag FIRST: how the datetimes
+            # below must be parsed depends on it, and the same payload may
+            # be flipping it.
             if data.all_day is not None:
                 ev.all_day = data.all_day
                 if data.all_day:
                     ev.is_utc = False  # all-day stays date-only
+            _all_day = bool(ev.all_day)
+            if data.dtstart is not None:
+                if _all_day:
+                    ev.dtstart = _parse_date_only(data.dtstart)
+                    ev.is_utc = False
+                else:
+                    ev.dtstart, _s_utc = _parse_dt_pair(data.dtstart)
+                    # When the incoming payload carries tz info, mark the row
+                    # as UTC-stored so the serializer adds Z. Don't flip the
+                    # flag off if start arrives naive but end was UTC — only
+                    # escalate.
+                    if _s_utc:
+                        ev.is_utc = True
+            if data.dtend is not None:
+                if _all_day:
+                    ev.dtend = _parse_date_only(data.dtend)
+                    ev.is_utc = False
+                else:
+                    ev.dtend, _e_utc = _parse_dt_pair(data.dtend)
+                    if _e_utc:
+                        ev.is_utc = True
+            if _all_day:
+                ev.dtend = _ensure_positive_duration(ev.dtstart, ev.dtend, True)
             if data.rrule is not None:
                 ev.rrule = data.rrule
             if data.color is not None:
