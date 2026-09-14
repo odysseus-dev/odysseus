@@ -2616,6 +2616,29 @@ def _build_system_prompt(
             'that open draft is the target: use update_document/edit_document on it instead of creating another document.'
         )
 
+    # Browsing is a two-step tool and models routinely stop after step one.
+    # browser_navigate returns the page TITLE and a snapshot reference — never
+    # the page text. Observed: asked to open a URL and summarise it, the agent
+    # called browser_navigate, saw exit_code=0, reported "the page loaded
+    # successfully", and stopped, having read nothing. browser_snapshot has the
+    # same trap one level down: its optional `filename` argument saves the
+    # snapshot to a file INSTEAD of returning it, and models volunteer one.
+    if relevant_tools and not suppress_local_context and any(
+        "browser_" in str(_t) for _t in relevant_tools
+    ):
+        agent_prompt += (
+            "\n\n🌐 READING A WEB PAGE: browser_navigate only OPENS the page — it returns the "
+            "title and a snapshot reference, never the page text. It is never the last step. "
+            "To read the content you must then call browser_snapshot (or browser_find to look "
+            "for specific text). Reporting that a page 'loaded successfully' is not an answer: "
+            "the user asked what is ON the page. "
+            "Call browser_snapshot with NO arguments. Do NOT pass 'filename' — that writes the "
+            "snapshot to a file INSTEAD of returning it, so you get a path you cannot read and "
+            "the page content is lost. "
+            "When you only need to read a page and not interact with it, web_fetch does it in a "
+            "single call and is preferred."
+        )
+
     # Inject relevant skills based on the user's last message. The
     # SkillsManager does a Jaccard token-match over published skills'
     # name + description + when_to_use + procedure, returning the top
