@@ -9,6 +9,7 @@ from src.model_capability_readers.base import (
     VENDOR_OLLAMA,
     VENDOR_OPENAI,
     VENDOR_OPENROUTER,
+    VENDOR_UNKNOWN,
     detect_vendor,
     stable_model_id_for,
 )
@@ -18,16 +19,16 @@ def surfaces(record):
     return set(mc.display_surfaces_for(record.capability))
 
 
-def test_detect_vendor_uses_endpoint_kind_then_host_and_common_local_ports():
+def test_detect_vendor_uses_endpoint_kind_and_host_but_not_ambiguous_local_ports():
     assert detect_vendor("https://example.test/v1", endpoint_kind="ollama") == VENDOR_OLLAMA
     assert detect_vendor("http://127.0.0.1:8080", endpoint_kind="llama_cpp") == VENDOR_LLAMACPP
     assert detect_vendor("https://openrouter.ai/api/v1") == VENDOR_OPENROUTER
     assert detect_vendor("https://api.openai.com/v1") == VENDOR_OPENAI
     assert detect_vendor("https://generativelanguage.googleapis.com/v1beta/openai") == VENDOR_GOOGLE
-    assert detect_vendor("http://127.0.0.1:11434") == VENDOR_OLLAMA
-    assert detect_vendor("http://127.0.0.1:1234") == VENDOR_LMSTUDIO
-    assert detect_vendor("http://127.0.0.1:8080") == VENDOR_GENERIC_OPENAI
-    assert detect_vendor("http://localhost:7000/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("http://127.0.0.1:11434") == VENDOR_UNKNOWN
+    assert detect_vendor("http://127.0.0.1:1234") == VENDOR_UNKNOWN
+    assert detect_vendor("http://127.0.0.1:8080") == VENDOR_UNKNOWN
+    assert detect_vendor("http://localhost:7000/v1") == VENDOR_UNKNOWN
 
 
 def test_detect_vendor_requires_a_dns_label_boundary():
@@ -354,7 +355,9 @@ def test_ollama_reader_maps_show_capabilities_and_tags_are_unknown():
         "nomic-embed-text:latest",
         {"capabilities": ["embedding"]},
     )
-    tags = ollama.records_from_tags_payload({"models": [{"name": "qwen3:latest"}]})
+    tags = ollama.records_from_tags_payload(
+        {"models": [{"name": "qwen3:latest", "details": {"family": "qwen3"}}]}
+    )
 
     assert vision is not None
     assert vision.capability.family == mc.FAMILY_CHAT
@@ -390,7 +393,9 @@ def test_ollama_reader_uses_show_shape_without_architecture_name_matching():
     assert record.capability.modalities.input == (mc.MODALITY_TEXT,)
     assert record.capability.modalities.output == (mc.MODALITY_TEXT,)
     assert record.capability.capabilities == (mc.CAP_REASONING, mc.CAP_TOOL_CALL)
-    assert dict(record.capability.limits) == {"context_tokens": 8192}
+    # Serialized Modelfile text is not reparsed for capability truth.  The
+    # structured native `model_info.*.context_length` field wins.
+    assert dict(record.capability.limits) == {"context_tokens": 32768}
     assert surfaces(record) == {"chat"}
 
 
@@ -406,6 +411,68 @@ def test_ollama_reader_uses_generic_model_info_context_length_when_no_num_ctx():
     assert record is not None
     assert record.capability.family == mc.FAMILY_CHAT
     assert dict(record.capability.limits) == {"context_tokens": 32768}
+
+
+def test_ollama_ps_reader_keeps_loaded_allocation_in_runtime_shape():
+    record = ollama.runtime_context_from_ps_payload(
+        "hf.co/example/Qwen3:Q6_K",
+        {
+            "models": [
+                {
+                    "name": "hf.co/example/Qwen3:Q6_K",
+                    "model": "hf.co/example/Qwen3:Q6_K",
+                    "context_length": 65536,
+                    "details": {"family": "qwen3"},
+                }
+            ]
+        },
+        endpoint_id="7",
+    )
+
+    assert record is not None
+    assert record.allocated_context_tokens == 65536
+    assert record.stable_model_id == "ollama|endpoint:7|hf.co/example/qwen3:q6_k"
+    serialized = record.to_dict()
+    assert serialized["runtime"] == {"allocated_context_tokens": 65536}
+    assert serialized["evidence"] == {
+        "source": mc.SOURCE_PROVIDER_READER,
+        "confidence": mc.CONFIDENCE_PROVIDER_REPORTED,
+        "shape": "ollama.ps.v1",
+        "scope": "loaded_model",
+    }
+    assert "limits" not in serialized
+    assert "raw" not in serialized
+
+
+def test_ollama_ps_reader_matches_only_exact_or_latest_identity():
+    payload = {
+        "models": [
+            {"model": "qwen3:latest", "context_length": 32768},
+            {"model": "qwen3:14b", "context_length": 65536},
+        ]
+    }
+
+    record = ollama.runtime_context_from_ps_payload("qwen3", payload)
+
+    assert record is not None
+    assert record.allocated_context_tokens == 32768
+    assert ollama.runtime_context_from_ps_payload("qwen3:8b", payload) is None
+
+
+def test_ollama_ps_reader_fails_closed_for_invalid_or_conflicting_allocation():
+    assert ollama.runtime_context_from_ps_payload(
+        "qwen3",
+        {"models": [{"model": "qwen3", "context_length": True}]},
+    ) is None
+    assert ollama.runtime_context_from_ps_payload(
+        "qwen3",
+        {
+            "models": [
+                {"model": "qwen3", "context_length": 32768},
+                {"name": "qwen3:latest", "context_length": 65536},
+            ]
+        },
+    ) is None
 
 
 def test_lmstudio_reader_uses_native_v1_capabilities_when_present():
