@@ -77,6 +77,36 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("notes", "set reminder request", rf"{_PLEASE}set\s+(?:a\s+)?reminder\b"),
         ("notes", "assistant reminder request", rf"{_ACTION_QUESTION}set\s+(?:a\s+)?reminder\b"),
 
+        # Contacts / address-book lookup. A question like "what is Mario's
+        # number?" or "look up Anna in contacts" needs the contacts tool.
+        ("contacts", "phone/number lookup request", r"\b(?:what(?:'s| is)|tell\s+me|give\s+me|do\s+you\s+have|mi\s+dici|dime|decime|qual(?:'è|e| è)|cerca|busca)\b.{1,80}?\b(?:phone|telephone|number|numero|número|tel[eé]fono|email|address|indirizzo|direcci[oó]n|contact|contatto|contacto)\b"),
+        ("contacts", "contact lookup request", r"\b(?:look\s+up|find|search|get|pull\s+up|cerca|trova|busca)\b.{1,60}?\b(?:in|on|nel|nella|nell|nei|negli|en|su)\s+(?:my\s+)?(?:contacto?s?|contatt[io]s?|rubrica|address\s+book)\b"),
+        ("contacts", "contact search request", r"\b(?:search|find|look\s+up|cerca|trova|busca)\b.{0,40}\b(?:my\s+)?(?:contacto?s?|contatt[io]s?|rubrica|address\s+book)\b"),
+
+        # Files / directory lookup. A question like "read the README" or
+        # "cosa c'è in config.yaml" needs the read_file / grep tools.
+        # The target must mention "file" or be a plausible filename: has an
+        # extension, starts with ./~/, or begins with a capital letter.
+        ("files", "read or show a file", r"\b(?:read|display|open|view)\s+(?:the\s+)?(?:file\s+|contents?\s+of\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+        ("files", "show me file contents", r"\bshow(?:\s+me)?\s+(?:the\s+)?(?:file\s+|contents?\s+of\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+        ("files", "look at a file", r"\blook\s+at\s+(?:the\s+)?(?:file\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+        ("files", "what's in a file", r"\bwhat(?:'s|\s+is)\s+(?:in|inside)\s+(?:the\s+)?(?:file\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+        ("files", "what does file contain", r"\bwhat\s+does\s+(?:the\s+)?(?:file\s+)?(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,}))\s+contain\b"),
+        # Italian: "leggi X", "mostrami X", "apri X", "visualizza X", "guarda X", "cosa c'è in X"
+        ("files", "leggi/apri/visualizza/guarda file", r"\b(?:leggi|apri|visualizza|guarda|vedi)\s+(?:il\s+)?(?:file\s+|contenuto\s+(?:di|del)\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+        ("files", "mostrami file", r"\bmostra(?:mi)?\s+(?:il\s+)?(?:file\s+|contenuto\s+(?:di|del)\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+        ("files", "cosa c'è nel file", r"\b(?:cosa|che(?:\s+cosa)?)\s+(?:c['’`]?è|c['’`]?e)\s+(?:in|dentro|nel)\s+(?:il\s+)?(?:file\s+|(?:[.~/]\S+|\S+\.\w{1,6}|(?-i:[A-Z][A-Za-z0-9_]{1,})))\b"),
+
+        # Sessions / chat-history search.
+        ("sessions", "search chats", r"\bsearch\s+(?:my\s+)?(?:chat|conversation|message)s?\b"),
+        ("sessions", "find in chats", r"\bfind\s+(?:(?:in|through)\s+)?(?:my\s+|the\s+)?(?:chats?|conversations?|messages?|history)\b"),
+        ("sessions", "look through chats", r"\b(?:look|go)\s+through\s+(?:my\s+)?(?:chats?|conversations?|history)\b"),
+        ("sessions", "what did we say", r"\bwhat\s+did\s+(?:we|i)\s+(?:say|discuss|talk)\s+about\b"),
+        # Italian: "cerca nelle chat", "trova la conversazione", "cosa abbiamo detto su X"
+        ("sessions", "cerca nelle chat", r"\bcerca\s+(?:nel(?:la|le|l['’`]?)?|nei|negli|tra\s+(?:le|i)|in)\s+(?:chat|conversazion[ei]|messaggi[o]?)\b"),
+        ("sessions", "trova conversazione", r"\btrova\s+(?:la\s+)?(?:conversazione|chat|discussione)\b"),
+        ("sessions", "cosa abbiamo detto", r"\bcosa\s+(?:abbiamo|ho)\s+(?:detto|parlato|discusso)\s+(?:di|su(?:l(?:la|le|gli)?)?|a\s+riguardo\s+(?:di|del))\b"),
+
         # Email actions.
         ("email", "assistant email action request", rf"{_ACTION_QUESTION}(?:send|write|reply|email|message|archive|delete|mark)\b.{{0,120}}\b(?:emails?|mail|messages?|inbox|unread|read)\b"),
         ("email", "send/write/reply email request", rf"{_PLEASE}(?:send|write|reply)\b.{{0,120}}\b(?:emails?|mail|messages?)\b"),
