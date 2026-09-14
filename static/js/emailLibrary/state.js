@@ -20,6 +20,7 @@ export const state = {
   _libFolders: [],
   _libAccountId: null,           // null = backend default account
   _libAccounts: [],              // list of accounts for the chip strip
+  _libLabels: [],
   _libPendingExpandUid: null,
   _libSearch: '',
   _libFilter: 'all',             // all, unread, unanswered

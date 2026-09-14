@@ -37,6 +37,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
+from pydantic import BaseModel
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
 
@@ -63,6 +64,7 @@ from routes.email_helpers import (
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause, email_translation_body_hash,
+    _init_scheduled_db,
 )
 from routes.email_pollers import _start_poller
 
@@ -310,6 +312,51 @@ def _email_tag_account_clause(account_id: str | None) -> tuple[str, list[str]]:
 
 _VISIBLE_EMAIL_TAGS = {"urgent", "reply-soon", "action-needed", "calendar", "bills", "receipt", "travel"}
 _DONE_RESPONSE_TAGS = {"urgent", "reply-soon", "action-needed"}
+_RESERVED_EMAIL_LABEL_SLUGS = _VISIBLE_EMAIL_TAGS | {
+    "all",
+    "unread",
+    "favorites",
+    "undone",
+    "reminders",
+    "unanswered",
+    "pending-30d",
+    "pending_30d",
+    "stale-30d",
+    "stale_30d",
+    "spam",
+    "junk",
+    "archive",
+    "archived",
+    "inbox",
+    "sent",
+    "trash",
+    "drafts",
+    "scheduled",
+}
+
+
+class EmailLabelCreateRequest(BaseModel):
+    name: str
+    color: str | None = None
+    description: str | None = None
+    account_id: str | None = None
+
+
+class EmailLabelUpdateRequest(BaseModel):
+    name: str | None = None
+    color: str | None = None
+    description: str | None = None
+    active: bool | None = None
+
+
+class EmailLabelMessageRequest(BaseModel):
+    label: str
+    uid: str | None = None
+    folder: str = "INBOX"
+    account_id: str | None = None
+    message_id: str | None = None
+    subject: str | None = None
+    sender: str | None = None
 
 
 def _sanitize_visible_email_tags(tags, *, is_answered: bool = False) -> list[str]:
@@ -361,6 +408,231 @@ def _clear_done_response_tags(owner: str, account_id: str | None, folder: str, u
         conn.close()
     except Exception as e:
         logger.debug(f"clear done response tags skipped: {e}")
+
+
+def _model_dict(payload) -> dict:
+    if isinstance(payload, dict):
+        return payload
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump()
+    if hasattr(payload, "dict"):
+        return payload.dict()
+    return {}
+
+
+def _normalize_email_label_name(value: str | None) -> str:
+    name = re.sub(r"\s+", " ", str(value or "").strip())
+    if not name:
+        raise HTTPException(400, "Label name is required")
+    if len(name) > 48:
+        raise HTTPException(400, "Label name must be 48 characters or fewer")
+    return name
+
+
+def _email_label_slug_from_name(name: str, *, allow_reserved: bool = False) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower()).strip("-")
+    if not slug:
+        raise HTTPException(400, "Label name must include letters or numbers")
+    slug = slug[:64].strip("-")
+    if not slug:
+        raise HTTPException(400, "Label name must include letters or numbers")
+    if not allow_reserved and slug in _RESERVED_EMAIL_LABEL_SLUGS:
+        raise HTTPException(400, "That label name is reserved")
+    return slug
+
+
+def _normalize_email_label_color(value: str | None) -> str:
+    color = str(value or "").strip()
+    if not color:
+        return ""
+    if not re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", color):
+        raise HTTPException(400, "Label color must be a hex color")
+    return color.lower()
+
+
+def _normalize_email_label_account(account_id: str | None, owner: str) -> str:
+    account = str(account_id or "").strip()
+    if account:
+        _assert_owns_account(account, owner)
+    return account
+
+
+def _email_label_row_to_dict(row) -> dict:
+    return {
+        "slug": row[0],
+        "name": row[1],
+        "color": row[2] or "",
+        "description": row[3] or "",
+        "active": bool(row[4]),
+        "created_at": row[5],
+        "updated_at": row[6],
+    }
+
+
+_EMAIL_PROTOCOL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_EMAIL_UID_MAX = (1 << 32) - 1
+
+
+def _reject_email_protocol_controls(value: str, field: str) -> str:
+    text = str(value or "")
+    if _EMAIL_PROTOCOL_CONTROL_RE.search(text):
+        raise HTTPException(400, f"Invalid {field}")
+    return text
+
+
+def _canonical_email_label_folder(folder: str | None) -> str:
+    value = _reject_email_protocol_controls(folder or "INBOX", "email folder").strip() or "INBOX"
+    if len(value) > 1024:
+        raise HTTPException(400, "Invalid email folder")
+    return value
+
+
+def _canonical_email_label_uid(uid: str | None) -> str:
+    value = _reject_email_protocol_controls(uid or "", "email uid").strip()
+    if not value:
+        return ""
+    if not re.fullmatch(r"[0-9]+", value):
+        raise HTTPException(400, "Invalid email uid")
+    number = int(value)
+    if number < 1 or number > _EMAIL_UID_MAX:
+        raise HTTPException(400, "Invalid email uid")
+    return str(number)
+
+
+def _canonical_email_message_id(message_id: str | None) -> str:
+    value = _reject_email_protocol_controls(message_id or "", "email message_id").strip()
+    if not value:
+        return ""
+    # A Message-ID is a single angle-bracketed token. Keeping the complete
+    # token (rather than accepting an arbitrary HEADER search fragment) also
+    # gives assignments one stable canonical database key.
+    if len(value) > 998 or not re.fullmatch(r"<[^<>]+>", value) or "@" not in value[1:-1]:
+        raise HTTPException(400, "Invalid email message_id")
+    return value
+
+
+def _canonical_email_label_identity(
+    folder: str | None,
+    uid: str | None,
+    message_id: str | None,
+) -> tuple[str, str, str]:
+    folder_s = _canonical_email_label_folder(folder)
+    uid_s = _canonical_email_label_uid(uid)
+    mid = _canonical_email_message_id(message_id)
+    if not mid and not uid_s:
+        raise HTTPException(400, "Email uid or message_id is required")
+    return folder_s, uid_s, mid
+
+
+def _email_label_message_key(folder: str | None, uid: str | None, message_id: str | None) -> str:
+    folder_s, uid_s, mid = _canonical_email_label_identity(folder, uid, message_id)
+    if mid:
+        return f"mid:{mid}"
+    return f"uid:{folder_s}:{uid_s}"
+
+
+def _email_label_definition(owner: str, account_id: str | None, label: str):
+    _init_scheduled_db()
+    account = _normalize_email_label_account(account_id, owner)
+    slug = _email_label_slug_from_name(label)
+    conn = _sql3.connect(SCHEDULED_DB)
+    try:
+        return conn.execute(
+            """
+            SELECT slug, name, color, description, active, created_at, updated_at
+            FROM email_label_definitions
+            WHERE owner=? AND account_id=? AND slug=?
+            """,
+            (owner or "", account, slug),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def _email_label_filter_matches(owner: str, account_id: str | None, folder: str, slug: str) -> tuple[list[str], list[str]]:
+    _init_scheduled_db()
+    account = _normalize_email_label_account(account_id, owner)
+    slug = _email_label_slug_from_name(slug)
+    conn = _sql3.connect(SCHEDULED_DB)
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.message_id, a.uid, a.folder
+            FROM email_label_assignments a
+            JOIN email_label_definitions d
+              ON d.owner=a.owner AND d.account_id=a.account_id AND d.slug=a.label_slug
+            WHERE a.owner=? AND a.account_id=? AND a.label_slug=? AND d.active=1
+              AND (a.message_id != '' OR a.folder=?)
+            """,
+            (owner or "", account, slug, folder),
+        ).fetchall()
+    finally:
+        conn.close()
+    message_ids: list[str] = []
+    uids: list[str] = []
+    requested_folder = _canonical_email_label_folder(folder)
+    for mid, uid, row_folder in rows:
+        try:
+            row_folder_s, uid_s, mid_s = _canonical_email_label_identity(row_folder, uid, mid)
+        except HTTPException:
+            # Defense in depth for assignments written before identity
+            # validation existed: never reuse unsafe stored input in IMAP.
+            continue
+        if mid_s and mid_s not in message_ids:
+            message_ids.append(mid_s)
+        elif uid_s and row_folder_s == requested_folder and uid_s not in uids:
+            uids.append(uid_s)
+    return message_ids, uids
+
+
+def _attach_custom_email_labels(owner: str, account_id: str | None, folder: str, emails: list[dict]) -> None:
+    if not emails:
+        return
+    try:
+        _init_scheduled_db()
+        account = _normalize_email_label_account(account_id, owner)
+        keys = []
+        key_by_email = {}
+        for e in emails:
+            email_folder = e.get("folder") or folder
+            try:
+                key = _email_label_message_key(email_folder, e.get("uid"), e.get("message_id"))
+            except HTTPException:
+                continue
+            key_by_email[id(e)] = key
+            if key not in keys:
+                keys.append(key)
+        if not keys:
+            return
+        placeholders = ",".join("?" * len(keys))
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT a.message_key, d.slug, d.name, d.color, d.description
+                FROM email_label_assignments a
+                JOIN email_label_definitions d
+                  ON d.owner=a.owner AND d.account_id=a.account_id AND d.slug=a.label_slug
+                WHERE a.owner=? AND a.account_id=? AND d.active=1
+                  AND a.message_key IN ({placeholders})
+                ORDER BY lower(d.name), d.slug
+                """,
+                (owner or "", account, *keys),
+            ).fetchall()
+        finally:
+            conn.close()
+        by_key: dict[str, list[dict]] = {}
+        for key, slug, name, color, desc in rows:
+            by_key.setdefault(str(key), []).append({
+                "slug": slug,
+                "name": name,
+                "color": color or "",
+                "description": desc or "",
+            })
+        for e in emails:
+            e["labels"] = by_key.get(key_by_email.get(id(e)), [])
+    except Exception as e:
+        logger.debug(f"custom email label attach skipped: {e}")
 
 
 def _record_email_received_events(owner: str, account_id: str | None, folder: str, emails: list[dict]):
@@ -524,7 +796,8 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
 
 
 def _imap_search_quote(value: str) -> str:
-    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+    value = _reject_email_protocol_controls(value, "IMAP search value")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _message_id_chain(*values: str) -> list[str]:
@@ -892,6 +1165,7 @@ def _email_index_list(owner: str, account_id: str | None, folder: str, filter_: 
             "has_attachments": bool(has_attachments_raw),
             "folder": folder,
         })
+    _attach_custom_email_labels(owner, account_id, folder, emails)
     return emails, total, (total_row or [None, None])[1]
 
 
@@ -983,6 +1257,7 @@ def _email_index_search(owner: str, account_id: str | None, folder: str, query: 
             "has_attachments": bool(has_attachments),
             "folder": row_folder or folder,
         })
+    _attach_custom_email_labels(owner, account_id, folder, emails)
     return emails, total, (total_row or [None, None])[1]
 
 
@@ -1702,6 +1977,230 @@ def setup_email_routes():
     _POOL_HOOKS["connect"] = _pooled_connect
     _POOL_HOOKS["release"] = _pooled_release
 
+    @router.get("/labels")
+    async def list_email_labels(
+        account_id: str | None = Query(None),
+        include_inactive: bool = Query(False),
+        owner: str = Depends(require_owner),
+    ):
+        _init_scheduled_db()
+        account = _normalize_email_label_account(account_id, owner)
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            active_clause = "" if include_inactive else "AND active=1"
+            rows = conn.execute(
+                f"""
+                SELECT slug, name, color, description, active, created_at, updated_at
+                FROM email_label_definitions
+                WHERE owner=? AND account_id=? {active_clause}
+                ORDER BY lower(name), slug
+                """,
+                (owner or "", account),
+            ).fetchall()
+        finally:
+            conn.close()
+        return {"labels": [_email_label_row_to_dict(r) for r in rows]}
+
+    @router.post("/labels")
+    async def create_email_label(
+        payload: EmailLabelCreateRequest,
+        owner: str = Depends(require_owner),
+    ):
+        data = _model_dict(payload)
+        name = _normalize_email_label_name(data.get("name"))
+        slug = _email_label_slug_from_name(name)
+        color = _normalize_email_label_color(data.get("color"))
+        description = str(data.get("description") or "").strip()[:240]
+        account = _normalize_email_label_account(data.get("account_id"), owner)
+        now = datetime.utcnow().isoformat() + "Z"
+        _init_scheduled_db()
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            conn.execute(
+                """
+                INSERT INTO email_label_definitions
+                  (owner, account_id, slug, name, color, description, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(owner, account_id, slug) DO UPDATE SET
+                  name=excluded.name,
+                  color=excluded.color,
+                  description=excluded.description,
+                  active=1,
+                  updated_at=excluded.updated_at
+                """,
+                (owner or "", account, slug, name, color, description, now, now),
+            )
+            conn.commit()
+            row = conn.execute(
+                """
+                SELECT slug, name, color, description, active, created_at, updated_at
+                FROM email_label_definitions
+                WHERE owner=? AND account_id=? AND slug=?
+                """,
+                (owner or "", account, slug),
+            ).fetchone()
+        finally:
+            conn.close()
+        _invalidate_list_cache(account, None)
+        return {"success": True, "label": _email_label_row_to_dict(row)}
+
+    @router.patch("/labels/{slug}")
+    async def update_email_label(
+        slug: str,
+        payload: EmailLabelUpdateRequest,
+        account_id: str | None = Query(None),
+        owner: str = Depends(require_owner),
+    ):
+        data = _model_dict(payload)
+        label_slug = _email_label_slug_from_name(slug)
+        account = _normalize_email_label_account(account_id, owner)
+        updates = []
+        params = []
+        if data.get("name") is not None:
+            updates.append("name=?")
+            params.append(_normalize_email_label_name(data.get("name")))
+        if data.get("color") is not None:
+            updates.append("color=?")
+            params.append(_normalize_email_label_color(data.get("color")))
+        if data.get("description") is not None:
+            updates.append("description=?")
+            params.append(str(data.get("description") or "").strip()[:240])
+        if data.get("active") is not None:
+            updates.append("active=?")
+            params.append(1 if bool(data.get("active")) else 0)
+        if not updates:
+            raise HTTPException(400, "No label fields to update")
+        updates.append("updated_at=?")
+        params.append(datetime.utcnow().isoformat() + "Z")
+        _init_scheduled_db()
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            cur = conn.execute(
+                f"""
+                UPDATE email_label_definitions
+                SET {', '.join(updates)}
+                WHERE owner=? AND account_id=? AND slug=?
+                """,
+                (*params, owner or "", account, label_slug),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(404, "Label not found")
+            conn.commit()
+            row = conn.execute(
+                """
+                SELECT slug, name, color, description, active, created_at, updated_at
+                FROM email_label_definitions
+                WHERE owner=? AND account_id=? AND slug=?
+                """,
+                (owner or "", account, label_slug),
+            ).fetchone()
+        finally:
+            conn.close()
+        _invalidate_list_cache(account, None)
+        return {"success": True, "label": _email_label_row_to_dict(row)}
+
+    @router.delete("/labels/{slug}")
+    async def delete_email_label(
+        slug: str,
+        account_id: str | None = Query(None),
+        owner: str = Depends(require_owner),
+    ):
+        label_slug = _email_label_slug_from_name(slug)
+        account = _normalize_email_label_account(account_id, owner)
+        _init_scheduled_db()
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            cur = conn.execute(
+                """
+                UPDATE email_label_definitions
+                SET active=0, updated_at=?
+                WHERE owner=? AND account_id=? AND slug=?
+                """,
+                (datetime.utcnow().isoformat() + "Z", owner or "", account, label_slug),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _invalidate_list_cache(account, None)
+        return {"success": True, "deleted": cur.rowcount > 0}
+
+    @router.post("/labels/message")
+    async def add_email_label_to_message(
+        payload: EmailLabelMessageRequest,
+        owner: str = Depends(require_owner),
+    ):
+        data = _model_dict(payload)
+        folder, uid, message_id = _canonical_email_label_identity(
+            data.get("folder"), data.get("uid"), data.get("message_id"),
+        )
+        account = _normalize_email_label_account(data.get("account_id"), owner)
+        row = _email_label_definition(owner, account, data.get("label") or "")
+        if not row or not bool(row[4]):
+            raise HTTPException(404, "Label not found")
+        key = _email_label_message_key(folder, uid, message_id)
+        now = datetime.utcnow().isoformat() + "Z"
+        _init_scheduled_db()
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            conn.execute(
+                """
+                INSERT INTO email_label_assignments
+                  (owner, account_id, folder, message_key, message_id, uid, label_slug, subject, sender, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(owner, account_id, message_key, label_slug) DO UPDATE SET
+                  folder=excluded.folder,
+                  message_id=excluded.message_id,
+                  uid=excluded.uid,
+                  subject=excluded.subject,
+                  sender=excluded.sender
+                """,
+                (
+                    owner or "",
+                    account,
+                    folder,
+                    key,
+                    message_id,
+                    uid,
+                    row[0],
+                    str(data.get("subject") or "").strip()[:300],
+                    str(data.get("sender") or "").strip()[:300],
+                    now,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _invalidate_list_cache(account, None)
+        return {"success": True, "label": _email_label_row_to_dict(row), "message_key": key}
+
+    @router.delete("/labels/message/{slug}")
+    async def remove_email_label_from_message(
+        slug: str,
+        uid: str | None = Query(None),
+        folder: str = Query("INBOX"),
+        account_id: str | None = Query(None),
+        message_id: str | None = Query(None),
+        owner: str = Depends(require_owner),
+    ):
+        account = _normalize_email_label_account(account_id, owner)
+        label_slug = _email_label_slug_from_name(slug)
+        key = _email_label_message_key(folder, uid, message_id)
+        _init_scheduled_db()
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            cur = conn.execute(
+                """
+                DELETE FROM email_label_assignments
+                WHERE owner=? AND account_id=? AND message_key=? AND label_slug=?
+                """,
+                (owner or "", account, key, label_slug),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _invalidate_list_cache(account, None)
+        return {"success": True, "removed": cur.rowcount}
+
     def _fixture_email_file() -> Path:
         return Path(DATA_DIR) / "fixture_email_messages.json"
 
@@ -1786,6 +2285,13 @@ def setup_email_routes():
             pass
         elif filter_ in {"favorites", "reminders"} or str(filter_).startswith("tag:"):
             rows = []
+        elif str(filter_).startswith("label:"):
+            _attach_custom_email_labels(owner, None, folder, rows)
+            slug = _email_label_slug_from_name(str(filter_)[len("label:"):].strip())
+            rows = [
+                e for e in rows
+                if any((lbl.get("slug") == slug) for lbl in (e.get("labels") or []))
+            ]
         else:
             pass
         total = len(rows)
@@ -1796,6 +2302,8 @@ def setup_email_routes():
             item = dict(e)
             item.pop("_fixture_body", None)
             visible.append(item)
+        if not str(filter_ or "").startswith("label:"):
+            _attach_custom_email_labels(owner, None, folder, visible)
         return {
             "emails": visible,
             "total": total,
@@ -1898,6 +2406,26 @@ def setup_email_routes():
                 from datetime import datetime as _dt, timedelta as _td
                 _before = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
                 status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
+            elif filter_ and filter_.startswith("label:"):
+                _label_name = filter_[len("label:"):].strip().lower()
+                _label_message_ids, _label_uid_fallback = _email_label_filter_matches(owner, account_id, folder, _label_name)
+                if not _label_message_ids and not _label_uid_fallback:
+                    return {"emails": [], "total": 0, "folder": folder}
+
+                _uids = set()
+                for _mid in dict.fromkeys(_label_message_ids):
+                    if not _mid:
+                        continue
+                    st_m, data_m = _imap_uid_search(conn, f'(HEADER Message-ID {_imap_search_quote(_mid)}{from_clause})')
+                    if st_m == "OK" and data_m and data_m[0]:
+                        _uids.update(data_m[0].split())
+                for _uid in _label_uid_fallback:
+                    if _uid:
+                        _uids.add(str(_uid).encode())
+                if not _uids:
+                    return {"emails": [], "total": 0, "folder": folder}
+                data = [b" ".join(sorted(_uids, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
+                status = "OK"
             elif filter_ and filter_.startswith("tag:"):
                 # Tag-based filter — resolve UIDs from email_tags first, then
                 # ask IMAP for those messages by Message-ID. `tag:spam` reads
@@ -1982,8 +2510,6 @@ def setup_email_routes():
                 # Prefer stable Message-ID rows. Older tag rows may have only
                 # numeric ids; those were sequence numbers historically, but
                 # may be real UIDs for newer rows. Treat them as UIDs only.
-                def _imap_search_quote(value: str) -> str:
-                    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
                 _uids = set()
                 for _mid in dict.fromkeys(_tag_message_ids):
                     if not _mid:
@@ -2204,9 +2730,17 @@ def setup_email_routes():
                     logger.debug(f"email calendar event link attach skipped: {e}")
 
                 _hide_unlinked_calendar_tags(emails)
+                _attach_custom_email_labels(owner, account_id, folder, emails)
                 if filter_ and filter_.startswith("tag:") and filter_ != "tag:spam":
                     _final_tag = filter_[len("tag:"):].strip().lower().replace("_", "-")
                     emails = [e for e in emails if _final_tag in (e.get("tags") or [])]
+                    total = len(emails)
+                if filter_ and filter_.startswith("label:"):
+                    _final_label = _email_label_slug_from_name(filter_[len("label:"):].strip())
+                    emails = [
+                        e for e in emails
+                        if any((lbl.get("slug") == _final_label) for lbl in (e.get("labels") or []))
+                    ]
                     total = len(emails)
 
             if has_attachments_only:
@@ -2901,6 +3435,7 @@ def setup_email_routes():
                         logger.warning(f"Error parsing search result {uid}: {e}")
                         continue
                 _email_index_upsert(owner, account_id, effective_folder, fetched_emails)
+                _attach_custom_email_labels(owner, account_id, effective_folder, emails)
 
                 return {
                     "emails": emails,
