@@ -135,9 +135,13 @@ if __name__ == "__main__":
     import uvicorn
     # Import the FastAPI app from app.py
     from app import app
+    from core.log_safety import application_log_settings, uvicorn_log_config
 
     bind_host = os.getenv("APP_BIND", "127.0.0.1")
     bind_port = int(os.getenv("APP_PORT", "7000"))
+    application_log_level, _ = application_log_settings(
+        os.getenv("LOG_LEVEL", "INFO")
+    )
     url = f"http://{bind_host}:{bind_port}"
 
     if getattr(sys, 'frozen', False):
@@ -146,4 +150,10 @@ if __name__ == "__main__":
         # Start system tray manager thread
         threading.Thread(target=setup_system_tray, args=(url,), daemon=True).start()
 
-    uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")
+    uvicorn.run(
+        app,
+        host=bind_host,
+        port=bind_port,
+        log_level=application_log_level,
+        log_config=uvicorn_log_config(application_log_level),
+    )
