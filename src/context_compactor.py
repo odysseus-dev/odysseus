@@ -295,6 +295,12 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     2. Older conversation turns
     Reserves space for the response.
     """
+    # The reserve (output room + tool schemas) must never eat the whole budget.
+    # An agent with ~6K of tool schemas against a 6K budget got a NEGATIVE
+    # budget, so every step below failed to fit and the harshest path ran every
+    # round: system prompt cut to 2000 chars, tool results truncated, the
+    # user's request reduced to a fragment. Keep at least half for messages.
+    reserve_tokens = max(0, min(reserve_tokens, context_length // 2))
     budget = context_length - reserve_tokens
     used = estimate_tokens(messages)
     if used <= budget:

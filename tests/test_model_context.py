@@ -203,6 +203,20 @@ class TestLookupKnown:
     def test_gpt4_base(self):
         assert _lookup_known("gpt-4") == 8192
 
+    def test_newer_gpt_generation_inherits_latest_known(self):
+        """gpt-6-astra matched no key, read as an unknown window, and the agent
+        budget collapsed to 6000 tokens."""
+        assert _lookup_known("gpt-6-astra") == _lookup_known("gpt-5")
+        assert _lookup_known("openai/gpt-7-preview") == _lookup_known("gpt-5")
+
+    def test_generation_fallback_never_overrides_a_table_match(self):
+        assert _lookup_known("gpt-5.6-sol") == 400000
+        assert _lookup_known("gpt-4.1-mini") == 1047576
+
+    def test_generation_fallback_ignores_non_gpt_ids(self):
+        assert _lookup_known("gpt-oss-120b") is None
+        assert _lookup_known("chatgpt-6") is None
+
 
 class _FakeResp:
     def __init__(self, payload, ok=True):

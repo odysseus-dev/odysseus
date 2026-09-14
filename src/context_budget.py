@@ -33,6 +33,7 @@ def compute_input_token_budget(
     default: int = DEFAULT_BUDGET,
     headroom: float = DEFAULT_HEADROOM,
     hard_max: int = DEFAULT_HARD_MAX,
+    reserve: int = 0,
 ) -> int:
     """Return the effective soft input-token budget.
 
@@ -53,7 +54,10 @@ def compute_input_token_budget(
         - Otherwise (auto), scale to ``headroom`` of the context window, capped at
           ``hard_max`` — so long-context models use their capacity.
         - When the window is unknown (context_length <= 0), use the conservative
-          ``default`` budget and do NOT scale off the fallback.
+          ``default`` budget and do NOT scale off the fallback. That default is
+          room for *messages*: ``reserve`` (output + tool schemas, which the
+          trimmer subtracts) is added on top, otherwise an agent whose schemas
+          alone approach the default is left with no room for the conversation.
     """
     configured = _int_or_zero(configured)
     context_length = _int_or_zero(context_length)
@@ -65,7 +69,7 @@ def compute_input_token_budget(
         scaled = int(context_length * headroom)
         return max(1, min(scaled, hard_max))
 
-    return configured if configured > 0 else default
+    return (configured if configured > 0 else default) + max(0, _int_or_zero(reserve))
 
 
 def budget_is_explicit(configured: int, *, default: int = DEFAULT_BUDGET) -> bool:

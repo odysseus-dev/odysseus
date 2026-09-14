@@ -5153,6 +5153,7 @@ async def stream_agent_loop(
                 ctx_for_budget,
                 budget_is_explicit,
                 hard_max=hard_max,
+                reserve=reserve_tokens,
             )
             _soft_trim_budget = effective_budget
             _soft_trim_reserve = reserve_tokens

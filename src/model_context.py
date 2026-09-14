@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import ipaddress
 import logging
+import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -331,6 +332,41 @@ def _lookup_known(model: str) -> Optional[int]:
         if key in basename or key in name:
             if best_key is None or len(key) > len(best_key):
                 best_key, best_ctx = key, ctx
+    if best_ctx is None:
+        best_ctx = _lookup_gpt_generation(name)
+    return best_ctx
+
+
+_GPT_GENERATION_RE = re.compile(r"(?:^|/)gpt-(\d+)(?:\.(\d+))?")
+
+
+def _gpt_generation(model: str) -> Optional[float]:
+    m = _GPT_GENERATION_RE.search(model)
+    if not m:
+        return None
+    return float(f"{m.group(1)}.{m.group(2) or 0}")
+
+
+def _lookup_gpt_generation(name: str) -> Optional[int]:
+    """Window of the newest known GPT generation at or below this model's.
+
+    A frozen table breaks on every new generation before anyone adds a row:
+    `gpt-6-astra` matched nothing, read as an unknown window, and the agent
+    fell back to a 6000-token budget that its own tool schemas outgrew — so
+    every round trimmed the task out of the prompt. Later generations have not
+    shrunk their windows, so the previous generation is a safe floor.
+    """
+    generation = _gpt_generation(name)
+    if generation is None:
+        return None
+    best_gen: Optional[float] = None
+    best_ctx: Optional[int] = None
+    for key, ctx in KNOWN_CONTEXT_WINDOWS.items():
+        key_gen = _gpt_generation(key)
+        if key_gen is None or key_gen > generation:
+            continue
+        if best_gen is None or key_gen > best_gen:
+            best_gen, best_ctx = key_gen, ctx
     return best_ctx
 
 
