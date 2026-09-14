@@ -38,7 +38,7 @@ from routes.email_helpers import (
     _detect_sent_folder, _detect_spam_folder, _imap_move,
     _extract_attachment_text, _extract_text,
     _pre_retrieve_context,
-    _attach_compose_uploads, _cleanup_compose_uploads, _q,
+    _attach_compose_uploads, _cleanup_compose_uploads, _imap_mailbox_arg,
     SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _email_cache_owner_clause,
     _generate_scheduled_email_summary, _email_summary_failure_log_detail,
 )
@@ -552,7 +552,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if auto_cal:
             for sent_name in ("Sent", "INBOX/Sent", "Sent Items", "[Gmail]/Sent Mail"):
                 try:
-                    st, _ = conn.select(_q(sent_name), readonly=True)
+                    st, _ = conn.select(_imap_mailbox_arg(conn, sent_name), readonly=True)
                     if st == "OK":
                         folders_to_scan.append(sent_name)
                         break
@@ -560,7 +560,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     continue
         for folder in folders_to_scan:
             try:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_imap_mailbox_arg(conn, folder), readonly=True)
                 status, data = conn.uid("SEARCH", None, f'(SINCE {since})')
                 if status == "OK" and data[0]:
                     for u in reversed(data[0].split()[-30:]):
@@ -681,7 +681,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 _folder, uid = "INBOX", _entry
             try:
                 if _folder != _current_folder:
-                    conn.select(_q(_folder), readonly=True)
+                    conn.select(_imap_mailbox_arg(conn, _folder), readonly=True)
                     _current_folder = _folder
                 st, msg_data = conn.uid("FETCH", uid if isinstance(uid, bytes) else str(uid).encode(), "(RFC822)")
                 if st != "OK":
@@ -1470,7 +1470,7 @@ def _scheduled_poll_once() -> dict:
                 try:
                     with _imap(row_account_id, owner=row_owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
-                        imap.append(_q(sent_folder), "\\Seen", None, outer.as_bytes())
+                        imap.append(_imap_mailbox_arg(imap, sent_folder), "\\Seen", None, outer.as_bytes())
                 except Exception as e:
                     logger.warning(f"Failed to append scheduled {sid} to Sent: {e}")
 
