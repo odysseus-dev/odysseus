@@ -376,7 +376,43 @@ function _openVisionEditor(att, userMsgEl) {
       if (uiModule?.showError) uiModule.showError('Failed to save OCR text');
     }
   });
+  // Re-run OCR: ask the server to re-analyse the image with the currently
+  // configured Vision model (force=1 bypasses the cached description) and
+  // drop the result into the textarea. The endpoint persists the new text
+  // server-side, so this does not need a separate Save; chat history is
+  // untouched either way.
+  const rerunBtn = document.createElement('button');
+  rerunBtn.type = 'button';
+  rerunBtn.className = 'vision-editor-btn';
+  rerunBtn.title = 'Re-run the vision model on this image';
+  rerunBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg><span class="vision-btn-label">Re-run</span>';
+  rerunBtn.disabled = true;
+  rerunBtn.addEventListener('click', async () => {
+    const prevLabel = rerunBtn.querySelector('.vision-btn-label').textContent;
+    rerunBtn.disabled = true;
+    saveBtn.disabled = true;
+    regenBtn.disabled = true;
+    ta.disabled = true;
+    rerunBtn.querySelector('.vision-btn-label').textContent = 'Running…';
+    try {
+      const r = await fetch(`/api/upload/${att.id}/vision?force=1`, { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      ta.value = data.text || '';
+      if (uiModule?.showToast) uiModule.showToast('Re-ran vision model');
+    } catch (e) {
+      if (uiModule?.showError) uiModule.showError('Re-run failed: ' + e.message);
+    } finally {
+      rerunBtn.querySelector('.vision-btn-label').textContent = prevLabel;
+      rerunBtn.disabled = false;
+      saveBtn.disabled = false;
+      regenBtn.disabled = !userMsgEl;
+      ta.disabled = false;
+      ta.focus();
+    }
+  });
   actions.appendChild(closeBtn);
+  actions.appendChild(rerunBtn);
   actions.appendChild(saveBtn);
   actions.appendChild(regenBtn);
   panel.appendChild(actions);
@@ -397,6 +433,7 @@ function _openVisionEditor(att, userMsgEl) {
       ta.disabled = false;
       saveBtn.disabled = false;
       regenBtn.disabled = !userMsgEl;
+      rerunBtn.disabled = false;
       ta.focus();
     })
     .catch(() => {
@@ -405,6 +442,7 @@ function _openVisionEditor(att, userMsgEl) {
       ta.disabled = false;
       saveBtn.disabled = false;
       regenBtn.disabled = !userMsgEl;
+      rerunBtn.disabled = false;
     });
 }
 

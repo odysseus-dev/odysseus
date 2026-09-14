@@ -18701,7 +18701,7 @@ body.gallery-selecting .gallery-dl-btn,
 .vision-editor-text:focus { border-color: var(--accent-primary, var(--red)); }
 .vision-editor-hint { font-size: 10.5px; opacity: 0.55; line-height: 1.4; }
 .vision-editor-actions {
-  display: flex; gap: 8px; justify-content: flex-end;
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
   margin-top: 4px;
 }
 .vision-editor-btn {
