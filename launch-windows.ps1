@@ -78,13 +78,18 @@ $pyVersion = $null
 
 $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
 if ($pyLauncher) {
-    foreach ($v in @("-3.13", "-3.12", "-3.11")) {
-        $ver = Get-PythonVersionText $pyLauncher.Source @($v)
-        if ($ver) {
+    # Ask the launcher for its own default Python 3.x (highest installed,
+    # or whatever py.ini / PY_PYTHON overrides to) instead of hardcoding
+    # version flags, which go stale every time a new Python is released.
+    $ver = Get-PythonVersionText $pyLauncher.Source @("-3")
+    if ($ver) {
+        $versionParts = $ver.Split('.')
+        $major = [int]$versionParts[0]
+        $minor = [int]$versionParts[1]
+        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
             $pyExe = $pyLauncher.Source
-            $pyArgs = @($v)
+            $pyArgs = @("-3")
             $pyVersion = $ver
-            break
         }
     }
 }
@@ -109,7 +114,7 @@ if ($pyExe -like "*WindowsApps*python.exe") {
     $pyCmd = Get-Command py -ErrorAction SilentlyContinue
     if ($pyCmd) {
         $pyExe = $pyCmd.Source
-        $pyArgs = @("-3.11")
+        $pyArgs = @("-3")
     }
 }
 
