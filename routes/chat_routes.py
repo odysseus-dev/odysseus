@@ -2736,11 +2736,14 @@ def setup_chat_routes(
             raise HTTPException(400, "session_id, original_text, and instruction are required")
 
         _verify_session_owner(request, session_id)
+        owner = effective_user(request)
 
         try:
             sess = session_manager.get_session(session_id)
         except (KeyError, SessionNotFoundError):
             raise HTTPException(404, "Session not found")
+
+        resolve_session_auth(sess, session_id, owner=owner)
 
         messages = [
             {"role": "system", "content": (
