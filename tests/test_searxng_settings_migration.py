@@ -245,6 +245,10 @@ def test_invalid_utf8_is_not_replaced(tmp_path):
     assert after.st_ino == before.st_ino
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX ownership (os.fchown/os.O_DIRECTORY) only exists in the Linux searxng container.",
+)
 def test_temporary_file_is_chmodded_before_it_is_chowned(tmp_path, monkeypatch):
     # The Compose cap set is `cap_drop: ALL` plus CHOWN/SETGID/SETUID/
     # DAC_OVERRIDE and carries no FOWNER, and searxng's entrypoint chowns

@@ -1022,7 +1022,72 @@ def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
         (
             "llama-server --model model.gguf "
             "--mmproj \"$(find '/app/models' -iname '*.gguf' 2>/dev/null | sort | head -1)\""
-        ),
+                ),
     ]:
         with pytest.raises(HTTPException):
             _validate_serve_cmd(cmd)
+
+
+# ----- Issue #5978: macOS HF cache discovery -----
+# huggingface_hub stores downloads under ~/Library/Caches/huggingface/hub on
+# macOS, but the scanner only knew ~/.cache/... (Linux) and never consulted the
+# library, so macOS caches were invisible unless the user manually exported
+# HF_HOME. The two tests below pin the fix.
+
+
+def _exec_hf_cache_paths_def():
+    """Recover the shipped `hf_cache_paths()` def out of the generated scanner
+
+    and return it as a callable for behavioral testing.
+
+    Why exec-and-call instead of reaching the GET /api/model/cached route:
+    `_cached_model_scan_script` emits a standalone source string intended to
+    run via `python -` / `ssh host "python -"`; exercising it through the route
+    would reconstruct a Request + ServeRequest instead of testing the real
+    emission point. Extracting the one def (by stable delimiters, no regex)
+    and calling it pins exactly what ships (narrow, documented exception per
+    tests/TESTING_STANDARD.md).
+    """
+    script = _cached_model_scan_script()
+    start = script.index("def hf_cache_paths():")
+    end = script.index("    return candidates", start) + len("    return candidates")
+    ns: dict = {"os": os, "sys": sys}
+    exec(script[start:end] + "\n", ns)
+    return ns["hf_cache_paths"]
+
+
+def test_hf_cache_paths_includes_macos_library_caches_under_darwin(monkeypatch):
+    fn = _exec_hf_cache_paths_def()
+    monkeypatch.setattr("sys.platform", "darwin")
+    cands = fn()
+    assert any("Library/Caches/huggingface" in c for c in cands), cands
+
+
+def test_hf_cache_paths_includes_linux_dotcache_under_linux(monkeypatch):
+    fn = _exec_hf_cache_paths_def()
+    monkeypatch.setattr("sys.platform", "linux")
+    cands = fn()
+    assert any(".cache/huggingface/hub" in c for c in cands), cands
+
+
+def test_cached_model_scan_finds_model_at_platform_default_cache(tmp_path):
+    """End-to-end: the platform-default cache location (Linux ~/.cache here) must
+    be scanned with no model_dir / HF_HOME override — the #5978 scenario."""
+    cache = tmp_path / "home" / "tester" / ".cache" / "huggingface" / "hub"
+    snap = cache / "models--acme--cached-7b" / "snapshots" / "sha1"
+    snap.mkdir(parents=True)
+    (snap / "model-q4.gguf").write_bytes(b"gguf")
+
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("HUGGINGFACE_HUB_CACHE", "HF_HOME")}
+    env["HOME"] = str(tmp_path / "home" / "tester")
+
+    scan_py = tmp_path / "scan_cache.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    models = json.loads(proc.stdout)
+    assert "acme/cached-7b" in {m["repo_id"] for m in models}, models
