@@ -1375,13 +1375,34 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         # XML-like text inside JSON argument values stays data instead of
         # selecting a different tool.
         json_body_seen = False
+        # Wrapper spans consumed below; used to mask wrapper bodies out of the
+        # bare-invoke fallback so markup inside a malformed JSON payload stays
+        # data (issue #5333) while later real calls are recovered (#6014).
+        wrapper_spans: list[tuple[int, int]] = []
+        skip_before = -1
         for _ms, inner_start, inner_end, _me in _iter_delimited(
             text, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE
         ):
+            wrapper_spans.append((_ms, _me))
+            if inner_start < skip_before:
+                # Already consumed by a string-aware (extended) parse below.
+                continue
             body = text[inner_start:inner_end]
             if _looks_like_json_body(body):
                 json_body_seen = True
                 block = _parse_json_tool_call_body(body)
+                if not block:
+                    # Issue #6013: a closer token inside a JSON string value
+                    # ends the delimiter span early, so the body fails to
+                    # decode. Retry with each later closer in turn; the first
+                    # one whose body decodes is the real wrapper end.
+                    for close_m in _XML_TOOL_CALL_CLOSE_RE.finditer(text, _me):
+                        block = _parse_json_tool_call_body(
+                            text[inner_start:close_m.start()]
+                        )
+                        if block:
+                            skip_before = close_m.end()
+                            break
                 if block:
                     blocks.append(block)
                 continue
@@ -1398,6 +1419,13 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         # complete inner tool tag, but forget the closing </tool_call>.
         if not blocks:
             for m in _XML_OPEN_TOOL_CALL_RE.finditer(text):
+                # The opener-to-EOS match also fires when the wrapper WAS
+                # closed (group(1) then swallows the closer and everything
+                # after). Trust it only where the closed-span scan found
+                # nothing, or it would mask later valid calls (#6014).
+                if any(ws <= m.start() < we for ws, we in wrapper_spans):
+                    continue
+                wrapper_spans.append((m.start(), m.end()))
                 body = m.group(1)
                 if _looks_like_json_body(body):
                     # Same fail-closed rule as above for an unclosed wrapper.
@@ -1417,11 +1445,24 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     if block:
                         blocks.append(block)
         # Try bare <invoke> without wrapper. Skipped when a JSON wrapper body
-        # was seen but produced no block: this rescan covers the full text,
-        # wrapper bodies included, and <invoke> markup inside a (possibly
-        # malformed) JSON payload must stay data rather than dispatch.
-        if not blocks and not json_body_seen:
-            for inv_name, inv_body in _iter_xml_invoke(text):
+        # produced a valid block (blocks non-empty) — this rescan covers the
+        # full text and markup inside a JSON payload must stay data (#5333).
+        # Issue #6014: when JSON wrapper bodies were seen but all malformed,
+        # scan with every wrapper span masked out so a later valid bare call
+        # is recovered while markup inside the malformed payload stays data.
+        scan_text = None
+        if not blocks:
+            if not json_body_seen:
+                scan_text = text
+            elif wrapper_spans:
+                chars = list(text)
+                for ws, we in wrapper_spans:
+                    for i in range(max(0, ws), min(we, len(chars))):
+                        if chars[i] != "\n":
+                            chars[i] = " "
+                scan_text = "".join(chars)
+        if scan_text is not None:
+            for inv_name, inv_body in _iter_xml_invoke(scan_text):
                 block = _parse_xml_invoke(inv_name, inv_body)
                 if block:
                     blocks.append(block)
