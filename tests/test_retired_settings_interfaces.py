@@ -3,6 +3,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
+from fastapi import HTTPException
 
 import pytest
 
@@ -117,3 +118,38 @@ def test_manage_settings_tombstones_legacy_fallback_key(monkeypatch):
 
     assert save_calls == []
     assert store["default_model_fallbacks"] == LEGACY_VALUE
+
+@pytest.mark.asyncio
+async def test_tool_approval_mode_accepts_only_supported_values(monkeypatch):
+    store = dict(settings_mod.DEFAULT_SETTINGS)
+
+    monkeypatch.setattr(auth_routes, "migrate_from_settings", lambda: None)
+    monkeypatch.setattr(auth_routes, "_load_settings", lambda: dict(store))
+
+    def save_settings(updated):
+        store.clear()
+        store.update(updated)
+
+    monkeypatch.setattr(auth_routes, "_save_settings", save_settings)
+
+    router = auth_routes.setup_auth_routes(_AuthManager())
+    set_settings = _route(router, "/api/auth/settings", "POST")
+
+    response = await set_settings(
+        _Request({"tool_approval_mode": "auto"}, admin=True)
+    )
+    assert response["tool_approval_mode"] == "auto"
+    assert store["tool_approval_mode"] == "auto"
+
+    response = await set_settings(
+        _Request({"tool_approval_mode": "ask"}, admin=True)
+    )
+    assert response["tool_approval_mode"] == "ask"
+    assert store["tool_approval_mode"] == "ask"
+
+    with pytest.raises(HTTPException) as exc_info:
+        await set_settings(
+            _Request({"tool_approval_mode": "banana"}, admin=True)
+        )
+
+    assert exc_info.value.status_code == 400
