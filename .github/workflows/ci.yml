@@ -142,5 +142,8 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
       - run: mkdir -p data  # sqlite DB lives at ./data/app.db
         if: steps.docs-check.outputs.docs_only != 'true'
+      - name: Smoke gate (fresh-install confidence)
+        if: steps.docs-check.outputs.docs_only != 'true'
+        run: python -m pytest -q tests/test_smoke_install.py
       - run: python -m pytest -q
         if: steps.docs-check.outputs.docs_only != 'true'
