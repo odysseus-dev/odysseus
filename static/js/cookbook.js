@@ -31,7 +31,7 @@ import {
 import {
   initServe,
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
-} from './cookbookServe.js';
+} from './cookbookServe.js?v=20260915slice3';
 
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';

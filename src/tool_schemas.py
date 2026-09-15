@@ -1414,9 +1414,20 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
 
     # Convert structured args back to the text format each tool expects
     if tool_type == "bash":
-        content = args.get("command", "")
+        payload = args.get("command", "")
+        # Issue #6012: a Qwen/Hermes JSON wrapper with a non-string command
+        # (list/object/number) must fail closed — coercing it produced a
+        # ToolBlock whose content isn't a str and crashed or mangled execution.
+        if payload is not None and not isinstance(payload, str):
+            logger.warning(f"Rejecting non-string command payload for function call {name}: {payload!r}")
+            return None
+        content = payload or ""
     elif tool_type == "python":
-        content = args.get("code", "")
+        payload = args.get("code", "")
+        if payload is not None and not isinstance(payload, str):
+            logger.warning(f"Rejecting non-string code payload for function call {name}: {payload!r}")
+            return None
+        content = payload or ""
     elif tool_type == "web_search":
         queries = args.get("queries")
         if isinstance(queries, list) and queries:
