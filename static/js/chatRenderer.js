@@ -1648,6 +1648,15 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   return wrap;
 }
 
+// Dashboard widgets sit inside #welcome-screen, above the composer. Lazily
+// imported (same convention as notes/tasks/calendar here) so they only load
+// when the welcome screen is actually shown.
+function refreshDashboardWidgets() {
+  import('./dashboard.js').then(mod => {
+    if (mod.refreshDashboard) mod.refreshDashboard();
+  }).catch(() => {});
+}
+
 export function hideWelcomeScreen() {
   const ws = document.getElementById('welcome-screen');
   const cc = document.getElementById('chat-container');
@@ -1660,6 +1669,7 @@ export function hideWelcomeScreen() {
 }
 
 export function showWelcomeScreen() {
+  refreshDashboardWidgets();
   const ws = document.getElementById('welcome-screen');
   const cc = document.getElementById('chat-container');
   const alreadyVisible = !!(ws && !ws.classList.contains('hidden'));
@@ -3124,3 +3134,12 @@ const chatRenderer = {
 };
 
 export default chatRenderer;
+
+// showWelcomeScreen() only fires on IN-APP transitions into the welcome
+// state (New Chat click, session deselect, etc.) — a cold page load lands on
+// #welcome-screen via its server-rendered default without ever calling it,
+// so the widgets need refreshing here too.
+document.addEventListener('DOMContentLoaded', () => {
+  const ws = document.getElementById('welcome-screen');
+  if (ws && !ws.classList.contains('hidden')) refreshDashboardWidgets();
+});
