@@ -367,6 +367,8 @@ async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
         tool_policy=policy,
         active_document=active_document,
         active_email=active_email,
+        external_untrusted_context_seen=True,
+        delegated_credential=True,
     ):
         events.append(evt)
 
@@ -376,6 +378,8 @@ async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
     assert captured["tool_policy"] is policy
     assert captured["active_document"] is active_document
     assert captured["active_email"] == active_email
+    assert captured["external_untrusted_context_seen"] is True
+    assert captured["delegated_credential"] is True
     assert any("opaque-id" in event for event in events)
     assert not any("skill_saved" in event for event in events)
 

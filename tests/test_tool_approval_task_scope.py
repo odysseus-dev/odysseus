@@ -10,6 +10,7 @@ from core.models import ChatMessage, Session
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
     ToolApprovalScope,
+    stamp_chat_session_grant,
 )
 from src.tool_approvals import ExactToolApproval, ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
@@ -111,6 +112,9 @@ def test_allow_for_chat_session_applies_to_later_turns_in_only_that_chat():
 
     resolved_card = pending.public_payload()
     resolved_card["resolved"] = "approve"
+    # Resolving is a server action, and only the server's signature on the card
+    # makes it a grant. A card that merely looks resolved is not one.
+    stamp_chat_session_grant(resolved_card, "session-1", "approve")
     history = [
         ChatMessage(
             "assistant",

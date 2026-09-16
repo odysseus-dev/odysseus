@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
-from src.tool_security import BUILTIN_EMAIL_TOOLS
+from src.tool_security import BUILTIN_EMAIL_TOOLS, is_public_blocked_tool
 
 
 class ToolEffect(str, Enum):
@@ -624,10 +624,21 @@ class ToolRunSecurityContext:
     # The bypass affects only this automatic gate; current tool policy, ownership,
     # workspace confinement, and execution/sandbox restrictions still apply.
     approval_gate_bypassed: bool = False
+    # Driven by a bearer API token, not a person at a browser. Privileged
+    # tools are refused outright and no approval can lift that.
+    delegated_credential: bool = False
 
     def observe_messages(self, messages: Iterable[dict]) -> None:
         """Apply server-owned chat scope and promote untrusted prompt context."""
         message_list = list(messages or ())
+        if self.delegated_credential:
+            # A delegated run has no human to grant chat-session scope, so a
+            # grant sitting in this chat's history (left by the owner's own
+            # browser) must not be picked up by a token driving the same chat.
+            self.approval_gate_bypassed = False
+            if messages_contain_external_untrusted_context(message_list):
+                self.external_untrusted_context_seen = True
+            return
         if any(
             isinstance(message, dict)
             and isinstance(message.get("metadata"), dict)
@@ -641,6 +652,17 @@ class ToolRunSecurityContext:
             self.external_untrusted_context_seen = True
 
     def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
+        # Checked before the bypasses below, because neither may lift it, and
+        # kept independent of external_untrusted_context_seen so it holds on a
+        # run where that gate never arms and raises no prompt to bypass.
+        if self.delegated_credential and is_public_blocked_tool(tool_name):
+            return ToolGateDecision(
+                False,
+                (
+                    f"Tool '{tool_name}' is not available to API-token callers. "
+                    "It requires an interactive session."
+                ),
+            )
         if self.approval_gate_bypassed:
             return ToolGateDecision(True)
         if not self.external_untrusted_context_seen:

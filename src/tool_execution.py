@@ -15,6 +15,7 @@ import logging
 import os
 import pathlib
 import re
+import stat
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -30,7 +31,12 @@ from src.tool_security import (
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.constants import (
+    MAX_OUTPUT_CHARS,
+    MAX_READ_CHARS,
+    MAX_DIFF_LINES,
+    AGENT_WORKSPACE_DIR,
+)
 from src.tool_utils import _truncate, get_mcp_manager
 
 
@@ -46,11 +52,11 @@ _MISSING_TOOL_SECURITY_CONTEXT = _MissingToolSecurityContext()
 NO_TOOL_SECURITY_CONTEXT = _NoToolSecurityContext()
 
 # Persistent working directory for agent subprocesses.
-# Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
-# (/app/data) and the local data directory for manual installs.
-# Using this as cwd and HOME prevents the agent from silently creating files
-# in ephemeral container layers that are lost on the next rebuild.
-_AGENT_WORKDIR = DATA_DIR
+# Resolves to <repo_root>/data/agent_workspace, inside the bind-mounted volume
+# in Docker (/app/data), so files survive a rebuild as before. The subdirectory
+# rather than data/ itself keeps agent scratch files and dotfiles out of the
+# directory holding the session store and the auth database.
+_AGENT_WORKDIR = AGENT_WORKSPACE_DIR
 
 
 
@@ -66,10 +72,15 @@ _AGENT_WORKDIR = DATA_DIR
 #   1. Sensitive-subpath deny list — checked FIRST. Blocks .ssh,
 #      .gnupg, shell rc files, token/env files even if the root above
 #      them is on the allowlist.
-#   2. Allowlist — only the directories the agent legitimately needs
-#      (project data/, system tmp). $HOME is NOT on the default list.
-#   3. Opt-in extra roots — admin can add broader roots via the
-#      "tool_path_extra_roots" setting (list of path strings).
+#   2. Application-state deny (_is_app_state_path) - DATA_DIR holds the
+#      session store, auth database, app key and settings, so only
+#      _agent_readable_data_subdirs() is readable inside it.
+#   3. Allowlist - only the directories the agent legitimately needs
+#      (its data/ workspace, user content, system tmp). $HOME is NOT on
+#      the default list.
+#   4. Opt-in extra roots - admin can add broader roots via the
+#      "tool_path_extra_roots" setting. These cannot re-open DATA_DIR;
+#      rule 2 is independent of which root a path arrived through.
 # ---------------------------------------------------------------------------
 
 _SENSITIVE_BASENAMES: set[str] = {
@@ -116,6 +127,184 @@ def _is_sensitive_path(resolved: str) -> bool:
     return filename in _SENSITIVE_FILE_PATTERNS_CF
 
 
+def _path_within(resolved: str, root: str) -> bool:
+    """True when *resolved* is *root* itself or sits underneath it.
+
+    Use the platform's path-case rules.  This helper participates in allow
+    decisions, so unconditional case-folding would let a distinct ``/DATA``
+    tree masquerade as a descendant of ``/data`` on case-sensitive systems.
+    """
+    resolved, root = os.path.normcase(resolved), os.path.normcase(root)
+    if resolved == root:
+        return True
+    try:
+        if os.path.commonpath([resolved, root]) == root:
+            return True
+    except ValueError:
+        return False
+    # normcase is intentionally conservative about assumptions (notably on
+    # POSIX), so consult the filesystem when paths exist.  This recognizes a
+    # case alias on a case-insensitive volume without treating distinct
+    # case-sensitive paths as the same allow root.
+    if os.path.exists(root):
+        candidate = resolved
+        while True:
+            try:
+                if os.path.exists(candidate) and os.path.samefile(candidate, root):
+                    return True
+            except OSError:
+                pass
+            parent = os.path.dirname(candidate)
+            if parent == candidate:
+                break
+            candidate = parent
+    return False
+
+
+def _path_within_conservative(resolved: str, root: str) -> bool:
+    """Containment for deny decisions, folding case to fail closed."""
+    resolved, root = resolved.casefold(), root.casefold()
+    if resolved == root:
+        return True
+    try:
+        return os.path.commonpath([resolved, root]) == root
+    except ValueError:
+        return False
+
+
+def _agent_readable_data_subdirs() -> tuple[str, ...]:
+    """The only parts of DATA_DIR the agent's file tools may reach.
+
+    The agent's own scratch folder, plus the directories of user content whose
+    paths the application itself gives to the model, which it would then be
+    unable to open.  These normally live under DATA_DIR; the documented mail
+    attachment override may instead name a disjoint external directory:
+
+      UPLOAD_DIR            the chat upload manifest renders "path=<p>" and
+                            says to read it with read_file (agent_loop.py)
+      MAIL_ATTACHMENTS_DIR  download_attachment returns the path and its own
+                            description tells the model to read it
+      PERSONAL_DIR          GET /api/personal returns a path per file and is
+                            reachable through the app_api tool; RUNBOOK_DIR
+                            nests under it
+      PERSONAL_UPLOADS_DIR  indexed as a personal-docs directory, which
+                            manage_rag lists as an absolute path
+
+    Order matters: the first entry is roots[0], which _resolve_search_root uses
+    when grep/glob/ls are called with no path.
+    """
+    from src.constants import (
+        DATA_DIR,
+        MAIL_ATTACHMENTS_DIR,
+        PERSONAL_DIR,
+        PERSONAL_UPLOADS_DIR,
+        UPLOAD_DIR,
+    )
+    configured = (
+        (AGENT_WORKSPACE_DIR, "agent_workspace", False),
+        (UPLOAD_DIR, "uploads", False),
+        # This has a documented environment override and may legitimately
+        # live outside DATA_DIR, but it must never equal/contain DATA_DIR.
+        (MAIL_ATTACHMENTS_DIR, "mail-attachments", True),
+        (PERSONAL_DIR, "personal_docs", False),
+        (PERSONAL_UPLOADS_DIR, "personal_uploads", False),
+    )
+    configured_data_dir = os.path.abspath(os.path.expanduser(str(DATA_DIR)))
+    data_dir = os.path.realpath(configured_data_dir)
+    safe: list[str] = []
+    for raw, internal_name, external_ok in configured:
+        value = str(raw or "").strip()
+        # These paths are security-policy roots, not ordinary allowlist
+        # entries. Internal roles may inherit a relative DATA_DIR, but must
+        # still resolve to their exact canonical child below. External mail
+        # overrides require an absolute, disjoint directory.
+        if not value:
+            continue
+        expanded = os.path.abspath(os.path.expanduser(value))
+        # A policy root must not acquire an exemption by redirecting its final
+        # path component to protected state or to an unrelated external tree.
+        if os.path.islink(expanded):
+            continue
+        resolved = os.path.realpath(expanded)
+        if os.path.exists(resolved) and not os.path.isdir(resolved):
+            continue
+        expected_internal = os.path.join(data_dir, internal_name)
+        expected_configured = os.path.join(configured_data_dir, internal_name)
+        inside_data = (
+            os.path.normcase(expanded)
+            in {
+                os.path.normcase(expected_configured),
+                os.path.normcase(expected_internal),
+            }
+            and resolved == expected_internal
+        )
+        external_safe = (
+            external_ok
+            and os.path.isabs(os.path.expanduser(value))
+            and resolved != data_dir
+            and os.path.dirname(resolved) != resolved
+            and not _path_within(data_dir, resolved)
+            and not _path_within(resolved, data_dir)
+        )
+        if not (inside_data or external_safe) or _is_sensitive_path(resolved):
+            continue
+        safe.append(resolved)
+    return tuple(safe)
+
+
+def _is_app_state_path(resolved: str) -> bool:
+    """True for anything under DATA_DIR that is not agent-readable.
+
+    DATA_DIR holds the session store, the auth database, the app encryption key
+    and the settings file. A model-supplied path must not reach those through
+    any root, so this is checked in both resolvers rather than expressed as an
+    absence from the allowlist: a workspace bound at or above the data
+    directory, or an opt-in tool_path_extra_roots entry covering it, would
+    otherwise put them back in reach.
+
+    A containment rule rather than a filename deny list, so state files added
+    later are covered without anyone remembering to list them, and so a user's
+    own settings.json or app.db inside a real workspace is not caught.
+    """
+    from src.constants import DATA_DIR
+    if not _path_within_conservative(resolved, os.path.realpath(DATA_DIR)):
+        return False
+    return not any(
+        _path_within(resolved, d)
+        for d in _agent_readable_data_subdirs()
+    )
+
+
+def _is_hardlinked_regular_file(resolved: str) -> bool:
+    """Reject inode aliases that can smuggle DATA_DIR state into an allow root."""
+    try:
+        target = os.stat(resolved, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISREG(target.st_mode) and getattr(target, "st_nlink", 1) > 1
+
+
+def _is_denied_tool_path(resolved: str) -> bool:
+    """Apply every path deny to a canonical traversal result."""
+    return (
+        _is_sensitive_path(resolved)
+        or _is_app_state_path(resolved)
+        or _is_hardlinked_regular_file(resolved)
+    )
+
+
+def _can_traverse_tool_path(resolved: str) -> bool:
+    """Allow walking a denied state parent only to reach safe carve-outs."""
+    if _is_sensitive_path(resolved):
+        return False
+    if not _is_app_state_path(resolved):
+        return True
+    return any(
+        _path_within(readable, resolved)
+        for readable in _agent_readable_data_subdirs()
+    )
+
+
 def _tool_path_roots() -> list[str]:
     """Return the list of directory roots that read_file / write_file
     may touch. Default: project data/ + system temp dirs. Extra roots
@@ -123,9 +312,9 @@ def _tool_path_roots() -> list[str]:
     """
     roots: list[str] = []
 
-    # Project data directory — the agent's primary workspace.
-    from src.constants import DATA_DIR
-    roots.append(DATA_DIR)
+    # The agent's workspace plus the user-content directories inside data/.
+    # The rest of DATA_DIR is denied by _is_app_state_path.
+    roots.extend(_agent_readable_data_subdirs())
 
     # /tmp (and its macOS realpath /private/tmp).
     roots.append("/tmp")
@@ -193,6 +382,12 @@ def _resolve_tool_path(raw_path: str) -> str:
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
         )
+    if _is_app_state_path(resolved):
+        raise ValueError(
+            f"path '{raw_path}' is inside the application state directory"
+        )
+    if _is_hardlinked_regular_file(resolved):
+        raise ValueError(f"path '{raw_path}' is a hard-linked file")
 
     for root in _tool_path_roots():
         if resolved == root:
@@ -228,6 +423,12 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
         )
+    if _is_app_state_path(resolved):
+        raise ValueError(
+            f"path '{raw_path}' is inside the application state directory"
+        )
+    if _is_hardlinked_regular_file(resolved):
+        raise ValueError(f"path '{raw_path}' is a hard-linked file")
     if resolved != base:
         # normcase so containment holds on case-insensitive filesystems
         # (Windows, default macOS): it lowercases on Windows and is a no-op on
@@ -277,6 +478,10 @@ def vet_workspace(raw: str) -> Optional[str]:
     resolved = os.path.realpath(os.path.expanduser(raw))
     if not os.path.isdir(resolved) or _is_sensitive_path(resolved):
         return None
+    # Refuse the bind rather than binding a workspace where every subsequent
+    # tool call would fail on the same deny list.
+    if _is_app_state_path(resolved):
+        return None
     # Reject filesystem roots: binding / (or a Windows drive/UNC root) as the
     # workspace would make every absolute path "inside" it, collapsing the
     # confinement into host-wide file access. A root is its own dirname, which
@@ -289,7 +494,13 @@ def vet_workspace(raw: str) -> Optional[str]:
 def agent_cwd() -> str:
     """Working directory for agent subprocesses (bash/python/background jobs):
     the active workspace when set, else the persistent data dir."""
-    return get_active_workspace() or _AGENT_WORKDIR
+    workspace = get_active_workspace()
+    if workspace:
+        return workspace
+    resolved = os.path.realpath(_AGENT_WORKDIR)
+    if resolved not in _agent_readable_data_subdirs():
+        raise RuntimeError("agent workspace is not a safe real directory")
+    return resolved
 
 
 def get_mcp_manager():
@@ -304,16 +515,22 @@ def _resolve_search_root(raw_path: str) -> str:
 
     With a workspace active, the workspace folder is the root and a supplied
     path is confined inside it. Otherwise an empty path defaults to the agent's
-    primary root (project data dir) and a supplied path is confined by the
-    global allowlist + sensitive-file policy.
+    primary root (its workspace under the project data dir) and a supplied path
+    is confined by the global allowlist + sensitive-file policy.
     """
     raw = (raw_path or "").strip()
     ws = get_active_workspace()
     if ws:
-        return os.path.realpath(ws) if not raw else _resolve_tool_path_in_workspace(ws, raw)
+        # Resolve the empty case as the workspace path rather than returning
+        # it directly: returned unchecked it skipped both deny lists, so a
+        # bare ls listed whatever the workspace was bound to.
+        return _resolve_tool_path_in_workspace(ws, raw or ws)
     if not raw:
         roots = _tool_path_roots()
-        return roots[0] if roots else os.path.realpath(".")
+        default_root = os.path.realpath(AGENT_WORKSPACE_DIR)
+        if default_root in roots and not _is_denied_tool_path(default_root):
+            return default_root
+        raise ValueError("default agent workspace is not a safe readable data subdirectory")
     return _resolve_tool_path(raw)
 
 logger = logging.getLogger(__name__)

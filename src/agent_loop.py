@@ -33,6 +33,7 @@ from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import (
     blocked_tools_for_owner,
+    delegated_credential_blocked_tools,
     email_tool_policy_names,
     plan_mode_disabled_tools,
 )
@@ -3450,6 +3451,7 @@ async def stream_agent_loop(
     uploaded_files: Optional[List[Dict]] = None,
     workload: str = "foreground",
     external_untrusted_context_seen: bool = False,
+    delegated_credential: bool = False,
     exact_approval: Optional[ExactToolApproval] = None,
     _is_teacher_run: bool = False,
     history_session=None,
@@ -3478,6 +3480,7 @@ async def stream_agent_loop(
         approval_gate_bypassed=bool(
             exact_approval and exact_approval.allow_remaining_actions
         ),
+        delegated_credential=bool(delegated_credential),
     )
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
@@ -3497,6 +3500,10 @@ async def stream_agent_loop(
             mcp_mgr = None
     guide_only = bool(tool_policy and tool_policy.mode == "guide_only")
     public_blocked_tools = blocked_tools_for_owner(owner)
+    if delegated_credential:
+        # owner is the admin who minted the token, so the call above returns
+        # nothing. Cap the run regardless of who it acts for.
+        public_blocked_tools.update(delegated_credential_blocked_tools())
     if public_blocked_tools:
         disabled_tools.update(public_blocked_tools)
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
@@ -6442,6 +6449,10 @@ async def stream_agent_loop(
                 tool_policy=tool_policy,
                 active_document=active_document,
                 active_email=active_email,
+                external_untrusted_context_seen=(
+                    run_security.external_untrusted_context_seen
+                ),
+                delegated_credential=delegated_credential,
             ):
                 yield evt
         except Exception as _esc_err:
