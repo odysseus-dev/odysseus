@@ -41,6 +41,7 @@ BUILTIN_EMAIL_TOOLS = frozenset({
 # functionality).
 NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "bash",
+    "powershell",
     "python",
     "manage_bg_jobs",
     "read_file",
@@ -83,7 +84,7 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
 # manage_*, model serving, MCP, etc.) is blocked. Allowlist rather than blocklist
 # so any newly added tool defaults to BLOCKED in plan mode — fail safe.
 #
-# bash/python are deliberately NOT here: the shell can mutate (write files, hit
+    # bash/powershell/python are deliberately NOT here: the shell can mutate (write files, hit
 # the network) and can't be constrained to read-only at the tool layer, so plan
 # mode blocks it outright rather than relying on a prompt to keep it well-behaved.
 # Code/file discovery is covered by the dedicated read-only tools below
@@ -160,7 +161,7 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "generate_image", "edit_image", "trigger_research", "manage_research",
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
     # mode even if the schema list fails to load.
-    "bash", "python",
+    "bash", "powershell", "python",
     # Controls shell processes (kill); plan mode can't run bash anyway.
     "manage_bg_jobs",
 }
@@ -243,7 +244,7 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
 
     The pre-setup window (auth ENABLED but no admin created yet) is treated as
     NON-admin: returning True there would hand server-execution tools
-    (``bash``/``python``) to any caller before setup completes. The auth
+    (``bash``/``powershell``/``python``) to any caller before setup completes. The auth
     middleware already 401s ``/api/`` requests pre-setup, so this is
     defense-in-depth for callers that bypass it (e.g. trusted loopback).
     """

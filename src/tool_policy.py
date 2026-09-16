@@ -57,6 +57,7 @@ _COMMON_TOOL_NAMES = {
     "ask_teacher",
     "ask_user",
     "bash",
+    "powershell",
     "bulk_email",
     "builtin_browser",
     "cancel_download",

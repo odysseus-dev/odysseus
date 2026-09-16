@@ -40,7 +40,7 @@ _TOOL_BLOCK_RE = re.compile(
 # these tags is Markdown fence metadata on a real language (```bash {title=
 # "setup"}), never inline tool args — only the classic tag-then-newline form
 # executes for them.
-_CODE_FENCE_TAGS = frozenset({"bash", "python"})
+_CODE_FENCE_TAGS = frozenset({"bash", "powershell", "python"})
 
 
 def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
@@ -232,6 +232,9 @@ def _normalize_dsml(text: str) -> str:
 _TOOL_NAME_MAP = {
     "shell": "bash",
     "bash": "bash",
+    "powershell": "powershell",
+    "ps": "powershell",
+    "pwsh": "powershell",
     "terminal": "bash",
     "command": "bash",
     "execute": "bash",
@@ -643,7 +646,7 @@ def _raw_openai_tool_call_to_block(value) -> Optional[ToolBlock]:
     if tool_type not in TOOL_TAGS:
         return None
 
-    if tool_type == "bash":
+    if tool_type in ("bash", "powershell"):
         content = args.get("command", "")
     elif tool_type == "python":
         content = args.get("code", "")
@@ -917,7 +920,7 @@ def _parse_xml_direct_tool(name, body) -> Optional[ToolBlock]:
             params = {"query": body}
         elif mapped == "web_fetch":
             params = {"url": body}
-        elif mapped == "bash":
+        elif mapped in ("bash", "powershell"):
             params = {"command": body}
         elif mapped == "python":
             params = {"code": body}
@@ -1049,7 +1052,7 @@ def _parse_stepfun_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
             params = {"query": body}
         elif mapped == "web_fetch":
             params = {"url": body}
-        elif mapped == "bash":
+        elif mapped in ("bash", "powershell"):
             params = {"command": body}
         elif mapped == "python":
             params = {"code": body}
@@ -1099,7 +1102,7 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     # No structured params: args_body is a raw single value (e.g. a bash
     # command). Keep the freeform special-casing for the simple tools.
     if mapped:
-        if mapped == "bash":
+        if mapped in ("bash", "powershell"):
             content = xml_params.get("command", args_body)
         elif mapped == "python":
             content = xml_params.get("code", args_body)
@@ -1341,7 +1344,7 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 # a python/bash block — e.g. a hyphenated/namespaced tool name that
                 # _XML_INVOKE_RE's \w+ can't match would otherwise be executed as code.
                 continue
-            if tag in ("python", "bash"):
+            if tag in ("python", "bash", "powershell"):
                 block = (_parse_misfenced_web_lookup(content)
                          or _parse_misfenced_read_file_lookup(content, allow_shell_style=(tag == "bash")))
                 if block:
