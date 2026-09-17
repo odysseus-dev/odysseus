@@ -9212,6 +9212,208 @@ button.hamburger {
   color: var(--accent-primary, var(--red));
 }
 
+.thumb-transcribe-btn {
+  border: 1px solid var(--border);
+  background: none;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.75;
+  white-space: nowrap;
+  min-width: 11ch;
+  text-align: center;
+}
+.thumb-transcribe-btn:hover { opacity: 1; }
+.thumb-transcribe-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Batch action in the attachment strip (see renderAttachStrip). */
+.thumb-transcribe-all {
+  border: 1px solid var(--border);
+  background: none;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.8;
+  white-space: nowrap;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  align-self: center;
+}
+.thumb-transcribe-all:hover { opacity: 1; }
+
+.attach-transcribe-btn {
+  border: 1px solid var(--bubble-border, var(--border));
+  background: none;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.75;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  /* Fixed dimensions: state labels (Transcribe/Transcribing…/Transcribed)
+     must never resize the card. 14ch fits the longest label. */
+  min-width: 14ch;
+  text-align: center;
+}
+.attach-transcribe-btn:hover { opacity: 1; }
+.attach-transcribe-btn:disabled { opacity: 0.45; cursor: default; }
+/* Indeterminate busy dot: no fake percentages (backend has no progress).
+   Fixed 14px box keeps the button dimensions (and card layout) stable. */
+.attach-transcribe-btn.is-busy::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border-radius: 50%;
+  border: 2.5px solid currentColor;
+  border-top-color: transparent;
+  animation: attach-transcribe-spin 0.9s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes attach-transcribe-spin {
+  to { transform: rotate(360deg); }
+}
+/* Stable audio attachment layout: column with predictable rows so busy /
+   done states never shift surrounding content. Width is fixed on desktop
+   and fluid-full-width on narrow screens (media query below). */
+.attach-card-audio {
+  flex-direction: column;
+  align-items: stretch;
+  width: 300px;
+  max-width: 100%;
+}
+.attach-card-audio .attach-card-name {
+  max-width: 100%;
+}
+.attach-audio-player {
+  width: 100%;
+  height: 32px;
+  margin-top: 4px;
+}
+.attach-audio-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  min-height: 24px;
+}
+.attach-transcribe-status {
+  font-size: 11px;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-transcribe-status.is-error {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+}
+/* Automatic STT equalizer: the ONLY animated indicator on audio cards.
+   Visible solely on the currently transcribing card (see chatRenderer
+   _showEqualizer); queued/completed/failed cards keep static text only.
+   Five bars, clearly larger than the old 14px spinner, no fake progress. */
+.stt-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 22px;
+  padding: 2px 4px;
+}
+.stt-eq[hidden] {
+  display: none;
+}
+.stt-eq > span {
+  display: inline-block;
+  width: 5px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.9;
+  animation: stt-eq-bounce 0.9s ease-in-out infinite;
+  transform-origin: bottom;
+}
+.stt-eq > span:nth-child(1) { height: 40%; animation-delay: 0s; }
+.stt-eq > span:nth-child(2) { height: 75%; animation-delay: 0.12s; }
+.stt-eq > span:nth-child(3) { height: 100%; animation-delay: 0.24s; }
+.stt-eq > span:nth-child(4) { height: 65%; animation-delay: 0.36s; }
+.stt-eq > span:nth-child(5) { height: 45%; animation-delay: 0.48s; }
+@keyframes stt-eq-bounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+.attach-card-audio.is-transcribing .stt-eq {
+  color: var(--accent-primary, var(--red));
+}
+/* Pending-strip audio chips: compact equalizer + status line, no buttons.
+   The chip keeps its filename; status text ellipsizes like the name. */
+.stt-eq-thumb {
+  height: 16px;
+  padding: 1px 2px;
+}
+.stt-eq-thumb > span {
+  width: 4px;
+}
+.thumb-stt-status {
+  font-size: 11px;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+}
+.thumb[data-stt-key] {
+  gap: 6px;
+}
+/* Failed-item retry: the only button allowed on audio cards. */
+.stt-retry-btn {
+  border: 1px solid var(--bubble-border, var(--border));
+  background: none;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.8;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.stt-retry-btn:hover { opacity: 1; }
+.stt-retry-btn[hidden] { display: none; }
+.attach-copy-btn,
+.attach-open-btn,
+.attach-doc-btn {
+  min-width: 8ch;
+}
+/* Inline raw-transcript result on the audio card (toggled by Open/Close).
+   User-toggled like a lightbox: selectable, scrollable, full card width. */
+.attach-transcript-view {
+  margin-top: 6px;
+  max-width: 100%;
+}
+.attach-transcript-view[hidden] {
+  display: none;
+}
+.attach-transcript-text {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid var(--bubble-border, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  user-select: text;
+  cursor: text;
+}
+@media (max-width: 480px) {
+  .attach-card-audio {
+    width: 100%;
+  }
+}
+
 .thumb-collapsed {
   cursor: pointer;
   color: var(--red);

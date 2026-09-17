@@ -32,8 +32,9 @@ async function refreshSttProvider() {
     if (res.ok) {
       const stats = await res.json();
       _sttProvider = stats.provider || 'disabled';
-      // Notify the send button to update its icon
+      // Notify composer controls to update their state
       if (window._updateSendBtnIcon) window._updateSendBtnIcon();
+      if (window._updateMicBtn) window._updateMicBtn();
     }
   } catch (e) {
     console.warn('Failed to fetch STT stats:', e);
@@ -58,7 +59,15 @@ function _resetRecordingUI() {
     clearInterval(recordingInterval);
     recordingInterval = null;
   }
-  // Reset send button via global callback
+  // Reset dedicated mic button (Phase 1) and legacy send-button recording
+  // state so a stale stop icon can't stick after permission errors.
+  const micBtn = document.getElementById('mic-btn');
+  if (micBtn) {
+    micBtn.classList.remove('recording');
+    micBtn.setAttribute('aria-pressed', 'false');
+    micBtn.title = 'Record voice';
+    micBtn.disabled = false;
+  }
   const sendBtn = document.querySelector('.send-btn');
   if (sendBtn) {
     sendBtn.classList.remove('recording');
@@ -66,6 +75,9 @@ function _resetRecordingUI() {
   }
   if (window._updateSendBtnIcon) {
     setTimeout(window._updateSendBtnIcon, 50);
+  }
+  if (window._updateMicBtn) {
+    setTimeout(window._updateMicBtn, 50);
   }
 }
 
@@ -106,9 +118,11 @@ function stopBrowserSTT() {
 }
 
 /**
- * Send audio to server for transcription
+ * Send audio to server for transcription (detailed).
+ * Returns {text, language}; language is "" when unknown. Back-compat:
+ * transcribeOnServer() below keeps returning text only.
  */
-async function transcribeOnServer(audioBlob) {
+async function transcribeOnServerDetailed(audioBlob) {
   const formData = new FormData();
   formData.append('file', audioBlob, 'audio.webm');
 
@@ -124,11 +138,44 @@ async function transcribeOnServer(audioBlob) {
   }
 
   const data = await res.json();
-  return data.text || '';
+  return { text: data.text || '', language: data.language || '' };
 }
 
 /**
- * Insert transcribed text into the chat input
+ * Send audio to server for transcription (text only, back-compat).
+ */
+async function transcribeOnServer(audioBlob) {
+  const out = await transcribeOnServerDetailed(audioBlob);
+  return out.text;
+}
+
+/**
+ * Transcribe an already-uploaded audio attachment by upload ID.
+ * Uses the Phase 1 transcribe-by-id path so the file isn't uploaded twice.
+ * Returns {text, language}.
+ */
+async function transcribeUploadById(fileId) {
+  const res = await fetch('/api/stt/transcribe-upload', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.message || 'Transcription failed');
+  }
+
+  const data = await res.json();
+  return { text: data.text || '', language: data.language || '' };
+}
+
+/**
+ * Insert transcribed text into the chat input.
+ * Raw STT output is preserved verbatim as user/content data: it is appended
+ * to the composer (existing persistence via Session.add_message on send)
+ * and never interpolated into system/developer prompts here.
  */
 function insertTranscription(text, showToast) {
   if (!text) return;
@@ -151,7 +198,7 @@ function insertTranscription(text, showToast) {
 export function startRecording(onFileCreated, showToast, showError) {
   // Check for secure context (getUserMedia requires HTTPS or localhost)
   if (!window.isSecureContext) {
-    if (showError) showError('Microphone requires HTTPS. Use a reverse proxy with SSL or access via localhost.');
+    if (showError) showError('Microphone access requires HTTPS (or localhost). Open Odysseus using its HTTPS address.');
     _resetRecordingUI();
     return;
   }
@@ -218,6 +265,11 @@ export function startRecording(onFileCreated, showToast, showError) {
       mediaRecorder.start();
       isRecording = true;
       recordingStartTime = new Date();
+      // Re-enable the dedicated mic button so the user can stop. It was
+      // disabled synchronously on click to block double-click re-entry
+      // (which would orphan a second MediaRecorder/stream).
+      const _micBtn = document.getElementById('mic-btn');
+      if (_micBtn) _micBtn.disabled = false;
 
       // Start browser STT if that's the provider
       if (_sttProvider === 'browser') {
@@ -235,6 +287,8 @@ export function startRecording(onFileCreated, showToast, showError) {
           showError('Microphone access denied. Check browser permissions.');
         } else if (error.name === 'NotFoundError') {
           showError('No microphone found.');
+        } else if (!window.isSecureContext) {
+          showError('Microphone access requires HTTPS (or localhost). Open Odysseus using its HTTPS address.');
         } else {
           showError('Microphone error: ' + error.message);
         }
@@ -276,6 +330,10 @@ const voiceRecorderModule = {
   getIsRecording,
   init,
   refreshSttProvider,
+  transcribeOnServer,
+  transcribeOnServerDetailed,
+  transcribeUploadById,
+  insertTranscription,
   get _sttProvider() { return _sttProvider; },
   set _sttProvider(v) { _sttProvider = v; },
 };

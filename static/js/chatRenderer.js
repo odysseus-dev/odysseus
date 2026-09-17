@@ -9,6 +9,7 @@ import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { saveRawTranscriptDoc, openRawDocument, buildCombinedMarkdown } from './sttTranscriptDoc.js';
 import { loadPanel } from './panels.js';
 import { matchModelKey } from './model/matchKey.js';
 import { getTools } from './appConfig.js';
@@ -81,9 +82,501 @@ function _formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
+function _isAudioAttachment(att) {
+  const s = ((att && att.mime) || (att && att.name) || '').toLowerCase();
+  // Keep in sync with _isAudioFile (fileHandler.js) and is_audio_file.
+  return s.startsWith('audio/') || /\.(webm|weba|wav|mp3|m4a|ogg|oga|opus|flac|aac|aiff|aif)$/i.test(s);
+}
+
+// NOTE: uploaded-audio transcripts intentionally never touch the composer
+// here — destination is always the raw document (see sttTranscribeQueue
+// destinationFor). Mic dictation keeps its own composer path in
+// voiceRecorder.js insertTranscription.
+//
+// AUTOMATIC FLOW (no buttons): as soon as a sent audio card exists it is
+// enqueued; the shared singleton queue (concurrency 1) transcribes FIFO;
+// the card shows an equalizer animation only while it is the active job;
+// the .md document is created automatically and opened once per batch.
+
+function _freshBatchState() {
+  return {
+    order: [], // jobKeys in enqueue order
+    meta: new Map(), // jobKey -> {fileId|null, name}
+    fileIds: new Map(), // upload fileId -> jobKey (adopted at send time)
+    transcripts: new Map(), // jobKey -> {text, language}
+    failed: new Map(), // jobKey -> error message
+  };
+}
+
+/** Batch tracker for the automatic flow. Order is stable so the UI can show
+ *  Transcribing · 1/4 … 4/4 even as jobs drain from the queue. Reset when
+ *  the queue goes idle and the final document has been opened.
+ *  Everything is keyed by queue job key: pending blobs use
+ *  `pending:<name>:<size>:<mtime>`, sent uploads use `upload:<fileId>`.
+ *
+ *  NOTE: chatRenderer.js is instantiated multiple times per page load
+ *  (different ?v= query strings), so the state lives on window — otherwise
+ *  each copy would track its own half-batch (split docs, stuck animation).
+ *  Rendering is pure DOM, so sharing is safe. */
+const _sttBatch = (() => {
+  try {
+    if (typeof window !== 'undefined' && window) {
+      if (!window.__sttBatchState) window.__sttBatchState = _freshBatchState();
+      return window.__sttBatchState;
+    }
+  } catch (_) {}
+  return _freshBatchState();
+})();
+
+function _audioJobKey(att) {
+  return 'upload:' + (att && att.id ? att.id : '');
+}
+
+/** Resolve the queue job key for a sent attachment: adopted pending jobs
+ *  keep their original key so the same bytes are never transcribed twice. */
+function _resolveJobKey(att) {
+  if (att && att.id && _sttBatch.fileIds.has(att.id)) return _sttBatch.fileIds.get(att.id);
+  return _audioJobKey(att);
+}
+
+/** Stable batch position for status text, e.g. {position: 2, total: 4}. */
+function _batchPositionByKey(key) {
+  const i = _sttBatch.order.indexOf(key);
+  if (i < 0) return null;
+  return { position: i + 1, total: _sttBatch.order.length };
+}
+
+
+
+/** Live card(s) for an upload id (re-renders orphan old closures). */
+function _findAudioCards(fileId) {
+  try {
+    return Array.from(document.querySelectorAll(
+      '.attach-card-audio[data-file-id="' + String(fileId).replace(/"/g, '') + '"]'
+    ));
+  } catch (_) { return []; }
+}
+
+function _setAudioStatus(card, label, isError) {
+  if (!card) return;
+  const statusEl = card.querySelector('.attach-transcribe-status');
+  if (!statusEl) return;
+  statusEl.textContent = label || '';
+  statusEl.classList.toggle('is-error', !!isError);
+}
+
+/** Show/hide the equalizer animation. Exactly one card animates at a time:
+ *  only the currently transcribing job gets `show=true`. */
+function _showEqualizer(card, show) {
+  if (!card) return;
+  const eq = card.querySelector('.stt-eq');
+  if (!eq) return;
+  if (show) eq.removeAttribute('hidden');
+  else eq.setAttribute('hidden', '');
+  card.classList.toggle('is-transcribing', !!show);
+}
+
+function _setRetryVisible(card, show, att) {
+  if (!card) return;
+  const btn = card.querySelector('.stt-retry-btn');
+  if (!btn) return;
+  if (show) {
+    btn.removeAttribute('hidden');
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      btn.setAttribute('hidden', '');
+      _sttBatch.failed.delete(att.id);
+      _autoEnqueueAudio(att, { retry: true });
+    };
+  } else {
+    btn.setAttribute('hidden', '');
+    btn.onclick = null;
+  }
+}
+
+/** Pending chips carrying this job key (chip may be gone after send). */
+function _findPendingChips(key) {
+  try {
+    const out = [];
+    document.querySelectorAll('.thumb[data-stt-key]').forEach((chip) => {
+      if (chip.dataset.sttKey === key) out.push(chip);
+    });
+    return out;
+  } catch (_) { return []; }
+}
+
+function _paintChip(chip, state, suffix, error) {
+  if (!chip) return;
+  const eq = chip.querySelector('.stt-eq');
+  const st = chip.querySelector('.thumb-stt-status');
+  const retry = chip.querySelector('.stt-retry-btn');
+  const active = state === 'transcribing';
+  if (eq) {
+    if (active) eq.removeAttribute('hidden');
+    else eq.setAttribute('hidden', '');
+  }
+  if (st) {
+    if (state === 'transcribing') st.textContent = 'Transcribing' + suffix;
+    else if (state === 'queued') st.textContent = 'Queued' + suffix;
+    else if (state === 'completed') st.textContent = 'Transcribed';
+    else if (state === 'failed') st.textContent = error === 'No speech detected' ? error : 'Failed';
+    else st.textContent = suffix ? 'Queued' + suffix : '';
+  }
+  if (retry) {
+    if (state === 'failed') retry.removeAttribute('hidden');
+    else retry.setAttribute('hidden', '');
+  }
+}
+
+/** Render pending chip(s) for one job key from queue + batch truth. */
+function _renderPendingChip(key) {
+  const queue = window.sttTranscribeQueue;
+  const state = queue ? queue.getState(key) : undefined;
+  const pos = _batchPositionByKey(key);
+  const suffix = pos ? ' · ' + pos.position + '/' + pos.total : '';
+  let error = '';
+  if (state === 'failed' && queue) {
+    const outcome = queue.getOutcome(key);
+    error = (outcome && outcome.error) || 'Transcription failed';
+  }
+  for (const chip of _findPendingChips(key)) _paintChip(chip, state, suffix, error);
+}
+
+/** File ids linked to one job key (sent cards after adoption). */
+function _fileIdsForKey(key) {
+  const out = [];
+  _sttBatch.meta.forEach((m, k) => {
+    if (k === key && m && m.fileId) out.push(m.fileId);
+  });
+  return out;
+}
+
+/** Render all live sent cards for one job key. */
+function _renderCardsForKey(key, attHint) {
+  for (const fileId of _fileIdsForKey(key)) {
+    const att = (attHint && attHint.id === fileId) ? attHint : { id: fileId, name: (_sttBatch.meta.get(key) || {}).name };
+    _renderAudioCardState(att);
+  }
+}
+
+/** Store a terminal outcome, then repaint every surface for the key. */
+function _storeTerminal(key, state, info) {
+  if (state === 'completed') {
+    if (info && info.result && typeof info.result.text === 'string') {
+      _sttBatch.transcripts.set(key, {
+        text: info.result.text,
+        language: info.result.language || '',
+      });
+    }
+    _sttBatch.failed.delete(key);
+  } else if (state === 'failed') {
+    const err = (info && info.error) || 'Transcription failed';
+    _sttBatch.failed.set(key, err);
+    if (window.showToast) window.showToast(err === 'No speech detected' ? 'No speech detected' : err);
+  }
+}
+
+function _afterJobEvent(key, state, attHint) {
+  // Render on EVERY state (queued/transcribing included): this is what moves
+  // the equalizer from the finished chip/card to the next active one.
+  _renderPendingChip(key);
+  if (attHint) _renderAudioCardState(attHint);
+  else _renderCardsForKey(key);
+  if (state === 'completed' || state === 'failed') {
+    // Defer so the queue can start the next job first: finalize only when
+    // truly idle (no running, nothing waiting). Late joins re-arm the batch.
+    setTimeout(_maybeFinalizeBatch, 0);
+  }
+}
+
+/** Render all live sent cards for one attachment from queue + batch truth. */
+function _renderAudioCardState(att) {
+  const queue = window.sttTranscribeQueue;
+  const key = _resolveJobKey(att);
+  const state = queue ? queue.getState(key) : undefined;
+  const pos = _batchPositionByKey(key);
+  const suffix = pos ? ' · ' + pos.position + '/' + pos.total : '';
+  for (const card of _findAudioCards(att.id)) {
+    if (state === 'transcribing') {
+      _showEqualizer(card, true);
+      _setRetryVisible(card, false, att);
+      _setAudioStatus(card, 'Transcribing' + suffix, false);
+    } else if (state === 'queued') {
+      _showEqualizer(card, false);
+      _setRetryVisible(card, false, att);
+      _setAudioStatus(card, 'Queued' + suffix, false);
+    } else if (state === 'completed') {
+      _showEqualizer(card, false);
+      _setRetryVisible(card, false, att);
+      _setAudioStatus(card, 'Transcribed', false);
+    } else if (state === 'failed') {
+      _showEqualizer(card, false);
+      const outcome = queue.getOutcome(key);
+      const err = (outcome && outcome.error) || 'Transcription failed';
+      _setAudioStatus(card, err === 'No speech detected' ? err : 'Failed', true);
+      _setRetryVisible(card, true, att);
+    } else {
+      _showEqualizer(card, false);
+      _setRetryVisible(card, false, att);
+      _setAudioStatus(card, pos ? 'Queued' + suffix : '', false);
+    }
+  }
+}
+
+function _onAudioJobState(att, state, info) {
+  const key = _resolveJobKey(att);
+  _storeTerminal(key, state, info);
+  _afterJobEvent(key, state, att);
+}
+
+function _onPendingJobState(key, state, info) {
+  _storeTerminal(key, state, info);
+  _afterJobEvent(key, state, null);
+  if (state === 'completed') {
+    // Its job is done: let the "Transcribed" state flash briefly, then
+    // drop the chip from the attachment strip entirely.
+    setTimeout(() => {
+      try { window._sttDropPendingFile && window._sttDropPendingFile(key); } catch (_) {}
+    }, 1200);
+  }
+}
+
+async function _transcribeUploadFetch(fileId) {
+  const res = await fetch('/api/stt/transcribe-upload', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  if (!res.ok) {
+    let msg = 'Transcription failed';
+    try { const e = await res.json(); msg = e.detail?.message || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  return { text: data.text || '', language: data.language || '' };
+}
+
+function _currentSessionId() {
+  try {
+    if (window.sessionModule && window.sessionModule.getCurrentSessionId) {
+      return window.sessionModule.getCurrentSessionId() || '';
+    }
+  } catch (_) {}
+  return '';
+}
+
+/** Deferred document step, shared by pending and sent jobs. Transcripts are
+ *  only collected here (verbatim); the actual .md is created once per drain
+ *  in _maybeFinalizeBatch, whose size decides separate vs combined. */
+async function _saveJobDoc(key, { text, language }) {
+  _sttBatch.transcripts.set(key, { text, language: language || '' });
+  return null;
+}
+
+/** Re-paint every live surface of the batch (chips + cards) so all items
+ *  show stable i/n positions when a late join grows the total. */
+function _refreshBatchSurfaces() {
+  for (const key of _sttBatch.order) {
+    _renderPendingChip(key);
+    _renderCardsForKey(key);
+  }
+}
+
+/**
+ * Automatic enqueue for an attached (pending) audio File. Called the moment
+ * the file lands in the attachment strip — no Send, no button, no user
+ * action. Synchronous up to queue.enqueue so multi-file order is exact.
+ */
+function _autoEnqueuePending(file, key, opts) {
+  const queue = window.sttTranscribeQueue;
+  if (!queue || !file || !key) return;
+  const retry = !!(opts && opts.retry);
+  const state = queue.getState(key);
+  // Only brand-new keys (or explicit retries) enter the queue. Anything
+  // else just repaints — this also stops re-renders from re-transcribing.
+  if (state === 'queued' || state === 'transcribing') { _renderPendingChip(key); return; }
+  if ((state === 'completed' || state === 'failed') && !retry) { _renderPendingChip(key); return; }
+
+  if (!_sttBatch.order.includes(key)) _sttBatch.order.push(key);
+  const meta = _sttBatch.meta.get(key) || {};
+  meta.name = file.name || meta.name || key;
+  _sttBatch.meta.set(key, meta);
+
+  queue.enqueue({
+    key,
+    transcribe: () => _transcribePendingBlob(file),
+    saveDoc: ({ text, language }) => _saveJobDoc(key, { text, language }),
+    onState: (s, info) => _onPendingJobState(key, s, info),
+  }, { retry });
+  _refreshBatchSurfaces();
+}
+
+async function _transcribePendingBlob(file) {
+  const vr = window.voiceRecorderModule;
+  if (vr && vr.transcribeOnServerDetailed) {
+    const out = await vr.transcribeOnServerDetailed(file);
+    return { text: (out && out.text) || '', language: (out && out.language) || '' };
+  }
+  const fd = new FormData();
+  fd.append('file', file, file.name || 'audio.webm');
+  const res = await fetch('/api/stt/transcribe', { method: 'POST', credentials: 'same-origin', body: fd });
+  if (!res.ok) {
+    let msg = 'Transcription failed';
+    try { const e = await res.json(); msg = e.detail?.message || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  return { text: data.text || '', language: data.language || '' };
+}
+
+/**
+ * Automatic enqueue for a sent audio attachment. Fires only for genuinely
+ * new uploads: adopted pending jobs and every terminal state merely paint.
+ * (Re-renders, history loads and regenerations must never re-transcribe.)
+ */
+function _autoEnqueueAudio(att, opts) {
+  if (!att || !att.id) return;
+  const key = _resolveJobKey(att);
+  const queue = window.sttTranscribeQueue;
+  if (!queue) return;
+  const retry = !!(opts && opts.retry);
+  const state = queue.getState(key);
+  if (state !== undefined && !retry) {
+    _renderAudioCardState(att);
+    return;
+  }
+
+  if (!_sttBatch.order.includes(key)) _sttBatch.order.push(key);
+  const meta = _sttBatch.meta.get(key) || {};
+  if (!meta.fileId) meta.fileId = att.id;
+  meta.name = att.name || meta.name || key;
+  _sttBatch.meta.set(key, meta);
+
+  queue.enqueue({
+    key,
+    transcribe: () => _transcribeUploadFetch(att.id),
+    saveDoc: ({ text, language }) => _saveJobDoc(key, { text, language }),
+    onState: (s, info) => _onAudioJobState(att, s, info),
+  }, { retry });
+  _refreshBatchSurfaces();
+}
+
+/** Link uploaded file ids to their pending queue keys (same order on both
+ *  sides). Called by fileHandler.uploadPending on success, before the strip
+ *  clears — sent cards then adopt the live/finished job. */
+function _adoptSentFiles(pairs) {
+  (pairs || []).forEach((p) => {
+    if (!p || !p.key || !p.fileId) return;
+    _sttBatch.fileIds.set(p.fileId, p.key);
+    const meta = _sttBatch.meta.get(p.key) || {};
+    meta.fileId = p.fileId;
+    if (p.name) meta.name = p.name;
+    _sttBatch.meta.set(p.key, meta);
+    if (!_sttBatch.order.includes(p.key)) _sttBatch.order.push(p.key);
+  });
+}
+
+/** Frontend build stamp for the automatic STT flow — check `__sttBuild`
+ *  in devtools to confirm the running code includes these fixes. */
+const _STT_BUILD = '20260917-stt-autoflow-6';
+
+if (typeof window !== 'undefined') {
+  try {
+    window._sttAutoEnqueuePending = (file, key, opts) => _autoEnqueuePending(file, key, opts);
+    window._sttAdoptSentFiles = (pairs) => _adoptSentFiles(pairs);
+    window._sttPaintPendingChip = (key) => _renderPendingChip(key);
+    window.__sttBuild = _STT_BUILD;
+    if (!window.__sttBuildLogged) {
+      window.__sttBuildLogged = true;
+      if (typeof console !== 'undefined') console.info('[stt] audio auto-flow build ' + _STT_BUILD);
+    }
+  } catch (_) {}
+}
+
+/** Create and open the batch document once the whole batch is done.
+ *  No setting — the count decides: a single successful recording yields its
+ *  own `<stem>_raw.md`; two or more yield exactly one combined document
+ *  (`# Audio Transcripts` + one `## <recording>` section each, queue order,
+ *  verbatim, failures skipped). Either way the document opens exactly once.
+ *  Sequential single attaches therefore stay separate, multi-file batches
+ *  combine — automatically. */
+async function _maybeFinalizeBatch() {
+  const queue = window.sttTranscribeQueue;
+  if (!queue || !queue.isIdle()) return;
+  if (_sttBatch.order.length === 0) return;
+  const order = [..._sttBatch.order];
+  const meta = new Map(_sttBatch.meta);
+  const transcripts = new Map(_sttBatch.transcripts);
+  // Reset first so a late join starting now opens a fresh batch.
+  _sttBatch.order = [];
+  _sttBatch.meta.clear();
+  _sttBatch.fileIds.clear();
+  _sttBatch.transcripts.clear();
+  _sttBatch.failed.clear();
+
+  try {
+    const ok = order.filter((key) => {
+      const t = transcripts.get(key);
+      return t && typeof t.text === 'string' && t.text;
+    });
+    if (!ok.length) return; // every recording failed: nothing valid to open
+    if (ok.length === 1) {
+      const key = ok[0];
+      const name = (meta.get(key) || {}).name || key;
+      const doc = await saveRawTranscriptDoc({ name, transcript: transcripts.get(key).text, sessionId: _currentSessionId() });
+      openRawDocument(doc.id);
+      return;
+    }
+    const combinedText = buildCombinedMarkdown(ok.map((key) => ({
+      name: (meta.get(key) || {}).name || key,
+      text: transcripts.get(key).text,
+    })));
+    const doc = await saveRawTranscriptDoc({ name: 'audio-transcripts.md', transcript: combinedText, sessionId: _currentSessionId() });
+    openRawDocument(doc.id);
+  } catch (e) {
+    if (window.showToast) window.showToast('Could not save transcript document: ' + (e?.message || 'network error'));
+  }
+}
+
+/** Fresh sent card: adopt the pending job when known, else join the flow. */
+function _syncAudioCardFromQueue(card, att) {
+  if (!card || !att || !att.id) return;
+  const queue = window.sttTranscribeQueue;
+  if (!queue) return;
+  const key = _resolveJobKey(att);
+  const state = queue.getState(key);
+  if (state !== undefined) {
+    const meta = _sttBatch.meta.get(key) || {};
+    if (!meta.fileId) {
+      meta.fileId = att.id;
+      _sttBatch.meta.set(key, meta);
+      _sttBatch.fileIds.set(att.id, key);
+    }
+    if (!meta.name && att.name) {
+      meta.name = att.name;
+      _sttBatch.meta.set(key, meta);
+    }
+    if (!_sttBatch.order.includes(key)) _sttBatch.order.push(key);
+    if (state === 'completed') {
+      const outcome = queue.getOutcome(key);
+      if (outcome) {
+        if (outcome.result && outcome.result.text) {
+          _sttBatch.transcripts.set(key, { text: outcome.result.text, language: outcome.result.language || '' });
+        }
+      }
+    }
+    _renderAudioCardState(att);
+    return;
+  }
+  // Genuinely new upload (history reload, pre-adoption file, …) — enqueue.
+  _autoEnqueueAudio(att);
+}
+
 // Build the `.attach-cards` element for a message's attachment list. Shared by
 // addMessage and updateMessageAttachments so a live (optimistic) user bubble
 // can be re-rendered with real upload ids once the upload resolves.
+
 export function buildAttachCards(attachments) {
   const attachWrap = document.createElement('div');
   attachWrap.className = 'attach-cards';
@@ -214,6 +707,51 @@ export function buildAttachCards(attachments) {
         sizeSpan.className = 'attach-card-size';
         sizeSpan.textContent = _formatSize(att.size);
         card.appendChild(sizeSpan);
+      }
+      // Automatic STT (#6319 final): no Transcribe / Transcribe-all / Open-doc
+      // buttons. The card is enqueued the moment it exists; the active job
+      // shows an equalizer animation, the rest show a static Queued · i/n
+      // status. Player streams from the owner-checked download route;
+      // transcription reuses the same bytes server-side (no re-upload).
+      if (att.id && _isAudioAttachment(att)) {
+        card.classList.add('attach-card-audio');
+        // Stable file-id hook so queue state updates find the live card
+        // even after message re-renders orphan earlier closures.
+        card.dataset.fileId = att.id;
+        // Player/retry manage their own clicks: stop them reaching the
+        // card-level open-attachment handler (capture runs before it).
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('audio,.attach-audio-actions')) e.stopPropagation();
+        }, true);
+        const player = document.createElement('audio');
+        player.className = 'attach-audio-player';
+        player.controls = true;
+        player.preload = 'none';
+        player.src = `/api/upload/${att.id}`;
+        card.appendChild(player);
+        const actions = document.createElement('div');
+        actions.className = 'attach-audio-actions';
+        const eq = document.createElement('span');
+        eq.className = 'stt-eq';
+        eq.setAttribute('hidden', '');
+        eq.setAttribute('aria-hidden', 'true');
+        for (let i = 0; i < 5; i++) eq.appendChild(document.createElement('span'));
+        const statusEl = document.createElement('span');
+        statusEl.className = 'attach-transcribe-status';
+        statusEl.setAttribute('aria-live', 'polite');
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'stt-retry-btn';
+        retryBtn.textContent = 'Retry';
+        retryBtn.title = 'Retry transcription';
+        retryBtn.setAttribute('hidden', '');
+        actions.appendChild(eq);
+        actions.appendChild(statusEl);
+        actions.appendChild(retryBtn);
+        card.appendChild(actions);
+        // Join the automatic flow immediately (or repaint queue truth on
+        // re-render while a job is in flight).
+        _syncAudioCardFromQueue(card, att);
       }
       attachWrap.appendChild(card);
     }

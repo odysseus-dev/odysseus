@@ -28,7 +28,7 @@ cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
-To include optional extras in the image (PDF viewer, Office extraction; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`.
+To include optional extras in the image (PDF viewer, Office extraction, local speech-to-text via faster-whisper; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`. The default image intentionally omits these, so the "Local (faster-whisper)" STT provider reports unavailable until the image is rebuilt with that flag (or you use the Browser or API providers instead).
 
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set

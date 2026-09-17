@@ -63,6 +63,11 @@ DEFAULT_SETTINGS = {
     "stt_provider": "disabled",
     "stt_model": "base",
     "stt_language": "",
+    # False (default): load the local Whisper model only for the duration of
+    # each transcription, then release it — avoids keeping large models
+    # resident in RAM (e.g. Raspberry Pi). True: keep it loaded for reuse.
+    "keep_model_loaded": False,
+
     "search_provider": "searxng",
     # Default fallback chain — when the primary provider fails or
     # rate-limits, we try DuckDuckGo next. Free, no API key required, so

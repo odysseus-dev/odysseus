@@ -188,6 +188,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
     "/api/memory/audit",    # retains own 120s LLM inactivity timeout
+    "/api/stt",             # local Whisper inference runs off-loop via to_thread and can take minutes on CPU
 )
 
 
@@ -760,7 +761,7 @@ app.include_router(setup_tts_routes(tts_service))
 from services.stt import get_stt_service
 stt_service = get_stt_service()
 from routes.stt_routes import setup_stt_routes
-app.include_router(setup_stt_routes(stt_service))
+app.include_router(setup_stt_routes(stt_service, upload_handler))
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)

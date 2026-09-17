@@ -29,6 +29,18 @@ def test_kokoro_feature_markers_match_supported_python_range(python_version, sel
         assert requirement.marker.evaluate({"python_version": python_version}) is selected
 
 
+def test_setup_documents_optional_docker_build_arg_for_stt():
+    setup = (ROOT / "website" / "setup.md").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    # Default image stays lean: optional deps remain opt-in via build arg.
+    assert "ARG INSTALL_OPTIONAL=false" in dockerfile
+    # ...but local STT users must be told how to get faster-whisper into Docker.
+    assert "docker compose build --build-arg INSTALL_OPTIONAL=true" in setup
+    assert "faster-whisper" in setup
+    assert "Local (faster-whisper)" in setup
+
+
 def test_setup_documents_container_constraint_and_install_command():
     setup = (ROOT / "website" / "setup.md").read_text(encoding="utf-8")
 
