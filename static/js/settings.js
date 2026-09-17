@@ -897,11 +897,63 @@ async function initSttSettings() {
   var sttMsg = el('set-sttSettingsMsg');
   var sttEnabledToggle = el('set-sttEnabledToggle');
   var sttConfigWrap = el('set-sttConfigWrap');
-  // STT was removed from AI Defaults — bail if the UI isn't present.
+  var sttProviderHelp = el('set-sttProviderHelp');
+  var sttModelHelp = el('set-sttModelHelp');
+  var sttKeepRow = el('set-sttKeepRow');
+  var sttKeepToggle = el('set-sttKeepLoadedToggle');
+  // STT card may be absent in minimal builds — bail if the UI isn't present.
   if (!provSel) return;
 
   function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
   function getModel() { return isEndpoint() ? modelInput.value : modelSelect.value; }
+
+  // Endpoint id -> base_url for the provider-kind help below. Filled when the
+  // endpoint list loads; absent (unknown) endpoints fall back to generic text.
+  var sttEndpointsById = {};
+
+  function _isGoogleBase(base) {
+    try {
+      return (new URL(base).hostname || '').toLowerCase() === 'generativelanguage.googleapis.com';
+    } catch (_) { return false; }
+  }
+
+  function _selectedEndpointBase() {
+    if (!isEndpoint()) return '';
+    var id = provSel.value.slice('endpoint:'.length);
+    return sttEndpointsById[id] || '';
+  }
+
+  function updateSttHelp() {
+    var prov = provSel.value;
+    // Minimal help: field labels are self-evident for built-in providers.
+    // Only remote endpoints need a note (experimental + audio leaves host).
+    if (sttProviderHelp) {
+      if (prov.startsWith('endpoint:')) {
+        if (_isGoogleBase(_selectedEndpointBase())) {
+          sttProviderHelp.textContent = 'Gemini API (Experimental): audio leaves this host. Results may be unreliable.';
+        } else {
+          sttProviderHelp.textContent = 'API (Experimental): audio leaves this host; results depend on provider compatibility.';
+        }
+        sttProviderHelp.style.display = '';
+      } else {
+        sttProviderHelp.textContent = '';
+        sttProviderHelp.style.display = 'none';
+      }
+    }
+    if (sttModelHelp) {
+      if (isEndpoint()) {
+        if (_isGoogleBase(_selectedEndpointBase())) {
+          sttModelHelp.textContent = 'Gemini model ID (default gemini-3.5-transcribe). Experimental.';
+        } else {
+          sttModelHelp.textContent = 'Model ID supported by this endpoint (e.g. whisper-1). Experimental.';
+        }
+        sttModelHelp.style.display = '';
+      } else {
+        sttModelHelp.textContent = '';
+        sttModelHelp.style.display = 'none';
+      }
+    }
+  }
 
   function updateVisibility() {
     var prov = provSel.value;
@@ -909,11 +961,14 @@ async function initSttSettings() {
     var showLang = prov !== 'disabled';
     modelRow.style.display = showModel ? 'flex' : 'none';
     langRow.style.display = showLang ? 'flex' : 'none';
+    if (sttKeepRow) sttKeepRow.style.display = prov === 'local' ? 'flex' : 'none';
+    if (sttModelHelp) sttModelHelp.style.display = showModel ? '' : 'none';
     if (isEndpoint()) {
       modelSelect.style.display = 'none'; modelInput.style.display = '';
     } else {
       modelSelect.style.display = ''; modelInput.style.display = 'none';
     }
+    updateSttHelp();
   }
 
   function syncSttDisabled() {
@@ -929,13 +984,21 @@ async function initSttSettings() {
     return provSel.value;
   }
 
-  // Add API endpoints that might support STT
+  // Add API endpoints that might support STT, grouped under an API label.
+  // Option values stay endpoint:<id> so saved settings keep working.
   try {
     var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     var endpoints = await epRes.json();
+    var apiGroup = null;
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      if (ep.id && ep.base_url) sttEndpointsById[ep.id] = ep.base_url;
+      if (!apiGroup) {
+        apiGroup = document.createElement('optgroup');
+        apiGroup.label = 'API';
+        provSel.appendChild(apiGroup);
+      }
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; apiGroup.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for STT', e); }
 
@@ -944,8 +1007,21 @@ async function initSttSettings() {
     var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await settingsRes.json();
     if (settings.stt_provider) provSel.value = settings.stt_provider;
-    if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }
+    if (settings.stt_model) {
+      // Preserve custom/free-form values saved via API: without a matching
+      // option the select would silently fall back and a later save would
+      // overwrite the stored model.
+      var hasOption = Array.prototype.some.call(modelSelect.options, function(o) { return o.value === settings.stt_model; });
+      if (!hasOption && String(settings.stt_model).trim()) {
+        var customOpt = document.createElement('option');
+        customOpt.value = settings.stt_model;
+        customOpt.textContent = settings.stt_model + ' (custom)';
+        modelSelect.appendChild(customOpt);
+      }
+      modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model;
+    }
     if (settings.stt_language) langInput.value = settings.stt_language;
+    if (sttKeepToggle) sttKeepToggle.checked = settings.keep_model_loaded === true;
     if (sttEnabledToggle) sttEnabledToggle.checked = settings.stt_enabled !== false;
   } catch (e) { console.warn('Failed to load STT settings', e); }
 
@@ -955,17 +1031,19 @@ async function initSttSettings() {
   async function saveSTT() {
     try {
       var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
-      await _postSettings({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() });
+      await _postSettings({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim(), keep_model_loaded: sttKeepToggle ? !!sttKeepToggle.checked : false });
       sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
-      // Notify voiceRecorder of effective provider and update send button icon
+      // Notify voiceRecorder of effective provider and update composer controls
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
       if (window._updateSendBtnIcon) window._updateSendBtnIcon();
+      if (window._updateMicBtn) window._updateMicBtn();
     } catch (e) { sttMsg.textContent = 'Failed to save'; sttMsg.style.color = 'var(--red)'; }
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSTT(); });
   modelSelect.addEventListener('change', saveSTT);
   modelInput.addEventListener('change', saveSTT);
+  if (sttKeepToggle) sttKeepToggle.addEventListener('change', saveSTT);
   langInput.addEventListener('change', saveSTT);
   if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function() { syncSttDisabled(); saveSTT(); });
 }

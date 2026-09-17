@@ -26,6 +26,7 @@ import chatRenderer from './js/chatRenderer.js?v=20260819approvalcontrol1';
 import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import voiceRecorderModule from './js/voiceRecorder.js';
+import { sttTranscribeQueue } from './js/sttTranscribeQueue.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js';
@@ -3878,8 +3879,11 @@ function startOdysseusApp() {
 
   chatForm.onsubmit = handleSubmit;
 
-  // ── Dual-purpose send/mic button ──
+  // ── Dedicated send button (Send action only) + dedicated mic button ──
+  // Phase 1 (#6319): the mic no longer morphs the Send button. Send stays a
+  // dedicated Send/New-chat/Streaming control; voice lives on #mic-btn.
   const sendBtn = document.querySelector('.send-btn');
+  const micBtn = document.getElementById('mic-btn');
   const messageInput = el('message');
   const modelPickerWrap = document.getElementById('model-picker-wrap');
 
@@ -3927,20 +3931,11 @@ function startOdysseusApp() {
       _updateStreamingSubmitButton();
       return;
     }
-    // Don't override if recording
-    if (sendBtn.dataset.mode === 'recording') return;
     const prevMode = sendBtn.dataset.mode || '';
     const hasText = messageInput && messageInput.value.trim().length > 0;
     const hasFiles = _hasAttachments();
     let newMode;
-    if (!hasText && !hasFiles && _isSttEnabled()) {
-      clearTimeout(sendBtn._collapseTimer);
-      sendBtn.innerHTML = _micIcon;
-      sendBtn.title = 'Record voice';
-      newMode = 'mic';
-      sendBtn.classList.add('mic-mode');
-      sendBtn.classList.remove('newchat-mode', 'newchat-expanded');
-    } else if (!hasText && !hasFiles && !_isSttEnabled()) {
+    if (!hasText && !hasFiles) {
       clearTimeout(sendBtn._collapseTimer);
       // Group chat: always show send button, never newchat mode
       if (groupModule && groupModule.isActive()) {
@@ -3976,7 +3971,7 @@ function startOdysseusApp() {
       newMode = 'send';
       clearTimeout(sendBtn._expandTimer);
       const wasExpanded = sendBtn.classList.contains('newchat-expanded');
-      const wasNewchat = prevMode === 'newchat' || prevMode === 'mic';
+      const wasNewchat = prevMode === 'newchat';
       if (wasExpanded || wasNewchat) {
         // Collapse pill if expanded, then spin arrow in (same as + spin-in)
         if (wasExpanded) sendBtn.classList.remove('newchat-expanded');
@@ -3995,13 +3990,13 @@ function startOdysseusApp() {
         sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded', 'anim-spin', 'anim-launch', 'anim-land');
       }
     }
-    // Animate icon spin — when switching TO newchat or mic (the + or mic
-    // appearing). The previous `prevMode && ...` guard skipped this after
-    // streaming ended (dataset.mode is reset to '' there, an empty falsy
-    // string), which let the lingering anim-land class from the stop icon's
-    // entry replay on the +, making it look like the + comes from below.
-    // Never animate into send mode (arrow) — it should just appear instantly.
-    if (newMode !== prevMode && (newMode === 'newchat' || newMode === 'mic')) {
+    // Animate icon spin — when switching TO newchat (the + appearing). The
+    // previous `prevMode && ...` guard skipped this after streaming ended
+    // (dataset.mode is reset to '' there, an empty falsy string), which let
+    // the lingering anim-land class from the stop icon's entry replay on the
+    // +, making it look like the + comes from below. Never animate into send
+    // mode (arrow) — it should just appear instantly.
+    if (newMode !== prevMode && newMode === 'newchat') {
       if (!sendBtn.classList.contains('anim-spin')) {
         sendBtn.classList.remove('anim-launch', 'anim-land');
         sendBtn.classList.add('anim-spin');
@@ -4015,12 +4010,6 @@ function startOdysseusApp() {
     sendBtn.addEventListener('click', (e) => {
       e.preventDefault();
 
-      // If recording, stop recording
-      if (sendBtn.dataset.mode === 'recording' || voiceRecorderModule.getIsRecording()) {
-        voiceRecorderModule.stopRecording();
-        return;
-      }
-
       const hasText = messageInput && messageInput.value.trim().length > 0;
       const hasFiles = _hasAttachments();
 
@@ -4030,7 +4019,7 @@ function startOdysseusApp() {
         return;
       }
 
-      // New chat mode — empty input, no attachments, no STT
+      // New chat mode — empty input, no attachments
       if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
         if (sessionModule) {
           const sessions = sessionModule.getSessions();
@@ -4047,22 +4036,46 @@ function startOdysseusApp() {
         return;
       }
 
-      // If input is empty and STT is enabled, start recording
-      if (!hasText && !hasFiles && _isSttEnabled()) {
-        sendBtn.innerHTML = _stopIcon;
-        sendBtn.title = 'Stop recording';
-        sendBtn.dataset.mode = 'recording';
-        sendBtn.classList.add('recording');
-        voiceRecorderModule.startRecording(
-          (audioFile) => fileHandlerModule.addFiles([audioFile]),
-          uiModule.showToast,
-          uiModule.showError
-        );
+      // Otherwise, send message (Send never starts voice recording; #mic-btn owns that)
+      handleSubmit(e);
+    });
+  }
+
+  // ── Dedicated microphone button (#mic-btn) ──
+  // Visible only when STT is enabled. Own recording state; reuses
+  // voiceRecorder.js (secure-context + permission handling preserved).
+  function _updateMicBtn() {
+    if (!micBtn) return;
+    if (voiceRecorderModule.getIsRecording && voiceRecorderModule.getIsRecording()) return;
+    if (_isSttEnabled()) {
+      micBtn.style.display = '';
+      micBtn.disabled = false;
+      micBtn.setAttribute('aria-pressed', 'false');
+      micBtn.title = 'Record voice';
+    } else {
+      micBtn.style.display = 'none';
+    }
+  }
+
+  if (micBtn) {
+    micBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (voiceRecorderModule.getIsRecording && voiceRecorderModule.getIsRecording()) {
+        voiceRecorderModule.stopRecording();
         return;
       }
-
-      // Otherwise, send message
-      handleSubmit(e);
+      micBtn.classList.add('recording');
+      micBtn.setAttribute('aria-pressed', 'true');
+      micBtn.title = 'Stop recording';
+      // Block double-click re-entry synchronously: getIsRecording() only flips
+      // inside startRecording's async getUserMedia continuation. Re-enabled by
+      // voiceRecorder once recording starts or on any failure/reset path.
+      micBtn.disabled = true;
+      voiceRecorderModule.startRecording(
+        (audioFile) => fileHandlerModule.addFiles([audioFile]),
+        uiModule.showToast,
+        uiModule.showError
+      );
     });
   }
 
@@ -4131,11 +4144,17 @@ function startOdysseusApp() {
     }, { passive: true });
   }
 
-  // Expose globally so voiceRecorder can trigger update after async fetch
+  // Expose globally so voiceRecorder/settings can trigger updates after async fetch
   window._updateSendBtnIcon = _updateSendBtnIcon;
+  window._updateMicBtn = _updateMicBtn;
+  window.voiceRecorderModule = voiceRecorderModule;
+  // Shared singleton: all transcription entry points funnel through it so
+  // local Whisper inference stays strictly sequential (concurrency 1).
+  window.sttTranscribeQueue = sttTranscribeQueue;
 
   // Initial icon state
   _updateSendBtnIcon();
+  _updateMicBtn();
 
   // Auto-focus input on load
   if (messageInput) {
