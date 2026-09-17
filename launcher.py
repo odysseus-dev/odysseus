@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import webbrowser
+import socket
 
 # PyInstaller multiprocessing children re-enter this executable with a private
 # bootstrap argument. Consume it before splash/UI or application imports so a
@@ -131,16 +132,35 @@ def open_browser(url):
     webbrowser.open(url)
 
 
+def find_available_port(host, requested_port):
+    """Use the requested port or the next available local port."""
+    for port in range(requested_port, requested_port + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind((host, port))
+            except OSError:
+                continue
+        return port
+    raise RuntimeError(f"No available port found between {requested_port} and {requested_port + 19}")
+
+
 if __name__ == "__main__":
     import uvicorn
-    # Import the FastAPI app from app.py
-    from app import app
 
     bind_host = os.getenv("APP_BIND", "127.0.0.1")
-    bind_port = int(os.getenv("APP_PORT", "7000"))
+    requested_port = int(os.getenv("APP_PORT", "7000"))
+    bind_port = find_available_port(bind_host, requested_port)
+    if bind_port != requested_port:
+        print(f"Port {requested_port} is busy; using port {bind_port} instead.")
+    os.environ["APP_PORT"] = str(bind_port)
+
+    # Import the FastAPI app after selecting the port so internal URL helpers
+    # use the same port that Uvicorn and the browser will use.
+    from app import app
+
     url = f"http://{bind_host}:{bind_port}"
 
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, 'frozen', False) or os.getenv("ODYSSEUS_OPEN_BROWSER") == "1":
         # Start browser manager thread
         threading.Thread(target=open_browser, args=(url,), daemon=True).start()
         # Start system tray manager thread

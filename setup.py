@@ -18,7 +18,6 @@ from src.constants import (
     TTS_CACHE_DIR, GENERATED_IMAGES_DIR, DEEP_RESEARCH_DIR, CHROMA_DIR,
     RAG_DIR, MEMORY_VECTORS_DIR, AGENT_WORKSPACE_DIR, PASSWORD_MIN_LENGTH,
 )
-from core.auth import RESERVED_USERNAMES
 
 DIRS = [
     DATA_DIR,
@@ -55,6 +54,7 @@ def init_database():
 def _prompt_admin_credentials():
     """Interactively ask for admin username and password when running in a terminal."""
     import getpass
+    from core.auth import RESERVED_USERNAMES
 
     print()
     print("  Set up your admin account:")
@@ -89,6 +89,10 @@ def _prompt_admin_credentials():
 
 def create_default_admin():
     """Create an initial admin user if none exists."""
+    # Import after configuration has been loaded. Importing the core package
+    # also imports the database module, which reads DATABASE_URL at import time.
+    from core.auth import RESERVED_USERNAMES
+
     auth_path = AUTH_FILE
     if os.path.exists(auth_path):
         print("  [skip] auth.json already exists")
