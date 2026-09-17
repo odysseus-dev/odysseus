@@ -38,11 +38,24 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 
         elif action == "add":
             import uuid as _uuid
+            from src.url_safety import check_outbound_url
             name = args.get("name", "")
             base_url = args.get("base_url", "")
             api_key = args.get("api_key", "")
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
+            # SSRF hardening: validate the URL before storing it. The HTTP
+            # route (POST /api/model-endpoints) already calls
+            # check_outbound_url(); the agent tool path bypasses that route,
+            # so it needs the same guard. A prompt-injection payload smuggled
+            # into a skill, note, fetched page, or email could instruct the
+            # model to register a cloud-metadata or internal-network endpoint.
+            ok, reason = check_outbound_url(
+                base_url,
+                block_private=os.getenv("MODELENDPOINT_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                return {"error": f"Rejected endpoint URL: {reason}", "exit_code": 1}
             eid = str(_uuid.uuid4())[:8]
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
@@ -75,7 +88,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             return {"error": f"Unknown action: {action}", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_endpoints error: {e}")
-        return {"error": str(e), "exit_code": 1}
+        return {"error": "An internal error occurred while managing endpoints", "exit_code": 1}
     finally:
         db.close()
 
