@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import asyncio 
+from datetime import timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 from src.database import McpServer, SessionLocal
 
@@ -508,7 +509,7 @@ class McpManager:
 
     async def _do_call(self, session, tool_name: str, arguments: Dict) -> Dict:
         """Execute a single MCP tool call and return result dict."""
-        result = await session.call_tool(tool_name, arguments)
+        result = await session.call_tool(tool_name, arguments, read_timeout_seconds=timedelta(seconds=120))
         output_parts = []
         images = []
         for content in result.content:
