@@ -1064,6 +1064,22 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_research",
+            "description": "List, read, or delete saved deep-research reports from the Library. action='list' returns clickable rows (most recent first); action='read' (aliases: open/view/get) with id returns the report text + sources; action='delete' with id removes a report. Use this to recall an EXISTING research report — to START a new one use trigger_research.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "read", "delete"]},
+                    "id": {"type": "string", "description": "Research id (for read/delete — from action='list')"},
+                    "search": {"type": "string", "description": "Search query (for list)"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "resolve_contact",
             "description": "Look up a contact by name. Searches CardDAV address book and sent email history. Returns email addresses (when available) or phone numbers. Use when the user says 'message [name]', 'email [name]', or asks for someone's contact details.",
             "parameters": {

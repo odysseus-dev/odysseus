@@ -417,7 +417,7 @@ class ToolIndex:
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):
-            {"trigger_research"},
+            {"trigger_research", "manage_research"},
         # Settings-change intent — "change my…/set my…/use X for…/turn on…".
         frozenset({"change my", "set my", "use the voice", "change the voice",
                    "my voice", "tts voice", "search engine", "default model",
