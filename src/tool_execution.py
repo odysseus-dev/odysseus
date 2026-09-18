@@ -548,6 +548,16 @@ _ADMIN_TOOLS = {
     "serve_preset",
     "stop_served_model",
     "cancel_download",
+    # Read-only Cookbook tools reach require_admin routes over the internal
+    # loopback without an owner check (see NON_ADMIN_BLOCKED_TOOLS in
+    # src/tool_security.py), so they are admin-only at dispatch as well.
+    "list_served_models",
+    "tail_serve_output",
+    "list_downloads",
+    "search_hf_models",
+    "list_cached_models",
+    "list_serve_presets",
+    "list_cookbook_servers",
 }
 
 
