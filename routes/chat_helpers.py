@@ -664,10 +664,17 @@ async def build_chat_context(
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
     uploaded_files = build_uploaded_file_manifest(
-        att_ids or [],
-        getattr(chat_handler, "upload_handler", None),
-        getattr(sess, "owner", None),
+    att_ids or [],
+    getattr(chat_handler, "upload_handler", None),
+    getattr(sess, "owner", None),
     )
+
+    logger.warning(
+        "[UPLOAD MANIFEST DEBUG] att_ids=%r uploaded_files=%r",
+        att_ids,
+        uploaded_files,
+    )
+    
     context_message = (
         str(continuation_context_message).strip()
         if continuation_context_message
