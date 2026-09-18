@@ -106,3 +106,93 @@ def check_outbound_url(
     if not saw_ip:
         return False, "host does not resolve to an IP"
     return True, "ok"
+
+
+_LOCALHOST_NAMES = ("localhost", "ip6-localhost", "ip6-loopback")
+
+
+def _is_localhost_name(host: str) -> bool:
+    h = host.lower().rstrip(".")
+    return h in _LOCALHOST_NAMES or h.endswith(".localhost")
+
+
+def check_outbound_host(
+    host: str,
+    *,
+    block_private: bool = False,
+    resolver: Optional[Callable[[str], List[str]]] = None,
+    unresolved: str = "reject",
+) -> Tuple[bool, str]:
+    """Validate a bare user-supplied hostname / IP literal (no scheme).
+
+    Companion to :func:`check_outbound_url` for protocols that take a host
+    and port rather than a URL — IMAP, SMTP, CalDAV/CardDAV hosts, database
+    DSNs. Same policy: link-local / multicast / reserved / unspecified
+    addresses are always rejected (cloud metadata SSRF), private / loopback
+    only when ``block_private`` is set. ``localhost`` spellings are treated as
+    loopback without a DNS round-trip.
+
+    ``unresolved`` controls what happens when a hostname does not resolve:
+
+    - ``"reject"`` (default, fail-closed like ``check_outbound_url``);
+    - ``"allow"``: pass it through. Use this only where the very next step
+      is a connect that will surface the same DNS failure to the user, so
+      an offline host or a flaky resolver does not turn into a spurious
+      "blocked" error. IP literals and localhost names are still classified
+      without DNS, so the metadata / loopback cases are covered either way.
+    """
+    if not isinstance(host, str):
+        return False, "host must be a string"
+    host = host.strip()
+    if not host:
+        return False, "host is required"
+    # A bare host never carries a scheme, path, userinfo, port or whitespace.
+    # Anything of the sort is either a copy/paste mistake or an attempt to
+    # smuggle a target past the check; reject rather than guess.
+    if any(ch.isspace() for ch in host) or any(ch in host for ch in "/\\@?#"):
+        return False, "host must be a bare hostname or IP address"
+    literal = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    if ":" in literal:
+        # Only an IPv6 literal may contain colons; "host:port" is rejected.
+        try:
+            ip = ipaddress.ip_address(literal.split("%")[0])
+        except ValueError:
+            return False, "host must be a bare hostname or IP address"
+        reason = _classify(ip, block_private=block_private)
+        return (False, reason) if reason else (True, "ok")
+    try:
+        ip = ipaddress.ip_address(literal)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        reason = _classify(ip, block_private=block_private)
+        return (False, reason) if reason else (True, "ok")
+    if _is_localhost_name(host):
+        if block_private:
+            return False, f"private/shared/loopback address blocked: {host}"
+        return True, "ok"
+
+    resolve = resolver or _default_resolver
+    try:
+        raw_ips = resolve(host)
+    except Exception as e:
+        if unresolved == "allow":
+            return True, "unresolved (deferred to connect)"
+        return False, f"host does not resolve: {e}"
+    saw_ip = False
+    for raw in raw_ips or []:
+        if not isinstance(raw, str):
+            continue
+        try:
+            resolved = ipaddress.ip_address(raw.split("%")[0])
+        except ValueError:
+            continue
+        saw_ip = True
+        reason = _classify(resolved, block_private=block_private)
+        if reason:
+            return False, reason
+    if not saw_ip:
+        if unresolved == "allow":
+            return True, "unresolved (deferred to connect)"
+        return False, "host does not resolve to an IP"
+    return True, "ok"

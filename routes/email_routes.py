@@ -196,6 +196,43 @@ def _coerce_port(value, default):
         return None, f"Invalid port {value!r}; must be a whole number"
 
 
+def _mail_host_block_private(owner: str | None) -> bool:
+    """Whether loopback / LAN mail hosts are off-limits for this owner.
+
+    Odysseus is local-first: an admin pointing IMAP at a Dovecot on the LAN
+    or on localhost is a normal setup. Non-admins are not trusted with the
+    server's network position (THREAT_MODEL.md lists email as admin-only),
+    so for them private and loopback targets are rejected as well. Set
+    EMAIL_BLOCK_PRIVATE_IPS=true to apply the lockdown to everyone.
+    """
+    if os.getenv("EMAIL_BLOCK_PRIVATE_IPS", "false").lower() == "true":
+        return True
+    from src.tool_security import owner_is_admin_or_single_user
+    return not owner_is_admin_or_single_user(owner)
+
+
+def _check_mail_host(host: str, owner: str | None, label: str) -> str | None:
+    """SSRF guard for a user-supplied IMAP/SMTP host.
+
+    Returns an error message when the server must not open a connection to
+    ``host``, else None. Link-local (cloud metadata), multicast, reserved and
+    unspecified targets are always rejected; private/loopback per
+    _mail_host_block_private. Runs at save and test time so the background
+    pollers only ever see vetted hosts. Unresolvable names are let through:
+    the connect that follows fails with the same DNS error, and an offline
+    mail host must not read as "blocked".
+    """
+    from src.url_safety import check_outbound_host
+    ok, reason = check_outbound_host(
+        host,
+        block_private=_mail_host_block_private(owner),
+        unresolved="allow",
+    )
+    if ok:
+        return None
+    return f"Rejected {label} host: {reason}"
+
+
 def _lock_email_account_owner_mutation(db, *owners: str) -> None:
     """Delegate account/default serialization to the shared DB primitive."""
     from core.database import lock_email_account_owner_mutations
@@ -5522,6 +5559,13 @@ def setup_email_routes():
         if account_id:
             _assert_owns_account(account_id, owner)
 
+        for label, key in (("IMAP", "imap_host"), ("SMTP", "smtp_host")):
+            host = (data.get(key) or "").strip() if key in data else ""
+            if host:
+                host_err = _check_mail_host(host, owner, label)
+                if host_err:
+                    return {"ok": False, "error": host_err}
+
         # Non-reply automation flags stay global. Away/auto-reply settings are
         # account-scoped when an account_id is supplied by the Email Settings UI.
         settings = _load_settings()
@@ -5660,6 +5704,12 @@ def setup_email_routes():
         smtp_port, port_err = _coerce_port(data.get("smtp_port"), 465)
         if port_err:
             return {"ok": False, "error": port_err}
+        for label, key in (("IMAP", "imap_host"), ("SMTP", "smtp_host")):
+            host = (data.get(key) or "").strip()
+            if host:
+                host_err = _check_mail_host(host, owner, label)
+                if host_err:
+                    return {"ok": False, "error": host_err}
         db = SessionLocal()
         try:
             _lock_email_account_owner_mutation(db, owner)
@@ -5712,6 +5762,12 @@ def setup_email_routes():
             if not row:
                 return {"ok": False, "error": "Account not found"}
             # Simple fields
+            for label, key in (("IMAP", "imap_host"), ("SMTP", "smtp_host")):
+                host = (data.get(key) or "").strip() if key in data else ""
+                if host:
+                    host_err = _check_mail_host(host, owner, label)
+                    if host_err:
+                        return {"ok": False, "error": host_err}
             for key in ("name", "imap_host", "imap_user", "smtp_host", "smtp_user", "from_address", "display_name"):
                 if key in data:
                     setattr(row, key, (data[key] or "").strip())
@@ -5871,6 +5927,9 @@ def setup_email_routes():
             imap_result = {"ok": False, "error": imap_port_err}
         elif not (imap_host and imap_user and (imap_pass or oauth_provider == "google")):
             imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
+        elif (imap_host_err := _check_mail_host(imap_host, owner, "IMAP")):
+            # SSRF guard before any socket is opened (see _check_mail_host).
+            imap_result = {"ok": False, "error": imap_host_err}
         elif oauth_provider == "google" and _normalized_mail_host(imap_host) != _GOOGLE_OAUTH_IMAP_HOST:
             imap_result = {"ok": False, "error": "Google OAuth IMAP requires imap.gmail.com"}
         elif oauth_provider == "google" and not _google_oauth_imap_transport_allowed(imap_port, imap_starttls):
@@ -5912,6 +5971,8 @@ def setup_email_routes():
         smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
         if smtp_host and smtp_port_err:
             smtp_result = {"ok": False, "error": smtp_port_err}
+        elif smtp_host and (smtp_host_err := _check_mail_host(smtp_host, owner, "SMTP")):
+            smtp_result = {"ok": False, "error": smtp_host_err}
         elif oauth_provider == "google" and smtp_host and _normalized_mail_host(smtp_host) != _GOOGLE_OAUTH_SMTP_HOST:
             smtp_result = {"ok": False, "error": "Google OAuth SMTP requires smtp.gmail.com"}
         elif (
