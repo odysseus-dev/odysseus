@@ -1125,7 +1125,9 @@ def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[
     out.append(context_msg)
     return out
 
-
+# ISSUE #6348 — when a user uploads a file, the agent should be able to see it in context. 
+# This function generates a context message describing the uploaded files
+# which can be inserted into the message list before the latest user turn.
 def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
     if not uploaded_files:
         return None
@@ -1133,6 +1135,7 @@ def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Opt
     lines = [
         "Uploaded files attached to the latest user turn:",
     ]
+
     for item in uploaded_files[:20]:
         name = str(item.get("name") or item.get("id") or "upload")
         bits = [
@@ -1145,13 +1148,33 @@ def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Opt
             bits.append(f"size={item.get('size')} bytes")
         if item.get("path"):
             bits.append(f"path={item.get('path')}")
+
         lines.append("- " + "; ".join(bits))
-    if len(uploaded_files) > 20:
-        lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
+
+    if len(uploaded_files) == 1:
+        item = uploaded_files[0]
+        name = item.get("name") or item.get("id") or "the attached file"
+        path = item.get("path")
+
+        if path:
+            lines.extend([
+                "",
+                f"The user attached exactly one file: `{name}`.",
+                "The user can refer to this file as 'this file' or 'the attachment'.",
+                "When they do, DO NOT ask for the filename or path.",
+                "Immediately call the native `read_file` tool using this exact path:",
+                path,
+            ])
+
+    # Existing instruction
     lines.extend([
         "",
-        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
+        "The attachment contents may already be in the latest user message. "
+        "If an attachment is marked truncated or omitted, read its listed path "
+        "with `read_file` when that tool is available. Do not say uploaded files "
+        "are undiscoverable when they are listed here.",
     ])
+
     return untrusted_context_message(
         "current chat uploaded files",
         "\n".join(lines),
@@ -3512,7 +3535,12 @@ async def stream_agent_loop(
 
     uploaded_files = uploaded_files or []
     _upload_msg = _uploaded_files_context_message(uploaded_files)
+
+    if uploaded_files:
+        logger.warning("[ATTACH DEBUG] uploaded_files=%r", uploaded_files)
+
     if _upload_msg:
+        logger.warning("[ATTACH DEBUG] manifest=%r", _upload_msg)
         messages = _insert_before_latest_user(messages, _upload_msg)
 
     _t0 = time.time()

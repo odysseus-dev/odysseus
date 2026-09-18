@@ -2,57 +2,63 @@
 // Odysseus UI — Main Application Orchestrator
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
-import Storage from './js/storage.js';
-import uiModule from './js/ui.js';
-import workspaceModule from './js/workspace.js';
-import fileHandlerModule from './js/fileHandler.js';
-import modelsModule from './js/models.js?v=20260715startupcalm2';
-import ragModule from './js/rag.js';
-import presetsModule from './js/presets.js';
-import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260819approvalcontrol1';
-import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
-import documentModule from './js/document.js?v=20260815approvalsave1';
-import searchChatModule from './js/search-chat.js';
-import { makeWindowDraggable } from './js/windowDrag.js';
+import Storage from "./js/storage.js";
+import uiModule from "./js/ui.js";
+import workspaceModule from "./js/workspace.js";
+import fileHandlerModule from "./js/fileHandler.js";
+import modelsModule from "./js/models.js?v=20260715startupcalm2";
+import ragModule from "./js/rag.js";
+import presetsModule from "./js/presets.js";
+import searchModule from "./js/search.js";
+import chatModule from "./js/chat.js?v=20260819approvalcontrol1";
+import compareModule from "./js/compare/index.js?v=20260819approvalcontrol1";
+import documentModule from "./js/document.js?v=20260815approvalsave1";
+import searchChatModule from "./js/search-chat.js";
+import { makeWindowDraggable } from "./js/windowDrag.js";
 import {
   revealApplicationShellAfterPaint,
   runDeferredRouteOpener,
   deferRouteOpener,
-  settleSessionHydration
-} from './js/startupShell.js';
-import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260819approvalcontrol1';
-import sessionModule from './js/sessions.js';
-import memoryModule from './js/memory.js?v=20260722memoryloading1';
-import voiceRecorderModule from './js/voiceRecorder.js';
-import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js';
-import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js';
-import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
-import calendarModule from './js/calendar.js';
-import notesModule from './js/notes.js';
-import adminModule from './js/admin.js?v=20260716openrouter3';
-import settingsModule from './js/settings.js?v=20260815approvalsave1';
+  settleSessionHydration,
+} from "./js/startupShell.js";
+import markdownModule from "./js/markdown.js";
+import chatRenderer from "./js/chatRenderer.js?v=20260819approvalcontrol1";
+import sessionModule from "./js/sessions.js";
+import memoryModule from "./js/memory.js?v=20260722memoryloading1";
+import voiceRecorderModule from "./js/voiceRecorder.js";
+import censorModule from "./js/censor.js";
+import galleryModule from "./js/gallery.js";
+import { UI_VIS_DEFAULT_OFF, resolveVisibility } from "./js/ui_visibility.js";
+import tasksModule from "./js/tasks.js?v=20260723tasksbulkfeedback1";
+import calendarModule from "./js/calendar.js";
+import notesModule from "./js/notes.js";
+import adminModule from "./js/admin.js?v=20260716openrouter3";
+import settingsModule from "./js/settings.js?v=20260815approvalsave1";
 // Eagerly bind unified minimize/restore behavior across all tool modals.
-import './js/modalManager.js?v=20260723compareicon2';
+import "./js/modalManager.js?v=20260723compareicon2";
 // Desktop window tiling — drag a modal near an edge/corner to snap.
-import './js/tileManager.js';
-import themeModule from './js/theme.js';
+import "./js/tileManager.js";
+import themeModule from "./js/theme.js";
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two
 // _envState objects), which broke server selection. Keep all cookbook imports
 // unversioned so this can't recur.
-import cookbookModule from './js/cookbook.js';
-import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
-import ttsModule from './js/tts-ai.js';
-import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
-import { getSettings } from './js/appConfig.js';
-import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
-import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import cookbookModule from "./js/cookbook.js";
+import groupModule from "./js/group.js";
+import * as researchPanelModule from "./js/research/panel.js?v=20260630researchthumb";
+import ttsModule from "./js/tts-ai.js";
+import spinnerModule from "./js/spinner.js";
+import { initKeyboardShortcuts } from "./js/keyboard-shortcuts.js";
+import { getSettings } from "./js/appConfig.js";
+import {
+  initSidebarLayout,
+  syncRailSide,
+} from "./js/sidebar-layout.js?v=20260715startupclean";
+import {
+  initSectionCollapse,
+  initSectionDrag,
+} from "./js/section-management.js";
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -68,40 +74,53 @@ function _isMobileChatInput() {
 function _submitChatFormDirect(form) {
   if (!form) return;
   if (form.requestSubmit) form.requestSubmit();
-  else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  else
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
 }
 
 function _isForegroundChatBusy() {
-  const sendBtn = document.querySelector('.send-btn');
-  return !!window.__odysseusChatBusy
-    || Date.now() < (window.__odysseusChatBusyUntil || 0)
-    || !!document.querySelector('.send-btn[data-mode="streaming"], .send-btn.send-pending')
-    || (sendBtn && (sendBtn.title || '').toLowerCase().includes('stop'));
+  const sendBtn = document.querySelector(".send-btn");
+  return (
+    !!window.__odysseusChatBusy ||
+    Date.now() < (window.__odysseusChatBusyUntil || 0) ||
+    !!document.querySelector(
+      '.send-btn[data-mode="streaming"], .send-btn.send-pending',
+    ) ||
+    (sendBtn && (sendBtn.title || "").toLowerCase().includes("stop"))
+  );
 }
 
 function _shouldQueueFromMobileEnter(e, input) {
-  return e.key === 'Enter'
-    && !e.shiftKey
-    && !e.ctrlKey
-    && !e.metaKey
-    && !e.altKey
-    && !e.isComposing
-    && _isMobileChatInput()
-    && _isForegroundChatBusy()
-    && !!(input && input.value && input.value.trim());
+  return (
+    e.key === "Enter" &&
+    !e.shiftKey &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.isComposing &&
+    _isMobileChatInput() &&
+    _isForegroundChatBusy() &&
+    !!(input && input.value && input.value.trim())
+  );
 }
 
 function _shouldQueueFromMobileLineBreak(input) {
-  return _isMobileChatInput()
-    && _isForegroundChatBusy()
-    && !!(input && input.value && input.value.trim());
+  return (
+    _isMobileChatInput() &&
+    _isForegroundChatBusy() &&
+    !!(input && input.value && input.value.trim())
+  );
 }
 
 function _isLineBreakInputEvent(e) {
-  return e
-    && (e.inputType === 'insertLineBreak'
-      || e.inputType === 'insertParagraph'
-      || e.data === '\n');
+  return (
+    e &&
+    (e.inputType === "insertLineBreak" ||
+      e.inputType === "insertParagraph" ||
+      e.data === "\n")
+  );
 }
 
 function _submitMobileQueuedInput(input) {
@@ -110,53 +129,63 @@ function _submitMobileQueuedInput(input) {
   const last = Number(input.dataset.mobileQueueSubmitAt || 0);
   if (now - last < 300) return true;
   input.dataset.mobileQueueSubmitAt = String(now);
-  if (chatModule && chatModule.queueStreamingComposerRequest && chatModule.queueStreamingComposerRequest()) {
+  if (
+    chatModule &&
+    chatModule.queueStreamingComposerRequest &&
+    chatModule.queueStreamingComposerRequest()
+  ) {
     return true;
   }
   window.__odysseusQueueStreamingSubmit = now;
-  const form = document.getElementById('chat-form');
+  const form = document.getElementById("chat-form");
   _submitChatFormDirect(form);
   return true;
 }
 
 function _syncMobileEnterKeyHint(input) {
   if (!input) return;
-  input.setAttribute('enterkeyhint', (_isMobileChatInput() && _isForegroundChatBusy()) ? 'send' : 'enter');
+  input.setAttribute(
+    "enterkeyhint",
+    _isMobileChatInput() && _isForegroundChatBusy() ? "send" : "enter",
+  );
 }
 
 function _countLineBreaks(s) {
-  return ((s || '').match(/\n/g) || []).length;
+  return ((s || "").match(/\n/g) || []).length;
 }
 
 function initForegroundActivityHeartbeat() {
   let lastSent = 0;
   const minGapMs = 12000;
   const send = (force = false) => {
-    if (document.visibilityState === 'hidden') return;
+    if (document.visibilityState === "hidden") return;
     const now = Date.now();
     if (!force && now - lastSent < minGapMs) return;
     lastSent = now;
     try {
       if (navigator.sendBeacon) {
-        const body = new Blob(['{}'], { type: 'application/json' });
-        if (navigator.sendBeacon('/api/activity/heartbeat', body)) return;
+        const body = new Blob(["{}"], { type: "application/json" });
+        if (navigator.sendBeacon("/api/activity/heartbeat", body)) return;
       }
     } catch (_) {}
-    fetch('/api/activity/heartbeat', {
-      method: 'POST',
-      credentials: 'same-origin',
+    fetch("/api/activity/heartbeat", {
+      method: "POST",
+      credentials: "same-origin",
       keepalive: true,
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
     }).catch(() => {});
   };
   send(true);
-  window.addEventListener('focus', () => send(true));
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'hidden') send(true);
+  window.addEventListener("focus", () => send(true));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") send(true);
   });
-  ['pointerdown', 'keydown', 'touchstart', 'scroll'].forEach(type => {
-    window.addEventListener(type, () => send(false), { passive: true, capture: true });
+  ["pointerdown", "keydown", "touchstart", "scroll"].forEach((type) => {
+    window.addEventListener(type, () => send(false), {
+      passive: true,
+      capture: true,
+    });
   });
   setInterval(() => send(false), 15000);
 }
@@ -164,47 +193,52 @@ initForegroundActivityHeartbeat();
 
 function initRailHoverLabels() {
   const labels = {
-    'rail-search-btn': 'Search',
-    'rail-new-session': 'New',
-    'rail-delete-session': 'Delete',
-    'rail-chats': 'Chat',
-    'rail-documents': 'Docs',
-    'rail-calendar': 'Calendar',
-    'rail-compare': 'Compare',
-    'rail-cookbook': 'Cookbook',
-    'rail-research': 'Research',
-    'rail-email': 'Email',
-    'rail-gallery': 'Gallery',
-    'rail-archive': 'Library',
-    'rail-memory': 'Brain',
-    'rail-notes': 'Notes',
-    'rail-tasks': 'Tasks',
-    'rail-theme': 'Theme',
-    'rail-settings': 'Settings',
+    "rail-search-btn": "Search",
+    "rail-new-session": "New",
+    "rail-delete-session": "Delete",
+    "rail-chats": "Chat",
+    "rail-documents": "Docs",
+    "rail-calendar": "Calendar",
+    "rail-compare": "Compare",
+    "rail-cookbook": "Cookbook",
+    "rail-research": "Research",
+    "rail-email": "Email",
+    "rail-gallery": "Gallery",
+    "rail-archive": "Library",
+    "rail-memory": "Brain",
+    "rail-notes": "Notes",
+    "rail-tasks": "Tasks",
+    "rail-theme": "Theme",
+    "rail-settings": "Settings",
   };
-  document.querySelectorAll('#icon-rail .icon-rail-btn').forEach(btn => {
-    if (btn.querySelector('.rail-hover-label')) return;
-    const label = labels[btn.id] || btn.getAttribute('aria-label') || btn.getAttribute('title') || '';
+  document.querySelectorAll("#icon-rail .icon-rail-btn").forEach((btn) => {
+    if (btn.querySelector(".rail-hover-label")) return;
+    const label =
+      labels[btn.id] ||
+      btn.getAttribute("aria-label") ||
+      btn.getAttribute("title") ||
+      "";
     if (!label) return;
-    const span = document.createElement('span');
-    span.className = 'rail-hover-label';
-    span.textContent = String(label).replace(/\s*\([^)]*\)\s*/g, '').trim();
+    const span = document.createElement("span");
+    span.className = "rail-hover-label";
+    span.textContent = String(label)
+      .replace(/\s*\([^)]*\)\s*/g, "")
+      .trim();
     btn.appendChild(span);
   });
 }
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
-window.fetch = async function(...args) {
+window.fetch = async function (...args) {
   const res = await _origFetch.apply(this, args);
-  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
-    window.location.href = '/login';
+  if (res.status === 401 && !String(args[0]).includes("/api/auth/")) {
+    window.location.href = "/login";
   }
   return res;
 };
 
 // Search settings
-
 
 const el = uiModule.el;
 
@@ -213,20 +247,26 @@ const el = uiModule.el;
 // went stale when the user changed their default model).
 let _defaultChat = null;
 try {
-  const cachedDefaultChat = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
-  if (cachedDefaultChat && cachedDefaultChat.endpoint_url && cachedDefaultChat.model) {
+  const cachedDefaultChat = JSON.parse(
+    localStorage.getItem("odysseus-default-chat-cache") || "null",
+  );
+  if (
+    cachedDefaultChat &&
+    cachedDefaultChat.endpoint_url &&
+    cachedDefaultChat.model
+  ) {
     _defaultChat = cachedDefaultChat;
     window.__odysseusDefaultChat = cachedDefaultChat;
   }
 } catch (_) {}
 async function _refreshDefaultChat() {
   try {
-    const d = await (await fetch('/api/default-chat')).json();
+    const d = await (await fetch("/api/default-chat")).json();
     if (d && d.endpoint_url && d.model) {
       _defaultChat = d;
       try {
         window.__odysseusDefaultChat = d;
-        localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(d));
+        localStorage.setItem("odysseus-default-chat-cache", JSON.stringify(d));
       } catch (_) {}
       return d;
     }
@@ -240,30 +280,46 @@ _refreshDefaultChat();
 async function _createDirectChatFromPreferredModel() {
   if (!sessionModule) return false;
 
-  const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
+  const pending =
+    sessionModule.getPendingChat && sessionModule.getPendingChat();
   if (pending && pending.url && pending.modelId && pending.endpointId) {
-    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId, { source: pending.source || 'manual' });
+    sessionModule.createDirectChat(
+      pending.url,
+      pending.modelId,
+      pending.endpointId,
+      { source: pending.source || "manual" },
+    );
     return true;
   }
 
   const sessions = sessionModule.getSessions();
   const currentId = sessionModule.getCurrentSessionId();
-  const current = sessions.find(s => s.id === currentId);
+  const current = sessions.find((s) => s.id === currentId);
   if (current && current.endpoint_url && current.model && current.endpoint_id) {
-    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+    sessionModule.createDirectChat(
+      current.endpoint_url,
+      current.model,
+      current.endpoint_id,
+    );
     return true;
   }
 
   const dc = await _refreshDefaultChat();
   if (dc) {
-    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+      source: "default",
+    });
     return true;
   }
 
-  const withModel = sessions.filter(s => s.endpoint_url && s.model);
+  const withModel = sessions.filter((s) => s.endpoint_url && s.model);
   if (withModel.length > 0) {
     const last = withModel[0]; // sessions are sorted by recent
-    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
+    sessionModule.createDirectChat(
+      last.endpoint_url,
+      last.model,
+      last.endpoint_id,
+    );
     return true;
   }
 
@@ -275,25 +331,26 @@ async function _createDirectChatFromPreferredModel() {
 // ============================================
 function initializeEventListeners() {
   // Chat form submission
-//  document.getElementById('chat-form').addEventListener('submit', chatModule.handleChatSubmit);
+  //  document.getElementById('chat-form').addEventListener('submit', chatModule.handleChatSubmit);
 
   // File attachments (inside overflow menu)
-  const _overflowAttach = el('overflow-attach-btn');
-  if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
-  el('file-input').addEventListener('change', async (e)=>{
+  const _overflowAttach = el("overflow-attach-btn");
+  if (_overflowAttach)
+    _overflowAttach.addEventListener("click", fileHandlerModule.openPicker);
+  el("file-input").addEventListener("change", async (e) => {
     await fileHandlerModule.addFiles(Array.from(e.target.files || []));
-    e.target.value = '';
+    e.target.value = "";
     // Refocus textarea after file picker closes (mobile keyboard)
-    const ta = el('message');
+    const ta = el("message");
     if (ta) setTimeout(() => ta.focus(), 100);
   });
 
   // Paste handler
-  window.addEventListener('paste', async (e)=>{
+  window.addEventListener("paste", async (e) => {
     if (!e.clipboardData) return;
     let changed = false;
-    for (const item of e.clipboardData.items){
-      if (item.kind === 'file'){
+    for (const item of e.clipboardData.items) {
+      if (item.kind === "file") {
         const f = item.getAsFile();
         if (f) {
           await fileHandlerModule.addFiles([f]);
@@ -308,61 +365,80 @@ function initializeEventListeners() {
   // #chat-history and write "· N msgs" next to the title. Counts top-
   // level .msg elements (one per user/assistant turn); excludes the
   // welcome screen since it isn't inside chat-history.
-  const _metaCountEl = el('current-meta-count');
-  const _chatHistEl = el('chat-history');
+  const _metaCountEl = el("current-meta-count");
+  const _chatHistEl = el("chat-history");
   if (_metaCountEl && _chatHistEl) {
     let _countScheduled = false;
     const _updateMsgCount = () => {
       _countScheduled = false;
-      const n = _chatHistEl.querySelectorAll(':scope > .msg').length;
-      _metaCountEl.textContent = n ? `· ${n} msg${n === 1 ? '' : 's'}` : '';
+      const n = _chatHistEl.querySelectorAll(":scope > .msg").length;
+      _metaCountEl.textContent = n ? `· ${n} msg${n === 1 ? "" : "s"}` : "";
     };
     const _scheduleCount = () => {
       if (_countScheduled) return;
       _countScheduled = true;
       requestAnimationFrame(_updateMsgCount);
     };
-    new MutationObserver(_scheduleCount).observe(_chatHistEl, { childList: true });
+    new MutationObserver(_scheduleCount).observe(_chatHistEl, {
+      childList: true,
+    });
     _updateMsgCount();
   }
 
   // Scrolling
-  el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
-    const box = el('chat-history');
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    uiModule.setAutoScroll(atBottom);
-  }, 100));
+  el("chat-history").addEventListener(
+    "scroll",
+    uiModule.debounce(() => {
+      const box = el("chat-history");
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      uiModule.setAutoScroll(atBottom);
+    }, 100),
+  );
   // Close all footer popups immediately on any scroll
-  el('chat-history').addEventListener('scroll', () => {
-    document.querySelectorAll('.ctx-popup, .memory-used-detail, .msg-overflow-menu').forEach(p => p.remove());
-    document.querySelectorAll('.memory-used-pill').forEach(p => { p._openDetail = null; });
-  }, { passive: true });
+  el("chat-history").addEventListener(
+    "scroll",
+    () => {
+      document
+        .querySelectorAll(".ctx-popup, .memory-used-detail, .msg-overflow-menu")
+        .forEach((p) => p.remove());
+      document.querySelectorAll(".memory-used-pill").forEach((p) => {
+        p._openDetail = null;
+      });
+    },
+    { passive: true },
+  );
 
-  el('chat-history').addEventListener('wheel', (e) => {
+  el("chat-history").addEventListener("wheel", (e) => {
     // Only disable auto-scroll when user scrolls UP (deltaY < 0)
     if (e.deltaY < 0) uiModule.setAutoScroll(false);
   });
   let _touchThrottled = false;
-  el('chat-history').addEventListener('touchmove', () => {
-    if (_touchThrottled) return;
-    _touchThrottled = true;
-    uiModule.setAutoScroll(false);
-    requestAnimationFrame(() => { _touchThrottled = false; });
-  }, { passive: true });
+  el("chat-history").addEventListener(
+    "touchmove",
+    () => {
+      if (_touchThrottled) return;
+      _touchThrottled = true;
+      uiModule.setAutoScroll(false);
+      requestAnimationFrame(() => {
+        _touchThrottled = false;
+      });
+    },
+    { passive: true },
+  );
 
   // Internal #session-id links from AI search results
-  el('chat-history').addEventListener('click', (e) => {
-    const link = e.target.closest('a.chat-link');
+  el("chat-history").addEventListener("click", (e) => {
+    const link = e.target.closest("a.chat-link");
     if (!link) return;
-    const href = link.getAttribute('href');
-    if (href && href.startsWith('#') && sessionModule) {
+    const href = link.getAttribute("href");
+    if (href && href.startsWith("#") && sessionModule) {
       e.preventDefault();
       sessionModule.selectSession(href.slice(1));
     }
   });
 
   // Export dropdown button
-  const exportDlBtn = el('export-dl-btn');
+  const exportDlBtn = el("export-dl-btn");
   // ── Unified popup dismissal ──
   // Lightweight popups (header dropdowns, kebab menus, pickers) should vanish
   // on any "other action" — opening the sidebar, opening a tool window, etc.
@@ -372,63 +448,78 @@ function initializeEventListeners() {
   // windows are deliberately NOT touched here — those close via their own
   // controls.
   window.closeAllPopups = function closeAllPopups(except) {
-    document.querySelectorAll(
-      '.export-dropdown-menu.open, .overflow-menu.open, .model-picker-menu.open, .doc-overflow-menu.open'
-    ).forEach(m => { if (m !== except) m.classList.remove('open'); });
-    document.querySelectorAll(
-      '.skill-kebab-menu, .note-reminder-menu, .task-dropdown, .doclib-card-dropdown, .email-card-dropdown, .msg-overflow-menu'
-    ).forEach(m => { if (m !== except) m.remove(); });
+    document
+      .querySelectorAll(
+        ".export-dropdown-menu.open, .overflow-menu.open, .model-picker-menu.open, .doc-overflow-menu.open",
+      )
+      .forEach((m) => {
+        if (m !== except) m.classList.remove("open");
+      });
+    document
+      .querySelectorAll(
+        ".skill-kebab-menu, .note-reminder-menu, .task-dropdown, .doclib-card-dropdown, .email-card-dropdown, .msg-overflow-menu",
+      )
+      .forEach((m) => {
+        if (m !== except) m.remove();
+      });
   };
   // Window-opening / nav controls (rail buttons, sidebar tool rows + session
   // rows, section headers) count as "other actions" — dismiss popups when one
   // is clicked. Bubble phase so it runs after the control's own handler (the
   // window is already opening; we just clear stray popups). Popup triggers
   // themselves aren't these selectors, so toggles aren't broken.
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('.icon-rail-btn, #sidebar .list-item, .section-header-flex')) {
+  document.addEventListener("click", (e) => {
+    if (
+      e.target.closest(
+        ".icon-rail-btn, #sidebar .list-item, .section-header-flex",
+      )
+    ) {
       window.closeAllPopups();
     }
   });
 
-  const exportMenu = el('export-dropdown-menu');
+  const exportMenu = el("export-dropdown-menu");
   if (exportDlBtn && exportMenu) {
-    exportDlBtn.addEventListener('click', (e) => {
+    exportDlBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (exportMenu.classList.contains('open')) {
-        exportMenu.classList.remove('open');
+      if (exportMenu.classList.contains("open")) {
+        exportMenu.classList.remove("open");
       } else {
         // Move menu to body so it's not affected by ancestor transforms
-        if (exportMenu.parentElement !== document.body) document.body.appendChild(exportMenu);
+        if (exportMenu.parentElement !== document.body)
+          document.body.appendChild(exportMenu);
         const rect = exportDlBtn.getBoundingClientRect();
-        exportMenu.style.top = (rect.bottom + 4) + 'px';
-        exportMenu.style.left = 'auto';
-        exportMenu.style.right = (window.innerWidth - rect.right) + 'px';
-        exportMenu.classList.add('open');
+        exportMenu.style.top = rect.bottom + 4 + "px";
+        exportMenu.style.left = "auto";
+        exportMenu.style.right = window.innerWidth - rect.right + "px";
+        exportMenu.classList.add("open");
       }
     });
-    document.addEventListener('click', () => exportMenu.classList.remove('open'));
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && exportMenu.classList.contains('open')) {
-        exportMenu.classList.remove('open');
+    document.addEventListener("click", () =>
+      exportMenu.classList.remove("open"),
+    );
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && exportMenu.classList.contains("open")) {
+        exportMenu.classList.remove("open");
       }
     });
     // Opening the sidebar should dismiss any open popup. Many code paths open
     // the sidebar (toggle button, swipe, keyboard, rail), so watch its class
     // for a hidden→visible transition rather than hooking each one.
-    const _sidebarEl = el('sidebar');
+    const _sidebarEl = el("sidebar");
     if (_sidebarEl) {
-      let _wasHidden = _sidebarEl.classList.contains('hidden');
+      let _wasHidden = _sidebarEl.classList.contains("hidden");
       new MutationObserver(() => {
-        const nowHidden = _sidebarEl.classList.contains('hidden');
+        const nowHidden = _sidebarEl.classList.contains("hidden");
         if (_wasHidden && !nowHidden) window.closeAllPopups();
         _wasHidden = nowHidden;
-      }).observe(_sidebarEl, { attributes: true, attributeFilter: ['class'] });
+      }).observe(_sidebarEl, { attributes: true, attributeFilter: ["class"] });
     }
     // Clicking session name also opens dropdown
-    const currentMeta = el('current-meta');
+    const currentMeta = el("current-meta");
     if (currentMeta) {
-      currentMeta.style.cursor = 'pointer';
-      currentMeta.addEventListener('click', (e) => {
+      currentMeta.style.cursor = "pointer";
+      currentMeta.addEventListener("click", (e) => {
         e.stopPropagation();
         exportDlBtn.click();
       });
@@ -438,136 +529,163 @@ function initializeEventListeners() {
   // Serialize the current chat history into a plain-text transcript.
   // Includes user messages, assistant rounds, and agent tool calls in DOM order.
   function _serializeChatTranscript() {
-    const box = document.getElementById('chat-history');
-    if (!box) return '';
+    const box = document.getElementById("chat-history");
+    if (!box) return "";
     const parts = [];
     for (const child of box.children) {
-      if (child.classList?.contains('msg')) {
-        const isUser = child.classList.contains('msg-user');
+      if (child.classList?.contains("msg")) {
+        const isUser = child.classList.contains("msg-user");
         let label;
         if (isUser) {
-          label = 'User';
+          label = "User";
         } else {
-          const roleEl = child.querySelector('.role');
-          const ts = roleEl?.querySelector('.role-timestamp');
-          let raw = roleEl ? roleEl.textContent : '';
-          if (ts) raw = raw.replace(ts.textContent, '');
-          label = (raw || '').trim() || 'Assistant';
+          const roleEl = child.querySelector(".role");
+          const ts = roleEl?.querySelector(".role-timestamp");
+          let raw = roleEl ? roleEl.textContent : "";
+          if (ts) raw = raw.replace(ts.textContent, "");
+          label = (raw || "").trim() || "Assistant";
         }
-        const body = child.querySelector('.body');
+        const body = child.querySelector(".body");
         // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
         // to avoid extra newlines and formatting artifacts. Raw text lives on
         // the outer .msg in the main renderer; keep body.dataset.raw as a legacy
         // fallback for older/reused render paths.
-        const text = (child.dataset?.raw || body?.dataset?.raw || body?.innerText || body?.textContent || '').trim();
+        const text = (
+          child.dataset?.raw ||
+          body?.dataset?.raw ||
+          body?.innerText ||
+          body?.textContent ||
+          ""
+        ).trim();
         if (text) parts.push(`${label}: ${text}`);
-      } else if (child.classList?.contains('agent-thread')) {
-        const lines = ['[Tool calls]'];
-        for (const n of child.querySelectorAll('.agent-thread-node')) {
-          const tool = n.querySelector('.agent-thread-tool')?.textContent?.trim() || 'tool';
-          const cmd = n.querySelector('.agent-thread-cmd')?.textContent?.trim() || '';
-          const output = n.querySelector('.agent-tool-output pre')?.textContent?.trim() || '';
-          const status = n.classList.contains('error') ? 'failed' : 'done';
+      } else if (child.classList?.contains("agent-thread")) {
+        const lines = ["[Tool calls]"];
+        for (const n of child.querySelectorAll(".agent-thread-node")) {
+          const tool =
+            n.querySelector(".agent-thread-tool")?.textContent?.trim() ||
+            "tool";
+          const cmd =
+            n.querySelector(".agent-thread-cmd")?.textContent?.trim() || "";
+          const output =
+            n.querySelector(".agent-tool-output pre")?.textContent?.trim() ||
+            "";
+          const status = n.classList.contains("error") ? "failed" : "done";
           let line = `- ${tool} [${status}]`;
           if (cmd) line += `\n  cmd: ${cmd}`;
           if (output) {
-            const truncated = output.length > 2000 ? output.slice(0, 2000) + '…' : output;
+            const truncated =
+              output.length > 2000 ? output.slice(0, 2000) + "…" : output;
             line += `\n  out: ${truncated}`;
           }
           lines.push(line);
         }
-        parts.push(lines.join('\n'));
+        parts.push(lines.join("\n"));
       }
     }
-    return parts.join('\n\n');
+    return parts.join("\n\n");
   }
 
   // Export: Copy all messages
-  const exportCopyBtn = el('export-copy-btn');
+  const exportCopyBtn = el("export-copy-btn");
   if (exportCopyBtn) {
-    exportCopyBtn.addEventListener('click', async (e) => {
+    exportCopyBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      exportMenu.classList.remove('open');
+      exportMenu.classList.remove("open");
       const transcript = _serializeChatTranscript();
       // A new/empty chat has nothing to copy — don't write an empty string and
       // falsely report "Copied".
-      if (!transcript.trim()) { uiModule.showToast('Nothing to copy yet'); return; }
+      if (!transcript.trim()) {
+        uiModule.showToast("Nothing to copy yet");
+        return;
+      }
       await uiModule.copyToClipboard(transcript);
     });
   }
 
   // Export menu: Compact current chat context
-  const exportCompactBtn = el('export-compact-btn');
+  const exportCompactBtn = el("export-compact-btn");
   if (exportCompactBtn) {
-    exportCompactBtn.addEventListener('click', async (e) => {
+    exportCompactBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      exportMenu.classList.remove('open');
+      exportMenu.classList.remove("open");
       if (window.compactCurrentChatContext) {
         await window.compactCurrentChatContext();
       } else {
-        uiModule.showError('Compact action is not ready yet');
+        uiModule.showError("Compact action is not ready yet");
       }
     });
   }
 
   // Export: PDF
-  const exportPdfBtn = el('export-pdf-btn');
+  const exportPdfBtn = el("export-pdf-btn");
   if (exportPdfBtn) {
-    exportPdfBtn.addEventListener('click', (e) => {
+    exportPdfBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      exportMenu.classList.remove('open');
-      const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-      const sessionName = meta ? meta.name : 'Odysseus Chat';
+      exportMenu.classList.remove("open");
+      const meta = sessionModule
+        .getSessions()
+        .find((s) => s.id === sessionModule.getCurrentSessionId());
+      const sessionName = meta ? meta.name : "Odysseus Chat";
       const originalTitle = document.title;
       document.title = sessionName;
-      const chatHistory = document.getElementById('chat-history');
+      const chatHistory = document.getElementById("chat-history");
       if (chatHistory) chatHistory.dataset.printTitle = sessionName;
-      document.querySelectorAll('#chat-history details:not([open])').forEach(d => {
-        d.setAttribute('open', '');
-        d.dataset.printOpened = '1';
-      });
+      document
+        .querySelectorAll("#chat-history details:not([open])")
+        .forEach((d) => {
+          d.setAttribute("open", "");
+          d.dataset.printOpened = "1";
+        });
       window.print();
       document.title = originalTitle;
-      document.querySelectorAll('#chat-history details[data-print-opened]').forEach(d => {
-        d.removeAttribute('open');
-        d.removeAttribute('data-print-opened');
-      });
+      document
+        .querySelectorAll("#chat-history details[data-print-opened]")
+        .forEach((d) => {
+          d.removeAttribute("open");
+          d.removeAttribute("data-print-opened");
+        });
     });
   }
 
   // Export: Save to Docs
-  const exportDocBtn = el('export-doc-btn');
+  const exportDocBtn = el("export-doc-btn");
   if (exportDocBtn) {
-    exportDocBtn.addEventListener('click', async (e) => {
+    exportDocBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      exportMenu.classList.remove('open');
+      exportMenu.classList.remove("open");
       try {
         const sessionId = sessionModule.getCurrentSessionId();
         const texts = _serializeChatTranscript();
-        const meta = sessionModule.getSessions().find(s => s.id === sessionId);
-        const title = meta?.name || 'Untitled';
+        const meta = sessionModule
+          .getSessions()
+          .find((s) => s.id === sessionId);
+        const title = meta?.name || "Untitled";
         const res = await fetch(`${API_BASE}/api/document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, title, content: texts }),
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            title,
+            content: texts,
+          }),
         });
-        if (!res.ok) throw new Error('Failed');
+        if (!res.ok) throw new Error("Failed");
         const doc = await res.json();
         if (documentModule) documentModule.loadDocument(doc.id);
-        uiModule.showToast('Saved to documents');
+        uiModule.showToast("Saved to documents");
       } catch (err) {
-        console.error('Save to docs failed:', err);
-        uiModule.showError('Failed to save to documents');
+        console.error("Save to docs failed:", err);
+        uiModule.showError("Failed to save to documents");
       }
     });
   }
 
   // Export menu: Delete current chat
-  const exportDeleteBtn = el('export-delete-btn');
+  const exportDeleteBtn = el("export-delete-btn");
   if (exportDeleteBtn) {
-    exportDeleteBtn.addEventListener('click', async (e) => {
+    exportDeleteBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      exportMenu.classList.remove('open');
+      exportMenu.classList.remove("open");
       if (sessionModule?.deleteCurrentSessionFromTopMenu) {
         await sessionModule.deleteCurrentSessionFromTopMenu();
       }
@@ -575,29 +693,33 @@ function initializeEventListeners() {
   }
 
   // Rename session from top bar
-  const exportRenameBtn = el('export-rename-btn');
+  const exportRenameBtn = el("export-rename-btn");
   if (exportRenameBtn) {
-    exportRenameBtn.addEventListener('click', (e) => {
+    exportRenameBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      exportMenu.classList.remove('open');
+      exportMenu.classList.remove("open");
       let sid = sessionModule.getCurrentSessionId();
       // A brand-new chat has no session id yet — still allow renaming if there's
       // a pending chat (we materialize it on commit so the name sticks).
-      const hasPending = sessionModule.hasPendingChat && sessionModule.hasPendingChat();
+      const hasPending =
+        sessionModule.hasPendingChat && sessionModule.hasPendingChat();
       if (!sid && !hasPending) return;
-      const meta = sid ? sessionModule.getSessions().find(s => s.id === sid) : null;
-      const currentName = meta?.name || '';
-      const metaEl = el('current-meta');
+      const meta = sid
+        ? sessionModule.getSessions().find((s) => s.id === sid)
+        : null;
+      const currentName = meta?.name || "";
+      const metaEl = el("current-meta");
       if (!metaEl) return;
 
       // Replace title with an input
-      const input = document.createElement('input');
-      input.type = 'text';
+      const input = document.createElement("input");
+      input.type = "text";
       input.value = currentName;
-      input.className = 'session-rename-input';
-      input.style.cssText = 'font-size:inherit;background:transparent;border:none;border-bottom:1px solid var(--accent, var(--red));color:var(--fg);outline:none;width:100%;padding:0;';
+      input.className = "session-rename-input";
+      input.style.cssText =
+        "font-size:inherit;background:transparent;border:none;border-bottom:1px solid var(--accent, var(--red));color:var(--fg);outline:none;width:100%;padding:0;";
       const origText = metaEl.textContent;
-      metaEl.textContent = '';
+      metaEl.textContent = "";
       metaEl.appendChild(input);
       input.focus();
       input.select();
@@ -607,69 +729,85 @@ function initializeEventListeners() {
         if (newName && newName !== currentName) {
           // Materialize a pending (new) chat first so it has an id to rename.
           if (!sid && sessionModule.materializePendingSession) {
-            try { await sessionModule.materializePendingSession(); sid = sessionModule.getCurrentSessionId(); } catch (_) {}
+            try {
+              await sessionModule.materializePendingSession();
+              sid = sessionModule.getCurrentSessionId();
+            } catch (_) {}
           }
-          if (!sid) { metaEl.textContent = newName; return; }
+          if (!sid) {
+            metaEl.textContent = newName;
+            return;
+          }
           const fd = new FormData();
-          fd.append('name', newName);
-          await fetch(`${API_BASE}/api/session/${sid}`, { method: 'PATCH', body: fd });
-          const _m = sessionModule.getSessions().find(s => s.id === sid);
+          fd.append("name", newName);
+          await fetch(`${API_BASE}/api/session/${sid}`, {
+            method: "PATCH",
+            body: fd,
+          });
+          const _m = sessionModule.getSessions().find((s) => s.id === sid);
           if (_m) _m.name = newName;
           metaEl.textContent = newName;
-          uiModule.showToast('Renamed');
+          uiModule.showToast("Renamed");
           sessionModule.loadSessions();
         } else {
           metaEl.textContent = origText;
         }
       };
-      input.addEventListener('blur', commit);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
-        if (ev.key === 'Escape') { input.removeEventListener('blur', commit); metaEl.textContent = origText; }
+      input.addEventListener("blur", commit);
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          input.blur();
+        }
+        if (ev.key === "Escape") {
+          input.removeEventListener("blur", commit);
+          metaEl.textContent = origText;
+        }
       });
     });
   }
 
   // Custom preset modal handlers
-  const closeCustomPreset = el('close-custom-preset');
-  const cancelCustomPreset = el('cancel-custom-preset');
-  const saveCustomPreset = el('save-custom-preset');
+  const closeCustomPreset = el("close-custom-preset");
+  const cancelCustomPreset = el("cancel-custom-preset");
+  const saveCustomPreset = el("save-custom-preset");
 
   if (closeCustomPreset) {
-    closeCustomPreset.addEventListener('click', () => {
-      el('custom-preset-modal').classList.add('hidden');
+    closeCustomPreset.addEventListener("click", () => {
+      el("custom-preset-modal").classList.add("hidden");
     });
   }
 
   if (cancelCustomPreset) {
-    cancelCustomPreset.addEventListener('click', () => {
-      el('custom-preset-modal').classList.add('hidden');
+    cancelCustomPreset.addEventListener("click", () => {
+      el("custom-preset-modal").classList.add("hidden");
     });
   }
 
   if (saveCustomPreset) {
-    saveCustomPreset.addEventListener('click', async () => {
+    saveCustomPreset.addEventListener("click", async () => {
       // Skip character save when Group tab is active — group.js handles it
-      const activeTab = document.querySelector('.preset-tab.active');
-      if (activeTab && activeTab.dataset.chartab === 'group') return;
-      await presetsModule.saveCustomPreset(uiModule.showToast, uiModule.showError);
+      const activeTab = document.querySelector(".preset-tab.active");
+      if (activeTab && activeTab.dataset.chartab === "group") return;
+      await presetsModule.saveCustomPreset(
+        uiModule.showToast,
+        uiModule.showError,
+      );
     });
   }
 
   // Settings dropdown removed — items are now inline in sidebar section
 
-  
-
-
   // Close popups one by one with Escape key (topmost first)
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
       // If a confirm dialog is open, let it handle the Escape
-      const confirmOverlay = document.getElementById('styled-confirm-overlay');
-      if (confirmOverlay && !confirmOverlay.classList.contains('hidden')) return;
+      const confirmOverlay = document.getElementById("styled-confirm-overlay");
+      if (confirmOverlay && !confirmOverlay.classList.contains("hidden"))
+        return;
 
       // If editing a memory inline, cancel the edit instead of closing the modal
-      const editingMemory = document.querySelector('.memory-item-editing');
+      const editingMemory = document.querySelector(".memory-item-editing");
       if (editingMemory) {
         if (window.memoryModule) window.memoryModule.renderMemoryList();
         return;
@@ -680,7 +818,7 @@ function initializeEventListeners() {
       // dismisses the top one, not both.
 
       // Scoreboard sits on top of the compare window — close it first.
-      const scoreboardOverlay = document.getElementById('scoreboard-overlay');
+      const scoreboardOverlay = document.getElementById("scoreboard-overlay");
       if (scoreboardOverlay) {
         scoreboardOverlay.remove();
         return;
@@ -692,15 +830,15 @@ function initializeEventListeners() {
       }
 
       // Compare model selector
-      const cmpOverlay = document.getElementById('compare-model-overlay');
+      const cmpOverlay = document.getElementById("compare-model-overlay");
       if (cmpOverlay) {
         cmpOverlay.remove();
         return;
       }
 
       // Theme popup
-      const themeModal = document.getElementById('theme-modal');
-      if (themeModal && !themeModal.classList.contains('hidden')) {
+      const themeModal = document.getElementById("theme-modal");
+      if (themeModal && !themeModal.classList.contains("hidden")) {
         themeModule.closePopup();
         return;
       }
@@ -709,51 +847,67 @@ function initializeEventListeners() {
       // then the calendar modal itself). Let calendar.js handle those instead
       // of falling through to unrelated page-level fallbacks like document
       // panel minimize.
-      const calendarModal = document.getElementById('calendar-modal');
-      if (calendarModal && !calendarModal.classList.contains('hidden') && getComputedStyle(calendarModal).display !== 'none') {
+      const calendarModal = document.getElementById("calendar-modal");
+      if (
+        calendarModal &&
+        !calendarModal.classList.contains("hidden") &&
+        getComputedStyle(calendarModal).display !== "none"
+      ) {
         return;
       }
 
       // Model picker popup — close before opening any modals
-      const modelPickerMenu = document.getElementById('model-picker-menu');
-      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
-        modelPickerMenu.classList.remove('open');
+      const modelPickerMenu = document.getElementById("model-picker-menu");
+      if (modelPickerMenu && modelPickerMenu.classList.contains("open")) {
+        modelPickerMenu.classList.remove("open");
         return;
       }
 
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
-        'cookbook-modal': null,
-        'rename-session-modal': null,
-        'rename-ai-modal': null,
-        'custom-preset-modal': null,
-        'memory-modal': null,
+        "cookbook-modal": null,
+        "rename-session-modal": null,
+        "rename-ai-modal": null,
+        "custom-preset-modal": null,
+        "memory-modal": null,
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
+      const dynamicModals = [
+        "library-modal",
+        "archive-modal",
+        "doclib-modal",
+        "gallery-modal",
+        "tasks-modal",
+        "email-lib-modal",
+      ];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
-        if (id === 'gallery-modal') {
-          const editor = document.getElementById('gallery-editor-container');
-          const editing = !!window.__galleryEditLive || !!(
-            editor &&
-            getComputedStyle(editor).display !== 'none' &&
-            editor.querySelector('.gallery-editor')
-          );
+        if (id === "gallery-modal") {
+          const editor = document.getElementById("gallery-editor-container");
+          const editing =
+            !!window.__galleryEditLive ||
+            !!(
+              editor &&
+              getComputedStyle(editor).display !== "none" &&
+              editor.querySelector(".gallery-editor")
+            );
           if (editing) {
             e.preventDefault();
             e.stopImmediatePropagation();
             return;
           }
         }
-        if (m) { dismissModal(m); return; }
+        if (m) {
+          dismissModal(m);
+          return;
+        }
       }
 
       for (const modalId of Object.keys(modalItemMap)) {
         const modal = el(modalId);
-        if (modal && !modal.classList.contains('hidden')) {
+        if (modal && !modal.classList.contains("hidden")) {
           dismissModal(modal);
           return;
         }
@@ -765,11 +919,14 @@ function initializeEventListeners() {
       // Modals.minimize so the doc is preserved and restorable.
       if (documentModule && documentModule.isPanelOpen()) {
         // If there's a text selection in the document editor, let Escape clear that first
-        const docTextarea = document.getElementById('doc-editor-textarea');
-        if (docTextarea && docTextarea.selectionStart !== docTextarea.selectionEnd) {
+        const docTextarea = document.getElementById("doc-editor-textarea");
+        if (
+          docTextarea &&
+          docTextarea.selectionStart !== docTextarea.selectionEnd
+        ) {
           return;
         }
-        documentModule.closePanel('down');
+        documentModule.closePanel("down");
         return;
       }
     }
@@ -777,55 +934,72 @@ function initializeEventListeners() {
 
   // ── Shared modal dismiss helper ──
   const _modalSidebarMap = {
-    'memory-modal': null,
-    'theme-modal': null,
+    "memory-modal": null,
+    "theme-modal": null,
   };
-  const _dynamicModalIds = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+  const _dynamicModalIds = [
+    "library-modal",
+    "archive-modal",
+    "doclib-modal",
+    "gallery-modal",
+    "tasks-modal",
+  ];
   function dismissModal(modal) {
-    if (!modal || modal.classList.contains('hidden')) return;
-    if (modal.id === 'gallery-modal') {
-      const editor = document.getElementById('gallery-editor-container');
-      const editing = !!window.__galleryEditLive || !!(
-        editor &&
-        getComputedStyle(editor).display !== 'none' &&
-        editor.querySelector('.gallery-editor')
-      );
+    if (!modal || modal.classList.contains("hidden")) return;
+    if (modal.id === "gallery-modal") {
+      const editor = document.getElementById("gallery-editor-container");
+      const editing =
+        !!window.__galleryEditLive ||
+        !!(
+          editor &&
+          getComputedStyle(editor).display !== "none" &&
+          editor.querySelector(".gallery-editor")
+        );
       if (editing) return;
     }
-    const content = modal.querySelector('.modal-content') || modal.querySelector('#theme-popup');
-    if (content && !content.classList.contains('modal-closing')) {
-      content.classList.remove('sheet-ready');
-      content.style.transform = '';
-      content.style.transition = '';
-      content.classList.add('modal-closing');
-      content.addEventListener('animationend', () => {
-        if (_dynamicModalIds.includes(modal.id)) {
-          modal.remove();
-        } else {
-          modal.classList.add('hidden');
-          content.classList.remove('modal-closing');
-        }
-      }, { once: true });
+    const content =
+      modal.querySelector(".modal-content") ||
+      modal.querySelector("#theme-popup");
+    if (content && !content.classList.contains("modal-closing")) {
+      content.classList.remove("sheet-ready");
+      content.style.transform = "";
+      content.style.transition = "";
+      content.classList.add("modal-closing");
+      content.addEventListener(
+        "animationend",
+        () => {
+          if (_dynamicModalIds.includes(modal.id)) {
+            modal.remove();
+          } else {
+            modal.classList.add("hidden");
+            content.classList.remove("modal-closing");
+          }
+        },
+        { once: true },
+      );
       // Fallback in case animationend doesn't fire
       setTimeout(() => {
-        if (modal.parentElement && !modal.classList.contains('hidden')) {
+        if (modal.parentElement && !modal.classList.contains("hidden")) {
           if (_dynamicModalIds.includes(modal.id)) modal.remove();
-          else { modal.classList.add('hidden'); content.classList.remove('modal-closing'); }
+          else {
+            modal.classList.add("hidden");
+            content.classList.remove("modal-closing");
+          }
         }
       }, 250);
     } else {
-      if (content) content.classList.remove('sheet-ready');
+      if (content) content.classList.remove("sheet-ready");
       if (_dynamicModalIds.includes(modal.id)) modal.remove();
-      else modal.classList.add('hidden');
+      else modal.classList.add("hidden");
     }
   }
 
   // Click outside modal content → close modal
-  document.addEventListener('click', (e) => {
+  document.addEventListener("click", (e) => {
     if (uiModule.isTouchInsideModal()) return; // suppress synthetic events from touch scrolling
-    const modal = e.target.closest('.modal');
-    if (!modal || modal.classList.contains('hidden')) return;
-    if (e.target.closest('.modal-content')) return;
+    const modal = e.target.closest(".modal");
+    if (!modal || modal.classList.contains("hidden")) return;
+    if (e.target.closest(".modal-content")) return;
     dismissModal(modal);
   });
 
@@ -834,117 +1008,140 @@ function initializeEventListeners() {
   // ── Helper: start a fresh chat (deselect current, clear history, show welcome) ──
   function _startFreshChat() {
     try {
-      const prevId = sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
-      if (chatModule && chatModule.detachCurrentStream) chatModule.detachCurrentStream(prevId);
-      else if (chatModule && chatModule.abortCurrentRequest) chatModule.abortCurrentRequest();
+      const prevId =
+        sessionModule && sessionModule.getCurrentSessionId
+          ? sessionModule.getCurrentSessionId()
+          : null;
+      if (chatModule && chatModule.detachCurrentStream)
+        chatModule.detachCurrentStream(prevId);
+      else if (chatModule && chatModule.abortCurrentRequest)
+        chatModule.abortCurrentRequest();
     } catch (e) {
-      console.warn('fresh chat stream detach failed:', e);
+      console.warn("fresh chat stream detach failed:", e);
     }
     if (sessionModule) sessionModule.setCurrentSessionId(null);
-    const box = el('chat-history');
-    if (box) box.innerHTML = '';
+    const box = el("chat-history");
+    if (box) box.innerHTML = "";
     if (chatModule && chatModule.showWelcomeScreen) {
       chatModule.showWelcomeScreen();
     }
     // Close document panel if open
-    if (documentModule && documentModule.closePanel) documentModule.closePanel();
-    if (researchPanelModule && researchPanelModule.isOpen()) researchPanelModule.closePanel();
+    if (documentModule && documentModule.closePanel)
+      documentModule.closePanel();
+    if (researchPanelModule && researchPanelModule.isOpen())
+      researchPanelModule.closePanel();
     // Reset research overflow dot (but don't touch research state — caller manages that)
-    const _overflowRes = el('overflow-research-btn');
-    if (_overflowRes) _overflowRes.classList.remove('active');
-    if (typeof updatePlusDot === 'function') updatePlusDot();
+    const _overflowRes = el("overflow-research-btn");
+    if (_overflowRes) _overflowRes.classList.remove("active");
+    if (typeof updatePlusDot === "function") updatePlusDot();
     // Reset agent mode to Chat
-    const modeToggle = el('agent-mode-toggle');
-    if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
+    const modeToggle = el("agent-mode-toggle");
+    if (modeToggle && modeToggle.checked) {
+      modeToggle.checked = false;
+      modeToggle.dispatchEvent(new Event("change"));
+    }
     // Clear character/persona
-    if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+    if (presetsModule && presetsModule.deactivateCharacter)
+      presetsModule.deactivateCharacter();
   }
 
   /** Sync Research indicator button + overflow + tool sidebar active state. */
   function _syncResearchIndicator(active) {
-    const btn = el('research-toggle-btn');
-    const overflow = el('overflow-research-btn');
-    const toolBtn = el('tool-research-btn');
-    const chk = el('research-toggle');
+    const btn = el("research-toggle-btn");
+    const overflow = el("overflow-research-btn");
+    const toolBtn = el("tool-research-btn");
+    const chk = el("research-toggle");
     if (btn) {
-      btn.style.display = active ? '' : 'none';
-      btn.classList.toggle('active', active);
+      btn.style.display = active ? "" : "none";
+      btn.classList.toggle("active", active);
     }
     // Hide from overflow menu when showing in chatbox (avoid duplicate)
     if (overflow) {
-      overflow.classList.toggle('active', active);
-      overflow.style.display = active ? 'none' : '';
+      overflow.classList.toggle("active", active);
+      overflow.style.display = active ? "none" : "";
     }
-    if (toolBtn) toolBtn.classList.toggle('active', active);
+    if (toolBtn) toolBtn.classList.toggle("active", active);
     if (chk) chk.checked = active;
     // Research disables shell access
-    const bashChk = el('bash-toggle');
-    const bashBtn = el('bash-toggle-btn');
+    const bashChk = el("bash-toggle");
+    const bashBtn = el("bash-toggle-btn");
     if (active) {
       if (bashChk && bashChk.checked) {
         bashChk.checked = false;
-        if (bashBtn) bashBtn.classList.remove('active');
-        saveToolPref('bash', (loadToggleState().mode || 'chat'), false);
+        if (bashBtn) bashBtn.classList.remove("active");
+        saveToolPref("bash", loadToggleState().mode || "chat", false);
       }
     }
-    const s = loadToggleState(); s.research = active; saveToggleState(s);
+    const s = loadToggleState();
+    s.research = active;
+    saveToggleState(s);
     updatePlusDot();
-    document.dispatchEvent(new CustomEvent('overflow-state-change'));
+    document.dispatchEvent(new CustomEvent("overflow-state-change"));
   }
 
   /** Sync Group Chat indicator button + overflow. */
   function _syncGroupIndicator(active) {
-    const btn = el('group-toggle-btn');
-    const overflow = el('overflow-group-btn');
-    const chk = el('group-toggle');
+    const btn = el("group-toggle-btn");
+    const overflow = el("overflow-group-btn");
+    const chk = el("group-toggle");
     if (btn) {
-      btn.style.display = active ? '' : 'none';
-      btn.classList.toggle('active', active);
+      btn.style.display = active ? "" : "none";
+      btn.classList.toggle("active", active);
     }
     if (overflow) {
-      overflow.classList.toggle('active', active);
-      overflow.style.display = active ? 'none' : '';
+      overflow.classList.toggle("active", active);
+      overflow.style.display = active ? "none" : "";
     }
     if (chk) chk.checked = active;
     // Hide/show model picker
-    const _mpw = el('model-picker-wrap');
-    if (_mpw) _mpw.style.display = active ? 'none' : '';
+    const _mpw = el("model-picker-wrap");
+    if (_mpw) _mpw.style.display = active ? "none" : "";
     // Mutual exclusion: group disables research + web search
     if (active) {
       _syncResearchIndicator(false);
-      const _webChk = el('web-toggle');
+      const _webChk = el("web-toggle");
       if (_webChk && _webChk.checked) {
         _webChk.checked = false;
-        saveToolPref('web', (loadToggleState().mode || 'chat'), false);
+        saveToolPref("web", loadToggleState().mode || "chat", false);
       }
     }
-    const s = loadToggleState(); s.group = active; saveToggleState(s);
+    const s = loadToggleState();
+    s.group = active;
+    saveToggleState(s);
     updatePlusDot();
-    document.dispatchEvent(new CustomEvent('overflow-state-change'));
+    document.dispatchEvent(new CustomEvent("overflow-state-change"));
 
     // Update welcome screen for research mode
-    const ws = el('welcome-screen');
-    const welcomeName = document.querySelector('.welcome-name');
-    const welcomeSub = el('welcome-sub');
-    const tipEl = el('welcome-tip');
-    const _resIco = '<svg class="welcome-boat" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+    const ws = el("welcome-screen");
+    const welcomeName = document.querySelector(".welcome-name");
+    const welcomeSub = el("welcome-sub");
+    const tipEl = el("welcome-tip");
+    const _resIco =
+      '<svg class="welcome-boat" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
     if (active) {
       if (welcomeName) {
-        if (!welcomeName.dataset.researchOrigHtml) welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
-        welcomeName.innerHTML = _resIco + 'Deep Research';
+        if (!welcomeName.dataset.researchOrigHtml)
+          welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
+        welcomeName.innerHTML = _resIco + "Deep Research";
       }
       if (welcomeSub) {
-        if (!welcomeSub.dataset.researchOrigText) welcomeSub.dataset.researchOrigText = welcomeSub.textContent;
-        welcomeSub.textContent = 'Deep multi-step research with source gathering and synthesis.';
+        if (!welcomeSub.dataset.researchOrigText)
+          welcomeSub.dataset.researchOrigText = welcomeSub.textContent;
+        welcomeSub.textContent =
+          "Deep multi-step research with source gathering and synthesis.";
       }
       if (tipEl) {
-        if (!tipEl.dataset.researchOrigTip) tipEl.dataset.researchOrigTip = tipEl.textContent;
-        tipEl.textContent = '';
-        tipEl.style.display = 'none';
+        if (!tipEl.dataset.researchOrigTip)
+          tipEl.dataset.researchOrigTip = tipEl.textContent;
+        tipEl.textContent = "";
+        tipEl.style.display = "none";
       }
       // Hide Nobody toggle during research mode
-      const _incBtn = el('incognito-btn');
-      if (_incBtn) { _incBtn.dataset.researchOrigDisplay = _incBtn.style.display; _incBtn.style.display = 'none'; }
+      const _incBtn = el("incognito-btn");
+      if (_incBtn) {
+        _incBtn.dataset.researchOrigDisplay = _incBtn.style.display;
+        _incBtn.style.display = "none";
+      }
       // Close document panel if open
       if (window.documentModule && window.documentModule.isPanelOpen()) {
         window.documentModule.closePanel();
@@ -960,18 +1157,22 @@ function initializeEventListeners() {
       }
       if (tipEl && tipEl.dataset.researchOrigTip) {
         tipEl.textContent = tipEl.dataset.researchOrigTip;
-        tipEl.style.opacity = '';
-        tipEl.style.display = '';
+        tipEl.style.opacity = "";
+        tipEl.style.display = "";
         delete tipEl.dataset.researchOrigTip;
       }
       // Restore Nobody toggle
-      const _incBtn2 = el('incognito-btn');
+      const _incBtn2 = el("incognito-btn");
       if (_incBtn2 && _incBtn2.dataset.researchOrigDisplay !== undefined) {
         _incBtn2.style.display = _incBtn2.dataset.researchOrigDisplay;
         delete _incBtn2.dataset.researchOrigDisplay;
       }
     }
-    if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
+    if (ws) {
+      ws.style.animation = "none";
+      ws.offsetHeight;
+      ws.style.animation = "welcome-enter 0.3s ease-out both";
+    }
   }
 
   // ── Close compare if active (used by all tool/sidebar activations) ──
@@ -985,9 +1186,9 @@ function initializeEventListeners() {
   }
 
   // ── Tools section click handlers ──
-  const toolCompareBtn = el('tool-compare-btn');
+  const toolCompareBtn = el("tool-compare-btn");
   if (toolCompareBtn) {
-    toolCompareBtn.addEventListener('click', () => {
+    toolCompareBtn.addEventListener("click", () => {
       if (compareModule) {
         if (compareModule.isActive()) {
           // Already active — toggle off
@@ -995,7 +1196,7 @@ function initializeEventListeners() {
           return;
         }
         // Close other exclusive tools before opening compare
-        const resChk = el('research-toggle');
+        const resChk = el("research-toggle");
         if (resChk && resChk.checked) {
           _syncResearchIndicator(false);
         }
@@ -1005,21 +1206,21 @@ function initializeEventListeners() {
     });
   }
 
-  const toolResearchBtn = el('tool-research-btn');
+  const toolResearchBtn = el("tool-research-btn");
   if (toolResearchBtn) {
-    toolResearchBtn.addEventListener('click', () => {
+    toolResearchBtn.addEventListener("click", () => {
       researchPanelModule.toggle();
     });
   }
 
   // ── Cookbook modal toggle ──
-  const toolCookbookBtn = el('tool-cookbook-btn');
+  const toolCookbookBtn = el("tool-cookbook-btn");
   if (toolCookbookBtn) {
-    toolCookbookBtn.addEventListener('click', async () => {
+    toolCookbookBtn.addEventListener("click", async () => {
       if (!cookbookModule) return;
       // Try minimized→restore or open→minimize via the manager first
-      const Modals = await import('./js/modalManager.js');
-      if (!Modals.toggle('cookbook-modal')) {
+      const Modals = await import("./js/modalManager.js");
+      if (!Modals.toggle("cookbook-modal")) {
         // Not registered yet → fresh open
         cookbookModule.open();
       }
@@ -1027,9 +1228,9 @@ function initializeEventListeners() {
   }
 
   // Document library tool button
-  const toolDoclibBtn = el('tool-doclib-btn');
+  const toolDoclibBtn = el("tool-doclib-btn");
   if (toolDoclibBtn) {
-    toolDoclibBtn.addEventListener('click', () => {
+    toolDoclibBtn.addEventListener("click", () => {
       if (_closeCompareIfActive()) return;
       if (documentModule) {
         if (documentModule.isLibraryOpen()) {
@@ -1042,12 +1243,12 @@ function initializeEventListeners() {
   }
 
   // Gallery tool button
-  const toolGalleryBtn = el('tool-gallery-btn');
+  const toolGalleryBtn = el("tool-gallery-btn");
   if (toolGalleryBtn) {
-    toolGalleryBtn.addEventListener('click', async () => {
+    toolGalleryBtn.addEventListener("click", async () => {
       if (!galleryModule) return;
-      const Modals = await import('./js/modalManager.js');
-      if (!Modals.toggle('gallery-modal')) {
+      const Modals = await import("./js/modalManager.js");
+      if (!Modals.toggle("gallery-modal")) {
         if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
         else galleryModule.openGallery();
       }
@@ -1055,30 +1256,33 @@ function initializeEventListeners() {
   }
 
   // Tasks tool button
-  const toolTasksBtn = el('tool-tasks-btn');
+  const toolTasksBtn = el("tool-tasks-btn");
   if (toolTasksBtn) {
-  // Agents buttons (sidebar + rail)
-  const agentsBtns = [el("rail-agents"), el("tool-agents-btn")].filter(Boolean);
-  agentsBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
+    // Agents buttons (sidebar + rail)
+    const agentsBtns = [el("rail-agents"), el("tool-agents-btn")].filter(
+      Boolean,
+    );
+    agentsBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {});
     });
-  });
-    toolTasksBtn.addEventListener('click', () => {
+    toolTasksBtn.addEventListener("click", () => {
       if (tasksModule) {
-        tasksModule.isTasksOpen() ? tasksModule.closeTasks() : tasksModule.openTasks();
+        tasksModule.isTasksOpen()
+          ? tasksModule.closeTasks()
+          : tasksModule.openTasks();
       }
     });
   }
 
   // Calendar tool button
-  const toolCalendarBtn = el('tool-calendar-btn');
+  const toolCalendarBtn = el("tool-calendar-btn");
   if (toolCalendarBtn) {
-    toolCalendarBtn.addEventListener('click', async () => {
+    toolCalendarBtn.addEventListener("click", async () => {
       if (!calendarModule) return;
-      const Modals = await import('./js/modalManager.js');
+      const Modals = await import("./js/modalManager.js");
       // toggle returns true when a registered modal was minimized/restored;
       // returns false when nothing is registered → open fresh.
-      if (!Modals.toggle('calendar-modal')) {
+      if (!Modals.toggle("calendar-modal")) {
         if (calendarModule.isCalendarOpen()) calendarModule.closeCalendar();
         else calendarModule.openCalendar();
       }
@@ -1086,9 +1290,9 @@ function initializeEventListeners() {
   }
 
   // Notes tool button
-  const toolNotesBtn = el('tool-notes-btn');
+  const toolNotesBtn = el("tool-notes-btn");
   if (toolNotesBtn) {
-    toolNotesBtn.addEventListener('click', () => {
+    toolNotesBtn.addEventListener("click", () => {
       if (notesModule) {
         notesModule.togglePanel();
       }
@@ -1107,10 +1311,10 @@ function initializeEventListeners() {
   // and hides on narrow viewports, so read it live each call rather than
   // baking 48px in. Returns 0 when the rail isn't rendered.
   const _iconRailWidth = () => {
-    const r = document.getElementById('icon-rail');
+    const r = document.getElementById("icon-rail");
     if (!r) return 0;
     const cs = window.getComputedStyle(r);
-    if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
+    if (cs.display === "none" || cs.visibility === "hidden") return 0;
     return Math.round(r.getBoundingClientRect().width);
   };
   // Collapse the wide sidebar so the icon rail (48px mini sidebar) shows
@@ -1121,30 +1325,34 @@ function initializeEventListeners() {
   // body so a paired close-handler can restore it without overriding a
   // manual toggle the user did in between.
   const _collapseSidebarToRail = () => {
-    const sb = document.getElementById('sidebar');
-    const rail = document.getElementById('icon-rail');
+    const sb = document.getElementById("sidebar");
+    const rail = document.getElementById("icon-rail");
     if (!sb || !rail) return;
-    const wasVisible = !sb.classList.contains('hidden');
+    const wasVisible = !sb.classList.contains("hidden");
     if (wasVisible) {
-      document.body.dataset.routeCollapsedSidebar = '1';
+      document.body.dataset.routeCollapsedSidebar = "1";
     }
-    sb.classList.add('hidden');
-    rail.classList.remove('rail-hidden');
+    sb.classList.add("hidden");
+    rail.classList.remove("rail-hidden");
     // syncRailSide() flips iconRail.style.display based on the classes
     // we just set. Exposed by sidebar-layout.js on window.
-    try { window.syncRailSide && window.syncRailSide(); } catch (_) {}
+    try {
+      window.syncRailSide && window.syncRailSide();
+    } catch (_) {}
   };
   // Paired restore: if the route opener collapsed the sidebar, re-expand
   // it when the fullscreen view closes. Only restores if the user didn't
   // manually toggle in between (we clear the marker on manual hamburger
   // clicks via a MutationObserver on `.sidebar.hidden`).
   const _restoreSidebarIfRouteCollapsed = () => {
-    if (document.body.dataset.routeCollapsedSidebar !== '1') return;
+    if (document.body.dataset.routeCollapsedSidebar !== "1") return;
     delete document.body.dataset.routeCollapsedSidebar;
-    const sb = document.getElementById('sidebar');
+    const sb = document.getElementById("sidebar");
     if (!sb) return;
-    sb.classList.remove('hidden');
-    try { window.syncRailSide && window.syncRailSide(); } catch (_) {}
+    sb.classList.remove("hidden");
+    try {
+      window.syncRailSide && window.syncRailSide();
+    } catch (_) {}
   };
   // Expose so closeEmailLibrary / notes close can call this without
   // needing to import app.js directly.
@@ -1153,17 +1361,17 @@ function initializeEventListeners() {
   // hamburger click, or our own _restoreSidebarIfRouteCollapsed call —
   // both endpoints are the same observable state change).
   {
-    const sb = document.getElementById('sidebar');
-    if (sb && typeof MutationObserver !== 'undefined') {
+    const sb = document.getElementById("sidebar");
+    if (sb && typeof MutationObserver !== "undefined") {
       new MutationObserver(() => {
-        if (!sb.classList.contains('hidden')) {
+        if (!sb.classList.contains("hidden")) {
           delete document.body.dataset.routeCollapsedSidebar;
         }
-      }).observe(sb, { attributes: true, attributeFilter: ['class'] });
+      }).observe(sb, { attributes: true, attributeFilter: ["class"] });
     }
   }
   const _routeOpen = {
-    '/notes':    () => {
+    "/notes": () => {
       if (!notesModule) return;
       _collapseSidebarToRail();
       notesModule.openPanel();
@@ -1172,10 +1380,11 @@ function initializeEventListeners() {
       // path so the button icon flips and overflow:hidden gets applied
       // alongside. Retry on rAF in case the panel mounts a tick later.
       const _go = () => {
-        const btn = document.getElementById('notes-fullscreen-toggle');
-        const pane = document.querySelector('.notes-pane');
+        const btn = document.getElementById("notes-fullscreen-toggle");
+        const pane = document.querySelector(".notes-pane");
         if (!pane) return false;
-        if (!pane.classList.contains('notes-pane-fullscreen') && btn) btn.click();
+        if (!pane.classList.contains("notes-pane-fullscreen") && btn)
+          btn.click();
         return true;
       };
       if (!_go()) {
@@ -1184,9 +1393,9 @@ function initializeEventListeners() {
         setTimeout(_go, 200);
       }
     },
-    '/calendar': () => calendarModule && calendarModule.openCalendar(),
-    '/cookbook': () => document.getElementById('tool-cookbook-btn')?.click(),
-    '/email':    () => {
+    "/calendar": () => calendarModule && calendarModule.openCalendar(),
+    "/cookbook": () => document.getElementById("tool-cookbook-btn")?.click(),
+    "/email": () => {
       // Collapse the wide sidebar → icon rail (48px) so the user keeps
       // navigation visible alongside the fullscreen email view.
       _collapseSidebarToRail();
@@ -1195,11 +1404,13 @@ function initializeEventListeners() {
       // onto whatever was last open. The rail button has the full
       // default-chat / fallback-model resolution logic baked in, so just
       // delegate to it.
-      try { document.getElementById('rail-new-session')?.click(); } catch (_) {}
+      try {
+        document.getElementById("rail-new-session")?.click();
+      } catch (_) {}
       // The email library is opened by clicking the email section's HEADER
       // row (.section-header-flex), not the title span. Trigger that, then
       // snap the modal to fullscreen on the next frame.
-      const hdr = document.querySelector('#email-section .section-header-flex');
+      const hdr = document.querySelector("#email-section .section-header-flex");
       if (hdr) hdr.click();
       // The modal is built synchronously inside openEmailLibrary, so a
       // single frame later it's in the DOM and ready to be flagged.
@@ -1209,9 +1420,9 @@ function initializeEventListeners() {
       // owns all the positioning (with !important so it beats openEmailLibrary's
       // post-mount centering rAF) and reads the rail width from --icon-rail-w.
       const _goFullscreen = () => {
-        const modal = document.getElementById('email-lib-modal');
+        const modal = document.getElementById("email-lib-modal");
         if (!modal) return false;
-        modal.classList.add('email-lib-fullscreen');
+        modal.classList.add("email-lib-fullscreen");
         return true;
       };
       _goFullscreen();
@@ -1219,10 +1430,11 @@ function initializeEventListeners() {
       setTimeout(_goFullscreen, 50);
       setTimeout(_goFullscreen, 200);
     },
-    '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
-    '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
-    '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
-    '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
+    "/memory": () => document.getElementById("tool-memory-btn")?.click(),
+    "/gallery": () => document.getElementById("tool-gallery-btn")?.click(),
+    "/tasks": () => document.getElementById("tool-tasks-btn")?.click(),
+    "/library": () =>
+      sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
   const _opener = _routeOpen[urlPath];
   // Defer the opener — at this point in init, the modules whose handlers we
@@ -1234,9 +1446,9 @@ function initializeEventListeners() {
   deferRouteOpener(urlPath, _opener);
 
   // Archive browser tool button
-  const toolLibraryBtn = el('tool-library-btn');
+  const toolLibraryBtn = el("tool-library-btn");
   if (toolLibraryBtn) {
-    toolLibraryBtn.addEventListener('click', () => {
+    toolLibraryBtn.addEventListener("click", () => {
       if (sessionModule) sessionModule.openLibrary();
     });
   }
@@ -1244,88 +1456,95 @@ function initializeEventListeners() {
   // "+" on the Library row → create a new blank document and open it in the
   // editor (mirrors the email section's compose "+"). stopPropagation so it
   // doesn't also fire the row's open-library click.
-  const libraryNewDocBtn = el('library-new-doc-btn');
+  const libraryNewDocBtn = el("library-new-doc-btn");
   if (libraryNewDocBtn) {
-    libraryNewDocBtn.addEventListener('click', async (e) => {
+    libraryNewDocBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (libraryNewDocBtn.dataset.docNewWired === '1') return;
+      if (libraryNewDocBtn.dataset.docNewWired === "1") return;
       try {
-        if (documentModule && documentModule.newDocument) await documentModule.newDocument();
+        if (documentModule && documentModule.newDocument)
+          await documentModule.newDocument();
       } catch (err) {
-        console.error('New document from Library failed:', err);
-        if (uiModule && uiModule.showError) uiModule.showError('Could not create document');
+        console.error("New document from Library failed:", err);
+        if (uiModule && uiModule.showError)
+          uiModule.showError("Could not create document");
       }
     });
   }
 
   // Manage Chats — opens Full Library modal (decoupled from Chats accordion toggle)
-  const chatsLibraryBtn = el('chats-library-btn');
+  const chatsLibraryBtn = el("chats-library-btn");
   if (chatsLibraryBtn) {
-    chatsLibraryBtn.addEventListener('click', (e) => {
+    chatsLibraryBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (sessionModule) sessionModule.openLibrary('chats');
+      if (sessionModule) sessionModule.openLibrary("chats");
     });
   }
 
-  const toolArchiveBtn = el('tool-archive-btn');
+  const toolArchiveBtn = el("tool-archive-btn");
   if (toolArchiveBtn) {
-    toolArchiveBtn.addEventListener('click', () => {
-      if (sessionModule) sessionModule.openLibrary('archive');
+    toolArchiveBtn.addEventListener("click", () => {
+      if (sessionModule) sessionModule.openLibrary("archive");
     });
   }
 
-  const toolThemeBtn = el('tool-theme-btn');
+  const toolThemeBtn = el("tool-theme-btn");
   if (toolThemeBtn) {
-    toolThemeBtn.addEventListener('click', () => {
-      const tm = document.getElementById('theme-modal');
-      if (tm) tm.classList.remove('hidden');
+    toolThemeBtn.addEventListener("click", () => {
+      const tm = document.getElementById("theme-modal");
+      if (tm) tm.classList.remove("hidden");
     });
   }
 
   // Sidebar toggle
-  const toggleSidebarOption = el('toggle-sidebar-option');
+  const toggleSidebarOption = el("toggle-sidebar-option");
   if (toggleSidebarOption) {
-    toggleSidebarOption.addEventListener('click', () => {
-      const sidebar = el('sidebar');
-      sidebar.classList.toggle('hidden');
+    toggleSidebarOption.addEventListener("click", () => {
+      const sidebar = el("sidebar");
+      sidebar.classList.toggle("hidden");
     });
   }
 
   // Sidebar user bar — settings, admin, profile
-  const userBarSettings = el('user-bar-settings');
-  const userBarProfile = el('user-bar-profile');
-  const userBarAdmin = el('user-bar-admin');
+  const userBarSettings = el("user-bar-settings");
+  const userBarProfile = el("user-bar-profile");
+  const userBarAdmin = el("user-bar-admin");
 
   if (userBarSettings) {
-    userBarSettings.addEventListener('click', () => settingsModule.open());
+    userBarSettings.addEventListener("click", () => settingsModule.open());
   }
   if (userBarProfile) {
     // Clicking the user (avatar + name) jumps straight to the Account tab
     // instead of landing on whatever was last selected.
-    userBarProfile.addEventListener('click', () => settingsModule.open('account'));
+    userBarProfile.addEventListener("click", () =>
+      settingsModule.open("account"),
+    );
   }
   if (userBarAdmin) {
-    userBarAdmin.addEventListener('click', () => adminModule.open());
+    userBarAdmin.addEventListener("click", () => adminModule.open());
   }
 
   // Fetch auth status — populate user bar and show admin button if admin
-  fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
-    .then(r => r.json())
-    .then(d => {
+  fetch(`${API_BASE}/api/auth/status`, { credentials: "same-origin" })
+    .then((r) => r.json())
+    .then((d) => {
       window._isAdmin = !!d.is_admin;
-      if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
-      const userBarName = el('user-bar-name');
-      const userBarAvatar = el('user-bar-avatar');
+      if (d.is_admin && userBarAdmin) userBarAdmin.style.display = "";
+      const userBarName = el("user-bar-name");
+      const userBarAvatar = el("user-bar-avatar");
       if (userBarName && d.username) {
         let displayName = d.username;
         // Mask email addresses
-        if (displayName.includes('@')) {
-          const [local, domain] = displayName.split('@');
-          const ext = domain.includes('.') ? domain.slice(domain.lastIndexOf('.')) : '';
-          displayName = local.charAt(0) + '•••@••••' + ext;
+        if (displayName.includes("@")) {
+          const [local, domain] = displayName.split("@");
+          const ext = domain.includes(".")
+            ? domain.slice(domain.lastIndexOf("."))
+            : "";
+          displayName = local.charAt(0) + "•••@••••" + ext;
         }
         userBarName.textContent = displayName;
-        if (userBarAvatar) userBarAvatar.textContent = d.username.charAt(0).toUpperCase();
+        if (userBarAvatar)
+          userBarAvatar.textContent = d.username.charAt(0).toUpperCase();
       }
       // Apply per-user privilege restrictions
       if (d.privileges) {
@@ -1333,59 +1552,67 @@ function initializeEventListeners() {
         const p = d.privileges;
         // Hide agent mode toggle
         if (!p.can_use_agent) {
-          const modeToggle = document.getElementById('mode-toggle');
-          if (modeToggle) modeToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
+          const modeToggle = document.getElementById("mode-toggle");
+          if (modeToggle)
+            modeToggle
+              .closest(".chat-input-toggle")
+              ?.style.setProperty("display", "none");
         }
         // Hide bash toggle
         if (!p.can_use_bash) {
-          const bashToggle = document.getElementById('bash-toggle');
-          if (bashToggle) bashToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
-          const bashBtn = document.getElementById('bash-toggle-btn');
-          if (bashBtn) bashBtn.style.display = 'none';
+          const bashToggle = document.getElementById("bash-toggle");
+          if (bashToggle)
+            bashToggle
+              .closest(".chat-input-toggle")
+              ?.style.setProperty("display", "none");
+          const bashBtn = document.getElementById("bash-toggle-btn");
+          if (bashBtn) bashBtn.style.display = "none";
         }
         // Hide document button
         if (!p.can_use_documents) {
-          const docBtn = document.getElementById('overflow-doc-btn');
-          if (docBtn) docBtn.style.display = 'none';
-          const docInd = document.getElementById('doc-indicator-btn');
-          if (docInd) docInd.style.display = 'none';
+          const docBtn = document.getElementById("overflow-doc-btn");
+          if (docBtn) docBtn.style.display = "none";
+          const docInd = document.getElementById("doc-indicator-btn");
+          if (docInd) docInd.style.display = "none";
         }
         // Hide research toggle
         if (!p.can_use_research) {
-          const resBtn = document.getElementById('research-toggle-btn');
-          if (resBtn) resBtn.style.display = 'none';
-          const resOverflow = document.getElementById('overflow-research-btn');
-          if (resOverflow) resOverflow.style.display = 'none';
+          const resBtn = document.getElementById("research-toggle-btn");
+          if (resBtn) resBtn.style.display = "none";
+          const resOverflow = document.getElementById("overflow-research-btn");
+          if (resOverflow) resOverflow.style.display = "none";
         }
-
       }
     })
     .catch(() => {});
 
   // Session sort dropdown
-  const sortBtn = el('session-sort-btn');
-  const sortDropdown = el('session-sort-dropdown');
+  const sortBtn = el("session-sort-btn");
+  const sortDropdown = el("session-sort-dropdown");
   if (sortBtn && sortDropdown) {
-    sortBtn.addEventListener('click', (e) => {
+    sortBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      sortDropdown.style.display = sortDropdown.style.display === 'block' ? 'none' : 'block';
+      sortDropdown.style.display =
+        sortDropdown.style.display === "block" ? "none" : "block";
     });
-    document.addEventListener('click', () => { sortDropdown.style.display = 'none'; });
-    sortDropdown.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener("click", () => {
+      sortDropdown.style.display = "none";
+    });
+    sortDropdown.addEventListener("click", (e) => e.stopPropagation());
 
     // Sort mode options (newest, oldest, last active) — toggleable
-    sortDropdown.querySelectorAll('.sort-option').forEach(opt => {
-      opt.addEventListener('click', () => {
+    sortDropdown.querySelectorAll(".sort-option").forEach((opt) => {
+      opt.addEventListener("click", () => {
         const mode = opt.dataset.sort;
         const current = sessionModule.getSortMode();
         // Toggle: clicking the active sort reverts to manual
         if (current === mode) {
           sessionModule.setSortMode(null);
-          sortDropdown.style.display = 'none';
-          uiModule.showToast('Manual order');
+          sortDropdown.style.display = "none";
+          uiModule.showToast("Manual order");
         } else {
           sessionModule.setSortMode(mode);
-          sortDropdown.style.display = 'none';
+          sortDropdown.style.display = "none";
           uiModule.showToast(`Sorted: ${opt.textContent.trim().toLowerCase()}`);
         }
         _syncSortChecks();
@@ -1395,45 +1622,54 @@ function initializeEventListeners() {
     // Sync checkmarks on sort options
     function _syncSortChecks() {
       const current = sessionModule.getSortMode();
-      sortDropdown.querySelectorAll('.sort-option').forEach(o => {
-        const check = o.querySelector('.sort-check') || document.createElement('span');
-        check.className = 'sort-check';
-        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
-        check.textContent = '\u2022';
-        if (!o.querySelector('.sort-check')) o.appendChild(check);
+      sortDropdown.querySelectorAll(".sort-option").forEach((o) => {
+        const check =
+          o.querySelector(".sort-check") || document.createElement("span");
+        check.className = "sort-check";
+        check.style.cssText =
+          "float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:" +
+          (o.dataset.sort === current ? "1" : "0");
+        check.textContent = "\u2022";
+        if (!o.querySelector(".sort-check")) o.appendChild(check);
       });
       // Highlight filter icon when a sort is active
-      if (sortBtn) sortBtn.classList.toggle('active', !!current);
+      if (sortBtn) sortBtn.classList.toggle("active", !!current);
     }
     // Sync on dropdown open + initial load
-    sortBtn.addEventListener('click', _syncSortChecks);
+    sortBtn.addEventListener("click", _syncSortChecks);
     _syncSortChecks();
 
     // AI auto-sort — spinner on the sort button itself. Used by both
     // the main "★ Tidy" button (AI) and the sub-row "Tidy" button
     // (no AI, Phase 1 cleanup only) via the skipLlm flag.
     async function _runTidy(skipLlm) {
-      const btnIcon = sortBtn.querySelector('.sort-icon');
-      if (btnIcon) btnIcon.style.display = 'none';
-      const wp = spinnerModule.create('', 'clean', 'whirlpool');
+      const btnIcon = sortBtn.querySelector(".sort-icon");
+      if (btnIcon) btnIcon.style.display = "none";
+      const wp = spinnerModule.create("", "clean", "whirlpool");
       const wpEl = wp.createElement();
-      wpEl.style.cssText = 'width:13px;height:13px;display:inline-block;vertical-align:middle;margin-top:-5px;';
+      wpEl.style.cssText =
+        "width:13px;height:13px;display:inline-block;vertical-align:middle;margin-top:-5px;";
       sortBtn.appendChild(wpEl);
       wp.start();
-      sortDropdown.style.display = 'none';
+      sortDropdown.style.display = "none";
       try {
-        const url = `${API_BASE}/api/sessions/auto-sort${skipLlm ? '?skip_llm=true' : ''}`;
-        const res = await fetch(url, { method: 'POST' });
+        const url = `${API_BASE}/api/sessions/auto-sort${skipLlm ? "?skip_llm=true" : ""}`;
+        const res = await fetch(url, { method: "POST" });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Auto-sort failed');
-        if (data.status === 'ok') {
+        if (!res.ok) throw new Error(data.detail || "Auto-sort failed");
+        if (data.status === "ok") {
           sessionModule.setSortMode(null); // clear sort — tidy creates manual folder order
           _syncSortChecks();
           if (skipLlm) {
             // No-AI path: just report what got cleaned. No "unfiled
             // remaining" prompt because we never tried to file anything.
-            const cleaned = (data.deleted_empty || 0) + (data.deleted_throwaway || 0);
-            uiModule.showToast(cleaned ? `Cleaned ${cleaned} empty/throwaway chat${cleaned === 1 ? '' : 's'}` : 'Already clean');
+            const cleaned =
+              (data.deleted_empty || 0) + (data.deleted_throwaway || 0);
+            uiModule.showToast(
+              cleaned
+                ? `Cleaned ${cleaned} empty/throwaway chat${cleaned === 1 ? "" : "s"}`
+                : "Already clean",
+            );
           } else {
             // Tidy now works in batches (15 most-recent unfiled per click)
             // so the user gets fast feedback and a manageable LLM call
@@ -1441,72 +1677,89 @@ function initializeEventListeners() {
             const remaining = data.unfiled_remaining || 0;
             let msg;
             if (data.updated > 0) {
-              msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? '' : 's'}`;
-              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Group again`;
+              msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? "" : "s"}`;
+              if (remaining > 0)
+                msg += ` — ${remaining} unfiled left, hit Group again`;
             } else if (remaining > 0) {
               msg = `${remaining} unfiled chats — hit Group again`;
             } else {
-              msg = 'All sorted';
+              msg = "All sorted";
             }
             uiModule.showToast(msg);
           }
           if (sessionModule) await sessionModule.loadSessions();
         } else {
-          uiModule.showToast(data.reason || 'Nothing to sort');
+          uiModule.showToast(data.reason || "Nothing to sort");
         }
       } catch (e) {
-        uiModule.showError('Auto-sort: ' + e.message);
+        uiModule.showError("Auto-sort: " + e.message);
       } finally {
         wp.destroy();
         if (wpEl.parentNode) wpEl.parentNode.removeChild(wpEl);
-        if (btnIcon) btnIcon.style.display = '';
+        if (btnIcon) btnIcon.style.display = "";
       }
     }
 
-    const autoSortBtn = el('auto-sort-sessions-btn');
-    if (autoSortBtn) autoSortBtn.addEventListener('click', () => _runTidy(false));
+    const autoSortBtn = el("auto-sort-sessions-btn");
+    if (autoSortBtn)
+      autoSortBtn.addEventListener("click", () => _runTidy(false));
   }
 
   // Model sort dropdown
-  const modelSortBtn = el('model-sort-btn');
-  const modelSortDropdown = el('model-sort-dropdown');
+  const modelSortBtn = el("model-sort-btn");
+  const modelSortDropdown = el("model-sort-dropdown");
   if (modelSortBtn && modelSortDropdown) {
-    modelSortBtn.addEventListener('click', (e) => {
+    modelSortBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      modelSortDropdown.style.display = modelSortDropdown.style.display === 'block' ? 'none' : 'block';
+      modelSortDropdown.style.display =
+        modelSortDropdown.style.display === "block" ? "none" : "block";
     });
-    document.addEventListener('click', () => { modelSortDropdown.style.display = 'none'; });
-    modelSortDropdown.addEventListener('click', (e) => e.stopPropagation());
-    modelSortDropdown.querySelectorAll('.sort-option').forEach(opt => {
-      opt.addEventListener('click', () => {
+    document.addEventListener("click", () => {
+      modelSortDropdown.style.display = "none";
+    });
+    modelSortDropdown.addEventListener("click", (e) => e.stopPropagation());
+    modelSortDropdown.querySelectorAll(".sort-option").forEach((opt) => {
+      opt.addEventListener("click", () => {
         const mode = opt.dataset.sort;
-        Storage.set('odysseus-model-sort', mode);
+        Storage.set("odysseus-model-sort", mode);
         if (modelsModule) modelsModule.refreshModels();
-        modelSortDropdown.style.display = 'none';
-        uiModule.showToast('Models sorted: ' + opt.textContent.trim().toLowerCase());
+        modelSortDropdown.style.display = "none";
+        uiModule.showToast(
+          "Models sorted: " + opt.textContent.trim().toLowerCase(),
+        );
       });
     });
   }
 
-
-
   // Feature visibility — hide admin-disabled features
   // Use prefetched data from login page if available
-  const _prefetchedFeatures = sessionStorage.getItem('ody-prefetch-features');
-  sessionStorage.removeItem('ody-prefetch-features');
-  window._initFeaturesReady = (_prefetchedFeatures
-    ? Promise.resolve(JSON.parse(_prefetchedFeatures))
-    : fetch(`${API_BASE}/api/auth/features`, { credentials: 'same-origin' }).then(r => r.json())
-  ).then(features => {
+  const _prefetchedFeatures = sessionStorage.getItem("ody-prefetch-features");
+  sessionStorage.removeItem("ody-prefetch-features");
+  window._initFeaturesReady = (
+    _prefetchedFeatures
+      ? Promise.resolve(JSON.parse(_prefetchedFeatures))
+      : fetch(`${API_BASE}/api/auth/features`, {
+          credentials: "same-origin",
+        }).then((r) => r.json())
+  )
+    .then((features) => {
       const map = {
-        web_search:      ['web-toggle-btn'],
-        deep_research:   ['research-toggle-btn', 'tool-research-btn', 'overflow-research-btn', 'rail-research'],
-        document_editor: ['overflow-doc-btn', 'rail-documents'],
-        gallery:         ['tool-gallery-btn', 'rail-gallery'],
+        web_search: ["web-toggle-btn"],
+        deep_research: [
+          "research-toggle-btn",
+          "tool-research-btn",
+          "overflow-research-btn",
+          "rail-research",
+        ],
+        document_editor: ["overflow-doc-btn", "rail-documents"],
+        gallery: ["tool-gallery-btn", "rail-gallery"],
       };
       Object.entries(map).forEach(([key, ids]) => {
         if (features[key] === false) {
-          ids.forEach(id => { const e = el(id); if (e) e.style.display = 'none'; });
+          ids.forEach((id) => {
+            const e = el(id);
+            if (e) e.style.display = "none";
+          });
         }
       });
       // Re-apply the user's Appearance UI-vis preferences after the
@@ -1515,7 +1768,10 @@ function initializeEventListeners() {
       // user's "Show in sidebar" toggle is on. The user has to toggle
       // off then on to trigger applyUIVis a second time, which is the
       // bug they report as "deep research only shows after I toggle".
-      try { if (window.applyUIVis && window.loadUIVis) window.applyUIVis(window.loadUIVis()); } catch (_) {}
+      try {
+        if (window.applyUIVis && window.loadUIVis)
+          window.applyUIVis(window.loadUIVis());
+      } catch (_) {}
     })
     .catch(() => {});
 
@@ -1523,16 +1779,19 @@ function initializeEventListeners() {
   // getSettings() consumes the login prefetch itself, so every other module
   // that asks for settings this load gets the same snapshot without a request.
   window._initSettingsReady = getSettings()
-    .then(settings => {
+    .then((settings) => {
       // NOTE: image_gen_enabled only governs *generating* images in chat — the
       // tool is blocked server-side (chat_routes / agent_loop). The Gallery
       // holds uploads and past images too, so it stays visible regardless;
       // use the `gallery` feature flag to hide the Gallery entirely.
       // Hide TTS overflow button when TTS is disabled or no provider configured
-      const ttsOff = settings.tts_enabled === false || !settings.tts_provider || settings.tts_provider === 'disabled';
-      const overflowTts = el('overflow-tts-btn');
+      const ttsOff =
+        settings.tts_enabled === false ||
+        !settings.tts_provider ||
+        settings.tts_provider === "disabled";
+      const overflowTts = el("overflow-tts-btn");
       if (overflowTts) {
-        overflowTts.style.display = ttsOff ? 'none' : '';
+        overflowTts.style.display = ttsOff ? "none" : "";
       }
     })
     .catch(() => {});
@@ -1540,178 +1799,188 @@ function initializeEventListeners() {
   // (Logout handler moved to sidebar user bar above)
 
   // Rename AI modal
-  const renameAiOption = el('rename-ai-option');
-  const renameAiModal = el('rename-ai-modal');
-  const closeRenameAi = el('close-rename-ai');
-  const cancelRenameAi = el('cancel-rename-ai');
-  const saveAiName = el('save-ai-name');
-  const aiNameInput = el('ai-name-input');
-  
+  const renameAiOption = el("rename-ai-option");
+  const renameAiModal = el("rename-ai-modal");
+  const closeRenameAi = el("close-rename-ai");
+  const cancelRenameAi = el("cancel-rename-ai");
+  const saveAiName = el("save-ai-name");
+  const aiNameInput = el("ai-name-input");
+
   if (renameAiOption) {
-    renameAiOption.addEventListener('click', () => {
+    renameAiOption.addEventListener("click", () => {
       const currentName = aiNameInput.value;
-      renameAiModal.classList.remove('hidden');
+      renameAiModal.classList.remove("hidden");
     });
   }
-  
+
   if (closeRenameAi) {
-    closeRenameAi.addEventListener('click', () => {
-      renameAiModal.classList.add('hidden');
+    closeRenameAi.addEventListener("click", () => {
+      renameAiModal.classList.add("hidden");
     });
   }
-  
+
   if (cancelRenameAi) {
-    cancelRenameAi.addEventListener('click', () => {
-      renameAiModal.classList.add('hidden');
+    cancelRenameAi.addEventListener("click", () => {
+      renameAiModal.classList.add("hidden");
     });
   }
-  
+
   if (saveAiName) {
-    saveAiName.addEventListener('click', async () => {
+    saveAiName.addEventListener("click", async () => {
       const newName = aiNameInput.value.trim();
-      
+
       if (!newName) {
-        uiModule.showError('Please enter a name for the AI');
+        uiModule.showError("Please enter a name for the AI");
         return;
       }
-      
+
       try {
         const response = await fetch(`${API_BASE}/api/ai/name`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ name: newName })
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName }),
         });
-        
+
         const result = await response.json();
         if (result.success) {
           uiModule.showToast(`AI renamed to ${newName}`);
-          renameAiModal.classList.add('hidden');
-          aiNameInput.value = '';
+          renameAiModal.classList.add("hidden");
+          aiNameInput.value = "";
         }
       } catch (e) {
-        uiModule.showError('Failed to rename AI: ' + e.message);
+        uiModule.showError("Failed to rename AI: " + e.message);
       }
     });
   }
 
   // Memory management
-  const memoryModal = el('memory-modal');
-  const closeMemoryBtn = el('close-memory-modal');
+  const memoryModal = el("memory-modal");
+  const closeMemoryBtn = el("close-memory-modal");
 
   // Theme popup close button
-  const closeThemeBtn = el('close-theme-popup');
+  const closeThemeBtn = el("close-theme-popup");
   if (closeThemeBtn && themeModule) {
-    closeThemeBtn.addEventListener('click', () => {
+    closeThemeBtn.addEventListener("click", () => {
       themeModule.closePopup();
     });
   }
 
   // Rename session modal
-  const renameSessionModal = el('rename-session-modal');
-  const closeRenameSession = el('close-rename-session');
-  const cancelRenameSession = el('cancel-rename-session');
-  const saveSessionName = el('save-session-name');
-  const sessionNameInput = el('session-name-input');
-  
+  const renameSessionModal = el("rename-session-modal");
+  const closeRenameSession = el("close-rename-session");
+  const cancelRenameSession = el("cancel-rename-session");
+  const saveSessionName = el("save-session-name");
+  const sessionNameInput = el("session-name-input");
+
   // Close handlers for rename session modal
   if (closeRenameSession) {
-    closeRenameSession.addEventListener('click', () => {
-      renameSessionModal.classList.add('hidden');
+    closeRenameSession.addEventListener("click", () => {
+      renameSessionModal.classList.add("hidden");
     });
   }
-  
+
   if (cancelRenameSession) {
-    cancelRenameSession.addEventListener('click', () => {
-      renameSessionModal.classList.add('hidden');
+    cancelRenameSession.addEventListener("click", () => {
+      renameSessionModal.classList.add("hidden");
     });
   }
-  
+
   if (saveSessionName) {
-    saveSessionName.addEventListener('click', async () => {
+    saveSessionName.addEventListener("click", async () => {
       const newName = sessionNameInput.value.trim();
-      
+
       if (!newName) {
-        uiModule.showError('Please enter a name for the session');
+        uiModule.showError("Please enter a name for the session");
         return;
       }
-      
+
       try {
-        const response = await fetch(`${API_BASE}/api/session/${sessionModule.getCurrentSessionId()}`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ name: newName })
-        });
-        
+        const response = await fetch(
+          `${API_BASE}/api/session/${sessionModule.getCurrentSessionId()}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName }),
+          },
+        );
+
         const result = await response.json();
         if (response.ok) {
           uiModule.showToast(`Session renamed to ${newName}`);
-          renameSessionModal.classList.add('hidden');
-          sessionNameInput.value = '';
+          renameSessionModal.classList.add("hidden");
+          sessionNameInput.value = "";
           // Update the current session name in the UI
-          const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
+          const meta = sessionModule
+            .getSessions()
+            .find((s) => s.id === sessionModule.getCurrentSessionId());
           if (meta) {
             meta.name = newName;
-            const ver = window._appVersion ? ` v${window._appVersion}` : '';
-            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
+            const ver = window._appVersion ? ` v${window._appVersion}` : "";
+            el("current-meta").textContent =
+              `Session: ${meta.name}${meta.model ? " " + meta.model.split("/").pop() : ""}${meta.rag ? " [RAG]" : ""}${ver}`;
           }
           // Refresh the sessions list
-        await sessionModule.loadSessions();
+          await sessionModule.loadSessions();
         } else {
-          throw new Error(result.detail || 'Failed to rename session');
+          throw new Error(result.detail || "Failed to rename session");
         }
       } catch (e) {
-        uiModule.showError('Failed to rename session: ' + e.message);
+        uiModule.showError("Failed to rename session: " + e.message);
       }
     });
   }
-  
+
   if (closeMemoryBtn) {
-    closeMemoryBtn.addEventListener('click', () => {
+    closeMemoryBtn.addEventListener("click", () => {
       dismissModal(memoryModal);
     });
   }
 
   // Sidebar Memory button
-  const toolMemoryBtn = el('tool-memory-btn');
+  const toolMemoryBtn = el("tool-memory-btn");
   if (toolMemoryBtn && memoryModal) {
-    toolMemoryBtn.addEventListener('click', () => {
-      memoryModal.classList.remove('hidden');
-      if (memoryModule && memoryModule.renderMemoryList) memoryModule.renderMemoryList();
-      if (memoryModule && memoryModule.updateMemoryCount) memoryModule.updateMemoryCount();
+    toolMemoryBtn.addEventListener("click", () => {
+      memoryModal.classList.remove("hidden");
+      if (memoryModule && memoryModule.renderMemoryList)
+        memoryModule.renderMemoryList();
+      if (memoryModule && memoryModule.updateMemoryCount)
+        memoryModule.updateMemoryCount();
     });
   }
 
-  const addMemBtn = el('add-memory-btn');
+  const addMemBtn = el("add-memory-btn");
   if (addMemBtn) {
-    addMemBtn.addEventListener('click', memoryModule.addNewMemory);
+    addMemBtn.addEventListener("click", memoryModule.addNewMemory);
   }
-  
-  const memorySearchInput = el('memory-search');
+
+  const memorySearchInput = el("memory-search");
   if (memorySearchInput) {
-    memorySearchInput.addEventListener('input', () => {
+    memorySearchInput.addEventListener("input", () => {
       memoryModule.renderMemoryList();
       memoryModule.updateMemoryCount();
     });
   }
-  
-  const newMemoryInput = el('new-memory-input');
+
+  const newMemoryInput = el("new-memory-input");
   if (newMemoryInput) {
     // keydown, not the deprecated keypress: keypress is not guaranteed to
     // fire for Enter everywhere, which left the Add Memory form with no
     // working submit path (#5828).
-    newMemoryInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.isComposing) {
+    newMemoryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
         memoryModule.addNewMemory();
       }
     });
   }
-  const newMemoryAddBtn = el('new-memory-add-btn');
+  const newMemoryAddBtn = el("new-memory-add-btn");
   if (newMemoryAddBtn) {
-    newMemoryAddBtn.addEventListener('click', () => memoryModule.addNewMemory());
+    newMemoryAddBtn.addEventListener("click", () =>
+      memoryModule.addNewMemory(),
+    );
   }
 
-// Voice recording is handled by the dual-purpose send/mic button (see below)
+  // Voice recording is handled by the dual-purpose send/mic button (see below)
 
   // ── Toggle persistence — delegates to Storage module ──
   function loadToggleState() {
@@ -1724,17 +1993,19 @@ function initializeEventListeners() {
   // Mode-affected tools: default ON in Agent mode, default OFF in Chat mode,
   // but the user's explicit per-mode override is persisted and honored.
   const MODE_TOOLS = [
-    { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
-    { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
+    { btnId: "web-toggle-btn", checkboxId: "web-toggle", stateKey: "web" },
+    { btnId: "bash-toggle-btn", checkboxId: "bash-toggle", stateKey: "bash" },
   ];
 
-  function _modeKey(stateKey, mode) { return `${stateKey}_${mode}`; }
+  function _modeKey(stateKey, mode) {
+    return `${stateKey}_${mode}`;
+  }
 
   function loadToolPref(stateKey, mode) {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
-    return mode === 'agent'; // default: ON in agent, OFF in chat
+    return mode === "agent"; // default: ON in agent, OFF in chat
   }
 
   function saveToolPref(stateKey, mode, value) {
@@ -1744,34 +2015,37 @@ function initializeEventListeners() {
   }
 
   const TOOL_TOGGLE_TOAST_LABELS = {
-    web: 'Web search',
-    bash: 'Shell',
+    web: "Web search",
+    bash: "Shell",
   };
 
   function showToolToggleToast(stateKey, active) {
     const label = TOOL_TOGGLE_TOAST_LABELS[stateKey];
     if (!label || !uiModule?.showToast) return;
-    uiModule.showToast(`${label} ${active ? 'on' : 'off'}`, 1800);
+    uiModule.showToast(`${label} ${active ? "on" : "off"}`, 1800);
   }
 
   function syncPlanToggle(active) {
-    const btn = el('plan-toggle-btn');
-    const chk = el('plan-toggle');
-    const status = el('plan-mode-status');
-    const statusToggle = el('plan-mode-status-toggle');
+    const btn = el("plan-toggle-btn");
+    const chk = el("plan-toggle");
+    const status = el("plan-mode-status");
+    const statusToggle = el("plan-mode-status-toggle");
     if (chk) chk.checked = !!active;
-    document.body.classList.toggle('plan-mode-active', !!active);
+    document.body.classList.toggle("plan-mode-active", !!active);
     if (status) status.hidden = !active;
     if (statusToggle) {
-      statusToggle.setAttribute('aria-pressed', String(!!active));
-      statusToggle.setAttribute('aria-label', active ? 'Turn off plan mode' : 'Turn on plan mode');
+      statusToggle.setAttribute("aria-pressed", String(!!active));
+      statusToggle.setAttribute(
+        "aria-label",
+        active ? "Turn off plan mode" : "Turn on plan mode",
+      );
     }
     if (btn) {
-      btn.classList.toggle('active', !!active);
-      btn.setAttribute('aria-pressed', String(!!active));
+      btn.classList.toggle("active", !!active);
+      btn.setAttribute("aria-pressed", String(!!active));
       btn.title = active
-        ? 'Plan mode on - next message proposes a plan only'
-        : 'Plan mode';
+        ? "Plan mode on - next message proposes a plan only"
+        : "Plan mode";
     }
   }
 
@@ -1782,11 +2056,11 @@ function initializeEventListeners() {
     saveToggleState(st);
     syncPlanToggle(on);
     if (on) {
-      const resChk = el('research-toggle');
+      const resChk = el("research-toggle");
       if (resChk && resChk.checked) _syncResearchIndicator(false);
     }
     if (!options.silent && uiModule?.showToast) {
-      uiModule.showToast(on ? 'Plan mode on' : 'Plan mode off', 1600);
+      uiModule.showToast(on ? "Plan mode on" : "Plan mode off", 1600);
     }
   }
 
@@ -1795,31 +2069,34 @@ function initializeEventListeners() {
       const btn = el(btnId);
       if (!btn) return;
       // Hide bash button in chat mode
-      if (mode === 'chat' && stateKey === 'bash') {
-        btn.style.display = 'none';
+      if (mode === "chat" && stateKey === "bash") {
+        btn.style.display = "none";
         return;
       }
       // Show buttons in agent mode (or for web toggle in any mode)
-      btn.style.display = '';
-      if (btn.style.display === 'none') return;
+      btn.style.display = "";
+      if (btn.style.display === "none") return;
       const on = loadToolPref(stateKey, mode);
-      btn.classList.toggle('active', on);
-      if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
+      btn.classList.toggle("active", on);
+      if (checkboxId) {
+        const chk = el(checkboxId);
+        if (chk) chk.checked = on;
+      }
     });
   }
 
-	  // ── Agent / Chat mode toggle ──
-	  (function initModeToggle() {
-    const agentBtn = el('mode-agent-btn');
-    const chatBtn = el('mode-chat-btn');
+  // ── Agent / Chat mode toggle ──
+  (function initModeToggle() {
+    const agentBtn = el("mode-agent-btn");
+    const chatBtn = el("mode-chat-btn");
     if (!agentBtn || !chatBtn) return;
     const state = loadToggleState();
-    let currentMode = state.mode || 'chat';
+    let currentMode = state.mode || "chat";
 
     // Immediately hide bash button in chat mode on page load
-    if (currentMode === 'chat') {
-      const bashBtn = el('bash-toggle-btn');
-      if (bashBtn) bashBtn.style.display = 'none';
+    if (currentMode === "chat") {
+      const bashBtn = el("bash-toggle-btn");
+      if (bashBtn) bashBtn.style.display = "none";
     }
 
     function setMode(mode) {
@@ -1827,91 +2104,137 @@ function initializeEventListeners() {
       const st = loadToggleState();
       st.mode = mode;
       saveToggleState(st);
-      agentBtn.classList.toggle('active', mode === 'agent');
-      chatBtn.classList.toggle('active', mode === 'chat');
-      agentBtn.setAttribute('aria-pressed', String(mode === 'agent'));
-      chatBtn.setAttribute('aria-pressed', String(mode === 'chat'));
+      agentBtn.classList.toggle("active", mode === "agent");
+      chatBtn.classList.toggle("active", mode === "chat");
+      agentBtn.setAttribute("aria-pressed", String(mode === "agent"));
+      chatBtn.setAttribute("aria-pressed", String(mode === "chat"));
       // Slide the pill to the active button
-      const toggle = agentBtn.closest('.mode-toggle');
-      if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      const toggle = agentBtn.closest(".mode-toggle");
+      if (toggle) toggle.classList.toggle("mode-chat", mode === "chat");
       // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
-      try { workspaceModule.applyMode(mode); } catch (_) {}
+      try {
+        workspaceModule.applyMode(mode);
+      } catch (_) {}
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
     window.__odysseusSetChatMode = setMode;
-    agentBtn.addEventListener('click', () => {
+    agentBtn.addEventListener("click", () => {
       // Agent mode turns off research if active
-      const resChk = el('research-toggle');
+      const resChk = el("research-toggle");
       if (resChk && resChk.checked) _syncResearchIndicator(false);
-      setMode('agent');
+      setMode("agent");
     });
-    chatBtn.addEventListener('click', () => setMode('chat'));
-	    setMode(currentMode);
-	  })();
+    chatBtn.addEventListener("click", () => setMode("chat"));
+    setMode(currentMode);
+  })();
 
   (function initPlanToggle() {
-    const btn = el('plan-toggle-btn');
+    const btn = el("plan-toggle-btn");
     const state = loadToggleState();
     syncPlanToggle(!!state.plan_mode);
-    window.__odysseusSetPlanMode = (active) => setPlanMode(active, { silent: true });
-    const statusToggle = el('plan-mode-status-toggle');
+    window.__odysseusSetPlanMode = (active) =>
+      setPlanMode(active, { silent: true });
+    const statusToggle = el("plan-mode-status-toggle");
     if (btn) {
-      btn.addEventListener('click', () => {
+      btn.addEventListener("click", () => {
         const st = loadToggleState();
         setPlanMode(!st.plan_mode);
       });
     }
     if (statusToggle) {
-      statusToggle.addEventListener('click', () => setPlanMode(false));
+      statusToggle.addEventListener("click", () => setPlanMode(false));
     }
-    const msgInput = el('message');
+    const msgInput = el("message");
     if (msgInput && !msgInput._odysseusPlanTabToggle) {
       msgInput._odysseusPlanTabToggle = true;
-      msgInput.addEventListener('keydown', (e) => {
-        if (e.key !== 'Tab' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+      msgInput.addEventListener("keydown", (e) => {
+        if (
+          e.key !== "Tab" ||
+          e.shiftKey ||
+          e.altKey ||
+          e.ctrlKey ||
+          e.metaKey ||
+          e.isComposing
+        )
+          return;
         e.preventDefault();
         e.stopPropagation();
         const st = loadToggleState();
         setPlanMode(!st.plan_mode);
       });
     }
-    const chatBar = document.querySelector('.chat-input-bar');
+    const chatBar = document.querySelector(".chat-input-bar");
     if (chatBar && !chatBar._odysseusPlanSwipeToggle) {
       chatBar._odysseusPlanSwipeToggle = true;
       let touchStartX = 0;
       let touchStartY = 0;
       let touchStartAt = 0;
-      chatBar.addEventListener('touchstart', (e) => {
-        if (!e.touches || e.touches.length !== 1) return;
-        const t = e.touches[0];
-        touchStartX = t.clientX;
-        touchStartY = t.clientY;
-        touchStartAt = Date.now();
-      }, { passive: true });
-      chatBar.addEventListener('touchend', (e) => {
-        if (!touchStartAt || !e.changedTouches || e.changedTouches.length !== 1) return;
-        if (!window.matchMedia || !window.matchMedia('(max-width: 768px)').matches) return;
-        const t = e.changedTouches[0];
-        const dx = t.clientX - touchStartX;
-        const dy = t.clientY - touchStartY;
-        const dt = Date.now() - touchStartAt;
-        touchStartAt = 0;
-        if (dt > 700 || Math.abs(dx) < 56 || Math.abs(dy) > 28 || Math.abs(dx) < Math.abs(dy) * 2) return;
-        const st = loadToggleState();
-        setPlanMode(!st.plan_mode);
-      }, { passive: true });
+      chatBar.addEventListener(
+        "touchstart",
+        (e) => {
+          if (!e.touches || e.touches.length !== 1) return;
+          const t = e.touches[0];
+          touchStartX = t.clientX;
+          touchStartY = t.clientY;
+          touchStartAt = Date.now();
+        },
+        { passive: true },
+      );
+      chatBar.addEventListener(
+        "touchend",
+        (e) => {
+          if (
+            !touchStartAt ||
+            !e.changedTouches ||
+            e.changedTouches.length !== 1
+          )
+            return;
+          if (
+            !window.matchMedia ||
+            !window.matchMedia("(max-width: 768px)").matches
+          )
+            return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - touchStartX;
+          const dy = t.clientY - touchStartY;
+          const dt = Date.now() - touchStartAt;
+          touchStartAt = 0;
+          if (
+            dt > 700 ||
+            Math.abs(dx) < 56 ||
+            Math.abs(dy) > 28 ||
+            Math.abs(dx) < Math.abs(dy) * 2
+          )
+            return;
+          const st = loadToggleState();
+          setPlanMode(!st.plan_mode);
+        },
+        { passive: true },
+      );
     }
   })();
 
   // ── Tool splash explainer messages (shown first 2 times per tool) ──
-  const SPLASH_COUNT_KEY = 'odysseus-tool-splash-counts';
+  const SPLASH_COUNT_KEY = "odysseus-tool-splash-counts";
   const SPLASH_MAX = 2;
   const _toolSplashes = {
-    web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
-    bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
-    builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
-    research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
+    web: {
+      role: "Web Search",
+      text: "Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.",
+    },
+    bash: {
+      role: "Shell Access",
+      text: "Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.",
+    },
+    builder: {
+      role: "Tool Builder",
+      text: "Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.",
+    },
+    research: {
+      role: "Deep Research",
+      text: "Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.",
+    },
   };
   function _showToolSplash(key) {
     const splash = _toolSplashes[key];
@@ -1926,11 +2249,16 @@ function initializeEventListeners() {
     if (chatModule && chatModule.hideWelcomeScreen) {
       chatModule.hideWelcomeScreen();
     }
-    const chatBox = document.getElementById('chat-history');
+    const chatBox = document.getElementById("chat-history");
     if (!chatBox) return;
-    const div = document.createElement('div');
-    div.className = 'msg msg-ai tool-splash';
-    div.innerHTML = '<div class="role">' + splash.role + '</div><div class="body" style="opacity:0.7;font-size:0.92em">' + splash.text + '</div>';
+    const div = document.createElement("div");
+    div.className = "msg msg-ai tool-splash";
+    div.innerHTML =
+      '<div class="role">' +
+      splash.role +
+      '</div><div class="body" style="opacity:0.7;font-size:0.92em">' +
+      splash.text +
+      "</div>";
     chatBox.appendChild(div);
     if (uiModule) uiModule.scrollHistory();
   }
@@ -1940,66 +2268,81 @@ function initializeEventListeners() {
     const btn = el(btnId);
     if (!btn) return;
     // Restore per-mode saved state for both Agent and Chat modes.
-    const mode = (loadToggleState().mode) || 'chat';
+    const mode = loadToggleState().mode || "chat";
     const saved = loadToolPref(stateKey, mode);
     const chk = el(checkboxId);
     if (chk) chk.checked = saved;
-    btn.classList.toggle('active', saved);
-    btn.setAttribute('aria-pressed', String(saved));
-    btn.addEventListener('click', () => {
-      const curMode = (loadToggleState().mode) || 'chat';
+    btn.classList.toggle("active", saved);
+    btn.setAttribute("aria-pressed", String(saved));
+    btn.addEventListener("click", () => {
+      const curMode = loadToggleState().mode || "chat";
       const chk = el(checkboxId);
       chk.checked = !chk.checked;
-      btn.classList.toggle('active', chk.checked);
-      btn.setAttribute('aria-pressed', String(chk.checked));
+      btn.classList.toggle("active", chk.checked);
+      btn.setAttribute("aria-pressed", String(chk.checked));
       saveToolPref(stateKey, curMode, chk.checked);
       showToolToggleToast(stateKey, chk.checked);
       if (chk.checked) _showToolSplash(stateKey);
       // Web search and Research are mutually exclusive — Research takes priority
-      if (stateKey === 'web' && chk.checked) {
-        const resChk = el('research-toggle');
+      if (stateKey === "web" && chk.checked) {
+        const resChk = el("research-toggle");
         if (resChk && resChk.checked) {
           _syncResearchIndicator(false);
         }
       }
     });
   }
-  setupToggle('web-toggle-btn', 'web-toggle', 'web');
-  setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
-  try { workspaceModule.initWorkspace(); } catch (_) {}
+  setupToggle("web-toggle-btn", "web-toggle", "web");
+  setupToggle("bash-toggle-btn", "bash-toggle", "bash");
+  try {
+    workspaceModule.initWorkspace();
+  } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   function bringOpenDocumentToFrontOnMobile() {
     if (window.innerWidth > 768) return false;
-    if (!documentModule || !documentModule.isPanelOpen || !documentModule.isPanelOpen()) return false;
-    if (!document.body.classList.contains('email-front')) return false;
-    document.body.classList.remove('email-front', 'email-doc-split-active');
-    document.documentElement.style.removeProperty('--email-doc-split-left-x');
-    document.documentElement.style.removeProperty('--email-doc-split-email-w');
-    document.documentElement.style.removeProperty('--email-doc-split-right-x');
-    const docPane = document.getElementById('doc-editor-pane');
-    if (docPane) docPane.style.setProperty('z-index', '10010', 'important');
-    const overflow = el('overflow-doc-btn');
-    if (overflow) overflow.classList.add('active');
-    const indicator = el('doc-indicator-btn');
-    if (indicator) indicator.classList.add('active');
-    const st = loadToggleState(); st.doc = true; saveToggleState(st);
+    if (
+      !documentModule ||
+      !documentModule.isPanelOpen ||
+      !documentModule.isPanelOpen()
+    )
+      return false;
+    if (!document.body.classList.contains("email-front")) return false;
+    document.body.classList.remove("email-front", "email-doc-split-active");
+    document.documentElement.style.removeProperty("--email-doc-split-left-x");
+    document.documentElement.style.removeProperty("--email-doc-split-email-w");
+    document.documentElement.style.removeProperty("--email-doc-split-right-x");
+    const docPane = document.getElementById("doc-editor-pane");
+    if (docPane) docPane.style.setProperty("z-index", "10010", "important");
+    const overflow = el("overflow-doc-btn");
+    if (overflow) overflow.classList.add("active");
+    const indicator = el("doc-indicator-btn");
+    if (indicator) indicator.classList.add("active");
+    const st = loadToggleState();
+    st.doc = true;
+    saveToggleState(st);
     return true;
   }
 
-  const overflowDocBtn = el('overflow-doc-btn');
+  const overflowDocBtn = el("overflow-doc-btn");
   if (overflowDocBtn) {
-    overflowDocBtn.addEventListener('click', async () => {
+    overflowDocBtn.addEventListener("click", async () => {
       if (!documentModule) return;
       if (bringOpenDocumentToFrontOnMobile()) return;
       if (documentModule.isPanelOpen()) {
         documentModule.closePanel();
-        overflowDocBtn.classList.remove('active');
-        const st = loadToggleState(); st.doc = false; saveToggleState(st);
+        overflowDocBtn.classList.remove("active");
+        const st = loadToggleState();
+        st.doc = false;
+        saveToggleState(st);
       } else {
         let sessionId = sessionModule.getCurrentSessionId();
         // If there's a pending "New Chat", materialize it first
-        if (!sessionId && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+        if (
+          !sessionId &&
+          sessionModule.hasPendingChat &&
+          sessionModule.hasPendingChat()
+        ) {
           await sessionModule.materializePendingSession();
           sessionId = sessionModule.getCurrentSessionId();
         }
@@ -2008,33 +2351,37 @@ function initializeEventListeners() {
         } else {
           documentModule.ensureDocPanel();
         }
-        overflowDocBtn.classList.add('active');
-        const st = loadToggleState(); st.doc = true; saveToggleState(st);
+        overflowDocBtn.classList.add("active");
+        const st = loadToggleState();
+        st.doc = true;
+        saveToggleState(st);
       }
     });
   }
 
   // Document indicator button (shown outside overflow when docs exist)
-  const docIndicatorBtn = el('doc-indicator-btn');
+  const docIndicatorBtn = el("doc-indicator-btn");
   if (docIndicatorBtn) {
-    docIndicatorBtn.addEventListener('click', () => {
-      const ob = el('overflow-doc-btn');
+    docIndicatorBtn.addEventListener("click", () => {
+      const ob = el("overflow-doc-btn");
       if (ob) ob.click();
     });
   }
 
   // ── RAG toggle (overflow + indicator) ──
   function _syncRagIndicator(active) {
-    const indicator = el('rag-indicator-btn');
-    const overflow = el('overflow-rag-btn');
-    const chk = el('rag-toggle');
+    const indicator = el("rag-indicator-btn");
+    const overflow = el("overflow-rag-btn");
+    const chk = el("rag-toggle");
     if (chk) chk.checked = active;
     if (indicator) {
-      indicator.style.display = active ? '' : 'none';
-      indicator.classList.toggle('active', active);
+      indicator.style.display = active ? "" : "none";
+      indicator.classList.toggle("active", active);
     }
-    if (overflow) overflow.classList.toggle('active', active);
-    const s = loadToggleState(); s.rag = active; saveToggleState(s);
+    if (overflow) overflow.classList.toggle("active", active);
+    const s = loadToggleState();
+    s.rag = active;
+    saveToggleState(s);
     updatePlusDot();
   }
   window._syncRagIndicator = _syncRagIndicator;
@@ -2053,57 +2400,80 @@ function initializeEventListeners() {
 
   // ── Overflow "..." menu (Research) ──
   function updatePlusDot() {
-    const plusBtn = el('overflow-plus-btn');
+    const plusBtn = el("overflow-plus-btn");
     if (!plusBtn) return;
-    const menu = el('overflow-menu');
-    const anyActive = menu ? Array.from(menu.querySelectorAll('.overflow-menu-item.active')).some(item => item.style.display !== 'none') : false;
-    plusBtn.classList.toggle('has-active', anyActive);
+    const menu = el("overflow-menu");
+    const anyActive = menu
+      ? Array.from(menu.querySelectorAll(".overflow-menu-item.active")).some(
+          (item) => item.style.display !== "none",
+        )
+      : false;
+    plusBtn.classList.toggle("has-active", anyActive);
   }
   // External modules (compare) dispatch this when their overflow state changes
-  document.addEventListener('overflow-state-change', () => updatePlusDot());
+  document.addEventListener("overflow-state-change", () => updatePlusDot());
 
   // ── Prevent toolbar buttons from stealing focus (avoids mobile keyboard bounce) ──
-  const chatInputBar = document.querySelector('.chat-input-bar');
+  const chatInputBar = document.querySelector(".chat-input-bar");
   // ── Keep textarea focused when interacting with chat bar controls (mobile keyboard fix) ──
-  const _msgTextarea = el('message');
+  const _msgTextarea = el("message");
   if (chatInputBar && _msgTextarea) {
     let _refocusOnBlur = false;
     function _flagRefocus(e) {
-      if (e.target.closest('textarea, input')) return;
+      if (e.target.closest("textarea, input")) return;
       // Don't refocus for attach — file picker needs full focus control
-      if (e.target.closest('#overflow-attach-btn')) return;
+      if (e.target.closest("#overflow-attach-btn")) return;
       // Don't refocus for model picker button — focus should go to picker search input
-      if (e.target.closest('.model-picker-btn')) return;
+      if (e.target.closest(".model-picker-btn")) return;
       // Don't refocus when tapping the +/chevron tools button — the user
       // is explicitly trying to dismiss the keyboard and open the tools
       // menu. Without this, the textarea blurs (keyboard down), then this
       // handler re-focuses it (keyboard bounces back up).
-      if (e.target.closest('#overflow-plus-btn')) return;
+      if (e.target.closest("#overflow-plus-btn")) return;
       if (document.activeElement === _msgTextarea) _refocusOnBlur = true;
     }
-    chatInputBar.addEventListener('touchstart', _flagRefocus, { passive: true });
+    chatInputBar.addEventListener("touchstart", _flagRefocus, {
+      passive: true,
+    });
     // Overflow menu is position:fixed — may not bubble through chatInputBar on mobile
-    const _overflowMenu = el('overflow-menu');
-    if (_overflowMenu) _overflowMenu.addEventListener('touchstart', _flagRefocus, { passive: true });
+    const _overflowMenu = el("overflow-menu");
+    if (_overflowMenu)
+      _overflowMenu.addEventListener("touchstart", _flagRefocus, {
+        passive: true,
+      });
     // Model picker menu too
-    const _pickerMenu = document.getElementById('model-picker-menu');
-    if (_pickerMenu) _pickerMenu.addEventListener('touchstart', _flagRefocus, { passive: true });
+    const _pickerMenu = document.getElementById("model-picker-menu");
+    if (_pickerMenu)
+      _pickerMenu.addEventListener("touchstart", _flagRefocus, {
+        passive: true,
+      });
     // Attach strip (outside chat-input-bar)
-    const _attachStrip = el('attach-strip');
-    if (_attachStrip) _attachStrip.addEventListener('touchstart', _flagRefocus, { passive: true });
-    _msgTextarea.addEventListener('blur', () => {
+    const _attachStrip = el("attach-strip");
+    if (_attachStrip)
+      _attachStrip.addEventListener("touchstart", _flagRefocus, {
+        passive: true,
+      });
+    _msgTextarea.addEventListener("blur", () => {
       if (_refocusOnBlur) {
         _refocusOnBlur = false;
         setTimeout(() => _msgTextarea.focus(), 0);
       }
     });
     // Clear flag if touch ends without causing blur
-    document.addEventListener('touchend', () => { setTimeout(() => { _refocusOnBlur = false; }, 50); }, { passive: true });
+    document.addEventListener(
+      "touchend",
+      () => {
+        setTimeout(() => {
+          _refocusOnBlur = false;
+        }, 50);
+      },
+      { passive: true },
+    );
   }
 
   (function initOverflowMenu() {
-    const plusBtn = el('overflow-plus-btn');
-    const menu = el('overflow-menu');
+    const plusBtn = el("overflow-plus-btn");
+    const menu = el("overflow-menu");
     if (!plusBtn || !menu) return;
 
     // `.chat-input-bar` has `container-type: inline-size`, which makes it the
@@ -2113,142 +2483,152 @@ function initializeEventListeners() {
     // open so its fixed position + z-index apply against the viewport, then
     // restore it to its wrapper on close.
     const ownerWrap = menu.parentElement;
-    const pickerWrap = el('model-picker-wrap');
+    const pickerWrap = el("model-picker-wrap");
     let _vvReposition = null;
     // Pin the menu's bottom 8px above the chevron (viewport-relative, since it's
     // portaled to <body>). Only cap height + show a scrollbar when the list is
     // genuinely taller than the room above the button.
     function positionMenu() {
       const r = plusBtn.getBoundingClientRect();
-      menu.style.left = r.left + 'px';
-      menu.style.right = 'auto';
-      menu.style.bottom = 'auto';
-      menu.style.maxHeight = '';      // reset so we can measure the natural height
-      menu.style.overflowY = '';
-      const avail = r.top - 16;        // room above the chevron
+      menu.style.left = r.left + "px";
+      menu.style.right = "auto";
+      menu.style.bottom = "auto";
+      menu.style.maxHeight = ""; // reset so we can measure the natural height
+      menu.style.overflowY = "";
+      const avail = r.top - 16; // room above the chevron
       const natural = menu.scrollHeight;
       const h = Math.min(natural, avail);
-      if (natural > avail) {           // only cap + scroll when it doesn't fit
-        menu.style.maxHeight = avail + 'px';
-        menu.style.overflowY = 'auto';
+      if (natural > avail) {
+        // only cap + scroll when it doesn't fit
+        menu.style.maxHeight = avail + "px";
+        menu.style.overflowY = "auto";
       }
-      menu.style.top = (r.top - 8 - h) + 'px';
+      menu.style.top = r.top - 8 - h + "px";
     }
     // Tapping the chevron must NOT steal focus from the message box, or the
     // mobile keyboard collapses. preventDefault on pointerdown keeps the
     // textarea focused (keyboard stays up) while click still opens the menu.
-    plusBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); });
-    plusBtn.addEventListener('click', (e) => {
+    plusBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+    });
+    plusBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       // Closing path needs to play the fold-in animation, not just flip
       // .hidden — route through closeOverflowMenu so the second-click
       // close looks the same as click-outside / Escape / item-pick.
-      const isOpen = !menu.classList.contains('hidden') && !menu.classList.contains('closing');
+      const isOpen =
+        !menu.classList.contains("hidden") &&
+        !menu.classList.contains("closing");
       if (isOpen) {
         closeOverflowMenu();
         return;
       }
       // Re-opening while a fold-in is mid-animation: cancel it cleanly.
-      menu.classList.remove('closing');
-      menu.classList.remove('hidden');
-      plusBtn.classList.add('expanded');
-      document.body.appendChild(menu);  // escape the composer's container-type trap
+      menu.classList.remove("closing");
+      menu.classList.remove("hidden");
+      plusBtn.classList.add("expanded");
+      document.body.appendChild(menu); // escape the composer's container-type trap
       // Hide pill bar label so it doesn't show through the menu
-      if (pickerWrap) pickerWrap.style.visibility = 'hidden';
+      if (pickerWrap) pickerWrap.style.visibility = "hidden";
       // Keep the textarea focused so the keyboard stays up if it was open (the
       // pointerdown handler above prevents the focus-steal). Still watch
       // visualViewport so the menu follows the chevron if the viewport shifts.
       positionMenu();
       if (window.visualViewport && !_vvReposition) {
         _vvReposition = () => positionMenu();
-        window.visualViewport.addEventListener('resize', _vvReposition);
-        window.visualViewport.addEventListener('scroll', _vvReposition);
+        window.visualViewport.addEventListener("resize", _vvReposition);
+        window.visualViewport.addEventListener("scroll", _vvReposition);
       }
     });
     function closeOverflowMenu() {
-      if (menu.classList.contains('hidden')) return;
-      if (menu.classList.contains('closing')) return;
+      if (menu.classList.contains("hidden")) return;
+      if (menu.classList.contains("closing")) return;
       if (_vvReposition && window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', _vvReposition);
-        window.visualViewport.removeEventListener('scroll', _vvReposition);
+        window.visualViewport.removeEventListener("resize", _vvReposition);
+        window.visualViewport.removeEventListener("scroll", _vvReposition);
         _vvReposition = null;
       }
       // Play the fold-in animation (items peel top-down, then container
       // scales back into the chevron) before flipping to display:none.
-      menu.classList.add('closing');
-      plusBtn.classList.remove('expanded');
-      if (pickerWrap) pickerWrap.style.visibility = '';
+      menu.classList.add("closing");
+      plusBtn.classList.remove("expanded");
+      if (pickerWrap) pickerWrap.style.visibility = "";
       // Item delays max at 0.18s + 0.20s anim = 0.38s for items, container
       // delay 0.16s + 0.22s = 0.38s. 400ms covers both with margin.
       setTimeout(() => {
-        menu.classList.add('hidden');
-        menu.classList.remove('closing');
-        if (ownerWrap) ownerWrap.appendChild(menu);  // restore from <body> portal
+        menu.classList.add("hidden");
+        menu.classList.remove("closing");
+        if (ownerWrap) ownerWrap.appendChild(menu); // restore from <body> portal
       }, 400);
     }
     // Close menu when clicking any item inside it. preventDefault on pointerdown
     // so tapping an item (e.g. Attach files) doesn't steal focus from the message
     // box — keeps the mobile keyboard up.
-    menu.querySelectorAll('.overflow-menu-item').forEach(item => {
-      item.addEventListener('pointerdown', (e) => { e.preventDefault(); });
-      item.addEventListener('click', () => closeOverflowMenu());
+    menu.querySelectorAll(".overflow-menu-item").forEach((item) => {
+      item.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+      });
+      item.addEventListener("click", () => closeOverflowMenu());
     });
-    document.addEventListener('click', (e) => {
+    document.addEventListener("click", (e) => {
       if (!menu.contains(e.target) && e.target !== plusBtn) closeOverflowMenu();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !menu.classList.contains('hidden')) closeOverflowMenu();
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !menu.classList.contains("hidden"))
+        closeOverflowMenu();
     });
 
     // Research toggle
-    const researchBtn = el('research-toggle-btn');
+    const researchBtn = el("research-toggle-btn");
     if (researchBtn) {
       const st = loadToggleState();
       const resState = st.research || false;
-      el('research-toggle').checked = resState;
-      researchBtn.classList.toggle('active', resState);
-      researchBtn.style.display = resState ? '' : 'none';
+      el("research-toggle").checked = resState;
+      researchBtn.classList.toggle("active", resState);
+      researchBtn.style.display = resState ? "" : "none";
       // Sync overflow + tool sidebar on load
-      const overflowRes = el('overflow-research-btn');
-      if (overflowRes) overflowRes.classList.toggle('active', resState);
-      const toolRes = el('tool-research-btn');
-      if (toolRes) toolRes.classList.toggle('active', resState);
+      const overflowRes = el("overflow-research-btn");
+      if (overflowRes) overflowRes.classList.toggle("active", resState);
+      const toolRes = el("tool-research-btn");
+      if (toolRes) toolRes.classList.toggle("active", resState);
       // On load: if both research and web are ON, research wins
       if (resState) {
-        const webChk = el('web-toggle');
-        const webBtn = el('web-toggle-btn');
+        const webChk = el("web-toggle");
+        const webBtn = el("web-toggle-btn");
         if (webChk && webChk.checked) {
           webChk.checked = false;
-          if (webBtn) webBtn.classList.remove('active');
-          saveToolPref('web', (st.mode || 'chat'), false);
+          if (webBtn) webBtn.classList.remove("active");
+          saveToolPref("web", st.mode || "chat", false);
         }
       }
 
-      researchBtn.addEventListener('click', () => {
-        const chk = el('research-toggle');
+      researchBtn.addEventListener("click", () => {
+        const chk = el("research-toggle");
         const turningOn = chk ? !chk.checked : false;
         _syncResearchIndicator(turningOn);
         if (turningOn) {
-          _showToolSplash('research');
+          _showToolSplash("research");
           // Clear character — mutually exclusive with research
-          if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+          if (presetsModule && presetsModule.deactivateCharacter)
+            presetsModule.deactivateCharacter();
           // Research and Web search are mutually exclusive
-          const webChk = el('web-toggle');
-          const webBtn = el('web-toggle-btn');
+          const webChk = el("web-toggle");
+          const webBtn = el("web-toggle-btn");
           if (webChk && webChk.checked) {
             webChk.checked = false;
-            if (webBtn) webBtn.classList.remove('active');
-            saveToolPref('web', (loadToggleState().mode || 'chat'), false);
+            if (webBtn) webBtn.classList.remove("active");
+            saveToolPref("web", loadToggleState().mode || "chat", false);
           }
           // Research requires chat mode — force switch from agent
           const rs = loadToggleState();
-          if (rs.mode === 'agent') {
-            rs.mode = 'chat';
+          if (rs.mode === "agent") {
+            rs.mode = "chat";
             saveToggleState(rs);
-            const ab = el('mode-agent-btn'), cb = el('mode-chat-btn');
-            if (ab) ab.classList.remove('active');
-            if (cb) cb.classList.add('active');
-            applyModeToToggles('chat');
+            const ab = el("mode-agent-btn"),
+              cb = el("mode-chat-btn");
+            if (ab) ab.classList.remove("active");
+            if (cb) cb.classList.add("active");
+            applyModeToToggles("chat");
           }
         }
       });
@@ -2259,28 +2639,32 @@ function initializeEventListeners() {
 
   // ── Auto-collapse toolbar buttons into overflow when space is tight ──
   (function initToolbarOverflow() {
-    const inputLeft = document.querySelector('.chat-input-left');
-    const overflowMenu = el('overflow-menu');
-    const overflowWrapper = document.querySelector('.overflow-wrapper');
+    const inputLeft = document.querySelector(".chat-input-left");
+    const overflowMenu = el("overflow-menu");
+    const overflowWrapper = document.querySelector(".overflow-wrapper");
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
-    const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
+    const collapsibleIds = ["bash-toggle-btn", "web-toggle-btn"];
+    const collapsibleBtns = collapsibleIds.map((id) => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
 
     // Create overflow mirror items for each collapsible button
-    collapsibleBtns.forEach(btn => {
-      const mirror = document.createElement('button');
-      mirror.type = 'button';
-      mirror.className = 'overflow-menu-item toolbar-overflow-mirror';
+    collapsibleBtns.forEach((btn) => {
+      const mirror = document.createElement("button");
+      mirror.type = "button";
+      mirror.className = "overflow-menu-item toolbar-overflow-mirror";
       mirror.dataset.mirrorOf = btn.id;
-      const title = btn.title || btn.id.replace(/-/g, ' ');
-      mirror.innerHTML = btn.querySelector('svg').outerHTML + '<span>' + title + '</span>' +
+      const title = btn.title || btn.id.replace(/-/g, " ");
+      mirror.innerHTML =
+        btn.querySelector("svg").outerHTML +
+        "<span>" +
+        title +
+        "</span>" +
         '<span class="overflow-active-dot"></span>';
-      mirror.style.display = 'none';
-      mirror.addEventListener('click', () => btn.click());
+      mirror.style.display = "none";
+      mirror.addEventListener("click", () => btn.click());
       // Insert at top of overflow menu (before existing items)
       overflowMenu.insertBefore(mirror, overflowMenu.firstChild);
       overflowMirrors.set(btn.id, mirror);
@@ -2289,7 +2673,8 @@ function initializeEventListeners() {
     function syncMirrorStates() {
       overflowMirrors.forEach((mirror, btnId) => {
         const btn = el(btnId);
-        if (btn) mirror.classList.toggle('active', btn.classList.contains('active'));
+        if (btn)
+          mirror.classList.toggle("active", btn.classList.contains("active"));
       });
       updatePlusDot();
     }
@@ -2297,18 +2682,20 @@ function initializeEventListeners() {
     function checkToolbarOverflow() {
       const inputBottom = inputLeft.parentElement;
       if (!inputBottom) return;
-      const rightEl = document.querySelector('.chat-input-right');
-      const available = inputBottom.clientWidth -
-        (rightEl ? rightEl.offsetWidth : 0) - 16;
+      const rightEl = document.querySelector(".chat-input-right");
+      const available =
+        inputBottom.clientWidth - (rightEl ? rightEl.offsetWidth : 0) - 16;
 
       // Uncollapse all to measure natural widths
-      collapsibleBtns.forEach(btn => btn.classList.remove('toolbar-collapsed'));
-      overflowMirrors.forEach(m => m.style.display = 'none');
+      collapsibleBtns.forEach((btn) =>
+        btn.classList.remove("toolbar-collapsed"),
+      );
+      overflowMirrors.forEach((m) => (m.style.display = "none"));
 
       // Temporarily allow overflow for accurate measurement
       const prevOverflow = inputLeft.style.overflow;
-      inputLeft.style.overflow = 'visible';
-      inputLeft.style.flexWrap = 'nowrap';
+      inputLeft.style.overflow = "visible";
+      inputLeft.style.flexWrap = "nowrap";
 
       // Force reflow then measure each child
       void inputLeft.offsetWidth;
@@ -2317,30 +2704,31 @@ function initializeEventListeners() {
       const wrapperWidth = overflowWrapper.offsetWidth + 4;
 
       // Measure each collapsible button's natural width
-      const btnWidths = collapsibleBtns.map(btn => btn.offsetWidth + 4);
+      const btnWidths = collapsibleBtns.map((btn) => btn.offsetWidth + 4);
 
       // Measure non-collapsible, non-wrapper children (tool indicators etc)
       let otherWidth = 0;
-      Array.from(inputLeft.children).forEach(c => {
+      Array.from(inputLeft.children).forEach((c) => {
         if (c === overflowWrapper) return;
         if (collapsibleBtns.includes(c)) return;
         if (c.offsetWidth) otherWidth += c.offsetWidth + 4;
       });
 
-      let totalWidth = wrapperWidth + otherWidth + btnWidths.reduce((a, b) => a + b, 0);
+      let totalWidth =
+        wrapperWidth + otherWidth + btnWidths.reduce((a, b) => a + b, 0);
 
       // Force-collapse shell & search when research mode + doc panel are both active
-      const _resChk = el('research-toggle');
+      const _resChk = el("research-toggle");
       const _researchOn = _resChk && _resChk.checked;
-      const _docViewOn = document.body.classList.contains('doc-view');
+      const _docViewOn = document.body.classList.contains("doc-view");
       if (_researchOn && _docViewOn) {
-        collapsibleBtns.forEach(btn => {
-          btn.classList.add('toolbar-collapsed');
+        collapsibleBtns.forEach((btn) => {
+          btn.classList.add("toolbar-collapsed");
           const mirror = overflowMirrors.get(btn.id);
-          if (mirror) mirror.style.display = '';
+          if (mirror) mirror.style.display = "";
         });
         inputLeft.style.overflow = prevOverflow;
-        inputLeft.style.flexWrap = '';
+        inputLeft.style.flexWrap = "";
         syncMirrorStates();
         return;
       }
@@ -2348,9 +2736,9 @@ function initializeEventListeners() {
       // Collapse from lowest priority until it fits
       if (totalWidth > available) {
         for (let i = 0; i < collapsibleBtns.length; i++) {
-          collapsibleBtns[i].classList.add('toolbar-collapsed');
+          collapsibleBtns[i].classList.add("toolbar-collapsed");
           const mirror = overflowMirrors.get(collapsibleBtns[i].id);
-          if (mirror) mirror.style.display = '';
+          if (mirror) mirror.style.display = "";
           totalWidth -= btnWidths[i];
           if (totalWidth <= available) break;
         }
@@ -2358,122 +2746,140 @@ function initializeEventListeners() {
 
       // Restore
       inputLeft.style.overflow = prevOverflow;
-      inputLeft.style.flexWrap = '';
+      inputLeft.style.flexWrap = "";
       syncMirrorStates();
     }
 
     // Observe active class changes to sync mirror states
     const observer = new MutationObserver(() => syncMirrorStates());
-    collapsibleBtns.forEach(btn => {
-      observer.observe(btn, { attributes: true, attributeFilter: ['class'] });
+    collapsibleBtns.forEach((btn) => {
+      observer.observe(btn, { attributes: true, attributeFilter: ["class"] });
     });
 
     // Run on resize and on load
-    window.addEventListener('resize', () => requestAnimationFrame(checkToolbarOverflow));
+    window.addEventListener("resize", () =>
+      requestAnimationFrame(checkToolbarOverflow),
+    );
     // Run immediately (state is already restored by this point)
     checkToolbarOverflow();
     // Re-check when sidebar toggles (changes available width)
-    document.addEventListener('overflow-state-change', () =>
-      requestAnimationFrame(checkToolbarOverflow));
+    document.addEventListener("overflow-state-change", () =>
+      requestAnimationFrame(checkToolbarOverflow),
+    );
     // Also re-check when sidebar visibility changes
-    const sidebarEl = el('sidebar');
+    const sidebarEl = el("sidebar");
     if (sidebarEl) {
-      new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
-        .observe(sidebarEl, { attributes: true, attributeFilter: ['class'] });
+      new MutationObserver(() =>
+        requestAnimationFrame(checkToolbarOverflow),
+      ).observe(sidebarEl, { attributes: true, attributeFilter: ["class"] });
     }
     // Re-check when doc panel opens/closes (body.doc-view toggled)
-    new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
-      .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    new MutationObserver(() =>
+      requestAnimationFrame(checkToolbarOverflow),
+    ).observe(document.body, { attributes: true, attributeFilter: ["class"] });
     // Re-check when input bar itself resizes (e.g. doc panel drag)
     const inputBottom = inputLeft.parentElement;
     if (inputBottom) {
-      new ResizeObserver(() => requestAnimationFrame(checkToolbarOverflow)).observe(inputBottom);
+      new ResizeObserver(() =>
+        requestAnimationFrame(checkToolbarOverflow),
+      ).observe(inputBottom);
     }
   })();
 
   // ── Auto-hide model picker when textarea area is too narrow ──
   (function initModelPickerResponsive() {
-    const inputTop = document.querySelector('.chat-input-top');
-    const pickerWrap = el('model-picker-wrap');
+    const inputTop = document.querySelector(".chat-input-top");
+    const pickerWrap = el("model-picker-wrap");
     if (!inputTop || !pickerWrap) return;
 
     const PLACEHOLDER_COMPACT_WIDTH = 400;
     const PICKER_HIDE_WIDTH = 220;
     const TOOLBAR_HIDE_WIDTH = 160;
-	    const textarea = el('message');
-	    const inputBottom = document.querySelector('.chat-input-bottom');
-	    const _isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-	    let _placeholderHintOn = false;
+    const textarea = el("message");
+    const inputBottom = document.querySelector(".chat-input-bottom");
+    const _isMobile = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    let _placeholderHintOn = false;
 
-	    function setComposerPlaceholder(width) {
-	      if (!textarea) return;
-	      if (_isMobile && _placeholderHintOn) {
-	        textarea.setAttribute('placeholder', 'Swipe to toggle plan');
-	        return;
-	      }
-	      textarea.setAttribute('placeholder', width < PLACEHOLDER_COMPACT_WIDTH ? 'Message...' : 'Message Odysseus...');
-	    }
+    function setComposerPlaceholder(width) {
+      if (!textarea) return;
+      if (_isMobile && _placeholderHintOn) {
+        textarea.setAttribute("placeholder", "Swipe to toggle plan");
+        return;
+      }
+      textarea.setAttribute(
+        "placeholder",
+        width < PLACEHOLDER_COMPACT_WIDTH
+          ? "Message..."
+          : "Message Odysseus...",
+      );
+    }
 
-	    if (_isMobile && textarea && !textarea._odysseusPlanPlaceholderHint) {
-	      textarea._odysseusPlanPlaceholderHint = true;
-	      setInterval(() => {
-	        _placeholderHintOn = !_placeholderHintOn;
-	        setComposerPlaceholder(inputTop.clientWidth || window.innerWidth || 0);
-	      }, 5000);
-	    }
+    if (_isMobile && textarea && !textarea._odysseusPlanPlaceholderHint) {
+      textarea._odysseusPlanPlaceholderHint = true;
+      setInterval(() => {
+        _placeholderHintOn = !_placeholderHintOn;
+        setComposerPlaceholder(inputTop.clientWidth || window.innerWidth || 0);
+      }, 5000);
+    }
 
-		    function checkPickerOverflow() {
-		      const w = inputTop.clientWidth || window.innerWidth || 0;
-		      const hasText = !!(textarea && textarea.value && textarea.value.trim());
-		      if (_isMobile) {
-		        // Mobile has much less horizontal room: any typed text should get
-		        // the full composer row, matching plan-mode's collision behavior.
-		        pickerWrap.classList.toggle('picker-auto-hidden', hasText);
-		        setComposerPlaceholder(w);
-		        return;
-		      }
-		      // Hide model picker
-		      pickerWrap.classList.toggle('picker-auto-hidden', w < PICKER_HIDE_WIDTH);
-	      // Keep a prompt inside the composer even when the picker crowds the row.
-	      // A blank placeholder makes the mobile/compact empty state feel broken.
-	      setComposerPlaceholder(w);
+    function checkPickerOverflow() {
+      const w = inputTop.clientWidth || window.innerWidth || 0;
+      const hasText = !!(textarea && textarea.value && textarea.value.trim());
+      if (_isMobile) {
+        // Mobile has much less horizontal room: any typed text should get
+        // the full composer row, matching plan-mode's collision behavior.
+        pickerWrap.classList.toggle("picker-auto-hidden", hasText);
+        setComposerPlaceholder(w);
+        return;
+      }
+      // Hide model picker
+      pickerWrap.classList.toggle("picker-auto-hidden", w < PICKER_HIDE_WIDTH);
+      // Keep a prompt inside the composer even when the picker crowds the row.
+      // A blank placeholder makes the mobile/compact empty state feel broken.
+      setComposerPlaceholder(w);
       // Hide entire bottom toolbar (tools, mode toggle) — only send button remains
       if (inputBottom) {
-        inputBottom.classList.toggle('toolbar-auto-hidden', w < TOOLBAR_HIDE_WIDTH);
+        inputBottom.classList.toggle(
+          "toolbar-auto-hidden",
+          w < TOOLBAR_HIDE_WIDTH,
+        );
       }
     }
 
-    const ro = new ResizeObserver(() => requestAnimationFrame(checkPickerOverflow));
+    const ro = new ResizeObserver(() =>
+      requestAnimationFrame(checkPickerOverflow),
+    );
     ro.observe(inputTop);
     checkPickerOverflow();
   })();
 
   // TTS Mode toggle (separate from overflow IIFE for safety)
   (function initTTSToggle() {
-    const ttsBtn = document.getElementById('overflow-tts-btn');
+    const ttsBtn = document.getElementById("overflow-tts-btn");
     if (!ttsBtn) return;
     try {
       const st = loadToggleState();
       if (st.ttsMode) {
-        ttsBtn.classList.add('active');
+        ttsBtn.classList.add("active");
         if (window.aiTTSManager) window.aiTTSManager.autoPlay = true;
       }
-    } catch(e) {}
+    } catch (e) {}
 
-    ttsBtn.addEventListener('click', () => {
-      const isActive = !ttsBtn.classList.contains('active');
-      ttsBtn.classList.toggle('active', isActive);
+    ttsBtn.addEventListener("click", () => {
+      const isActive = !ttsBtn.classList.contains("active");
+      ttsBtn.classList.toggle("active", isActive);
       if (window.aiTTSManager) window.aiTTSManager.autoPlay = isActive;
-      const s = loadToggleState(); s.ttsMode = isActive; saveToggleState(s);
+      const s = loadToggleState();
+      s.ttsMode = isActive;
+      saveToggleState(s);
       updatePlusDot();
     });
   })();
 
-
   // ── Compare indicator (sidebar only, no overflow) ──
-  const compareIndicatorBtn = el('compare-indicator-btn');
+  const compareIndicatorBtn = el("compare-indicator-btn");
   if (compareIndicatorBtn) {
-    compareIndicatorBtn.addEventListener('click', () => {
+    compareIndicatorBtn.addEventListener("click", () => {
       if (compareModule && compareModule.isActive()) {
         compareModule.closeCompare();
       }
@@ -2481,249 +2887,302 @@ function initializeEventListeners() {
   }
 
   // ── Overflow RAG toggle ──
-  const overflowRagBtn = el('overflow-rag-btn');
-  const ragIndicatorBtn = el('rag-indicator-btn');
+  const overflowRagBtn = el("overflow-rag-btn");
+  const ragIndicatorBtn = el("rag-indicator-btn");
   if (overflowRagBtn) {
-    overflowRagBtn.addEventListener('click', () => {
-      const chk = el('rag-toggle');
+    overflowRagBtn.addEventListener("click", () => {
+      const chk = el("rag-toggle");
       const isActive = chk ? !chk.checked : true;
       _syncRagIndicator(isActive);
     });
   }
   if (ragIndicatorBtn) {
-    ragIndicatorBtn.addEventListener('click', () => {
+    ragIndicatorBtn.addEventListener("click", () => {
       _syncRagIndicator(false);
     });
   }
 
   // ── Overflow Research toggle ──
-  const overflowResearchBtn = el('overflow-research-btn');
+  const overflowResearchBtn = el("overflow-research-btn");
   if (overflowResearchBtn) {
-    overflowResearchBtn.addEventListener('click', () => {
-      const chk = el('research-toggle');
+    overflowResearchBtn.addEventListener("click", () => {
+      const chk = el("research-toggle");
       const turningOn = chk ? !chk.checked : false;
       _syncResearchIndicator(turningOn);
       if (turningOn) {
-        _showToolSplash('research');
+        _showToolSplash("research");
         // Clear character — mutually exclusive with research
-        if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+        if (presetsModule && presetsModule.deactivateCharacter)
+          presetsModule.deactivateCharacter();
         // Mutual exclusion with web search
-        const webChk = el('web-toggle');
-        const webBtn = el('web-toggle-btn');
+        const webChk = el("web-toggle");
+        const webBtn = el("web-toggle-btn");
         if (webChk && webChk.checked) {
           webChk.checked = false;
-          if (webBtn) webBtn.classList.remove('active');
-          saveToolPref('web', (loadToggleState().mode || 'chat'), false);
+          if (webBtn) webBtn.classList.remove("active");
+          saveToolPref("web", loadToggleState().mode || "chat", false);
         }
         // Research requires chat mode
         const rs2 = loadToggleState();
-        if (rs2.mode === 'agent') {
-          rs2.mode = 'chat';
+        if (rs2.mode === "agent") {
+          rs2.mode = "chat";
           saveToggleState(rs2);
-          const ab2 = el('mode-agent-btn'), cb2 = el('mode-chat-btn');
-          if (ab2) ab2.classList.remove('active');
-          if (cb2) cb2.classList.add('active');
-          applyModeToToggles('chat');
+          const ab2 = el("mode-agent-btn"),
+            cb2 = el("mode-chat-btn");
+          if (ab2) ab2.classList.remove("active");
+          if (cb2) cb2.classList.add("active");
+          applyModeToToggles("chat");
         }
       }
     });
   }
 
   // ── Overflow Group Chat toggle ──
-  const overflowGroupBtn = el('overflow-group-btn');
+  const overflowGroupBtn = el("overflow-group-btn");
   if (overflowGroupBtn) {
-    overflowGroupBtn.addEventListener('click', async () => {
-      const chk = el('group-toggle');
+    overflowGroupBtn.addEventListener("click", async () => {
+      const chk = el("group-toggle");
       const turningOn = chk ? !chk.checked : false;
       if (turningOn) {
         const picked = await groupModule.showModelPicker();
         if (!picked || picked.length < 2) return;
-        groupModule.setActive(true);  // Set early so updateModelPicker sees it
+        groupModule.setActive(true); // Set early so updateModelPicker sees it
         _syncGroupIndicator(true);
         _startFreshChat();
         // Clear any leftover splash screens
-        const _chatBox = document.getElementById('chat-history');
+        const _chatBox = document.getElementById("chat-history");
         if (_chatBox) {
-          _chatBox.querySelectorAll('.tool-splash').forEach(s => s.remove());
+          _chatBox.querySelectorAll(".tool-splash").forEach((s) => s.remove());
           // Also hide welcome screen
-          if (chatModule && chatModule.hideWelcomeScreen) chatModule.hideWelcomeScreen();
+          if (chatModule && chatModule.hideWelcomeScreen)
+            chatModule.hideWelcomeScreen();
         }
         // Start group — create participant sessions immediately
-        const sid = sessionModule.getCurrentSessionId() || 'group-' + Date.now();
+        const sid =
+          sessionModule.getCurrentSessionId() || "group-" + Date.now();
         await groupModule.startGroup(picked, sid);
         // Re-hide picker after everything settles
-        const _mpw = el('model-picker-wrap');
-        if (_mpw) _mpw.style.display = 'none';
+        const _mpw = el("model-picker-wrap");
+        if (_mpw) _mpw.style.display = "none";
         uiModule.showToast(`Group chat ready — ${picked.length} models`);
       } else {
         _syncGroupIndicator(false);
         groupModule.stopGroup();
         // Restore model picker
-        const _mpWrap2 = el('model-picker-wrap');
-        if (_mpWrap2) _mpWrap2.style.display = '';
+        const _mpWrap2 = el("model-picker-wrap");
+        if (_mpWrap2) _mpWrap2.style.display = "";
       }
     });
   }
 
   // ── Group toggle button (chatbox indicator) — click to deactivate ──
-  const groupToggleBtn = el('group-toggle-btn');
+  const groupToggleBtn = el("group-toggle-btn");
   if (groupToggleBtn) {
-    groupToggleBtn.addEventListener('click', () => {
+    groupToggleBtn.addEventListener("click", () => {
       _syncGroupIndicator(false);
       groupModule.stopGroup();
     });
   }
 
   // ── Incognito mode toggle (on welcome screen) ──
-  const incognitoBtn = el('incognito-btn');
-  const INCOGNITO_EYE_OPEN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-  const INCOGNITO_EYE_CLOSED = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
-  const SESSION_ICON_CHAT = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-  const SESSION_ICON_INCOGNITO = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  const incognitoBtn = el("incognito-btn");
+  const INCOGNITO_EYE_OPEN =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const INCOGNITO_EYE_CLOSED =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
+  const SESSION_ICON_CHAT =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  const SESSION_ICON_INCOGNITO =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
   function _syncSessionIncognitoIcon(active) {
-    const activeSession = document.querySelector('.list-item.active-session .session-icon');
+    const activeSession = document.querySelector(
+      ".list-item.active-session .session-icon",
+    );
     if (activeSession) {
-      activeSession.innerHTML = active ? SESSION_ICON_INCOGNITO : SESSION_ICON_CHAT;
-      activeSession.style.color = active ? 'var(--accent)' : '';
+      activeSession.innerHTML = active
+        ? SESSION_ICON_INCOGNITO
+        : SESSION_ICON_CHAT;
+      activeSession.style.color = active ? "var(--accent)" : "";
     }
   }
 
   if (incognitoBtn) {
-    incognitoBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    incognitoBtn.addEventListener('click', () => {
+    incognitoBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    incognitoBtn.addEventListener("click", () => {
       // Don't toggle mid-chat — incognito only changeable from welcome screen
-      const ws = el('welcome-screen');
-      if (ws && ws.classList.contains('hidden')) return;
-      const chk = el('incognito-toggle');
+      const ws = el("welcome-screen");
+      if (ws && ws.classList.contains("hidden")) return;
+      const chk = el("incognito-toggle");
       chk.checked = !chk.checked;
-      incognitoBtn.classList.toggle('active', chk.checked);
-      const tipEl = el('welcome-tip');
-      incognitoBtn.title = chk.checked ? 'Disable Nobody mode' : 'Enable Nobody mode — no memory, no history saved';
-      const welcomeName = document.querySelector('.welcome-name');
+      incognitoBtn.classList.toggle("active", chk.checked);
+      const tipEl = el("welcome-tip");
+      incognitoBtn.title = chk.checked
+        ? "Disable Nobody mode"
+        : "Enable Nobody mode — no memory, no history saved";
+      const welcomeName = document.querySelector(".welcome-name");
       if (chk.checked) {
         try {
-          if (sessionModule && sessionModule.setCurrentSessionId) sessionModule.setCurrentSessionId(null);
-          const box = el('chat-history');
-          if (box) box.innerHTML = '';
+          if (sessionModule && sessionModule.setCurrentSessionId)
+            sessionModule.setCurrentSessionId(null);
+          const box = el("chat-history");
+          if (box) box.innerHTML = "";
         } catch (_) {}
-        incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
+        incognitoBtn.innerHTML =
+          INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
         if (welcomeName) {
           welcomeName.dataset.originalHtml = welcomeName.innerHTML;
-          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
+          welcomeName.innerHTML =
+            '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
           // Restart the L→R clip-wipe reveal on the new label
-          welcomeName.style.animation = 'none';
+          welcomeName.style.animation = "none";
           welcomeName.offsetHeight;
-          welcomeName.style.animation = '';
+          welcomeName.style.animation = "";
         }
-        if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
-        const welcomeSub = el('welcome-sub');
+        if (ws) {
+          ws.style.animation = "none";
+          ws.offsetHeight;
+          ws.style.animation = "welcome-enter 0.3s ease-out both";
+        }
+        const welcomeSub = el("welcome-sub");
         if (welcomeSub) {
-          if (!welcomeSub.dataset.originalText) welcomeSub.dataset.originalText = welcomeSub.textContent;
+          if (!welcomeSub.dataset.originalText)
+            welcomeSub.dataset.originalText = welcomeSub.textContent;
           welcomeSub.textContent = "Who am I? I'm nobody.";
-          welcomeSub.style.display = '';
+          welcomeSub.style.display = "";
         }
-        if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
+        if (tipEl) {
+          tipEl.dataset.originalTip = tipEl.textContent;
+          tipEl.textContent =
+            "Temporary session \u2014 won\u2019t be saved and no memory activation.";
+          tipEl.style.opacity = "0.5";
+          tipEl.style.marginTop = "8px";
+        }
         // Default to plain chat: disable tools visually, switch to chat mode.
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
         // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
         // ephemeral — their agent-mode defaults must come back on toggle-off.
         const beforeNobody = Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {};
-        if (!beforeNobody.nobody_prev_mode) beforeNobody.nobody_prev_mode = beforeNobody.mode || 'agent';
+        if (!beforeNobody.nobody_prev_mode)
+          beforeNobody.nobody_prev_mode = beforeNobody.mode || "agent";
         Storage.setJSON(Storage.KEYS.TOGGLES, beforeNobody);
-        const _offIds = ['web-toggle', 'bash-toggle', 'research-toggle'];
-        _offIds.forEach(id => { const c = el(id); if (c) c.checked = false; });
-        ['web-toggle-btn', 'bash-toggle-btn'].forEach(id => { const b = el(id); if (b) b.classList.remove('active'); });
-        if (typeof window.__odysseusSetChatMode === 'function') {
-          window.__odysseusSetChatMode('chat');
+        const _offIds = ["web-toggle", "bash-toggle", "research-toggle"];
+        _offIds.forEach((id) => {
+          const c = el(id);
+          if (c) c.checked = false;
+        });
+        ["web-toggle-btn", "bash-toggle-btn"].forEach((id) => {
+          const b = el(id);
+          if (b) b.classList.remove("active");
+        });
+        if (typeof window.__odysseusSetChatMode === "function") {
+          window.__odysseusSetChatMode("chat");
         } else {
-          const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
+          const _ab = el("mode-agent-btn"),
+            _cb = el("mode-chat-btn");
           if (_ab) {
-            _ab.classList.remove('active');
-            _ab.setAttribute('aria-pressed', 'false');
+            _ab.classList.remove("active");
+            _ab.setAttribute("aria-pressed", "false");
           }
           if (_cb) {
-            _cb.classList.add('active');
-            _cb.setAttribute('aria-pressed', 'true');
+            _cb.classList.add("active");
+            _cb.setAttribute("aria-pressed", "true");
           }
-          const _toggle = _ab?.closest('.mode-toggle') || _cb?.closest('.mode-toggle');
-          if (_toggle) _toggle.classList.add('mode-chat');
+          const _toggle =
+            _ab?.closest(".mode-toggle") || _cb?.closest(".mode-toggle");
+          if (_toggle) _toggle.classList.add("mode-chat");
           const ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-          ts.mode = 'chat';
+          ts.mode = "chat";
           Storage.setJSON(Storage.KEYS.TOGGLES, ts);
         }
         const ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
         ts.research = false;
         Storage.setJSON(Storage.KEYS.TOGGLES, ts);
       } else {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
+        incognitoBtn.innerHTML =
+          INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
         if (welcomeName && welcomeName.dataset.originalHtml) {
           welcomeName.innerHTML = welcomeName.dataset.originalHtml;
           // Restart the L→R clip-wipe reveal on the restored label
-          welcomeName.style.animation = 'none';
+          welcomeName.style.animation = "none";
           welcomeName.offsetHeight;
-          welcomeName.style.animation = '';
+          welcomeName.style.animation = "";
         }
-        if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
-        const welcomeSub2 = el('welcome-sub');
+        if (ws) {
+          ws.style.animation = "none";
+          ws.offsetHeight;
+          ws.style.animation = "welcome-enter 0.3s ease-out both";
+        }
+        const welcomeSub2 = el("welcome-sub");
         if (welcomeSub2) {
           if (welcomeSub2.dataset.originalText) {
             welcomeSub2.textContent = welcomeSub2.dataset.originalText;
             delete welcomeSub2.dataset.originalText;
           }
-          welcomeSub2.style.display = '';
+          welcomeSub2.style.display = "";
         }
-        if (tipEl && tipEl.dataset.originalTip) { tipEl.textContent = tipEl.dataset.originalTip; tipEl.style.opacity = ''; tipEl.style.marginTop = ''; }
+        if (tipEl && tipEl.dataset.originalTip) {
+          tipEl.textContent = tipEl.dataset.originalTip;
+          tipEl.style.opacity = "";
+          tipEl.style.marginTop = "";
+        }
         // Heal any previously-persisted false values from the old Nobody bug
         // so agent-mode defaults (web/bash ON) come back.
         const _ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-        const _restoreMode = _ts.nobody_prev_mode || 'agent';
+        const _restoreMode = _ts.nobody_prev_mode || "agent";
         delete _ts.nobody_prev_mode;
-        ['web_agent', 'bash_agent', 'web_chat', 'bash_chat'].forEach(k => {
+        ["web_agent", "bash_agent", "web_chat", "bash_chat"].forEach((k) => {
           if (_ts[k] === false) delete _ts[k];
         });
         Storage.setJSON(Storage.KEYS.TOGGLES, _ts);
-        if (typeof window.__odysseusSetChatMode === 'function') {
-          window.__odysseusSetChatMode(_restoreMode === 'chat' ? 'chat' : 'agent');
+        if (typeof window.__odysseusSetChatMode === "function") {
+          window.__odysseusSetChatMode(
+            _restoreMode === "chat" ? "chat" : "agent",
+          );
         }
         // Reapply the current mode's real defaults to the visible toggles
-        const _curMode = (Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {}).mode || 'chat';
-        try { applyModeToToggles(_curMode); } catch (_) {}
+        const _curMode =
+          (Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {}).mode || "chat";
+        try {
+          applyModeToToggles(_curMode);
+        } catch (_) {}
       }
       // If toggled off mid-chat (welcome screen hidden), hide the button
-      if (!chk.checked && ws && ws.classList.contains('hidden')) {
-        incognitoBtn.style.display = 'none';
+      if (!chk.checked && ws && ws.classList.contains("hidden")) {
+        incognitoBtn.style.display = "none";
       }
       // Show/hide persistent incognito indicator in top bar
-      const _incInd = el('incognito-indicator');
-      if (_incInd) _incInd.style.display = chk.checked ? '' : 'none';
+      const _incInd = el("incognito-indicator");
+      if (_incInd) _incInd.style.display = chk.checked ? "" : "none";
       // Update active session icon in sidebar
       _syncSessionIncognitoIcon(chk.checked);
     });
   }
 
   // Incognito indicator click — deactivate incognito
-  const incognitoIndicator = el('incognito-indicator');
+  const incognitoIndicator = el("incognito-indicator");
   if (incognitoIndicator) {
-    incognitoIndicator.addEventListener('click', () => {
+    incognitoIndicator.addEventListener("click", () => {
       if (incognitoBtn) incognitoBtn.click();
       else {
-        const chk = el('incognito-toggle');
-        if (chk) { chk.checked = false; }
-        incognitoIndicator.style.display = 'none';
+        const chk = el("incognito-toggle");
+        if (chk) {
+          chk.checked = false;
+        }
+        incognitoIndicator.style.display = "none";
       }
     });
   }
 
   // ── Deactivate incognito mode (called on new session) ──
   function _deactivateIncognito() {
-    const chk = el('incognito-toggle');
+    const chk = el("incognito-toggle");
     if (!chk || !chk.checked) return;
     if (incognitoBtn) incognitoBtn.click();
   }
 
   // ── UI Visibility (Customize UI modal) ──
-  const UI_VIS_KEY = 'odysseus-ui-visibility';
+  const UI_VIS_KEY = "odysseus-ui-visibility";
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2740,192 +3199,536 @@ function initializeEventListeners() {
     // resolveVisibility computes selector→visible (pure; ui_visibility.js),
     // including the tools-section parent rule that hides every tool rail
     // launcher when Tools is off. Apply the result to the DOM here.
-    for (const [selector, visible] of Object.entries(resolveVisibility(state))) {
-      document.querySelectorAll(selector).forEach(el => {
-        el.style.display = visible ? '' : 'none';
+    for (const [selector, visible] of Object.entries(
+      resolveVisibility(state),
+    )) {
+      document.querySelectorAll(selector).forEach((el) => {
+        el.style.display = visible ? "" : "none";
       });
     }
     // Drag reorder: use body class so dynamically created handles are covered
-    const dragEnabled = state['section-drag-reorder'] === true;
-    document.body.classList.toggle('rearrange-mode', dragEnabled);
-    document.querySelectorAll('.section[draggable]').forEach(el => {
-      el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
+    const dragEnabled = state["section-drag-reorder"] === true;
+    document.body.classList.toggle("rearrange-mode", dragEnabled);
+    document.querySelectorAll(".section[draggable]").forEach((el) => {
+      el.setAttribute("draggable", dragEnabled ? "true" : "false");
     });
     // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
     // like `:blush:` render through the normal monochrome emoji path.
-    applyTextEmojis(state['text-emojis'] === true);
+    applyTextEmojis(state["text-emojis"] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
-    document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
+    document.body.classList.toggle(
+      "hide-thinking",
+      state["show-thinking"] === false,
+    );
     // Fullwidth chat toggle (chat-fullwidth: checked=fullwidth, unchecked=big-padding
-    document.body.classList.toggle('fullwidth-chat', state['chat-fullwidth'] === true);
+    document.body.classList.toggle(
+      "fullwidth-chat",
+      state["chat-fullwidth"] === true,
+    );
   }
 
   // Rearrange toggles in session/model sort dropdowns
   function syncRearrangeChecks() {
-    const on = loadUIVis()['section-drag-reorder'] === true;
-    document.querySelectorAll('.rearrange-toggle .rearrange-check').forEach(ch => {
-      ch.style.opacity = on ? '1' : '0';
-    });
+    const on = loadUIVis()["section-drag-reorder"] === true;
+    document
+      .querySelectorAll(".rearrange-toggle .rearrange-check")
+      .forEach((ch) => {
+        ch.style.opacity = on ? "1" : "0";
+      });
   }
-  document.querySelectorAll('.rearrange-toggle').forEach(toggle => {
-    toggle.addEventListener('click', () => {
+  document.querySelectorAll(".rearrange-toggle").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
       const state = loadUIVis();
-      const wasOn = state['section-drag-reorder'] === true;
-      state['section-drag-reorder'] = !wasOn;
+      const wasOn = state["section-drag-reorder"] === true;
+      state["section-drag-reorder"] = !wasOn;
       saveUIVis(state);
       applyUIVis(state);
       syncRearrangeChecks();
-      uiModule.showToast(!wasOn ? 'Rearrange enabled' : 'Rearrange disabled');
+      uiModule.showToast(!wasOn ? "Rearrange enabled" : "Rearrange disabled");
       // Close the dropdown the toggle lives in — the sort dropdown's own
       // click-stopPropagation means it won't close on its own.
       const dd = toggle.closest('[id$="-sort-dropdown"]');
-      if (dd) dd.style.display = 'none';
+      if (dd) dd.style.display = "none";
     });
   });
 
   // Esc exits rearrange mode (no matter where focus/mouse is) — matches the
   // global Esc-cancels-select pattern. Capture phase so a sort dropdown that
   // happens to be open doesn't swallow it first.
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (!document.body.classList.contains('rearrange-mode')) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const state = loadUIVis();
-    state['section-drag-reorder'] = false;
-    saveUIVis(state);
-    applyUIVis(state);
-    syncRearrangeChecks();
-    uiModule.showToast('Rearrange disabled');
-  }, true);
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key !== "Escape") return;
+      if (!document.body.classList.contains("rearrange-mode")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const state = loadUIVis();
+      state["section-drag-reorder"] = false;
+      saveUIVis(state);
+      applyUIVis(state);
+      syncRearrangeChecks();
+      uiModule.showToast("Rearrange disabled");
+    },
+    true,
+  );
   // Sync checkmarks when dropdowns open
-  const _sessionSortBtn = el('session-sort-btn');
-  const _modelSortBtn = el('model-sort-btn');
-  if (_sessionSortBtn) _sessionSortBtn.addEventListener('click', syncRearrangeChecks);
-  if (_modelSortBtn) _modelSortBtn.addEventListener('click', syncRearrangeChecks);
+  const _sessionSortBtn = el("session-sort-btn");
+  const _modelSortBtn = el("model-sort-btn");
+  if (_sessionSortBtn)
+    _sessionSortBtn.addEventListener("click", syncRearrangeChecks);
+  if (_modelSortBtn)
+    _modelSortBtn.addEventListener("click", syncRearrangeChecks);
   syncRearrangeChecks();
 
   // ── Text-only emoji conversion ──
   // Regex matching most emoji codepoints (Emoji_Presentation + common sequences)
-  const EMOJI_RE = /(?:\p{Emoji_Presentation}|\p{Extended_Pictographic})(?:\uFE0F|\u200D(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}))*/gu;
+  const EMOJI_RE =
+    /(?:\p{Emoji_Presentation}|\p{Extended_Pictographic})(?:\uFE0F|\u200D(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}))*/gu;
 
   // Common emoji → text description map
   const EMOJI_MAP = {
-    '😀':'grinning','😃':'smiley','😄':'smile','😁':'grin','😆':'laughing','😅':'sweat smile',
-    '🤣':'rofl','😂':'joy','🙂':'slightly smiling','🙃':'upside down','😉':'wink',
-    '😊':'blush','😇':'innocent','🥰':'smiling hearts','😍':'heart eyes','🤩':'star struck',
-    '😘':'kissing heart','😗':'kissing','😚':'kissing closed eyes','😙':'kissing smiling eyes',
-    '🥲':'smiling tear','😋':'yum','😛':'tongue','😜':'winking tongue','🤪':'zany',
-    '😝':'squinting tongue','🤑':'money mouth','🤗':'hugging','🤭':'hand over mouth',
-    '🤫':'shushing','🤔':'thinking','🫡':'saluting','🤐':'zipper mouth','🤨':'raised eyebrow',
-    '😐':'neutral','😑':'expressionless','😶':'no mouth','🫥':'dotted line face',
-    '😏':'smirk','😒':'unamused','🙄':'eye roll','😬':'grimacing','🤥':'lying',
-    '😌':'relieved','😔':'pensive','😪':'sleepy','🤤':'drooling','😴':'sleeping',
-    '😷':'mask','🤒':'thermometer','🤕':'head bandage','🤢':'nauseated','🤮':'vomiting',
-    '🥵':'hot','🥶':'cold','🥴':'woozy','😵':'dizzy','🤯':'exploding head',
-    '🤠':'cowboy','🥳':'party','🥸':'disguised','😎':'sunglasses','🤓':'nerd',
-    '🧐':'monocle','😕':'confused','🫤':'diagonal mouth','😟':'worried','🙁':'slightly frowning',
-    '😮':'open mouth','😯':'hushed','😲':'astonished','😳':'flushed','🥺':'pleading',
-    '🥹':'holding back tears','😦':'frowning open mouth','😧':'anguished','😨':'fearful',
-    '😰':'anxious sweat','😥':'sad relieved','😢':'crying','😭':'sobbing','😱':'screaming',
-    '😖':'confounded','😣':'persevering','😞':'disappointed','😓':'downcast sweat',
-    '😩':'weary','😫':'tired','🥱':'yawning','😤':'triumph','😡':'pouting',
-    '😠':'angry','🤬':'swearing','😈':'smiling devil','👿':'angry devil',
-    '💀':'skull','☠️':'skull crossbones','💩':'poop','🤡':'clown','👹':'ogre','👺':'goblin',
-    '👻':'ghost','👽':'alien','👾':'space invader','🤖':'robot',
-    '😺':'smiling cat','😸':'grinning cat','😹':'tears of joy cat','😻':'heart eyes cat',
-    '😼':'wry cat','😽':'kissing cat','🙀':'weary cat','😿':'crying cat','😾':'pouting cat',
-    '🙈':'see no evil','🙉':'hear no evil','🙊':'speak no evil',
-    '👋':'wave','🤚':'raised back of hand','🖐️':'hand with fingers splayed','✋':'raised hand',
-    '🖖':'vulcan salute','🫱':'rightward hand','🫲':'leftward hand',
-    '👌':'ok hand','🤌':'pinched fingers','🤏':'pinching hand','✌️':'victory',
-    '🤞':'crossed fingers','🫰':'hand with index finger and thumb crossed',
-    '🤟':'love you','🤘':'rock on','🤙':'call me','👈':'point left','👉':'point right',
-    '👆':'point up','🖕':'middle finger','👇':'point down','☝️':'index up',
-    '🫵':'point at viewer','👍':'thumbs up','👎':'thumbs down','✊':'raised fist',
-    '👊':'fist bump','🤛':'left fist','🤜':'right fist','👏':'clap','🙌':'raising hands',
-    '🫶':'heart hands','👐':'open hands','🤲':'palms up','🤝':'handshake','🙏':'pray',
-    '✍️':'writing','💅':'nail polish','🤳':'selfie','💪':'flexed biceps',
-    '❤️':'red heart','🧡':'orange heart','💛':'yellow heart','💚':'green heart',
-    '💙':'blue heart','💜':'purple heart','🖤':'black heart','🤍':'white heart',
-    '🩷':'pink heart','🩵':'light blue heart','🩶':'grey heart','🤎':'brown heart',
-    '💔':'broken heart','❤️‍🔥':'heart on fire','❤️‍🩹':'mending heart',
-    '💕':'two hearts','💞':'revolving hearts','💓':'heartbeat','💗':'growing heart',
-    '💖':'sparkling heart','💘':'heart with arrow','💝':'heart with ribbon',
-    '💟':'heart decoration','🔥':'fire','💯':'100','✨':'sparkles','⭐':'star',
-    '🌟':'glowing star','💫':'dizzy star','🎉':'party popper','🎊':'confetti ball',
-    '🎈':'balloon','🎁':'gift','🏆':'trophy','🥇':'1st place','🥈':'2nd place','🥉':'3rd place',
-    '⚡':'zap','💡':'light bulb','🔑':'key','🔒':'locked','🔓':'unlocked',
-    '🔔':'bell','🔕':'bell off','📢':'loudspeaker','📣':'megaphone',
-    '💬':'speech bubble','💭':'thought bubble','🗯️':'anger bubble',
-    '✅':'check mark','❌':'cross mark','❓':'question','❗':'exclamation',
-    '⚠️':'warning','🚫':'prohibited','⛔':'no entry','🔴':'red circle','🟢':'green circle',
-    '🔵':'blue circle','🟡':'yellow circle','⚪':'white circle','⚫':'black circle',
-    '🟠':'orange circle','🟣':'purple circle','🟤':'brown circle',
-    '📁':'folder','📂':'open folder','📄':'document','📝':'memo','📎':'paperclip',
-    '📌':'pin','📍':'round pin','🔗':'link','📊':'bar chart','📈':'chart up','📉':'chart down',
-    '🔍':'magnifying glass left','🔎':'magnifying glass right',
-    '🌐':'globe','🌍':'globe europe','🌎':'globe americas','🌏':'globe asia',
-    '🕐':'clock 1','🕑':'clock 2','🕒':'clock 3','🕓':'clock 4',
-    '⏰':'alarm clock','⏳':'hourglass flowing','⌛':'hourglass done',
-    '🚀':'rocket','✈️':'airplane','🚗':'car','🚂':'train','🚢':'ship',
-    '🏠':'house','🏢':'building','🏗️':'construction','🏭':'factory',
-    '🎵':'musical note','🎶':'musical notes','🎤':'microphone','🎧':'headphones',
-    '📷':'camera','📸':'camera flash','🎬':'clapperboard','📺':'television',
-    '💻':'laptop','🖥️':'desktop','📱':'mobile phone','☎️':'telephone',
-    '🔧':'wrench','🔨':'hammer','⚙️':'gear','🧲':'magnet','🧪':'test tube','🔬':'microscope',
-    '📚':'books','📖':'open book','✏️':'pencil','🖊️':'pen','🖋️':'fountain pen',
-    '🎯':'bullseye','♟️':'chess pawn','🎲':'game die','🧩':'puzzle piece',
-    '🍕':'pizza','🍔':'burger','🍟':'fries','🌮':'taco','🍣':'sushi','🍩':'donut',
-    '☕':'coffee','🍺':'beer','🍷':'wine','🥤':'cup with straw',
-    '🐶':'dog','🐱':'cat','🐭':'mouse','🐹':'hamster','🐰':'rabbit','🦊':'fox',
-    '🐻':'bear','🐼':'panda','🐨':'koala','🐯':'tiger','🦁':'lion','🐮':'cow',
-    '🐷':'pig','🐸':'frog','🐵':'monkey','🐔':'chicken','🐧':'penguin','🐦':'bird',
-    '🦅':'eagle','🦆':'duck','🦉':'owl','🐺':'wolf','🐗':'boar','🐴':'horse',
-    '🦄':'unicorn','🐝':'bee','🐛':'bug','🦋':'butterfly','🐌':'snail','🐞':'ladybug',
-    '🐍':'snake','🐢':'turtle','🐙':'octopus','🦀':'crab','🐠':'tropical fish',
-    '🐳':'whale','🐋':'whale','🦈':'shark','🐊':'crocodile','🦕':'sauropod','🦖':'t-rex',
-    '🌸':'cherry blossom','🌹':'rose','🌻':'sunflower','🌺':'hibiscus','🌷':'tulip',
-    '🌱':'seedling','🌲':'evergreen tree','🌳':'deciduous tree','🍀':'four leaf clover',
-    '🍎':'red apple','🍐':'pear','🍊':'tangerine','🍋':'lemon','🍌':'banana',
-    '🍉':'watermelon','🍇':'grapes','🍓':'strawberry','🫐':'blueberries','🍑':'peach',
-    '🌈':'rainbow','☀️':'sun','🌤️':'sun behind cloud','⛅':'sun behind cloud','☁️':'cloud',
-    '🌧️':'rain','⛈️':'thunder','❄️':'snowflake','🌊':'wave',
-    '👀':'eyes','👁️':'eye','👂':'ear','👃':'nose','👄':'mouth','👅':'tongue',
-    '🧠':'brain','🦴':'bone','🦷':'tooth','👶':'baby','🧒':'child','👦':'boy','👧':'girl',
-    '🧑':'person','👨':'man','👩':'woman','🧓':'older person',
-    '👮':'police officer','🧑‍💻':'technologist','👨‍💻':'man technologist',
-    '👩‍💻':'woman technologist',
-    '🎓':'graduation cap','🧢':'billed cap','👑':'crown','💎':'gem','👓':'glasses','🕶️':'sunglasses',
-    '🩸':'drop of blood','💊':'pill','🩹':'bandage','🧬':'dna','🦠':'microbe',
-    '☢️':'radioactive','☣️':'biohazard','♻️':'recycling',
-    '🏳️':'white flag','🏴':'black flag','🚩':'red flag','🏁':'checkered flag',
-    '➡️':'right arrow','⬅️':'left arrow','⬆️':'up arrow','⬇️':'down arrow',
-    '↗️':'upper right arrow','↘️':'lower right arrow','↙️':'lower left arrow','↖️':'upper left arrow',
-    '↩️':'left curve','↪️':'right curve','🔄':'counterclockwise','🔃':'clockwise',
-    '➕':'plus','➖':'minus','➗':'division','✖️':'multiply','♾️':'infinity',
-    '‼️':'double exclamation','⁉️':'exclamation question',
-    '©️':'copyright','®️':'registered','™️':'trademark',
+    "😀": "grinning",
+    "😃": "smiley",
+    "😄": "smile",
+    "😁": "grin",
+    "😆": "laughing",
+    "😅": "sweat smile",
+    "🤣": "rofl",
+    "😂": "joy",
+    "🙂": "slightly smiling",
+    "🙃": "upside down",
+    "😉": "wink",
+    "😊": "blush",
+    "😇": "innocent",
+    "🥰": "smiling hearts",
+    "😍": "heart eyes",
+    "🤩": "star struck",
+    "😘": "kissing heart",
+    "😗": "kissing",
+    "😚": "kissing closed eyes",
+    "😙": "kissing smiling eyes",
+    "🥲": "smiling tear",
+    "😋": "yum",
+    "😛": "tongue",
+    "😜": "winking tongue",
+    "🤪": "zany",
+    "😝": "squinting tongue",
+    "🤑": "money mouth",
+    "🤗": "hugging",
+    "🤭": "hand over mouth",
+    "🤫": "shushing",
+    "🤔": "thinking",
+    "🫡": "saluting",
+    "🤐": "zipper mouth",
+    "🤨": "raised eyebrow",
+    "😐": "neutral",
+    "😑": "expressionless",
+    "😶": "no mouth",
+    "🫥": "dotted line face",
+    "😏": "smirk",
+    "😒": "unamused",
+    "🙄": "eye roll",
+    "😬": "grimacing",
+    "🤥": "lying",
+    "😌": "relieved",
+    "😔": "pensive",
+    "😪": "sleepy",
+    "🤤": "drooling",
+    "😴": "sleeping",
+    "😷": "mask",
+    "🤒": "thermometer",
+    "🤕": "head bandage",
+    "🤢": "nauseated",
+    "🤮": "vomiting",
+    "🥵": "hot",
+    "🥶": "cold",
+    "🥴": "woozy",
+    "😵": "dizzy",
+    "🤯": "exploding head",
+    "🤠": "cowboy",
+    "🥳": "party",
+    "🥸": "disguised",
+    "😎": "sunglasses",
+    "🤓": "nerd",
+    "🧐": "monocle",
+    "😕": "confused",
+    "🫤": "diagonal mouth",
+    "😟": "worried",
+    "🙁": "slightly frowning",
+    "😮": "open mouth",
+    "😯": "hushed",
+    "😲": "astonished",
+    "😳": "flushed",
+    "🥺": "pleading",
+    "🥹": "holding back tears",
+    "😦": "frowning open mouth",
+    "😧": "anguished",
+    "😨": "fearful",
+    "😰": "anxious sweat",
+    "😥": "sad relieved",
+    "😢": "crying",
+    "😭": "sobbing",
+    "😱": "screaming",
+    "😖": "confounded",
+    "😣": "persevering",
+    "😞": "disappointed",
+    "😓": "downcast sweat",
+    "😩": "weary",
+    "😫": "tired",
+    "🥱": "yawning",
+    "😤": "triumph",
+    "😡": "pouting",
+    "😠": "angry",
+    "🤬": "swearing",
+    "😈": "smiling devil",
+    "👿": "angry devil",
+    "💀": "skull",
+    "☠️": "skull crossbones",
+    "💩": "poop",
+    "🤡": "clown",
+    "👹": "ogre",
+    "👺": "goblin",
+    "👻": "ghost",
+    "👽": "alien",
+    "👾": "space invader",
+    "🤖": "robot",
+    "😺": "smiling cat",
+    "😸": "grinning cat",
+    "😹": "tears of joy cat",
+    "😻": "heart eyes cat",
+    "😼": "wry cat",
+    "😽": "kissing cat",
+    "🙀": "weary cat",
+    "😿": "crying cat",
+    "😾": "pouting cat",
+    "🙈": "see no evil",
+    "🙉": "hear no evil",
+    "🙊": "speak no evil",
+    "👋": "wave",
+    "🤚": "raised back of hand",
+    "🖐️": "hand with fingers splayed",
+    "✋": "raised hand",
+    "🖖": "vulcan salute",
+    "🫱": "rightward hand",
+    "🫲": "leftward hand",
+    "👌": "ok hand",
+    "🤌": "pinched fingers",
+    "🤏": "pinching hand",
+    "✌️": "victory",
+    "🤞": "crossed fingers",
+    "🫰": "hand with index finger and thumb crossed",
+    "🤟": "love you",
+    "🤘": "rock on",
+    "🤙": "call me",
+    "👈": "point left",
+    "👉": "point right",
+    "👆": "point up",
+    "🖕": "middle finger",
+    "👇": "point down",
+    "☝️": "index up",
+    "🫵": "point at viewer",
+    "👍": "thumbs up",
+    "👎": "thumbs down",
+    "✊": "raised fist",
+    "👊": "fist bump",
+    "🤛": "left fist",
+    "🤜": "right fist",
+    "👏": "clap",
+    "🙌": "raising hands",
+    "🫶": "heart hands",
+    "👐": "open hands",
+    "🤲": "palms up",
+    "🤝": "handshake",
+    "🙏": "pray",
+    "✍️": "writing",
+    "💅": "nail polish",
+    "🤳": "selfie",
+    "💪": "flexed biceps",
+    "❤️": "red heart",
+    "🧡": "orange heart",
+    "💛": "yellow heart",
+    "💚": "green heart",
+    "💙": "blue heart",
+    "💜": "purple heart",
+    "🖤": "black heart",
+    "🤍": "white heart",
+    "🩷": "pink heart",
+    "🩵": "light blue heart",
+    "🩶": "grey heart",
+    "🤎": "brown heart",
+    "💔": "broken heart",
+    "❤️‍🔥": "heart on fire",
+    "❤️‍🩹": "mending heart",
+    "💕": "two hearts",
+    "💞": "revolving hearts",
+    "💓": "heartbeat",
+    "💗": "growing heart",
+    "💖": "sparkling heart",
+    "💘": "heart with arrow",
+    "💝": "heart with ribbon",
+    "💟": "heart decoration",
+    "🔥": "fire",
+    "💯": "100",
+    "✨": "sparkles",
+    "⭐": "star",
+    "🌟": "glowing star",
+    "💫": "dizzy star",
+    "🎉": "party popper",
+    "🎊": "confetti ball",
+    "🎈": "balloon",
+    "🎁": "gift",
+    "🏆": "trophy",
+    "🥇": "1st place",
+    "🥈": "2nd place",
+    "🥉": "3rd place",
+    "⚡": "zap",
+    "💡": "light bulb",
+    "🔑": "key",
+    "🔒": "locked",
+    "🔓": "unlocked",
+    "🔔": "bell",
+    "🔕": "bell off",
+    "📢": "loudspeaker",
+    "📣": "megaphone",
+    "💬": "speech bubble",
+    "💭": "thought bubble",
+    "🗯️": "anger bubble",
+    "✅": "check mark",
+    "❌": "cross mark",
+    "❓": "question",
+    "❗": "exclamation",
+    "⚠️": "warning",
+    "🚫": "prohibited",
+    "⛔": "no entry",
+    "🔴": "red circle",
+    "🟢": "green circle",
+    "🔵": "blue circle",
+    "🟡": "yellow circle",
+    "⚪": "white circle",
+    "⚫": "black circle",
+    "🟠": "orange circle",
+    "🟣": "purple circle",
+    "🟤": "brown circle",
+    "📁": "folder",
+    "📂": "open folder",
+    "📄": "document",
+    "📝": "memo",
+    "📎": "paperclip",
+    "📌": "pin",
+    "📍": "round pin",
+    "🔗": "link",
+    "📊": "bar chart",
+    "📈": "chart up",
+    "📉": "chart down",
+    "🔍": "magnifying glass left",
+    "🔎": "magnifying glass right",
+    "🌐": "globe",
+    "🌍": "globe europe",
+    "🌎": "globe americas",
+    "🌏": "globe asia",
+    "🕐": "clock 1",
+    "🕑": "clock 2",
+    "🕒": "clock 3",
+    "🕓": "clock 4",
+    "⏰": "alarm clock",
+    "⏳": "hourglass flowing",
+    "⌛": "hourglass done",
+    "🚀": "rocket",
+    "✈️": "airplane",
+    "🚗": "car",
+    "🚂": "train",
+    "🚢": "ship",
+    "🏠": "house",
+    "🏢": "building",
+    "🏗️": "construction",
+    "🏭": "factory",
+    "🎵": "musical note",
+    "🎶": "musical notes",
+    "🎤": "microphone",
+    "🎧": "headphones",
+    "📷": "camera",
+    "📸": "camera flash",
+    "🎬": "clapperboard",
+    "📺": "television",
+    "💻": "laptop",
+    "🖥️": "desktop",
+    "📱": "mobile phone",
+    "☎️": "telephone",
+    "🔧": "wrench",
+    "🔨": "hammer",
+    "⚙️": "gear",
+    "🧲": "magnet",
+    "🧪": "test tube",
+    "🔬": "microscope",
+    "📚": "books",
+    "📖": "open book",
+    "✏️": "pencil",
+    "🖊️": "pen",
+    "🖋️": "fountain pen",
+    "🎯": "bullseye",
+    "♟️": "chess pawn",
+    "🎲": "game die",
+    "🧩": "puzzle piece",
+    "🍕": "pizza",
+    "🍔": "burger",
+    "🍟": "fries",
+    "🌮": "taco",
+    "🍣": "sushi",
+    "🍩": "donut",
+    "☕": "coffee",
+    "🍺": "beer",
+    "🍷": "wine",
+    "🥤": "cup with straw",
+    "🐶": "dog",
+    "🐱": "cat",
+    "🐭": "mouse",
+    "🐹": "hamster",
+    "🐰": "rabbit",
+    "🦊": "fox",
+    "🐻": "bear",
+    "🐼": "panda",
+    "🐨": "koala",
+    "🐯": "tiger",
+    "🦁": "lion",
+    "🐮": "cow",
+    "🐷": "pig",
+    "🐸": "frog",
+    "🐵": "monkey",
+    "🐔": "chicken",
+    "🐧": "penguin",
+    "🐦": "bird",
+    "🦅": "eagle",
+    "🦆": "duck",
+    "🦉": "owl",
+    "🐺": "wolf",
+    "🐗": "boar",
+    "🐴": "horse",
+    "🦄": "unicorn",
+    "🐝": "bee",
+    "🐛": "bug",
+    "🦋": "butterfly",
+    "🐌": "snail",
+    "🐞": "ladybug",
+    "🐍": "snake",
+    "🐢": "turtle",
+    "🐙": "octopus",
+    "🦀": "crab",
+    "🐠": "tropical fish",
+    "🐳": "whale",
+    "🐋": "whale",
+    "🦈": "shark",
+    "🐊": "crocodile",
+    "🦕": "sauropod",
+    "🦖": "t-rex",
+    "🌸": "cherry blossom",
+    "🌹": "rose",
+    "🌻": "sunflower",
+    "🌺": "hibiscus",
+    "🌷": "tulip",
+    "🌱": "seedling",
+    "🌲": "evergreen tree",
+    "🌳": "deciduous tree",
+    "🍀": "four leaf clover",
+    "🍎": "red apple",
+    "🍐": "pear",
+    "🍊": "tangerine",
+    "🍋": "lemon",
+    "🍌": "banana",
+    "🍉": "watermelon",
+    "🍇": "grapes",
+    "🍓": "strawberry",
+    "🫐": "blueberries",
+    "🍑": "peach",
+    "🌈": "rainbow",
+    "☀️": "sun",
+    "🌤️": "sun behind cloud",
+    "⛅": "sun behind cloud",
+    "☁️": "cloud",
+    "🌧️": "rain",
+    "⛈️": "thunder",
+    "❄️": "snowflake",
+    "🌊": "wave",
+    "👀": "eyes",
+    "👁️": "eye",
+    "👂": "ear",
+    "👃": "nose",
+    "👄": "mouth",
+    "👅": "tongue",
+    "🧠": "brain",
+    "🦴": "bone",
+    "🦷": "tooth",
+    "👶": "baby",
+    "🧒": "child",
+    "👦": "boy",
+    "👧": "girl",
+    "🧑": "person",
+    "👨": "man",
+    "👩": "woman",
+    "🧓": "older person",
+    "👮": "police officer",
+    "🧑‍💻": "technologist",
+    "👨‍💻": "man technologist",
+    "👩‍💻": "woman technologist",
+    "🎓": "graduation cap",
+    "🧢": "billed cap",
+    "👑": "crown",
+    "💎": "gem",
+    "👓": "glasses",
+    "🕶️": "sunglasses",
+    "🩸": "drop of blood",
+    "💊": "pill",
+    "🩹": "bandage",
+    "🧬": "dna",
+    "🦠": "microbe",
+    "☢️": "radioactive",
+    "☣️": "biohazard",
+    "♻️": "recycling",
+    "🏳️": "white flag",
+    "🏴": "black flag",
+    "🚩": "red flag",
+    "🏁": "checkered flag",
+    "➡️": "right arrow",
+    "⬅️": "left arrow",
+    "⬆️": "up arrow",
+    "⬇️": "down arrow",
+    "↗️": "upper right arrow",
+    "↘️": "lower right arrow",
+    "↙️": "lower left arrow",
+    "↖️": "upper left arrow",
+    "↩️": "left curve",
+    "↪️": "right curve",
+    "🔄": "counterclockwise",
+    "🔃": "clockwise",
+    "➕": "plus",
+    "➖": "minus",
+    "➗": "division",
+    "✖️": "multiply",
+    "♾️": "infinity",
+    "‼️": "double exclamation",
+    "⁉️": "exclamation question",
+    "©️": "copyright",
+    "®️": "registered",
+    "™️": "trademark",
   };
 
   function emojiToText(str) {
     return str.replace(EMOJI_RE, (match) => {
       const desc = EMOJI_MAP[match];
-      if (desc) return ':' + desc + ':';
+      if (desc) return ":" + desc + ":";
       // Fallback: use the emoji's Unicode name if available, or skip
-      return ':emoji:';
+      return ":emoji:";
     });
   }
 
-  const _DEOJ_SKIP = '.sources-section, .thinking-toggle, .memory-used-pill';
+  const _DEOJ_SKIP = ".sources-section, .thinking-toggle, .memory-used-pill";
 
   /** Walk all text nodes inside an element and replace emojis with text descriptions */
   function deEmojify(root) {
     if (!root || !root.querySelectorAll) return;
     // Monochrome SVG spans from svgifyEmoji — Unicode lives in aria-label only
-    root.querySelectorAll('.emoji[aria-label]').forEach((span) => {
+    root.querySelectorAll(".emoji[aria-label]").forEach((span) => {
       if (span.closest(_DEOJ_SKIP)) return;
-      const label = span.getAttribute('aria-label') || '';
+      const label = span.getAttribute("aria-label") || "";
       span.replaceWith(document.createTextNode(emojiToText(label)));
     });
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -2933,7 +3736,8 @@ function initializeEventListeners() {
     while (walker.nextNode()) nodes.push(walker.currentNode);
     for (const node of nodes) {
       // Skip UI elements that use unicode symbols as functional icons
-      if (node.parentElement && node.parentElement.closest(_DEOJ_SKIP)) continue;
+      if (node.parentElement && node.parentElement.closest(_DEOJ_SKIP))
+        continue;
       if (EMOJI_RE.test(node.textContent)) {
         EMOJI_RE.lastIndex = 0; // reset regex state
         node.textContent = emojiToText(node.textContent);
@@ -2943,30 +3747,30 @@ function initializeEventListeners() {
 
   /** Apply or remove text-emoji mode on all chat messages */
   function applyTextEmojis(enabled) {
-    document.body.classList.toggle('text-emojis', enabled);
+    document.body.classList.toggle("text-emojis", enabled);
     if (enabled) {
-      document.querySelectorAll('.msg .body').forEach(deEmojify);
+      document.querySelectorAll(".msg .body").forEach(deEmojify);
     }
   }
 
   // Observe chat history for new/changed messages — de-emojify on the fly
   let _deEmojifyTimer = null;
   const _chatObs = new MutationObserver(() => {
-    if (!document.body.classList.contains('text-emojis')) return;
+    if (!document.body.classList.contains("text-emojis")) return;
     clearTimeout(_deEmojifyTimer);
     _deEmojifyTimer = setTimeout(() => {
-      document.querySelectorAll('.msg .body').forEach(deEmojify);
+      document.querySelectorAll(".msg .body").forEach(deEmojify);
     }, 150);
   });
-  const _chatBox = document.getElementById('chat-history');
+  const _chatBox = document.getElementById("chat-history");
   if (_chatBox) _chatObs.observe(_chatBox, { childList: true, subtree: true });
 
   // Migrate old toolbar visibility key if present
   (function migrateOldToolbarVis() {
-    const OLD_KEY = 'odysseus-toolbar-visibility';
+    const OLD_KEY = "odysseus-toolbar-visibility";
     try {
       const old = Storage.getJSON(OLD_KEY, null);
-      if (old && typeof old === 'object') {
+      if (old && typeof old === "object") {
         const current = loadUIVis();
         let migrated = false;
         Object.entries(old).forEach(([btnId, val]) => {
@@ -2995,35 +3799,38 @@ function initializeEventListeners() {
     // The only two modals without a per-module makeWindowDraggable call. Wire
     // them onto the shared helper, drag-only, to match their old behavior.
     try {
-      ['custom-preset-modal', 'rename-session-modal'].forEach((id) => {
+      ["custom-preset-modal", "rename-session-modal"].forEach((id) => {
         const m = document.getElementById(id);
         if (!m) return;
-        const content = m.querySelector('.modal-content');
-        const header = m.querySelector('.modal-header');
+        const content = m.querySelector(".modal-content");
+        const header = m.querySelector(".modal-header");
         if (!content || !header) return;
         makeWindowDraggable(m, {
-          content, header,
-          skipSelector: '.close-btn',
+          content,
+          header,
+          skipSelector: ".close-btn",
           enableDock: false,
           enableResize: false,
         });
         // Re-center on open (these persist in the DOM). Guard on the
         // hidden→visible edge so it never fires mid-drag.
-        let wasHidden = m.classList.contains('hidden');
+        let wasHidden = m.classList.contains("hidden");
         new MutationObserver(() => {
-          const isHidden = m.classList.contains('hidden');
+          const isHidden = m.classList.contains("hidden");
           if (wasHidden && !isHidden) {
-            content.style.position = '';
-            content.style.left = '';
-            content.style.top = '';
-            content.style.right = '';
-            content.style.bottom = '';
-            content.style.margin = '';
+            content.style.position = "";
+            content.style.left = "";
+            content.style.top = "";
+            content.style.right = "";
+            content.style.bottom = "";
+            content.style.margin = "";
           }
           wasHidden = isHidden;
-        }).observe(m, { attributes: true, attributeFilter: ['class'] });
+        }).observe(m, { attributes: true, attributeFilter: ["class"] });
       });
-    } catch (e) { console.error('Dialog drag init error:', e); }
+    } catch (e) {
+      console.error("Dialog drag init error:", e);
+    }
   })();
 
   // ── Modal minimize → dock ──
@@ -3035,26 +3842,27 @@ function initializeEventListeners() {
     // custom-preset-modal (the Prompt window) is handled by the new
     // modalManager dock (registered in _AUTO_WIRE), so the legacy dock must
     // not also inject a `_`/chip for it.
-    const SKIP_IDS = new Set(['styled-confirm-overlay', 'custom-preset-modal']);
+    const SKIP_IDS = new Set(["styled-confirm-overlay", "custom-preset-modal"]);
     const dockEntries = new Map(); // modal element -> dock entry element
 
-    let dock = document.getElementById('modal-dock');
+    let dock = document.getElementById("modal-dock");
     if (!dock) {
-      dock = document.createElement('div');
-      dock.id = 'modal-dock';
+      dock = document.createElement("div");
+      dock.id = "modal-dock";
       document.body.appendChild(dock);
     }
 
     // Keep the dock clear of the sidebar (which can be collapsed, resized,
     // hidden, or flipped to the right side).
     function updateDockOffset() {
-      const sidebar = document.getElementById('sidebar');
-      const iconRail = document.getElementById('icon-rail');
+      const sidebar = document.getElementById("sidebar");
+      const iconRail = document.getElementById("icon-rail");
       let leftPx = 0;
       let rightPx = 0;
-      const sidebarRight = sidebar && sidebar.classList.contains('right-side');
-      const sidebarVisible = sidebar &&
-        !sidebar.classList.contains('hidden') &&
+      const sidebarRight = sidebar && sidebar.classList.contains("right-side");
+      const sidebarVisible =
+        sidebar &&
+        !sidebar.classList.contains("hidden") &&
         sidebar.offsetWidth > 0;
       const railVisible = iconRail && iconRail.offsetWidth > 0;
       const sidebarW = sidebarVisible ? sidebar.offsetWidth : 0;
@@ -3064,35 +3872,42 @@ function initializeEventListeners() {
       } else {
         leftPx = sidebarW + railW;
       }
-      dock.style.left = leftPx + 'px';
-      dock.style.right = rightPx + 'px';
+      dock.style.left = leftPx + "px";
+      dock.style.right = rightPx + "px";
     }
     updateDockOffset();
     // Recompute when sidebar resizes, collapses, or moves sides
     if (window.ResizeObserver) {
       const ro = new ResizeObserver(updateDockOffset);
-      const sb = document.getElementById('sidebar');
-      const ir = document.getElementById('icon-rail');
+      const sb = document.getElementById("sidebar");
+      const ir = document.getElementById("icon-rail");
       if (sb) ro.observe(sb);
       if (ir) ro.observe(ir);
     }
-    window.addEventListener('resize', updateDockOffset);
+    window.addEventListener("resize", updateDockOffset);
     // Side-flip / collapse toggles class names on body or sidebar
     new MutationObserver(updateDockOffset).observe(document.body, {
-      attributes: true, attributeFilter: ['class'],
+      attributes: true,
+      attributeFilter: ["class"],
     });
-    const sbEl = document.getElementById('sidebar');
+    const sbEl = document.getElementById("sidebar");
     if (sbEl) {
       new MutationObserver(updateDockOffset).observe(sbEl, {
-        attributes: true, attributeFilter: ['class', 'style'],
+        attributes: true,
+        attributeFilter: ["class", "style"],
       });
     }
 
     function modalTitle(modal) {
-      const h = modal.querySelector('.modal-header h4, .modal-header h3, .modal-header h2');
+      const h = modal.querySelector(
+        ".modal-header h4, .modal-header h3, .modal-header h2",
+      );
       if (h && h.textContent.trim()) return h.textContent.trim();
-      if (modal.id) return modal.id.replace(/-modal$|-overlay$|-popup$/, '').replace(/-/g, ' ');
-      return 'Window';
+      if (modal.id)
+        return modal.id
+          .replace(/-modal$|-overlay$|-popup$/, "")
+          .replace(/-/g, " ");
+      return "Window";
     }
 
     function removeDockEntry(modal) {
@@ -3104,66 +3919,73 @@ function initializeEventListeners() {
     }
 
     function restoreModal(modal) {
-      modal.classList.remove('minimized');
-      modal.classList.remove('hidden');
+      modal.classList.remove("minimized");
+      modal.classList.remove("hidden");
       removeDockEntry(modal);
       // Bring to front (matches existing focus-on-click behavior)
-      modal.style.zIndex = '';
+      modal.style.zIndex = "";
     }
 
     function minimizeModal(modal) {
-      if (modal.classList.contains('hidden')) return;
-      modal.classList.add('minimized');
+      if (modal.classList.contains("hidden")) return;
+      modal.classList.add("minimized");
       if (dockEntries.has(modal)) return;
 
-      const entry = document.createElement('div');
-      entry.className = 'modal-dock-item';
+      const entry = document.createElement("div");
+      entry.className = "modal-dock-item";
       entry.title = `Restore ${modalTitle(modal)}`;
 
-      const label = document.createElement('span');
-      label.className = 'modal-dock-label';
+      const label = document.createElement("span");
+      label.className = "modal-dock-label";
       label.textContent = modalTitle(modal);
 
-      const closeX = document.createElement('button');
-      closeX.className = 'modal-dock-close';
-      closeX.textContent = '×';
-      closeX.title = 'Close';
-      closeX.addEventListener('click', (e) => {
+      const closeX = document.createElement("button");
+      closeX.className = "modal-dock-close";
+      closeX.textContent = "×";
+      closeX.title = "Close";
+      closeX.addEventListener("click", (e) => {
         e.stopPropagation();
-        modal.classList.remove('minimized');
-        modal.classList.add('hidden');
-        modal.style.display = '';
+        modal.classList.remove("minimized");
+        modal.classList.add("hidden");
+        modal.style.display = "";
         removeDockEntry(modal);
       });
 
       entry.appendChild(label);
       entry.appendChild(closeX);
-      entry.addEventListener('click', () => restoreModal(modal));
+      entry.addEventListener("click", () => restoreModal(modal));
       dock.appendChild(entry);
       dockEntries.set(modal, entry);
     }
 
     function injectMinimizeButton(modal) {
-      if (!modal || !modal.classList || !modal.classList.contains('modal')) return;
+      if (!modal || !modal.classList || !modal.classList.contains("modal"))
+        return;
       if (modal.id && SKIP_IDS.has(modal.id)) return;
       // Modals managed by the new modalManager (Modals.register) get their own
       // .modal-minimize-btn and chips via the .minimized-dock-chip system.
       // Skip them entirely so we don't double-up minimize buttons or chips.
       if (modal.id && /^email-reader-/.test(modal.id)) return;
-      if (modal.id && window.Modals && window.Modals.isRegistered && window.Modals.isRegistered(modal.id)) return;
-      const header = modal.querySelector('.modal-header');
+      if (
+        modal.id &&
+        window.Modals &&
+        window.Modals.isRegistered &&
+        window.Modals.isRegistered(modal.id)
+      )
+        return;
+      const header = modal.querySelector(".modal-header");
       if (!header) return;
-      if (header.querySelector('.minimize-btn, .modal-minimize-btn')) return;
-      const closeBtn = header.querySelector('.close-btn, .modal-close');
+      if (header.querySelector(".minimize-btn, .modal-minimize-btn")) return;
+      const closeBtn = header.querySelector(".close-btn, .modal-close");
       if (!closeBtn) return;
 
-      const minBtn = document.createElement('button');
-      minBtn.className = 'minimize-btn';
-      minBtn.type = 'button';
-      minBtn.title = 'Minimize';
-      minBtn.textContent = '_';
-      minBtn.addEventListener('mousedown', (e) => e.stopPropagation()); // don't start drag
-      minBtn.addEventListener('click', (e) => {
+      const minBtn = document.createElement("button");
+      minBtn.className = "minimize-btn";
+      minBtn.type = "button";
+      minBtn.title = "Minimize";
+      minBtn.textContent = "_";
+      minBtn.addEventListener("mousedown", (e) => e.stopPropagation()); // don't start drag
+      minBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         minimizeModal(modal);
       });
@@ -3171,25 +3993,28 @@ function initializeEventListeners() {
 
       // Watch this modal's class so close-from-elsewhere clears the dock entry
       new MutationObserver(() => {
-        if (modal.classList.contains('hidden') && !modal.classList.contains('minimized')) {
+        if (
+          modal.classList.contains("hidden") &&
+          !modal.classList.contains("minimized")
+        ) {
           removeDockEntry(modal);
         }
-      }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+      }).observe(modal, { attributes: true, attributeFilter: ["class"] });
     }
 
     // Initial pass over existing modals
-    document.querySelectorAll('.modal').forEach(injectMinimizeButton);
+    document.querySelectorAll(".modal").forEach(injectMinimizeButton);
 
     // Watch for dynamically-created modals
     new MutationObserver((mutations) => {
       for (const m of mutations) {
         for (const n of m.addedNodes) {
           if (n.nodeType !== 1) continue;
-          if (n.classList && n.classList.contains('modal')) {
+          if (n.classList && n.classList.contains("modal")) {
             injectMinimizeButton(n);
           }
           if (n.querySelectorAll) {
-            n.querySelectorAll('.modal').forEach(injectMinimizeButton);
+            n.querySelectorAll(".modal").forEach(injectMinimizeButton);
           }
         }
       }
@@ -3197,9 +4022,9 @@ function initializeEventListeners() {
   })();
 
   // Preset button (in overflow menu)
-  const overflowPresetBtn = el('overflow-preset-btn');
+  const overflowPresetBtn = el("overflow-preset-btn");
   if (overflowPresetBtn) {
-    overflowPresetBtn.addEventListener('click', () => {
+    overflowPresetBtn.addEventListener("click", () => {
       if (presetsModule && presetsModule.openCustomPresetModal) {
         presetsModule.openCustomPresetModal();
       }
@@ -3207,27 +4032,32 @@ function initializeEventListeners() {
   }
 
   // RAG directory
-  const addDirBtn = el('add-directory-btn');
+  const addDirBtn = el("add-directory-btn");
   if (addDirBtn) {
-    addDirBtn.addEventListener('click', () => {
+    addDirBtn.addEventListener("click", () => {
       ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
     });
   }
-  
-  const directoryInput = el('rag-directory');
+
+  const directoryInput = el("rag-directory");
   if (directoryInput) {
-    directoryInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
+    directoryInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
         ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
       }
     });
-
   }
 
   // Sidebar layout (extracted to js/sidebar-layout.js)
   initSidebarLayout(Storage, {
-    documentModule, _closeCompareIfActive, _deactivateIncognito,
-    presetsModule, sessionModule, el, _defaultChat, _syncResearchIndicator
+    documentModule,
+    _closeCompareIfActive,
+    _deactivateIncognito,
+    presetsModule,
+    sessionModule,
+    el,
+    _defaultChat,
+    _syncResearchIndicator,
   });
 
   // Mobile: horizontal swipe on a tabbed window switches tabs. Works for any
@@ -3239,103 +4069,148 @@ function initializeEventListeners() {
     if (window.innerWidth > 768) return;
     // [tab-bar selector, tab-button selector] for each tabbed window.
     const SYSTEMS = [
-      ['.preset-tabs', '.preset-tab'],
-      ['.lib-tabs', '.lib-tab'],
-      ['.memory-tabs', '.memory-tab'],
-      ['.admin-tabs', '.admin-tab'],
+      [".preset-tabs", ".preset-tab"],
+      [".lib-tabs", ".lib-tab"],
+      [".memory-tabs", ".memory-tab"],
+      [".admin-tabs", ".admin-tab"],
     ];
-    const _IGNORE = '.chat-input-bar, input, textarea, select, [contenteditable="true"], .preset-range, ' +
-      '.note-cl-row, .minimized-dock-chip, canvas, .email-card-reader';
-    let sx = 0, sy = 0, tracking = false;
-
-    document.addEventListener('touchstart', (e) => {
-      if (window.innerWidth > 768 || e.touches.length !== 1) { tracking = false; return; }
-      if (e.target.closest && e.target.closest(_IGNORE)) { tracking = false; return; }
-      sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
-    }, { passive: true });
-
-    document.addEventListener('touchend', (e) => {
-      if (!tracking) return;
+    const _IGNORE =
+      '.chat-input-bar, input, textarea, select, [contenteditable="true"], .preset-range, ' +
+      ".note-cl-row, .minimized-dock-chip, canvas, .email-card-reader";
+    let sx = 0,
+      sy = 0,
       tracking = false;
-      const t = e.changedTouches[0];
-      if (!t) return;
-      const dx = t.clientX - sx, dy = t.clientY - sy;
-      // Require a deliberate, mostly-horizontal swipe.
-      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-      for (const [barSel, tabSel] of SYSTEMS) {
-        const bar = document.querySelector(barSel);
-        if (!bar || bar.offsetParent === null) continue;  // not the visible window
-        // Only act if the swipe happened inside this bar's window (not some
-        // other on-screen element).
-        const host = bar.closest('.modal, #notes-pane, .preset-modal-content, .admin-card') || bar.parentElement;
-        const startEl = document.elementFromPoint(sx, sy);
-        if (host && startEl && !host.contains(startEl)) continue;
-        const tabs = [...bar.querySelectorAll(tabSel)];
-        if (tabs.length < 2) continue;
-        let idx = tabs.findIndex(tb => tb.classList.contains('active'));
-        if (idx < 0) idx = 0;
-        // Swipe left (dx<0) → next tab; swipe right (dx>0) → previous.
-        const nextIdx = dx < 0 ? idx + 1 : idx - 1;
-        if (nextIdx < 0 || nextIdx >= tabs.length) return;  // at an edge
-        tabs[nextIdx].click();
-        return;
-      }
-    }, { passive: true });
+
+    document.addEventListener(
+      "touchstart",
+      (e) => {
+        if (window.innerWidth > 768 || e.touches.length !== 1) {
+          tracking = false;
+          return;
+        }
+        if (e.target.closest && e.target.closest(_IGNORE)) {
+          tracking = false;
+          return;
+        }
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+        tracking = true;
+      },
+      { passive: true },
+    );
+
+    document.addEventListener(
+      "touchend",
+      (e) => {
+        if (!tracking) return;
+        tracking = false;
+        const t = e.changedTouches[0];
+        if (!t) return;
+        const dx = t.clientX - sx,
+          dy = t.clientY - sy;
+        // Require a deliberate, mostly-horizontal swipe.
+        if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+        for (const [barSel, tabSel] of SYSTEMS) {
+          const bar = document.querySelector(barSel);
+          if (!bar || bar.offsetParent === null) continue; // not the visible window
+          // Only act if the swipe happened inside this bar's window (not some
+          // other on-screen element).
+          const host =
+            bar.closest(
+              ".modal, #notes-pane, .preset-modal-content, .admin-card",
+            ) || bar.parentElement;
+          const startEl = document.elementFromPoint(sx, sy);
+          if (host && startEl && !host.contains(startEl)) continue;
+          const tabs = [...bar.querySelectorAll(tabSel)];
+          if (tabs.length < 2) continue;
+          let idx = tabs.findIndex((tb) => tb.classList.contains("active"));
+          if (idx < 0) idx = 0;
+          // Swipe left (dx<0) → next tab; swipe right (dx>0) → previous.
+          const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+          if (nextIdx < 0 || nextIdx >= tabs.length) return; // at an edge
+          tabs[nextIdx].click();
+          return;
+        }
+      },
+      { passive: true },
+    );
   })();
 
   // Elastic overscroll (rubber-band bounce) — desktop wheel only, on chat-history not container
   (function initElasticScroll() {
-    const hist = el('chat-history');
+    const hist = el("chat-history");
     if (!hist) return;
-    const SNAP_BACK = 'transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    const SNAP_BACK = "transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)";
 
     let wheelPull = 0;
     let wheelTimer = null;
-    hist.addEventListener('wheel', (e) => {
-      const atTop = hist.scrollTop <= 0 && e.deltaY < 0;
-      const atBottom = hist.scrollTop + hist.clientHeight >= hist.scrollHeight - 1 && e.deltaY > 0;
-      if (!atTop && !atBottom) { wheelPull = 0; return; }
+    hist.addEventListener(
+      "wheel",
+      (e) => {
+        const atTop = hist.scrollTop <= 0 && e.deltaY < 0;
+        const atBottom =
+          hist.scrollTop + hist.clientHeight >= hist.scrollHeight - 1 &&
+          e.deltaY > 0;
+        if (!atTop && !atBottom) {
+          wheelPull = 0;
+          return;
+        }
 
-      wheelPull += e.deltaY * -0.03;
-      wheelPull = Math.max(-7, Math.min(7, wheelPull));
-      hist.style.transition = 'none';
-      hist.style.transform = `translateY(${wheelPull}px)`;
+        wheelPull += e.deltaY * -0.03;
+        wheelPull = Math.max(-7, Math.min(7, wheelPull));
+        hist.style.transition = "none";
+        hist.style.transform = `translateY(${wheelPull}px)`;
 
-      clearTimeout(wheelTimer);
-      wheelTimer = setTimeout(() => {
-        wheelPull = 0;
-        hist.style.transition = SNAP_BACK;
-        hist.style.transform = '';
-      }, 120);
-    }, { passive: true });
+        clearTimeout(wheelTimer);
+        wheelTimer = setTimeout(() => {
+          wheelPull = 0;
+          hist.style.transition = SNAP_BACK;
+          hist.style.transform = "";
+        }, 120);
+      },
+      { passive: true },
+    );
   })();
 
-  async function _handleNewChatAction({ preferModel = true, focus = true } = {}) {
-      if (!sessionModule) return;
-      if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
-      // Clear character on new chat
-      if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
-      // Clear research mode if active
-      const _resChk = el('research-toggle');
-      if (_resChk && _resChk.checked) _syncResearchIndicator(false);
-      if (preferModel && await _createDirectChatFromPreferredModel()) return;
-      // No models at all — show welcome screen
-      _startFreshChat();
-      const docBtn3 = el('overflow-doc-btn');
-      if (docBtn3) docBtn3.classList.remove('active', 'has-docs');
-      document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
-      if (focus) {
-        const input = el('message');
-        if (input) { try { input.focus(); } catch (_) {} }
+  async function _handleNewChatAction({
+    preferModel = true,
+    focus = true,
+  } = {}) {
+    if (!sessionModule) return;
+    if (_closeCompareIfActive()) return;
+    _deactivateIncognito();
+    // Clear character on new chat
+    if (presetsModule && presetsModule.deactivateCharacter)
+      presetsModule.deactivateCharacter();
+    // Clear research mode if active
+    const _resChk = el("research-toggle");
+    if (_resChk && _resChk.checked) _syncResearchIndicator(false);
+    if (preferModel && (await _createDirectChatFromPreferredModel())) return;
+    // No models at all — show welcome screen
+    _startFreshChat();
+    const docBtn3 = el("overflow-doc-btn");
+    if (docBtn3) docBtn3.classList.remove("active", "has-docs");
+    document
+      .querySelectorAll(".session-item.active")
+      .forEach((s) => s.classList.remove("active"));
+    if (focus) {
+      const input = el("message");
+      if (input) {
+        try {
+          input.focus();
+        } catch (_) {}
       }
+    }
   }
 
   // New session button on icon rail
-  const railNewSession = el('rail-new-session');
+  const railNewSession = el("rail-new-session");
   if (railNewSession) {
-    railNewSession.addEventListener('click', async (e) => {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
+    railNewSession.addEventListener("click", async (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       await _handleNewChatAction();
     });
   }
@@ -3344,92 +4219,121 @@ function initializeEventListeners() {
   // The send path at chat.js:354 will auto-create a session using /api/default-chat
   // on first submit, so users can start typing before models finish loading and
   // the default model attaches when they hit send.
-  const mobileNewChat = el('mobile-new-chat-btn');
+  const mobileNewChat = el("mobile-new-chat-btn");
   if (mobileNewChat) {
-    mobileNewChat.addEventListener('click', () => {
+    mobileNewChat.addEventListener("click", () => {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
       _deactivateIncognito();
       _startFreshChat();
-      document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
+      document
+        .querySelectorAll(".session-item.active")
+        .forEach((s) => s.classList.remove("active"));
       // Focus the composer synchronously so mobile keyboards pop open.
       // iOS Safari only honours programmatic focus inside the original click
       // callback — a setTimeout breaks the user-gesture chain.
-      const _input = el('message-input');
-      if (_input) { try { _input.focus(); } catch (_) {} }
+      const _input = el("message-input");
+      if (_input) {
+        try {
+          _input.focus();
+        } catch (_) {}
+      }
     });
   }
 
   // Logo click → new chat (same logic as rail new-session button)
-  const brandBtn = el('sidebar-brand-btn');
+  const brandBtn = el("sidebar-brand-btn");
   if (brandBtn) {
-    brandBtn.addEventListener('click', async (e) => {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
+    brandBtn.addEventListener("click", async (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       await _handleNewChatAction();
     });
   }
 
-  const sidebarNewChatBtn = el('sidebar-new-chat-btn');
+  const sidebarNewChatBtn = el("sidebar-new-chat-btn");
   if (sidebarNewChatBtn) {
-    sidebarNewChatBtn.addEventListener('click', async (e) => {
-      if (e) { e.preventDefault(); e.stopImmediatePropagation(); }
+    sidebarNewChatBtn.addEventListener("click", async (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
       await _handleNewChatAction();
     });
   }
 
   // Delete session button on icon rail
-  const railDelete = el('rail-delete-session');
+  const railDelete = el("rail-delete-session");
   if (railDelete) {
-    railDelete.addEventListener('click', async () => {
+    railDelete.addEventListener("click", async () => {
       if (!sessionModule) return;
       const currentId = sessionModule.getCurrentSessionId();
       if (!currentId) return;
       const sessions = sessionModule.getSessions();
-      const current = sessions.find(s => s.id === currentId);
-      const name = current ? current.name : 'this session';
-      if (!await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })) return;
+      const current = sessions.find((s) => s.id === currentId);
+      const name = current ? current.name : "this session";
+      if (
+        !(await uiModule.styledConfirm(`Delete "${name}"?`, {
+          confirmText: "Delete",
+          danger: true,
+        }))
+      )
+        return;
       try {
         // Find the next session below the current one before deleting
-        const idx = sessions.findIndex(s => s.id === currentId);
-        const nextSession = sessions.filter(s => !s.archived && s.id !== currentId)[Math.max(0, idx)] ||
-                            sessions.find(s => !s.archived && s.id !== currentId);
-        const res = await fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' });
+        const idx = sessions.findIndex((s) => s.id === currentId);
+        const nextSession =
+          sessions.filter((s) => !s.archived && s.id !== currentId)[
+            Math.max(0, idx)
+          ] || sessions.find((s) => !s.archived && s.id !== currentId);
+        const res = await fetch(`${API_BASE}/api/session/${currentId}`, {
+          method: "DELETE",
+        });
         if (res.ok) {
           await sessionModule.loadSessions();
           if (nextSession) {
             await sessionModule.selectSession(nextSession.id);
           }
-          uiModule.showToast('Session deleted');
+          uiModule.showToast("Session deleted");
         } else {
-          uiModule.showError('Failed to delete session');
+          uiModule.showError("Failed to delete session");
         }
       } catch (e) {
-        uiModule.showError('Failed to delete session: ' + e);
+        uiModule.showError("Failed to delete session: " + e);
       }
     });
   }
 
   // Textarea auto-resize
-  const textarea = el('message');
+  const textarea = el("message");
   if (textarea) {
     _syncMobileEnterKeyHint(textarea);
-    window.addEventListener('odysseus:chat-busy-change', () => _syncMobileEnterKeyHint(textarea));
+    window.addEventListener("odysseus:chat-busy-change", () =>
+      _syncMobileEnterKeyHint(textarea),
+    );
     uiModule.autoResize(textarea);
-    let previousTextareaValue = textarea.value || '';
-    textarea.addEventListener('beforeinput', (e) => {
-      if (_isLineBreakInputEvent(e) && _shouldQueueFromMobileLineBreak(textarea)) {
+    let previousTextareaValue = textarea.value || "";
+    textarea.addEventListener("beforeinput", (e) => {
+      if (
+        _isLineBreakInputEvent(e) &&
+        _shouldQueueFromMobileLineBreak(textarea)
+      ) {
         e.preventDefault();
         e.stopPropagation();
         _submitMobileQueuedInput(textarea);
       }
     });
-    textarea.addEventListener('input', (e) => {
-      const currentValue = textarea.value || '';
-      const insertedLineBreak = _isLineBreakInputEvent(e)
-        || _countLineBreaks(currentValue) > _countLineBreaks(previousTextareaValue);
+    textarea.addEventListener("input", (e) => {
+      const currentValue = textarea.value || "";
+      const insertedLineBreak =
+        _isLineBreakInputEvent(e) ||
+        _countLineBreaks(currentValue) >
+          _countLineBreaks(previousTextareaValue);
       if (insertedLineBreak && _shouldQueueFromMobileLineBreak(textarea)) {
-        textarea.value = currentValue.replace(/\n+$/g, '');
-        previousTextareaValue = textarea.value || '';
+        textarea.value = currentValue.replace(/\n+$/g, "");
+        previousTextareaValue = textarea.value || "";
         _submitMobileQueuedInput(textarea);
         return;
       }
@@ -3437,13 +4341,16 @@ function initializeEventListeners() {
       uiModule.autoResize(textarea);
       _syncMobileEnterKeyHint(textarea);
     });
-    textarea.addEventListener('paste', () => {
+    textarea.addEventListener("paste", () => {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
-    textarea.addEventListener('keydown', (e) => {
+    textarea.addEventListener("keydown", (e) => {
       const isMobile = _isMobileChatInput();
 
-      if (_shouldQueueFromMobileEnter(e, textarea) || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile)) {
+      if (
+        _shouldQueueFromMobileEnter(e, textarea) ||
+        (e.key === "Enter" && !e.shiftKey && !e.isComposing && !isMobile)
+      ) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3454,10 +4361,18 @@ function initializeEventListeners() {
         e.preventDefault();
         e.stopPropagation();
         // Check if already submitting before triggering form submission
-        const form = el('chat-form');
+        const form = el("chat-form");
         if (form) {
-          if (_isForegroundChatBusy() && textarea.value && textarea.value.trim()) {
-            if (chatModule && chatModule.queueStreamingComposerRequest && chatModule.queueStreamingComposerRequest()) {
+          if (
+            _isForegroundChatBusy() &&
+            textarea.value &&
+            textarea.value.trim()
+          ) {
+            if (
+              chatModule &&
+              chatModule.queueStreamingComposerRequest &&
+              chatModule.queueStreamingComposerRequest()
+            ) {
               return;
             }
             window.__odysseusQueueStreamingSubmit = Date.now();
@@ -3470,24 +4385,27 @@ function initializeEventListeners() {
 
   // ── Ghost text autocomplete for /new and /create commands ──
   (function initGhostAutocomplete() {
-    const textarea = el('message');
-    const ghost = document.getElementById('message-ghost');
+    const textarea = el("message");
+    const ghost = document.getElementById("message-ghost");
     if (!textarea || !ghost) return;
 
-    let modelCache = null;     // { models: [{ mid, url, endpointId, displayName }], ts }
-    let filtered = [];         // currently matching models
-    let cycleIdx = 0;          // index into filtered[]
-    let active = false;        // is ghost visible?
-    const CACHE_TTL = 60000;   // re-fetch after 60s
+    let modelCache = null; // { models: [{ mid, url, endpointId, displayName }], ts }
+    let filtered = []; // currently matching models
+    let cycleIdx = 0; // index into filtered[]
+    let active = false; // is ghost visible?
+    const CACHE_TTL = 60000; // re-fetch after 60s
     const CMD_RE = /^\/(new|create)\s/i;
 
     async function fetchModels() {
-      if (modelCache && Date.now() - modelCache.ts < CACHE_TTL) return modelCache.models;
+      if (modelCache && Date.now() - modelCache.ts < CACHE_TTL)
+        return modelCache.models;
       try {
-        const res = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
+        const res = await fetch(`${API_BASE}/api/models`, {
+          credentials: "same-origin",
+        });
         const data = await res.json();
         const models = [];
-        (data.items || []).forEach(ep => {
+        (data.items || []).forEach((ep) => {
           const displayNames = ep.models_display || ep.models || [];
           (ep.models || []).forEach((mid, i) => {
             models.push({
@@ -3501,7 +4419,7 @@ function initializeEventListeners() {
         modelCache = { models, ts: Date.now() };
         return models;
       } catch (e) {
-        console.warn('Ghost autocomplete: failed to fetch models', e);
+        console.warn("Ghost autocomplete: failed to fetch models", e);
         return modelCache ? modelCache.models : [];
       }
     }
@@ -3510,24 +4428,24 @@ function initializeEventListeners() {
       active = false;
       filtered = [];
       cycleIdx = 0;
-      ghost.textContent = '';
-      ghost.style.display = 'none';
+      ghost.textContent = "";
+      ghost.style.display = "none";
     }
 
     function show(typed, suggestion) {
       active = true;
-      ghost.innerHTML = '';
+      ghost.innerHTML = "";
       // Invisible portion matches what user typed (keeps alignment)
-      const span1 = document.createElement('span');
-      span1.style.visibility = 'hidden';
+      const span1 = document.createElement("span");
+      span1.style.visibility = "hidden";
       span1.textContent = typed;
       // Visible faded suggestion portion
-      const span2 = document.createElement('span');
-      span2.className = 'ghost-suggestion';
+      const span2 = document.createElement("span");
+      span2.className = "ghost-suggestion";
       span2.textContent = suggestion;
       ghost.appendChild(span1);
       ghost.appendChild(span2);
-      ghost.style.display = 'block';
+      ghost.style.display = "block";
     }
 
     function syncSize() {
@@ -3540,27 +4458,43 @@ function initializeEventListeners() {
     async function update() {
       const val = textarea.value;
       const match = val.match(CMD_RE);
-      if (!match) { hide(); return; }
+      if (!match) {
+        hide();
+        return;
+      }
 
       const prefix = val.slice(match[0].length); // text after "/new " or "/create "
       const models = await fetchModels();
-      if (!models.length) { hide(); return; }
+      if (!models.length) {
+        hide();
+        return;
+      }
 
       // Filter models whose mid or displayName starts with the typed prefix (case-insensitive)
       const lp = prefix.toLowerCase();
-      filtered = models.filter(m =>
-        m.mid.toLowerCase().startsWith(lp) || m.displayName.toLowerCase().startsWith(lp)
+      filtered = models.filter(
+        (m) =>
+          m.mid.toLowerCase().startsWith(lp) ||
+          m.displayName.toLowerCase().startsWith(lp),
       );
 
-      if (!filtered.length) { hide(); return; }
+      if (!filtered.length) {
+        hide();
+        return;
+      }
 
       // Clamp cycle index
       cycleIdx = cycleIdx % filtered.length;
       const chosen = filtered[cycleIdx];
       // Determine which name matched for completion
-      const name = chosen.mid.toLowerCase().startsWith(lp) ? chosen.mid : chosen.displayName;
+      const name = chosen.mid.toLowerCase().startsWith(lp)
+        ? chosen.mid
+        : chosen.displayName;
       const remainder = name.slice(prefix.length);
-      if (!remainder && filtered.length <= 1) { hide(); return; }
+      if (!remainder && filtered.length <= 1) {
+        hide();
+        return;
+      }
 
       syncSize();
       show(val, remainder);
@@ -3568,15 +4502,15 @@ function initializeEventListeners() {
 
     // --- Event listeners ---
 
-    textarea.addEventListener('input', () => {
+    textarea.addEventListener("input", () => {
       cycleIdx = 0;
       update();
     });
 
-    textarea.addEventListener('keydown', (e) => {
+    textarea.addEventListener("keydown", (e) => {
       if (!active) return;
 
-      if (e.key === 'Tab') {
+      if (e.key === "Tab") {
         // Tab fills the current suggestion into the textarea
         e.preventDefault();
         e.stopPropagation();
@@ -3586,14 +4520,16 @@ function initializeEventListeners() {
           const prefix = val.slice(match[0].length);
           const chosen = filtered[cycleIdx % filtered.length];
           const lp = prefix.toLowerCase();
-          const name = chosen.mid.toLowerCase().startsWith(lp) ? chosen.mid : chosen.displayName;
+          const name = chosen.mid.toLowerCase().startsWith(lp)
+            ? chosen.mid
+            : chosen.displayName;
           textarea.value = match[0] + name;
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
         }
         return;
       }
 
-      if (e.key === 'ArrowDown') {
+      if (e.key === "ArrowDown") {
         e.preventDefault();
         e.stopPropagation();
         cycleIdx = (cycleIdx + 1) % filtered.length;
@@ -3601,7 +4537,7 @@ function initializeEventListeners() {
         return;
       }
 
-      if (e.key === 'ArrowUp') {
+      if (e.key === "ArrowUp") {
         e.preventDefault();
         e.stopPropagation();
         cycleIdx = (cycleIdx - 1 + filtered.length) % filtered.length;
@@ -3609,51 +4545,67 @@ function initializeEventListeners() {
         return;
       }
 
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         e.preventDefault();
         hide();
         return;
       }
     });
 
-    textarea.addEventListener('blur', hide);
+    textarea.addEventListener("blur", hide);
 
     // Observe textarea resize (from autoResize) to keep ghost in sync
-    const ro = new ResizeObserver(() => { if (active) syncSize(); });
+    const ro = new ResizeObserver(() => {
+      if (active) syncSize();
+    });
     ro.observe(textarea);
 
     // Public API for the Enter handler above
     window._ghostAutocomplete = {
-      isActive() { return active && filtered.length > 0; },
+      isActive() {
+        return active && filtered.length > 0;
+      },
       accept() {
         if (!active || !filtered.length) return;
         const val = textarea.value;
         const match = val.match(CMD_RE);
-        if (!match) { hide(); return; }
+        if (!match) {
+          hide();
+          return;
+        }
         const prefix = val.slice(match[0].length);
         const chosen = filtered[cycleIdx % filtered.length];
         const lp = prefix.toLowerCase();
-        const name = chosen.mid.toLowerCase().startsWith(lp) ? chosen.mid : chosen.displayName;
+        const name = chosen.mid.toLowerCase().startsWith(lp)
+          ? chosen.mid
+          : chosen.displayName;
         textarea.value = match[0] + name;
         hide();
         // Trigger input event so autoResize fires
-        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
         // Now submit the form (the /new command handler will process it)
         setTimeout(() => {
-          const form = el('chat-form');
+          const form = el("chat-form");
           _submitChatFormDirect(form);
         }, 0);
-      }
+      },
     };
   })();
 
   // Keyboard shortcuts (extracted to js/keyboard-shortcuts.js)
   initKeyboardShortcuts({
-    el, Storage, sessionModule, uiModule, chatModule,
-    adminModule, settingsModule, searchChatModule,
-    _closeCompareIfActive, _deactivateIncognito, API_BASE
+    el,
+    Storage,
+    sessionModule,
+    uiModule,
+    chatModule,
+    adminModule,
+    settingsModule,
+    searchChatModule,
+    _closeCompareIfActive,
+    _deactivateIncognito,
+    API_BASE,
   });
-  
 }
 
 // ============================================
@@ -3665,40 +4617,49 @@ function startOdysseusApp() {
   window.__odysseusAppStarted = true;
   const _bumpChatPriority = (ms = 10000) => {
     try {
-      window.__odysseusChatBusyUntil = Math.max(window.__odysseusChatBusyUntil || 0, Date.now() + ms);
+      window.__odysseusChatBusyUntil = Math.max(
+        window.__odysseusChatBusyUntil || 0,
+        Date.now() + ms,
+      );
     } catch (_) {}
   };
   _bumpChatPriority(10000);
   // Set CSS variables
-  document.documentElement.style.setProperty('--line-height', '20px');
+  document.documentElement.style.setProperty("--line-height", "20px");
   initRailHoverLabels();
 
   // Smooth keyboard open/close on mobile — keep chat scrolled to bottom
-  if (window.visualViewport && 'ontouchstart' in window) {
+  if (window.visualViewport && "ontouchstart" in window) {
     let _prevVPH = visualViewport.height;
-    visualViewport.addEventListener('resize', () => {
+    visualViewport.addEventListener("resize", () => {
       const delta = visualViewport.height - _prevVPH;
       _prevVPH = visualViewport.height;
       // Keyboard opened (viewport shrank significantly)
       if (delta < -50) {
-        const hist = document.getElementById('chat-history');
+        const hist = document.getElementById("chat-history");
         if (hist) {
-          hist.style.scrollBehavior = 'smooth';
+          hist.style.scrollBehavior = "smooth";
           hist.scrollTop = hist.scrollHeight;
           // Reset after animation
-          setTimeout(() => { hist.style.scrollBehavior = ''; }, 300);
+          setTimeout(() => {
+            hist.style.scrollBehavior = "";
+          }, 300);
         }
       }
     });
   }
 
   // Initialize all event listeners
-  try { initializeEventListeners(); } catch(e) { console.error('Event init error:', e); }
+  try {
+    initializeEventListeners();
+  } catch (e) {
+    console.error("Event init error:", e);
+  }
 
   // Reveal the toolbar now that all toggle/overflow state is resolved
   // (hidden via inline style="visibility:hidden" in HTML to prevent FOUC)
-  const _inputBottom = document.querySelector('.chat-input-bottom');
-  if (_inputBottom) _inputBottom.style.visibility = '';
+  const _inputBottom = document.querySelector(".chat-input-bottom");
+  if (_inputBottom) _inputBottom.style.visibility = "";
 
   fileHandlerModule.init(API_BASE);
   modelsModule.init(API_BASE);
@@ -3718,41 +4679,44 @@ function startOdysseusApp() {
     documentModule.init(API_BASE);
     // Restore document panel if it was open before refresh
     const _curSession = sessionModule && sessionModule.getCurrentSessionId();
-    if (_curSession && localStorage.getItem('odysseus-doc-open-' + _curSession) === '1') {
+    if (
+      _curSession &&
+      localStorage.getItem("odysseus-doc-open-" + _curSession) === "1"
+    ) {
       documentModule.loadSessionDocs(_curSession);
     }
-  }  
+  }
   // Initialize search chat module
   if (searchChatModule) {
     searchChatModule.init(API_BASE);
   }
 
   // Search buttons — icon rail + sidebar
-  const railSearchBtn = el('rail-search-btn');
+  const railSearchBtn = el("rail-search-btn");
   if (railSearchBtn) {
-    railSearchBtn.addEventListener('click', () => {
+    railSearchBtn.addEventListener("click", () => {
       if (searchChatModule) searchChatModule.openSearch();
     });
   }
 
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
-    'rail-compare':   'tool-compare-btn',
-    'rail-research':  'tool-research-btn',
-    'rail-cookbook':   'tool-cookbook-btn',
-    'rail-archive':   'tool-library-btn',
-    'rail-gallery':   'tool-gallery-btn',
-    'rail-tasks':     'tool-tasks-btn',
-    'rail-calendar':  'tool-calendar-btn',
-    'rail-notes':     'tool-notes-btn',
-    'rail-memory':    'tool-memory-btn',
-    'rail-theme':     'tool-theme-btn',
-    'rail-email':     'email-section-title',
+    "rail-compare": "tool-compare-btn",
+    "rail-research": "tool-research-btn",
+    "rail-cookbook": "tool-cookbook-btn",
+    "rail-archive": "tool-library-btn",
+    "rail-gallery": "tool-gallery-btn",
+    "rail-tasks": "tool-tasks-btn",
+    "rail-calendar": "tool-calendar-btn",
+    "rail-notes": "tool-notes-btn",
+    "rail-memory": "tool-memory-btn",
+    "rail-theme": "tool-theme-btn",
+    "rail-email": "email-section-title",
   };
   Object.entries(_railToolMap).forEach(([railId, toolId]) => {
     const railBtn = el(railId);
     if (railBtn) {
-      railBtn.addEventListener('click', () => {
+      railBtn.addEventListener("click", () => {
         const toolBtn = el(toolId);
         if (toolBtn) toolBtn.click();
       });
@@ -3760,48 +4724,54 @@ function startOdysseusApp() {
   });
 
   // Rail chats — click to open the completed background session
-  const _railChatsBtn = el('rail-chats');
+  const _railChatsBtn = el("rail-chats");
   if (_railChatsBtn) {
-    _railChatsBtn.addEventListener('click', () => {
+    _railChatsBtn.addEventListener("click", () => {
       const targetSid = _railChatsBtn.dataset.targetSession;
       if (targetSid && window.sessionModule) {
         window.sessionModule.selectSession(targetSid);
       }
       // Clear notification — session will call clearStreamComplete on load
-      _railChatsBtn.classList.remove('rail-notify', 'rail-notify-success');
+      _railChatsBtn.classList.remove("rail-notify", "rail-notify-success");
       delete _railChatsBtn.dataset.targetSession;
       _syncRailDynamic();
     });
   }
 
   // Rail documents — toggle doc panel on/off (not library)
-  const _railDocsBtn = el('rail-documents');
+  const _railDocsBtn = el("rail-documents");
   if (_railDocsBtn) {
-    _railDocsBtn.addEventListener('click', () => {
-      const ob = el('overflow-doc-btn');
+    _railDocsBtn.addEventListener("click", () => {
+      const ob = el("overflow-doc-btn");
       if (ob) ob.click();
     });
   }
 
   // Rail: settings button
-  const _railSettings = el('rail-settings');
+  const _railSettings = el("rail-settings");
   if (_railSettings) {
-    _railSettings.addEventListener('click', () => {
-      const sidebar = document.getElementById('sidebar');
-      if (sidebar) sidebar.classList.remove('hidden');
+    _railSettings.addEventListener("click", () => {
+      const sidebar = document.getElementById("sidebar");
+      if (sidebar) sidebar.classList.remove("hidden");
       syncRailSide();
       // Scroll to bottom where settings typically are
-      const sidebarInner = document.querySelector('.sidebar-inner');
-      if (sidebarInner) sidebarInner.scrollTo({ top: sidebarInner.scrollHeight, behavior: 'smooth' });
+      const sidebarInner = document.querySelector(".sidebar-inner");
+      if (sidebarInner)
+        sidebarInner.scrollTo({
+          top: sidebarInner.scrollHeight,
+          behavior: "smooth",
+        });
     });
   }
 
   // Rail: admin button
-  const _railAdmin = el('rail-admin');
+  const _railAdmin = el("rail-admin");
   if (_railAdmin) {
-    _railAdmin.addEventListener('click', () => {
+    _railAdmin.addEventListener("click", () => {
       // Try to open admin modal
-      const adminBtn = document.querySelector('[data-modal="admin-modal"]') || el('tool-admin-btn');
+      const adminBtn =
+        document.querySelector('[data-modal="admin-modal"]') ||
+        el("tool-admin-btn");
       if (adminBtn) adminBtn.click();
     });
   }
@@ -3812,36 +4782,46 @@ function startOdysseusApp() {
   // are shown/hidden dynamically here.
   function _syncRailDynamic() {
     // Show doc icon if panel is open OR session has documents
-    const docPanelOpen = window.documentModule && window.documentModule.isPanelOpen();
-    const docIndicator = el('doc-indicator-btn');
-    const hasDocs = docIndicator && docIndicator.classList.contains('visible');
+    const docPanelOpen =
+      window.documentModule && window.documentModule.isPanelOpen();
+    const docIndicator = el("doc-indicator-btn");
+    const hasDocs = docIndicator && docIndicator.classList.contains("visible");
     const docOpen = docPanelOpen || hasDocs;
-    const hasChatNotif = el('rail-chats')?.classList.contains('rail-notify');
+    const hasChatNotif = el("rail-chats")?.classList.contains("rail-notify");
 
-    const _show = (id, visible) => { const b = el(id); if (b) b.style.display = visible ? '' : 'none'; };
-    _show('rail-documents', docOpen);
-    _show('rail-chats', !!hasChatNotif);
+    const _show = (id, visible) => {
+      const b = el(id);
+      if (b) b.style.display = visible ? "" : "none";
+    };
+    _show("rail-documents", docOpen);
+    _show("rail-chats", !!hasChatNotif);
   }
   window._syncRailDynamic = _syncRailDynamic;
   // Sync periodically and on key events
   setInterval(_syncRailDynamic, 1000);
-  document.addEventListener('overflow-state-change', _syncRailDynamic);
+  document.addEventListener("overflow-state-change", _syncRailDynamic);
 
-  const sidebarSearchBtn = el('sidebar-search-btn');
+  const sidebarSearchBtn = el("sidebar-search-btn");
   if (sidebarSearchBtn) {
-    sidebarSearchBtn.addEventListener('click', () => {
+    sidebarSearchBtn.addEventListener("click", () => {
       if (searchChatModule) searchChatModule.openSearch();
     });
   }
   // Modify form submit to handle special modes
-  const chatForm = document.getElementById('chat-form');
+  const chatForm = document.getElementById("chat-form");
   const originalSubmit = chatModule.handleChatSubmit;
   let _submitting = false;
-  const _messageInput = document.getElementById('message') || document.getElementById('message-input');
+  const _messageInput =
+    document.getElementById("message") ||
+    document.getElementById("message-input");
   if (_messageInput) {
-    _messageInput.addEventListener('focus', () => _bumpChatPriority(15000));
-    _messageInput.addEventListener('input', () => _bumpChatPriority(15000));
-    _messageInput.addEventListener('pointerdown', () => _bumpChatPriority(15000), { passive: true });
+    _messageInput.addEventListener("focus", () => _bumpChatPriority(15000));
+    _messageInput.addEventListener("input", () => _bumpChatPriority(15000));
+    _messageInput.addEventListener(
+      "pointerdown",
+      () => _bumpChatPriority(15000),
+      { passive: true },
+    );
   }
 
   function handleSubmit(e) {
@@ -3851,7 +4831,9 @@ function startOdysseusApp() {
     if (_submitting) return;
     _submitting = true;
     // Release after a short delay (stream start sets its own isStreaming guard)
-    setTimeout(() => { _submitting = false; }, 300);
+    setTimeout(() => {
+      _submitting = false;
+    }, 300);
 
     // Compare mode: route submit to compare handler (same message to all panes)
     if (compareModule && compareModule.isActive()) {
@@ -3859,16 +4841,65 @@ function startOdysseusApp() {
     }
 
     // Group chat: route to group module
+
+    /** 
+     * 
+     * ISSUES #6348
+     All logic with [group] prefix is for group chat handling. 
+     It checks if the group module is active, and if so, it intercepts the submit event to handle sending messages in a group context. 
+     It captures the message input, checks for attachments, creates a user message bubble, and sends the message through the group module. 
+     It also handles updating the message with attachment metadata after successful uploads. If the group module is not active, 
+     it falls back to the original chat submit behavior.
+    **/
     if (groupModule && groupModule.isActive()) {
-      console.log('[group] Submit intercepted');
-      const msgInput = document.getElementById('message');
-      const msg = msgInput ? msgInput.value.trim() : '';
-      if (!msg) { console.log('[group] Empty message, skipping'); return; }
-      console.log('[group] Sending:', msg);
+      console.log("[group] Submit intercepted");
+      const msgInput = document.getElementById("message");
+      const msg = msgInput ? msgInput.value.trim() : "";
+      if (!msg) {
+        console.log("[group] Empty message, skipping");
+        return;
+      }
+      console.log("[group] Sending:", msg); // Marker for debugging
       chatRenderer.hideWelcomeScreen();
-      chatRenderer.addMessage('user', msg);
-      msgInput.value = '';
-      groupModule.sendMessage(msg);
+
+      // Capture attachment metadata BEFORE group.sendMessage() uploads
+      // and clears the pending attachment state.
+      const groupPendingAttachInfo =
+        fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount()
+          ? fileHandlerModule.getPendingInfo()
+          : null;
+
+      // Create the user bubble with the attachment preview/info.
+      const groupUserMsgEl = chatRenderer.addMessage(
+        "user",
+        msg,
+        null,
+        groupPendingAttachInfo ? { attachments: groupPendingAttachInfo } : null,
+      );
+
+      msgInput.value = "";
+
+      // Group send uploads the pending files and clears the composer.
+      groupModule
+        .sendMessage(msg)
+        .then(() => {
+          // uploadPending() stores the complete metadata of the successful upload.
+          if (groupUserMsgEl && groupPendingAttachInfo) {
+            const uploadedMeta = fileHandlerModule.getLastUploadedMeta
+              ? fileHandlerModule.getLastUploadedMeta()
+              : [];
+
+            if (uploadedMeta && uploadedMeta.length) {
+              chatRenderer.updateMessageAttachments(
+                groupUserMsgEl,
+                uploadedMeta,
+              );
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("[group] Send failed:", err);
+        });
       return;
     }
 
@@ -3879,120 +4910,164 @@ function startOdysseusApp() {
   chatForm.onsubmit = handleSubmit;
 
   // ── Dual-purpose send/mic button ──
-  const sendBtn = document.querySelector('.send-btn');
-  const messageInput = el('message');
-  const modelPickerWrap = document.getElementById('model-picker-wrap');
+  const sendBtn = document.querySelector(".send-btn");
+  const messageInput = el("message");
+  const modelPickerWrap = document.getElementById("model-picker-wrap");
 
   // ArrowUp/ArrowDown prompt recall on #message lives in
   // static/js/composerArrowUpRecall.js (wired from chat.js). Do not re-add a
   // copy here: two capture-phase listeners on the same textarea meant the one
   // without the draft guard won and ate unsent multi-line prompts (#5862).
 
-  const _sendIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-  const _micIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
-  const _stopIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
-  const _newChatIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+  const _sendIcon =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+  const _micIcon =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+  const _stopIcon =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  const _newChatIcon =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
 
   // Expose icons globally so chat.js updateSubmitButton can use them
-  window._odysseusBtnIcons = { send: _sendIcon, mic: _micIcon, stop: _stopIcon, newChat: _newChatIcon };
+  window._odysseusBtnIcons = {
+    send: _sendIcon,
+    mic: _micIcon,
+    stop: _stopIcon,
+    newChat: _newChatIcon,
+  };
 
   function _isSttEnabled() {
-    return voiceRecorderModule._sttProvider && voiceRecorderModule._sttProvider !== 'disabled';
+    return (
+      voiceRecorderModule._sttProvider &&
+      voiceRecorderModule._sttProvider !== "disabled"
+    );
   }
 
   function _hasAttachments() {
-    return fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount() > 0;
+    return (
+      fileHandlerModule.getPendingCount &&
+      fileHandlerModule.getPendingCount() > 0
+    );
   }
 
   function _updateStreamingSubmitButton() {
-    if (!sendBtn || sendBtn.dataset.mode !== 'streaming') return false;
+    if (!sendBtn || sendBtn.dataset.mode !== "streaming") return false;
     const hasText = messageInput && messageInput.value.trim().length > 0;
-    const nextPhase = hasText ? 'queue' : 'processing';
+    const nextPhase = hasText ? "queue" : "processing";
     if (sendBtn.dataset.phase === nextPhase) return true;
     sendBtn.dataset.phase = nextPhase;
-    sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded', 'anim-spin', 'anim-launch', 'anim-land');
+    sendBtn.classList.remove(
+      "mic-mode",
+      "newchat-mode",
+      "newchat-expanded",
+      "anim-spin",
+      "anim-launch",
+      "anim-land",
+    );
     if (hasText) {
       sendBtn.innerHTML = _sendIcon;
-      sendBtn.title = 'Queue message';
+      sendBtn.title = "Queue message";
     } else {
       sendBtn.innerHTML = _stopIcon;
-      sendBtn.title = 'Stop generation';
+      sendBtn.title = "Stop generation";
     }
     return true;
   }
 
   function _updateSendBtnIcon() {
     if (!sendBtn) return;
-    if (sendBtn.dataset.mode === 'streaming') {
+    if (sendBtn.dataset.mode === "streaming") {
       _updateStreamingSubmitButton();
       return;
     }
     // Don't override if recording
-    if (sendBtn.dataset.mode === 'recording') return;
-    const prevMode = sendBtn.dataset.mode || '';
+    if (sendBtn.dataset.mode === "recording") return;
+    const prevMode = sendBtn.dataset.mode || "";
     const hasText = messageInput && messageInput.value.trim().length > 0;
     const hasFiles = _hasAttachments();
     let newMode;
     if (!hasText && !hasFiles && _isSttEnabled()) {
       clearTimeout(sendBtn._collapseTimer);
       sendBtn.innerHTML = _micIcon;
-      sendBtn.title = 'Record voice';
-      newMode = 'mic';
-      sendBtn.classList.add('mic-mode');
-      sendBtn.classList.remove('newchat-mode', 'newchat-expanded');
+      sendBtn.title = "Record voice";
+      newMode = "mic";
+      sendBtn.classList.add("mic-mode");
+      sendBtn.classList.remove("newchat-mode", "newchat-expanded");
     } else if (!hasText && !hasFiles && !_isSttEnabled()) {
       clearTimeout(sendBtn._collapseTimer);
       // Group chat: always show send button, never newchat mode
       if (groupModule && groupModule.isActive()) {
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send to group';
-        newMode = 'idle';
-        sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded');
+        sendBtn.title = "Send to group";
+        newMode = "idle";
+        sendBtn.classList.remove(
+          "mic-mode",
+          "newchat-mode",
+          "newchat-expanded",
+        );
       } else {
-      // Check if we're already on a fresh empty session (welcome screen visible)
-      const isEmptySession = document.getElementById('chat-container')?.classList.contains('welcome-active');
-      if (isEmptySession) {
-        // Already on new chat — show arrow in muted style (ready to type)
-        sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send message';
-        newMode = 'idle';
-        sendBtn.classList.add('newchat-mode'); // muted gray style
-        sendBtn.classList.remove('mic-mode', 'newchat-expanded');
-        clearTimeout(sendBtn._expandTimer);
-      } else {
-        sendBtn.innerHTML = _newChatIcon + '<span class="send-btn-label">+ New</span>';
-        sendBtn.title = 'New chat';
-        newMode = 'newchat';
-        sendBtn.classList.add('newchat-mode');
-        sendBtn.classList.remove('mic-mode');
-        // The button stays a 32px compact icon (no auto-expand to label —
-        // the "+ New" label inside is for screen readers only; sighted users
-        // see the spinning + on hover + the title tooltip).
-        clearTimeout(sendBtn._expandTimer);
-        sendBtn.classList.remove('newchat-expanded');
-      }
+        // Check if we're already on a fresh empty session (welcome screen visible)
+        const isEmptySession = document
+          .getElementById("chat-container")
+          ?.classList.contains("welcome-active");
+        if (isEmptySession) {
+          // Already on new chat — show arrow in muted style (ready to type)
+          sendBtn.innerHTML = _sendIcon;
+          sendBtn.title = "Send message";
+          newMode = "idle";
+          sendBtn.classList.add("newchat-mode"); // muted gray style
+          sendBtn.classList.remove("mic-mode", "newchat-expanded");
+          clearTimeout(sendBtn._expandTimer);
+        } else {
+          sendBtn.innerHTML =
+            _newChatIcon + '<span class="send-btn-label">+ New</span>';
+          sendBtn.title = "New chat";
+          newMode = "newchat";
+          sendBtn.classList.add("newchat-mode");
+          sendBtn.classList.remove("mic-mode");
+          // The button stays a 32px compact icon (no auto-expand to label —
+          // the "+ New" label inside is for screen readers only; sighted users
+          // see the spinning + on hover + the title tooltip).
+          clearTimeout(sendBtn._expandTimer);
+          sendBtn.classList.remove("newchat-expanded");
+        }
       } // close group-else
     } else {
-      newMode = 'send';
+      newMode = "send";
       clearTimeout(sendBtn._expandTimer);
-      const wasExpanded = sendBtn.classList.contains('newchat-expanded');
-      const wasNewchat = prevMode === 'newchat' || prevMode === 'mic';
+      const wasExpanded = sendBtn.classList.contains("newchat-expanded");
+      const wasNewchat = prevMode === "newchat" || prevMode === "mic";
       if (wasExpanded || wasNewchat) {
         // Collapse pill if expanded, then spin arrow in (same as + spin-in)
-        if (wasExpanded) sendBtn.classList.remove('newchat-expanded');
+        if (wasExpanded) sendBtn.classList.remove("newchat-expanded");
         const delay = wasExpanded ? 300 : 0;
         setTimeout(() => {
-          if (sendBtn.dataset.mode !== 'send') return;
+          if (sendBtn.dataset.mode !== "send") return;
           sendBtn.innerHTML = _sendIcon;
-          sendBtn.title = 'Send message';
-          sendBtn.classList.remove('mic-mode', 'newchat-mode', 'anim-spin-swap');
-          sendBtn.classList.add('anim-spin');
-          sendBtn.addEventListener('animationend', () => sendBtn.classList.remove('anim-spin'), { once: true });
+          sendBtn.title = "Send message";
+          sendBtn.classList.remove(
+            "mic-mode",
+            "newchat-mode",
+            "anim-spin-swap",
+          );
+          sendBtn.classList.add("anim-spin");
+          sendBtn.addEventListener(
+            "animationend",
+            () => sendBtn.classList.remove("anim-spin"),
+            { once: true },
+          );
         }, delay);
       } else {
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send message';
-        sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded', 'anim-spin', 'anim-launch', 'anim-land');
+        sendBtn.title = "Send message";
+        sendBtn.classList.remove(
+          "mic-mode",
+          "newchat-mode",
+          "newchat-expanded",
+          "anim-spin",
+          "anim-launch",
+          "anim-land",
+        );
       }
     }
     // Animate icon spin — when switching TO newchat or mic (the + or mic
@@ -4001,22 +5076,29 @@ function startOdysseusApp() {
     // string), which let the lingering anim-land class from the stop icon's
     // entry replay on the +, making it look like the + comes from below.
     // Never animate into send mode (arrow) — it should just appear instantly.
-    if (newMode !== prevMode && (newMode === 'newchat' || newMode === 'mic')) {
-      if (!sendBtn.classList.contains('anim-spin')) {
-        sendBtn.classList.remove('anim-launch', 'anim-land');
-        sendBtn.classList.add('anim-spin');
-        sendBtn.addEventListener('animationend', () => sendBtn.classList.remove('anim-spin'), { once: true });
+    if (newMode !== prevMode && (newMode === "newchat" || newMode === "mic")) {
+      if (!sendBtn.classList.contains("anim-spin")) {
+        sendBtn.classList.remove("anim-launch", "anim-land");
+        sendBtn.classList.add("anim-spin");
+        sendBtn.addEventListener(
+          "animationend",
+          () => sendBtn.classList.remove("anim-spin"),
+          { once: true },
+        );
       }
     }
     sendBtn.dataset.mode = newMode;
   }
 
   if (sendBtn) {
-    sendBtn.addEventListener('click', (e) => {
+    sendBtn.addEventListener("click", (e) => {
       e.preventDefault();
 
       // If recording, stop recording
-      if (sendBtn.dataset.mode === 'recording' || voiceRecorderModule.getIsRecording()) {
+      if (
+        sendBtn.dataset.mode === "recording" ||
+        voiceRecorderModule.getIsRecording()
+      ) {
         voiceRecorderModule.stopRecording();
         return;
       }
@@ -4024,23 +5106,27 @@ function startOdysseusApp() {
       const hasText = messageInput && messageInput.value.trim().length > 0;
       const hasFiles = _hasAttachments();
 
-      if (sendBtn.dataset.mode === 'streaming') {
+      if (sendBtn.dataset.mode === "streaming") {
         if (hasText) window.__odysseusQueueStreamingSubmit = Date.now();
         handleSubmit(e);
         return;
       }
 
       // New chat mode — empty input, no attachments, no STT
-      if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
+      if (!hasText && !hasFiles && sendBtn.dataset.mode === "newchat") {
         if (sessionModule) {
           const sessions = sessionModule.getSessions();
           const currentId = sessionModule.getCurrentSessionId();
-          const current = sessions.find(s => s.id === currentId);
+          const current = sessions.find((s) => s.id === currentId);
           if (current && current.endpoint_url && current.model) {
-            sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+            sessionModule.createDirectChat(
+              current.endpoint_url,
+              current.model,
+              current.endpoint_id,
+            );
           } else {
             // Fallback to rail button
-            const railNew = el('rail-new-session');
+            const railNew = el("rail-new-session");
             if (railNew) railNew.click();
           }
         }
@@ -4050,13 +5136,13 @@ function startOdysseusApp() {
       // If input is empty and STT is enabled, start recording
       if (!hasText && !hasFiles && _isSttEnabled()) {
         sendBtn.innerHTML = _stopIcon;
-        sendBtn.title = 'Stop recording';
-        sendBtn.dataset.mode = 'recording';
-        sendBtn.classList.add('recording');
+        sendBtn.title = "Stop recording";
+        sendBtn.dataset.mode = "recording";
+        sendBtn.classList.add("recording");
         voiceRecorderModule.startRecording(
           (audioFile) => fileHandlerModule.addFiles([audioFile]),
           uiModule.showToast,
-          uiModule.showError
+          uiModule.showError,
         );
         return;
       }
@@ -4068,28 +5154,41 @@ function startOdysseusApp() {
 
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
-    messageInput.addEventListener('keydown', (e) => {
+    messageInput.addEventListener("keydown", (e) => {
       if (e.defaultPrevented) return;
       const isMobile = _isMobileChatInput();
 
-      if (_shouldQueueFromMobileEnter(e, messageInput) || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile)) {
+      if (
+        _shouldQueueFromMobileEnter(e, messageInput) ||
+        (e.key === "Enter" && !e.shiftKey && !e.isComposing && !isMobile)
+      ) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the
         // stale 'newchat' mode and open a new chat instead of sending.
-        try { _updateSendBtnIcon(); } catch {}
-        if (sendBtn && sendBtn.dataset.mode === 'newchat') {
-          const railNew = el('rail-new-session');
+        try {
+          _updateSendBtnIcon();
+        } catch {}
+        if (sendBtn && sendBtn.dataset.mode === "newchat") {
+          const railNew = el("rail-new-session");
           if (railNew) railNew.click();
           return;
         }
-        if (_isForegroundChatBusy() && messageInput.value && messageInput.value.trim()) {
-          if (chatModule && chatModule.queueStreamingComposerRequest && chatModule.queueStreamingComposerRequest()) {
+        if (
+          _isForegroundChatBusy() &&
+          messageInput.value &&
+          messageInput.value.trim()
+        ) {
+          if (
+            chatModule &&
+            chatModule.queueStreamingComposerRequest &&
+            chatModule.queueStreamingComposerRequest()
+          ) {
             return;
           }
           window.__odysseusQueueStreamingSubmit = Date.now();
         }
-        _submitChatFormDirect(document.getElementById('chat-form'));
+        _submitChatFormDirect(document.getElementById("chat-form"));
       }
     });
   }
@@ -4097,38 +5196,50 @@ function startOdysseusApp() {
   // Toggle mic/send icon on input change + hide model picker after enough text
   if (messageInput) {
     const _debouncedUpdateIcon = uiModule.debounce(_updateSendBtnIcon, 50);
-		    const _MODEL_PICKER_HIDE_CHARS = 23;
-		    const _syncModelPickerAutohide = () => {
-		      const compactMobile = _isMobileChatInput() && !!(messageInput.value || '').trim();
-		      const hidePicker = compactMobile || (messageInput.value || '').replace(/\s/g, '').length >= _MODEL_PICKER_HIDE_CHARS;
-		      if (modelPickerWrap) {
-		        modelPickerWrap.classList.toggle('model-picker-autohide', hidePicker);
-		      }
-	      const planStatus = el('plan-mode-status');
-	      if (planStatus) {
-	        planStatus.classList.toggle('plan-mode-status-autohide', hidePicker);
-	      }
-	    };
+    const _MODEL_PICKER_HIDE_CHARS = 23;
+    const _syncModelPickerAutohide = () => {
+      const compactMobile =
+        _isMobileChatInput() && !!(messageInput.value || "").trim();
+      const hidePicker =
+        compactMobile ||
+        (messageInput.value || "").replace(/\s/g, "").length >=
+          _MODEL_PICKER_HIDE_CHARS;
+      if (modelPickerWrap) {
+        modelPickerWrap.classList.toggle("model-picker-autohide", hidePicker);
+      }
+      const planStatus = el("plan-mode-status");
+      if (planStatus) {
+        planStatus.classList.toggle("plan-mode-status-autohide", hidePicker);
+      }
+    };
     window._syncModelPickerAutohide = _syncModelPickerAutohide;
     _syncModelPickerAutohide();
-    messageInput.addEventListener('input', () => {
-      _syncModelPickerAutohide();
-      if (sendBtn && sendBtn.dataset.mode === 'streaming') {
-        _updateSendBtnIcon();
-      } else {
-        _debouncedUpdateIcon();
-      }
-    }, { passive: true });
+    messageInput.addEventListener(
+      "input",
+      () => {
+        _syncModelPickerAutohide();
+        if (sendBtn && sendBtn.dataset.mode === "streaming") {
+          _updateSendBtnIcon();
+        } else {
+          _debouncedUpdateIcon();
+        }
+      },
+      { passive: true },
+    );
   }
 
   // Collapse "New Session" label on scroll
-  const _chatScroll = document.getElementById('chat-container');
+  const _chatScroll = document.getElementById("chat-container");
   if (_chatScroll && sendBtn) {
-    _chatScroll.addEventListener('scroll', () => {
-      if (sendBtn.classList.contains('newchat-expanded')) {
-        sendBtn.classList.remove('newchat-expanded');
-      }
-    }, { passive: true });
+    _chatScroll.addEventListener(
+      "scroll",
+      () => {
+        if (sendBtn.classList.contains("newchat-expanded")) {
+          sendBtn.classList.remove("newchat-expanded");
+        }
+      },
+      { passive: true },
+    );
   }
 
   // Expose globally so voiceRecorder can trigger update after async fetch
@@ -4143,73 +5254,78 @@ function startOdysseusApp() {
   }
 
   // Add drag and drop handlers for the chat container
-  const chatContainer = el('chat-container');
+  const chatContainer = el("chat-container");
 
   // Prevent default to allow drop
-  const chatInputBar = chatContainer.querySelector('.chat-input-bar');
+  const chatInputBar = chatContainer.querySelector(".chat-input-bar");
   function _showDropHighlight() {
-    chatContainer.style.backgroundColor = 'rgba(0, 170, 255, 0.1)';
-    chatContainer.style.transition = 'background-color 0.2s ease';
+    chatContainer.style.backgroundColor = "rgba(0, 170, 255, 0.1)";
+    chatContainer.style.transition = "background-color 0.2s ease";
     if (chatInputBar) {
-      chatInputBar.style.outline = '2px dashed color-mix(in srgb, var(--accent, #0af) 50%, transparent)';
-      chatInputBar.style.outlineOffset = '-2px';
-      chatInputBar.style.background = 'color-mix(in srgb, var(--accent, #0af) 8%, var(--bg))';
-      chatInputBar.style.transition = 'outline 0.2s ease, background 0.2s ease';
+      chatInputBar.style.outline =
+        "2px dashed color-mix(in srgb, var(--accent, #0af) 50%, transparent)";
+      chatInputBar.style.outlineOffset = "-2px";
+      chatInputBar.style.background =
+        "color-mix(in srgb, var(--accent, #0af) 8%, var(--bg))";
+      chatInputBar.style.transition = "outline 0.2s ease, background 0.2s ease";
     }
   }
   function _hideDropHighlight() {
-    chatContainer.style.backgroundColor = '';
+    chatContainer.style.backgroundColor = "";
     if (chatInputBar) {
-      chatInputBar.style.outline = '';
-      chatInputBar.style.outlineOffset = '';
-      chatInputBar.style.background = '';
+      chatInputBar.style.outline = "";
+      chatInputBar.style.outlineOffset = "";
+      chatInputBar.style.background = "";
     }
   }
 
-  chatContainer.addEventListener('dragover', (e) => {
+  chatContainer.addEventListener("dragover", (e) => {
     e.preventDefault();
     e.stopPropagation();
     _showDropHighlight();
   });
 
-  chatContainer.addEventListener('drop', async (e) => {
+  chatContainer.addEventListener("drop", async (e) => {
     e.preventDefault();
     e.stopPropagation();
     _hideDropHighlight();
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     await fileHandlerModule.addFiles(files);
-    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
+    uiModule.showToast(
+      `Added ${files.length} file${files.length > 1 ? "s" : ""} to chat`,
+    );
   });
 
-  chatContainer.addEventListener('dragleave', (e) => {
+  chatContainer.addEventListener("dragleave", (e) => {
     e.preventDefault();
     _hideDropHighlight();
   });
-  
+
   // Make the attachment strip also a drop target
-  const attachStrip = el('attach-strip');
-  attachStrip.addEventListener('dragover', (e) => {
+  const attachStrip = el("attach-strip");
+  attachStrip.addEventListener("dragover", (e) => {
     e.preventDefault();
-    attachStrip.style.backgroundColor = 'rgba(0, 170, 255, 0.1)';
-    attachStrip.style.borderRadius = '4px';
+    attachStrip.style.backgroundColor = "rgba(0, 170, 255, 0.1)";
+    attachStrip.style.borderRadius = "4px";
   });
-  
-  attachStrip.addEventListener('drop', async (e) => {
+
+  attachStrip.addEventListener("drop", async (e) => {
     e.preventDefault();
-    attachStrip.style.backgroundColor = '';
-    
+    attachStrip.style.backgroundColor = "";
+
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     await fileHandlerModule.addFiles(files);
 
-    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
-
+    uiModule.showToast(
+      `Added ${files.length} file${files.length > 1 ? "s" : ""} to chat`,
+    );
   });
-  
-  attachStrip.addEventListener('dragleave', (e) => {
+
+  attachStrip.addEventListener("dragleave", (e) => {
     e.preventDefault();
-    attachStrip.style.backgroundColor = '';
+    attachStrip.style.backgroundColor = "";
   });
 
   // ── Compare-mode file drop shield ──────────────────────────────────────────
@@ -4228,56 +5344,78 @@ function startOdysseusApp() {
   let _cmpDropShield = null;
   const _isFileDrag = (e) => {
     const types = e.dataTransfer && e.dataTransfer.types;
-    return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+    return !!types && Array.prototype.indexOf.call(types, "Files") !== -1;
   };
   const _compareActive = () => {
-    const c = el('chat-container');
-    return !!c && c.classList.contains('compare-active');
+    const c = el("chat-container");
+    return !!c && c.classList.contains("compare-active");
   };
   const _showCmpShield = () => {
     if (!_cmpDropShield) {
-      _cmpDropShield = document.createElement('div');
-      _cmpDropShield.id = 'compare-drop-shield';
-      _cmpDropShield.setAttribute('aria-hidden', 'true');
-      _cmpDropShield.style.cssText = 'position:fixed;inset:0;z-index:2147483646;' +
-        'display:none;align-items:center;justify-content:center;' +
-        'background:color-mix(in srgb, var(--accent, #0af) 16%, rgba(0,0,0,0.5));' +
-        'backdrop-filter:blur(2px);';
-      const _box = document.createElement('div');
-      _box.style.cssText = 'pointer-events:none;border:2px dashed rgba(255,255,255,0.9);' +
-        'border-radius:14px;padding:20px 28px;background:rgba(0,0,0,0.4);' +
-        'font:600 16px/1.4 system-ui,sans-serif;color:#fff;';
-      _box.textContent = 'Drop files to attach';
+      _cmpDropShield = document.createElement("div");
+      _cmpDropShield.id = "compare-drop-shield";
+      _cmpDropShield.setAttribute("aria-hidden", "true");
+      _cmpDropShield.style.cssText =
+        "position:fixed;inset:0;z-index:2147483646;" +
+        "display:none;align-items:center;justify-content:center;" +
+        "background:color-mix(in srgb, var(--accent, #0af) 16%, rgba(0,0,0,0.5));" +
+        "backdrop-filter:blur(2px);";
+      const _box = document.createElement("div");
+      _box.style.cssText =
+        "pointer-events:none;border:2px dashed rgba(255,255,255,0.9);" +
+        "border-radius:14px;padding:20px 28px;background:rgba(0,0,0,0.4);" +
+        "font:600 16px/1.4 system-ui,sans-serif;color:#fff;";
+      _box.textContent = "Drop files to attach";
       _cmpDropShield.appendChild(_box);
       document.body.appendChild(_cmpDropShield);
     }
-    _cmpDropShield.style.display = 'flex';
+    _cmpDropShield.style.display = "flex";
   };
-  const _hideCmpShield = () => { if (_cmpDropShield) _cmpDropShield.style.display = 'none'; };
+  const _hideCmpShield = () => {
+    if (_cmpDropShield) _cmpDropShield.style.display = "none";
+  };
   // Capture phase so we raise the shield before the pointer reaches an iframe.
-  window.addEventListener('dragenter', (e) => {
-    if (_isFileDrag(e) && _compareActive()) _showCmpShield();
-  }, true);
-  window.addEventListener('dragover', (e) => {
-    if (!_isFileDrag(e) || !_compareActive()) return;
-    e.preventDefault();                       // mark as a valid drop target
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-    _showCmpShield();
-  }, true);
-  window.addEventListener('dragleave', (e) => {
-    // Hide only when the drag actually leaves the window (no relatedTarget).
-    if (_compareActive() && !e.relatedTarget) _hideCmpShield();
-  }, true);
-  window.addEventListener('dragend', _hideCmpShield, true);
-  window.addEventListener('drop', async (e) => {
-    if (!_isFileDrag(e) || !_compareActive()) return;
-    e.preventDefault();
-    _hideCmpShield();
-    const files = Array.from(e.dataTransfer.files || []);
-    if (!files.length) return;
-    await fileHandlerModule.addFiles(files);
-    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to attach`);
-  }, true);
+  window.addEventListener(
+    "dragenter",
+    (e) => {
+      if (_isFileDrag(e) && _compareActive()) _showCmpShield();
+    },
+    true,
+  );
+  window.addEventListener(
+    "dragover",
+    (e) => {
+      if (!_isFileDrag(e) || !_compareActive()) return;
+      e.preventDefault(); // mark as a valid drop target
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      _showCmpShield();
+    },
+    true,
+  );
+  window.addEventListener(
+    "dragleave",
+    (e) => {
+      // Hide only when the drag actually leaves the window (no relatedTarget).
+      if (_compareActive() && !e.relatedTarget) _hideCmpShield();
+    },
+    true,
+  );
+  window.addEventListener("dragend", _hideCmpShield, true);
+  window.addEventListener(
+    "drop",
+    async (e) => {
+      if (!_isFileDrag(e) || !_compareActive()) return;
+      e.preventDefault();
+      _hideCmpShield();
+      const files = Array.from(e.dataTransfer.files || []);
+      if (!files.length) return;
+      await fileHandlerModule.addFiles(files);
+      uiModule.showToast(
+        `Added ${files.length} file${files.length > 1 ? "s" : ""} to attach`,
+      );
+    },
+    true,
+  );
 
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
@@ -4294,7 +5432,7 @@ function startOdysseusApp() {
       showError: uiModule.showError,
       addMessage: chatModule.addMessage,
       renderContent: markdownModule.renderContent,
-      scrollHistory: uiModule.scrollHistoryInstant
+      scrollHistory: uiModule.scrollHistoryInstant,
     });
 
     // sessionModule is now wired, so every route opener has the modules it
@@ -4306,7 +5444,7 @@ function startOdysseusApp() {
     // sidebar-local and settles on its own schedule.
     settleSessionHydration(() => sessionModule.loadSessions());
   } else {
-    console.error('Session module not loaded!');
+    console.error("Session module not loaded!");
     // Nothing will hydrate. Settle immediately so the sidebar exposes the
     // failure; session-dependent routes must remain unopened without data.
     settleSessionHydration(null);
@@ -4315,18 +5453,25 @@ function startOdysseusApp() {
   const runNonCriticalStartup = (fn, delay = 4000) => {
     let tries = 0;
     const run = () => {
-      const busy = !!window.__odysseusChatBusy
-        || Date.now() < (window.__odysseusChatBusyUntil || 0)
-        || !!document.querySelector('.send-btn[data-mode="streaming"], .send-btn.send-pending');
+      const busy =
+        !!window.__odysseusChatBusy ||
+        Date.now() < (window.__odysseusChatBusyUntil || 0) ||
+        !!document.querySelector(
+          '.send-btn[data-mode="streaming"], .send-btn.send-pending',
+        );
       if (busy && tries < 12) {
         tries += 1;
         setTimeout(run, 2500);
         return;
       }
-      try { fn(); } catch (e) { console.warn('non-critical startup task failed:', e); }
+      try {
+        fn();
+      } catch (e) {
+        console.warn("non-critical startup task failed:", e);
+      }
     };
     setTimeout(() => {
-      if ('requestIdleCallback' in window) {
+      if ("requestIdleCallback" in window) {
         window.requestIdleCallback(run, { timeout: 5000 });
       } else {
         run();
@@ -4337,209 +5482,278 @@ function startOdysseusApp() {
   // Non-critical startup work must not compete with first paint, chat send, or
   // chat switching. Panels load their own data when opened; these are only warmups.
   runNonCriticalStartup(() => {
-    modelsModule.refreshModels(false).then(() => {
-      try { sessionModule.updateModelPicker(); } catch (_) {}
-    }).catch(() => {});
+    modelsModule
+      .refreshModels(false)
+      .then(() => {
+        try {
+          sessionModule.updateModelPicker();
+        } catch (_) {}
+      })
+      .catch(() => {});
   }, 3500);
   runNonCriticalStartup(() => modelsModule.refreshProviders(), 6500);
   runNonCriticalStartup(() => ragModule.loadPersonalDocs(), 9000);
-	  runNonCriticalStartup(() => memoryModule.loadMemories(), 12000);
+  runNonCriticalStartup(() => memoryModule.loadMemories(), 12000);
 
-	  // Ensure proper initial state
-	  voiceRecorderModule.init();
-	  if (censorModule) censorModule.init();
+  // Ensure proper initial state
+  voiceRecorderModule.init();
+  if (censorModule) censorModule.init();
 
-	  // ── Mobile pull-to-refresh for the active chat ──
-	  (function initMobileChatPullRefresh() {
-	    const historyEl = document.getElementById('chat-history');
-	    const container = document.getElementById('chat-container');
-	    if (!historyEl || !container || !('ontouchstart' in window || navigator.maxTouchPoints > 0)) return;
+  // ── Mobile pull-to-refresh for the active chat ──
+  (function initMobileChatPullRefresh() {
+    const historyEl = document.getElementById("chat-history");
+    const container = document.getElementById("chat-container");
+    if (
+      !historyEl ||
+      !container ||
+      !("ontouchstart" in window || navigator.maxTouchPoints > 0)
+    )
+      return;
 
-	    const THRESHOLD = 72;
-	    const MAX_PULL = 104;
-	    let startY = 0;
-	    let pullY = 0;
-	    let tracking = false;
-	    let refreshing = false;
-	    let spinner = null;
-	    const indicator = document.createElement('div');
-	    indicator.className = 'chat-pull-refresh';
-	    indicator.setAttribute('aria-hidden', 'true');
-	    indicator.innerHTML = '<div class="chat-pull-refresh-spinner"></div>';
-	    container.prepend(indicator);
-	    const spinnerMount = indicator.querySelector('.chat-pull-refresh-spinner');
-	    try {
-	      spinner = spinnerModule.createWhirlpool(18);
-	      spinnerMount.replaceChildren(spinner.element);
-	    } catch (_) {}
+    const THRESHOLD = 72;
+    const MAX_PULL = 104;
+    let startY = 0;
+    let pullY = 0;
+    let tracking = false;
+    let refreshing = false;
+    let spinner = null;
+    const indicator = document.createElement("div");
+    indicator.className = "chat-pull-refresh";
+    indicator.setAttribute("aria-hidden", "true");
+    indicator.innerHTML = '<div class="chat-pull-refresh-spinner"></div>';
+    container.prepend(indicator);
+    const spinnerMount = indicator.querySelector(".chat-pull-refresh-spinner");
+    try {
+      spinner = spinnerModule.createWhirlpool(18);
+      spinnerMount.replaceChildren(spinner.element);
+    } catch (_) {}
 
-	    function setPull(px, active = false) {
-	      pullY = Math.max(0, Math.min(MAX_PULL, px));
-	      const pct = Math.min(1, pullY / THRESHOLD);
-	      indicator.style.setProperty('--pull-refresh-y', `${pullY}px`);
-	      indicator.style.setProperty('--pull-refresh-progress', `${pct}`);
-	      indicator.classList.toggle('is-visible', active || refreshing || pullY > 2);
-	      indicator.classList.toggle('is-ready', pct >= 1 && !refreshing);
-	      indicator.classList.toggle('is-refreshing', refreshing);
-	    }
+    function setPull(px, active = false) {
+      pullY = Math.max(0, Math.min(MAX_PULL, px));
+      const pct = Math.min(1, pullY / THRESHOLD);
+      indicator.style.setProperty("--pull-refresh-y", `${pullY}px`);
+      indicator.style.setProperty("--pull-refresh-progress", `${pct}`);
+      indicator.classList.toggle(
+        "is-visible",
+        active || refreshing || pullY > 2,
+      );
+      indicator.classList.toggle("is-ready", pct >= 1 && !refreshing);
+      indicator.classList.toggle("is-refreshing", refreshing);
+    }
 
-	    async function runRefresh() {
-	      if (refreshing) return;
-	      if (_isForegroundChatBusy()) {
-	        setPull(0, false);
-	        return;
-	      }
-	      refreshing = true;
-	      setPull(THRESHOLD, true);
-	      const safetyTimer = setTimeout(() => {
-	        refreshing = false;
-	        setPull(0, false);
-	      }, 8000);
-	      try {
-	        const sid = sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
-	        if (sid && sessionModule.selectSession) {
-	          await sessionModule.selectSession(sid, { keepSidebar: true, showLoading: false, immediateLoading: true });
-	        } else if (sessionModule && sessionModule.loadSessions) {
-	          await sessionModule.loadSessions();
-	        }
-	      } catch (err) {
-	        console.warn('pull refresh failed:', err);
-	      } finally {
-	        clearTimeout(safetyTimer);
-	        refreshing = false;
-	        setPull(0, false);
-	      }
-	    }
+    async function runRefresh() {
+      if (refreshing) return;
+      if (_isForegroundChatBusy()) {
+        setPull(0, false);
+        return;
+      }
+      refreshing = true;
+      setPull(THRESHOLD, true);
+      const safetyTimer = setTimeout(() => {
+        refreshing = false;
+        setPull(0, false);
+      }, 8000);
+      try {
+        const sid =
+          sessionModule &&
+          sessionModule.getCurrentSessionId &&
+          sessionModule.getCurrentSessionId();
+        if (sid && sessionModule.selectSession) {
+          await sessionModule.selectSession(sid, {
+            keepSidebar: true,
+            showLoading: false,
+            immediateLoading: true,
+          });
+        } else if (sessionModule && sessionModule.loadSessions) {
+          await sessionModule.loadSessions();
+        }
+      } catch (err) {
+        console.warn("pull refresh failed:", err);
+      } finally {
+        clearTimeout(safetyTimer);
+        refreshing = false;
+        setPull(0, false);
+      }
+    }
 
-	    historyEl.addEventListener('touchstart', (e) => {
-	      if (refreshing || window.innerWidth > 768) return;
-	      if (document.querySelector('.modal:not(.hidden)')) return;
-	      if (historyEl.scrollTop > 0) return;
-	      if (e.target && e.target.closest && e.target.closest('.chat-input-bar, textarea, input, button, select, a')) return;
-	      tracking = true;
-	      startY = e.touches[0].clientY;
-	      setPull(0, false);
-	    }, { passive: true });
+    historyEl.addEventListener(
+      "touchstart",
+      (e) => {
+        if (refreshing || window.innerWidth > 768) return;
+        if (document.querySelector(".modal:not(.hidden)")) return;
+        if (historyEl.scrollTop > 0) return;
+        if (
+          e.target &&
+          e.target.closest &&
+          e.target.closest(
+            ".chat-input-bar, textarea, input, button, select, a",
+          )
+        )
+          return;
+        tracking = true;
+        startY = e.touches[0].clientY;
+        setPull(0, false);
+      },
+      { passive: true },
+    );
 
-	    historyEl.addEventListener('touchmove', (e) => {
-	      if (!tracking || refreshing) return;
-	      const dy = e.touches[0].clientY - startY;
-	      if (dy <= 0) {
-	        setPull(0, false);
-	        return;
-	      }
-	      if (historyEl.scrollTop <= 0) {
-	        e.preventDefault();
-	        setPull(dy * 0.62, true);
-	      }
-	    }, { passive: false });
+    historyEl.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!tracking || refreshing) return;
+        const dy = e.touches[0].clientY - startY;
+        if (dy <= 0) {
+          setPull(0, false);
+          return;
+        }
+        if (historyEl.scrollTop <= 0) {
+          e.preventDefault();
+          setPull(dy * 0.62, true);
+        }
+      },
+      { passive: false },
+    );
 
-	    historyEl.addEventListener('touchend', () => {
-	      if (!tracking) return;
-	      tracking = false;
-	      if (pullY >= THRESHOLD) runRefresh();
-	      else setPull(0, false);
-	    }, { passive: true });
+    historyEl.addEventListener(
+      "touchend",
+      () => {
+        if (!tracking) return;
+        tracking = false;
+        if (pullY >= THRESHOLD) runRefresh();
+        else setPull(0, false);
+      },
+      { passive: true },
+    );
 
-	    historyEl.addEventListener('touchcancel', () => {
-	      tracking = false;
-	      if (!refreshing) setPull(0, false);
-	    }, { passive: true });
-	  })();
+    historyEl.addEventListener(
+      "touchcancel",
+      () => {
+        tracking = false;
+        if (!refreshing) setPull(0, false);
+      },
+      { passive: true },
+    );
+  })();
 
-	  // Auto-focus message input on load
-	  const msgEl = document.getElementById('message');
+  // Auto-focus message input on load
+  const msgEl = document.getElementById("message");
   if (msgEl) msgEl.focus();
-  
+
   // Initialize mouse-based drag for sidebar sections
-  const sidebar = document.getElementById('sidebar');
-  const sidebarInner = sidebar ? sidebar.querySelector('.sidebar-inner') : sidebar;
+  const sidebar = document.getElementById("sidebar");
+  const sidebarInner = sidebar
+    ? sidebar.querySelector(".sidebar-inner")
+    : sidebar;
 
   // ── Subtle elastic overscroll for sidebar ──
   if (sidebarInner) {
     const MAX_PULL = 8;
     let _overscroll = 0;
     let _resetTimer = null;
-    sidebarInner.addEventListener('wheel', (e) => {
-      const el = sidebarInner;
-      const atTop = el.scrollTop <= 0 && e.deltaY < 0;
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && e.deltaY > 0;
-      if (!atTop && !atBottom) { _overscroll = 0; return; }
-      // Accumulate overscroll with diminishing returns
-      _overscroll += Math.abs(e.deltaY) * 0.15;
-      const pull = Math.min(_overscroll, MAX_PULL);
-      const dir = atTop ? 1 : -1;
-      el.style.transition = 'none';
-      el.style.transform = `translateY(${dir * pull}px)`;
-      // Reset after scrolling stops
-      clearTimeout(_resetTimer);
-      _resetTimer = setTimeout(() => {
-        el.style.transition = 'transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)';
-        el.style.transform = '';
-        _overscroll = 0;
-      }, 120);
-    }, { passive: true });
+    sidebarInner.addEventListener(
+      "wheel",
+      (e) => {
+        const el = sidebarInner;
+        const atTop = el.scrollTop <= 0 && e.deltaY < 0;
+        const atBottom =
+          el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && e.deltaY > 0;
+        if (!atTop && !atBottom) {
+          _overscroll = 0;
+          return;
+        }
+        // Accumulate overscroll with diminishing returns
+        _overscroll += Math.abs(e.deltaY) * 0.15;
+        const pull = Math.min(_overscroll, MAX_PULL);
+        const dir = atTop ? 1 : -1;
+        el.style.transition = "none";
+        el.style.transform = `translateY(${dir * pull}px)`;
+        // Reset after scrolling stops
+        clearTimeout(_resetTimer);
+        _resetTimer = setTimeout(() => {
+          el.style.transition = "transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)";
+          el.style.transform = "";
+          _overscroll = 0;
+        }, 120);
+      },
+      { passive: true },
+    );
   }
 
   // ── Global touch-scroll guard for sidebar ──
   // Suppress click events when the user was scrolling (finger moved).
   // This prevents accidental session/model/setting selection while swiping.
-  if (sidebarInner && 'ontouchstart' in window) {
+  if (sidebarInner && "ontouchstart" in window) {
     let _sidebarTouchMoved = false;
     let _sidebarTouchStartY = 0;
-    sidebarInner.addEventListener('touchstart', (e) => {
-      _sidebarTouchMoved = false;
-      _sidebarTouchStartY = e.touches[0].clientY;
-    }, { passive: true });
-    sidebarInner.addEventListener('touchmove', (e) => {
-      // Only flag as scroll if finger moved more than 8px vertically
-      if (Math.abs(e.touches[0].clientY - _sidebarTouchStartY) > 8) {
-        _sidebarTouchMoved = true;
-      }
-    }, { passive: true });
-    sidebarInner.addEventListener('click', (e) => {
-      if (_sidebarTouchMoved) {
-        e.stopPropagation();
-        e.preventDefault();
+    sidebarInner.addEventListener(
+      "touchstart",
+      (e) => {
         _sidebarTouchMoved = false;
-      }
-    }, true); // capture phase — intercepts before any child handlers
+        _sidebarTouchStartY = e.touches[0].clientY;
+      },
+      { passive: true },
+    );
+    sidebarInner.addEventListener(
+      "touchmove",
+      (e) => {
+        // Only flag as scroll if finger moved more than 8px vertically
+        if (Math.abs(e.touches[0].clientY - _sidebarTouchStartY) > 8) {
+          _sidebarTouchMoved = true;
+        }
+      },
+      { passive: true },
+    );
+    sidebarInner.addEventListener(
+      "click",
+      (e) => {
+        if (_sidebarTouchMoved) {
+          e.stopPropagation();
+          e.preventDefault();
+          _sidebarTouchMoved = false;
+        }
+      },
+      true,
+    ); // capture phase — intercepts before any child handlers
   }
 
   // Section collapse/expand + drag reorder (extracted to js/section-management.js)
   initSectionCollapse(Storage);
   initSectionDrag(Storage, loadUIVis);
-  
+
   // Handle drag over and out for individual sections
   const sections = document.querySelectorAll('.section[draggable="true"]');
-  sections.forEach(section => {
-    section.addEventListener('dragover', (e) => {
+  sections.forEach((section) => {
+    section.addEventListener("dragover", (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      
+      e.dataTransfer.dropEffect = "move";
+
       // Only show visual feedback if we're not dragging over the active element
-      const activeId = e.dataTransfer.getData('text/plain');
+      const activeId = e.dataTransfer.getData("text/plain");
       if (activeId && activeId !== section.id) {
-        section.setAttribute('dnd-over', 'true');
+        section.setAttribute("dnd-over", "true");
       }
     });
-    
-    section.addEventListener('dragleave', (e) => {
+
+    section.addEventListener("dragleave", (e) => {
       // Check if we're actually leaving the element
       const rect = section.getBoundingClientRect();
-      if (e.clientY < rect.top || e.clientY > rect.bottom || 
-          e.clientX < rect.left || e.clientX > rect.right) {
-        section.setAttribute('dnd-over', 'false');
+      if (
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom ||
+        e.clientX < rect.left ||
+        e.clientX > rect.right
+      ) {
+        section.setAttribute("dnd-over", "false");
       }
     });
   });
-  
+
   // Restore saved order on load
   const savedOrder = Storage.get(Storage.KEYS.SECTION_ORDER);
   if (savedOrder) {
     try {
       const order = JSON.parse(savedOrder);
-      const innerContainer = sidebarInner || document.getElementById('sidebar');
+      const innerContainer = sidebarInner || document.getElementById("sidebar");
 
       // Create a document fragment to minimize reflows
       const fragment = document.createDocumentFragment();
@@ -4553,7 +5767,7 @@ function startOdysseusApp() {
       }
 
       // Append any remaining sections (in case new ones were added)
-      sections.forEach(section => {
+      sections.forEach((section) => {
         if (!order.includes(section.id)) {
           fragment.appendChild(section);
         }
@@ -4562,22 +5776,22 @@ function startOdysseusApp() {
       // Finally, add all sections back to the container
       innerContainer.appendChild(fragment);
     } catch (e) {
-      console.error('Failed to restore sidebar order:', e);
+      console.error("Failed to restore sidebar order:", e);
     }
   }
-  
-
 
   if (window.hljs) {
-    console.log('Highlighting all code blocks on page load');
-    document.querySelectorAll('pre code:not(.hljs)').forEach(block => {
+    console.log("Highlighting all code blocks on page load");
+    document.querySelectorAll("pre code:not(.hljs)").forEach((block) => {
       window.hljs.highlightElement(block);
     });
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', startOdysseusApp, { once: true });
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startOdysseusApp, {
+    once: true,
+  });
 } else {
   startOdysseusApp();
 }
