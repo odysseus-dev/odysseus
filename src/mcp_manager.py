@@ -602,6 +602,57 @@ class McpManager:
 
         return schemas
 
+    def get_tools_for_explicit_server_reference(
+        self, query: str, disabled_map: Optional[Dict[str, set]] = None, max_tools: int = 3
+    ) -> Set[str]:
+        """Return a small relevant set from an explicitly named external server.
+
+        A named server is stronger evidence than tool-RAG, but large servers can
+        expose hundreds of schemas. Rank its tools by query-term overlap instead
+        of injecting every schema and exceeding a model's context window.
+        """
+        normalized_query = (query or "").casefold()
+        if not normalized_query:
+            return set()
+        # Safety constraints often say "do not create, move, or share". They
+        # must not make destructive tools look relevant. Rank the requested
+        # action before that constraint, while still retaining the full query
+        # for identifying the named server below.
+        action_query = re.split(r"\b(?:read[- ]only|do not)\b", normalized_query, maxsplit=1)[0]
+        query_terms = set(re.findall(r"[a-z0-9_]+", action_query))
+        # Common user wording that is absent from otherwise suitable tool names.
+        if {"folder", "contents", "root"} & query_terms:
+            query_terms.add("directory")
+        if "directory" in query_terms:
+            query_terms.add("list")
+
+        ranked: List[Tuple[int, str]] = []
+        for server_id, tools in self._tools.items():
+            if self.is_builtin(server_id):
+                continue
+            connection = self._connections.get(server_id, {})
+            server_name = str(connection.get("name") or server_id).strip().casefold()
+            aliases = {server_name}
+            if server_name.endswith(" mcp"):
+                aliases.add(server_name[:-4].strip())
+            if not any(
+                alias and re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", normalized_query)
+                for alias in aliases
+            ):
+                continue
+
+            disabled = (disabled_map or {}).get(server_id, set())
+            for tool in tools:
+                if tool["name"] in disabled:
+                    continue
+                searchable = f"{tool['name']} {tool.get('description', '')}".casefold()
+                score = sum(term in searchable for term in query_terms)
+                if score:
+                    ranked.append((score, f"mcp__{server_id}__{tool['name']}"))
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return {qualified for _, qualified in ranked[:max_tools]}
+
     def get_all_tools(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
         """Return a flat list of all discovered tools with server info."""
         result = []
@@ -658,16 +709,24 @@ class McpManager:
     _cached_prompt_desc = None
     _cached_prompt_desc_key = None
 
-    def get_tool_descriptions_for_prompt(self, disabled_map: Optional[Dict[str, set]] = None) -> str:
-        """Generate text describing MCP tools for the agent system prompt. Cached."""
+    def get_tool_descriptions_for_prompt(
+        self,
+        disabled_map: Optional[Dict[str, set]] = None,
+        tool_names: Optional[Set[str]] = None,
+    ) -> str:
+        """Generate selected MCP tool descriptions for the agent prompt."""
+        selected_names = frozenset(tool_names) if tool_names is not None else None
         cache_key = (
             frozenset((k, frozenset(v)) for k, v in (disabled_map or {}).items()),
+            selected_names,
             len(self._tools),
             self._generation,
         )
         if self._cached_prompt_desc is not None and self._cached_prompt_desc_key == cache_key:
             return self._cached_prompt_desc
         tools = self.get_all_tools(disabled_map)
+        if selected_names is not None:
+            tools = [tool for tool in tools if tool["qualified_name"] in selected_names]
         if not tools:
             return ""
 

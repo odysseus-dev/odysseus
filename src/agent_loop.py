@@ -2744,7 +2744,12 @@ def _build_system_prompt(
     # MCP tool descriptions — sourced from external servers, must not be in system role.
     if mcp_mgr:
         try:
-            _mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(mcp_disabled_map or {})
+            # Keep textual MCP guidance aligned with the schema subset. Large
+            # servers (for example Nextcloud) otherwise add every tool twice:
+            # once in this message and again as native schemas.
+            _mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(
+                mcp_disabled_map or {}, relevant_tools
+            )
             if _mcp_desc:
                 _mcp_desc_message = untrusted_context_message(
                     "MCP tools",
@@ -4027,7 +4032,27 @@ async def stream_agent_loop(
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update(forced_set)
 
-    if not guide_only and _relevant_tools is not None:
+    if not guide_only and _relevant_tools is not None and mcp_mgr:
+        # Retrieval may omit a dynamic MCP tool after the first round. A user
+        # explicitly naming a connected server is stronger evidence than RAG,
+        # so retain that server's enabled schemas for the entire request.
+        try:
+            _explicit_mcp_tools = mcp_mgr.get_tools_for_explicit_server_reference(
+                _retrieval_query or _last_user, _mcp_disabled_map
+            )
+            if _explicit_mcp_tools:
+                # A direct request to a named external server is a narrower
+                # intent than generic tool-RAG. Keep only ambient controls and
+                # its selected MCP tools; unrelated coding/admin schemas waste
+                # context and can distract the model into manage_skills loops.
+                from src.tool_index import ALWAYS_AVAILABLE
+                _relevant_tools = set(ALWAYS_AVAILABLE) | forced_set | _explicit_mcp_tools
+                logger.info(
+                    "[tool-rag] Explicit MCP server reference selected %d tools",
+                    len(_explicit_mcp_tools),
+                )
+        except Exception as _exc:
+            logger.warning("[tool-rag] Explicit MCP server expansion failed: %s", _exc)
         _relevant_tools = _expand_browser_mcp_tools(_relevant_tools, mcp_mgr)
 
     # The skill index injected by _build_system_prompt tells the model to
