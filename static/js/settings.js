@@ -5011,6 +5011,10 @@ async function initUnifiedIntegrations() {
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row" style="align-items:flex-start;"><label class="settings-label" style="padding-top:7px;">Headers</label><textarea id="uf-mcp-headers" class="settings-input" rows="4" spellcheck="false" autocomplete="off" style="min-height:88px;resize:vertical;font-family:var(--mono, 'Fira Code', monospace);line-height:1.45;" placeholder='{
+  "Authorization": "Bearer gate-token",
+  "X-Portainer-API-Key": "ptr_your-token"
+}'></textarea></div>
             </div>
             <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -5046,6 +5050,9 @@ async function initUnifiedIntegrations() {
           fd.append('env', env);
         } else {
           fd.append('url', el('uf-mcp-url').value);
+          let headers = '{}'; try { headers = JSON.stringify(JSON.parse(el('uf-mcp-headers').value || '{}')); }
+          catch (_) { el('uf-mcp-msg').textContent = 'Headers must be valid JSON'; return; }
+          fd.append('headers', headers);
         }
         const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
         const _origLabel = saveBtn.textContent;
