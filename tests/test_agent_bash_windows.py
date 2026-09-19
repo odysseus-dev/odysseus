@@ -125,4 +125,7 @@ async def test_posix_bash_keeps_existing_shell_path(monkeypatch):
     result = await subprocess_tools._create_bash_subprocess("pwd", cwd="/tmp/work")
 
     assert result is process
-    assert captured == {"command": "pwd", "kwargs": {"cwd": "/tmp/work"}}
+    assert captured == {
+        "command": "pwd",
+        "kwargs": {"cwd": "/tmp/work", "start_new_session": True},
+    }
