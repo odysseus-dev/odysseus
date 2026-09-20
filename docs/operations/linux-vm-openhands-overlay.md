@@ -66,8 +66,13 @@ Reach 9router with
 
 ## After health
 
-Connect providers **inside overlay 9router on the guest**. Do not add providers
-in tests first. Leave Mac `9router -H 127.0.0.1` (port 20128) untouched.
+Connect providers from **Odysseus Settings → 9router connections** on this
+board (`127.0.0.1:7000`). Overlay 9router stays unpublished. Odysseus derives
+the CLI header from `NINE_ROUTER_DATA_DIR` (`machine-id` + `auth/cli-secret`
+only; not the sqlite inference-key bridge).
+Develop on `/home/agent/work/odysseus`. After the feature works, rebuild
+`odysseus` and `up -d --wait --pull never` to confirm the packaged image.
+Do not use a host-wide 9router.
 
 ## Canvas
 

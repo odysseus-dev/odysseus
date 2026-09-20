@@ -61,8 +61,13 @@ def test_overlay_datadir_mounts_are_quarantined_not_owned_by_odysseus():
     assert "9router:/opt/odysseus/9router-data" in agent
     assert "9router:/opt/odysseus/9router-data" in worker
     assert "9router:/app/data" in router
-    assert "9router:" not in odysseus
     assert "NINE_ROUTER_SQLITE" not in odysseus
+    assert "9router:/opt/odysseus/9router-data" not in odysseus
+    assert "db/data.sqlite" not in odysseus
+    assert "NINE_ROUTER_DATA_DIR=/opt/odysseus/9router-cli" in odysseus
+    assert "9router/machine-id" in odysseus
+    assert "9router/auth:" in odysseus
+    assert BRIDGE_MARK not in odysseus
     for block in (agent, worker):
         assert BRIDGE_MARK in block
         assert DELETION_MARK in block
