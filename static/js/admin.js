@@ -798,14 +798,68 @@ async function _saveEpModelState(epId, panel) {
   } catch (e) { /* silent */ }
 }
 
+// Catalog flag for the 9router connections card. Connect stays disabled when
+// GET /api/ninerouter/connections returns ok=false (overlay down). Agents:
+// do not fall back to POST /api/model-endpoints or iframe 9router.
+let _ninerouterCatalogOk = true;
+
+async function loadNinerouterConnections() {
+  // Render redacted connection rows (label, opaque id, status). No keys.
+  const list = el('adm-ninerouter-connections');
+  const connectBtn = el('adm-nrConnectBtn');
+  const msg = el('adm-nrMsg');
+  if (!list) return;
+  try {
+    const res = await fetch('/api/ninerouter/connections', { credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    const ok = !!(data && data.ok);
+    _ninerouterCatalogOk = ok;
+    if (connectBtn) connectBtn.disabled = !ok;
+    if (!ok) {
+      const err = (data && data.error) ? String(data.error) : '9router catalog unhealthy';
+      list.innerHTML = '<div class="admin-error">unhealthy</div>';
+      if (msg) {
+        msg.textContent = err;
+        msg.className = 'admin-error';
+      }
+      return;
+    }
+    if (msg && msg.className === 'admin-error' && /unhealthy/i.test(msg.textContent || '')) {
+      msg.textContent = '';
+      msg.className = '';
+    }
+    const rows = Array.isArray(data.providers) ? data.providers : [];
+    if (!rows.length) {
+      list.innerHTML = '<div class="admin-empty">No connections yet</div>';
+      return;
+    }
+    list.innerHTML = rows.map((row) => {
+      const label = esc(String(row.label || row.name || row.provider || 'provider'));
+      const id = esc(String(row.connection_id || row.id || ''));
+      const status = esc(String(row.status || ''));
+      return `<div class="adm-nr-row" style="display:flex;align-items:center;gap:10px;padding:6px 2px;font-size:13px;">
+        <span style="font-weight:600;">${label}</span>
+        <span style="opacity:0.55;font-family:ui-monospace,monospace;font-size:11px;">${id}</span>
+        <span style="margin-left:auto;opacity:0.8;">${status}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    _ninerouterCatalogOk = false;
+    if (connectBtn) connectBtn.disabled = true;
+    list.innerHTML = '<div class="admin-error">unhealthy</div>';
+    if (msg) {
+      msg.textContent = '9router catalog unhealthy';
+      msg.className = 'admin-error';
+    }
+  }
+}
+
 function initEndpointForm() {
   const provider = el('adm-epProvider');
-  const urlInput = el('adm-epUrl');
-  const kindSel = el('adm-epKind');
 
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
-  // change events) keeps working unchanged.
+  // change events) keeps working unchanged. No Base URL field on this card.
   const picker = el('adm-provider-picker');
   const pickerBtn = el('adm-provider-btn');
   const pickerMenu = el('adm-provider-menu');
@@ -819,7 +873,7 @@ function initEndpointForm() {
     const opt = _selectedProviderOption();
     const flow = opt && opt.dataset ? opt.dataset.authFlow : '';
     if (flow && DEVICE_AUTH_PROVIDER_VALUES.has(flow)) return flow;
-    return DEVICE_AUTH_PROVIDER_VALUES.has(provider.value) ? provider.value : '';
+    return provider && DEVICE_AUTH_PROVIDER_VALUES.has(provider.value) ? provider.value : '';
   }
   function _isDeviceAuthSelected() {
     return !!_selectedDeviceAuthProvider();
@@ -827,55 +881,32 @@ function initEndpointForm() {
   function _setApiFormForProvider() {
     const deviceAuthProvider = _selectedDeviceAuthProvider();
     const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider] || null;
-    const apiKey = el('adm-epApiKey');
-    const testBtn = el('adm-epApiTestBtn');
-    const addBtn = el('adm-epAddBtn');
+    const apiKey = el('adm-nrApiKey');
+    const connectBtn = el('adm-nrConnectBtn');
     const status = el('adm-deviceAuthStatus');
-    const msg = _endpointMsg('api');
+    const msg = el('adm-nrMsg') || _endpointMsg('api');
     if (deviceAuthConfig) {
-      urlInput.value = '';
-      urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
-      urlInput.readOnly = true;
       if (apiKey) {
         apiKey.value = '';
         apiKey.placeholder = 'No API key needed';
         apiKey.disabled = true;
       }
-      if (testBtn) {
-        testBtn.disabled = true;
-        testBtn.style.opacity = '0.45';
-        testBtn.style.cursor = 'not-allowed';
+      if (connectBtn) {
+        connectBtn.disabled = !_ninerouterCatalogOk || deviceAuthPolling;
+        connectBtn.textContent = 'Connect';
       }
-      if (addBtn) {
-        addBtn.disabled = false;
-        addBtn.textContent = 'Add';
-        addBtn.style.width = '55px';
-        addBtn.style.display = '';
-      }
-      if (kindSel) kindSel.value = 'api';
       if (msg) {
         msg.textContent = '';
         msg.className = '';
       }
     } else {
-      urlInput.placeholder = 'Base URL or pick provider';
-      urlInput.readOnly = false;
       if (apiKey) {
-        apiKey.placeholder = 'API key';
+        apiKey.placeholder = 'API key (one-shot — not stored in Odysseus)';
         apiKey.disabled = false;
       }
-      if (testBtn) {
-        testBtn.disabled = false;
-        testBtn.style.opacity = '';
-        testBtn.style.cursor = '';
-      }
-      if (addBtn) {
-        addBtn.disabled = false;
-        addBtn.textContent = 'Add';
-        addBtn.style.width = '55px';
-        addBtn.style.display = '';
+      if (connectBtn) {
+        connectBtn.disabled = !_ninerouterCatalogOk || deviceAuthPolling;
+        connectBtn.textContent = 'Connect';
       }
       if (msg) {
         msg.textContent = '';
@@ -905,7 +936,6 @@ function initEndpointForm() {
   if (picker && pickerBtn && pickerMenu && pickerCurrent) {
     _renderPickerMenu();
     _syncPickerCurrent();
-    if (provider.value && !urlInput.value) urlInput.value = provider.value;
     pickerBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       pickerMenu.classList.toggle('hidden');
@@ -939,30 +969,8 @@ function initEndpointForm() {
       _syncPickerCurrent();
       return;
     }
-    if (provider.value) urlInput.value = provider.value;
-    else urlInput.value = '';
-    if (kindSel) kindSel.value = provider.value ? 'api' : 'proxy';
     _setApiFormForProvider();
   });
-  urlInput.addEventListener('input', () => {
-    if (provider.value && urlInput.value.trim() !== provider.value) {
-      provider.value = '';
-      if (kindSel) kindSel.value = 'api';
-      _renderPickerMenu();
-      _syncPickerCurrent();
-    }
-  });
-  if (kindSel) kindSel.value = kindSel.value || 'api';
-  function _apiEndpointKind() {
-    return (kindSel && kindSel.value) ? kindSel.value : 'api';
-  }
-  function _modelRefreshModeForApiEndpoint(url, endpointKind) {
-    if (endpointKind === 'proxy') return 'manual';
-    try {
-      if ((new URL(url)).hostname.toLowerCase() === 'generativelanguage.googleapis.com') return '';
-    } catch (_) {}
-    return 'auto';
-  }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
     // Fix common protocol typos
@@ -1029,124 +1037,53 @@ function initEndpointForm() {
   }
 
   function _endpointMsg(kind) {
-    return el(kind === 'local' ? 'adm-epLocalMsg' : 'adm-epApiMsg') || el('adm-epMsg');
+    if (kind === 'local') return el('adm-epLocalMsg') || el('adm-epMsg');
+    return el('adm-nrMsg') || el('adm-epApiMsg') || el('adm-epMsg');
   }
 
-  let apiTestController = null;
-  const apiTestBtn = el('adm-epApiTestBtn');
-  const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
-  if (apiTestBtn) {
-    apiTestBtn.addEventListener('click', async () => {
-      if (_isDeviceAuthSelected()) {
-        const msg = _endpointMsg('api');
-        msg.textContent = '';
-        msg.className = '';
+  // Connect: device-flow providers use runProviderDeviceFlow. API-key providers
+  // POST provider+api_key to /api/ninerouter/connections then clear the one-shot
+  // key. Do not POST /api/model-endpoints from this path.
+  const nrConnectBtn = el('adm-nrConnectBtn');
+  if (nrConnectBtn) {
+    nrConnectBtn.addEventListener('click', async () => {
+      const deviceAuthProvider = _selectedDeviceAuthProvider();
+      if (deviceAuthProvider) {
+        await _startProviderDeviceAuth(deviceAuthProvider, el('adm-nrConnectBtn'));
         return;
       }
       const msg = _endpointMsg('api');
       msg.textContent = ''; msg.className = '';
-      const rawUrl = (urlInput.value || provider.value).trim();
-      const apiKey = el('adm-epApiKey').value.trim();
-      if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-      if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
-      const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
-      apiTestController = new AbortController();
-      apiTestBtn.disabled = true;
-      apiTestBtn.textContent = 'Testing...';
-      if (apiCancelTestBtn) apiCancelTestBtn.classList.remove('hidden');
+      const slug = (provider && provider.value) ? provider.value.trim() : '';
+      const keyEl = el('adm-nrApiKey');
+      const apiKey = keyEl ? keyEl.value.trim() : '';
+      if (!slug) { msg.textContent = 'Select a provider'; msg.className = 'admin-error'; return; }
+      if (!apiKey) { msg.textContent = 'API key is required'; msg.className = 'admin-error'; return; }
+      if (!_ninerouterCatalogOk) { msg.textContent = 'unhealthy'; msg.className = 'admin-error'; return; }
+      const btn = el('adm-nrConnectBtn');
+      btn.disabled = true; btn.textContent = 'Connecting...';
       try {
         const fd = new FormData();
-        fd.append('base_url', url);
-        fd.append('endpoint_kind', _apiEndpointKind());
-        fd.append('model_refresh_timeout', '30');
-        if (apiKey) fd.append('api_key', apiKey);
-        const res = await fetch('/api/model-endpoints/test', {
-          method: 'POST',
-          body: fd,
-          credentials: 'same-origin',
-          signal: apiTestController.signal,
-        });
-        const d = await res.json();
-        _renderEndpointTestResult(msg, res, d);
-      } catch (e) {
-        if (e && e.name === 'AbortError') {
-          msg.textContent = 'Test canceled';
-          msg.className = '';
+        fd.append('provider', slug);
+        fd.append('api_key', apiKey);
+        const res = await fetch('/api/ninerouter/connections', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const d = await res.json().catch(() => ({}));
+        if (keyEl) keyEl.value = '';
+        if (res.ok) {
+          msg.textContent = 'Connected';
+          msg.className = 'admin-success';
+          await loadNinerouterConnections();
         } else {
-          msg.textContent = 'Test failed: ' + (e && e.message ? e.message : 'request failed');
+          msg.textContent = d.detail || 'Failed';
           msg.className = 'admin-error';
         }
-      }
-      apiTestController = null;
-      apiTestBtn.disabled = false;
-      apiTestBtn.textContent = 'Test';
-      if (apiCancelTestBtn) apiCancelTestBtn.classList.add('hidden');
-    });
-  }
-  if (apiCancelTestBtn) {
-    apiCancelTestBtn.addEventListener('click', () => {
-      if (apiTestController) apiTestController.abort();
+      } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+      btn.disabled = !_ninerouterCatalogOk; btn.textContent = 'Connect';
     });
   }
 
-  el('adm-epAddBtn').addEventListener('click', async () => {
-    const deviceAuthProvider = _selectedDeviceAuthProvider();
-    if (deviceAuthProvider) {
-      await _startProviderDeviceAuth(deviceAuthProvider, el('adm-epAddBtn'));
-      return;
-    }
-    const msg = _endpointMsg('api');
-    msg.textContent = ''; msg.className = '';
-    const rawUrl = (urlInput.value || provider.value).trim();
-    const apiKey = el('adm-epApiKey').value.trim();
-    if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-    if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
-    // Normalize URL (fix typos, add /v1, strip wrong paths)
-    const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
-    const btn = el('adm-epAddBtn');
-    btn.disabled = true; btn.textContent = 'Adding...';
-    try {
-      const fd = new FormData();
-      fd.append('base_url', url);
-      const endpointKind = _apiEndpointKind();
-      fd.append('endpoint_kind', endpointKind);
-      const refreshMode = _modelRefreshModeForApiEndpoint(url, endpointKind);
-      if (refreshMode) fd.append('model_refresh_mode', refreshMode);
-      fd.append('model_refresh_timeout', '30');
-      if (apiKey) fd.append('api_key', apiKey);
-      if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
-        fd.append('name', provider.selectedOptions[0].textContent.trim());
-      }
-      const epType = el('adm-epType');
-      if (epType) fd.append('model_type', epType.value);
-      if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
-      else fd.append('skip_probe', 'false');
-      const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
-      const d = await res.json();
-      if (res.ok) {
-        const count = d.models ? d.models.length : 0;
-        urlInput.value = ''; urlInput.style.display = '';
-        el('adm-epApiKey').value = ''; provider.value = '';
-        if (kindSel) kindSel.value = 'proxy';
-        if (epType) epType.value = 'llm';
-        if (d.id) _recentlyAddedEpId = String(d.id);
-        await loadEndpoints();
-        await _selectAddedModelInChat(d);
-        const goLink = ' <a href="#" data-go-added-models style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Added Models →</a>';
-        if (!d.online) {
-          msg.innerHTML = 'Added (endpoint offline — will retry on next load)' + goLink;
-          msg.className = 'admin-error';
-        } else if (d.status === 'empty') {
-          msg.innerHTML = 'Added — endpoint reachable, no models found' + goLink;
-          msg.className = 'admin-success';
-        } else {
-          msg.innerHTML = `Added — found ${count} model${count !== 1 ? 's' : ''}` + goLink;
-          msg.className = 'admin-success';
-        }
-      } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Add';
-  });
+  loadNinerouterConnections();
+  _setApiFormForProvider();
 
   async function _startProviderDeviceAuth(providerKey, triggerEl = null) {
     if (deviceAuthPolling) return;
@@ -1171,7 +1108,7 @@ function initEndpointForm() {
     const reset = () => {
       if (triggerEl) {
         triggerEl.disabled = false;
-        triggerEl.textContent = triggerText || 'Add';
+        triggerEl.textContent = triggerText || 'Connect';
       }
       deviceAuthPolling = false;
       _setApiFormForProvider();
@@ -1239,6 +1176,7 @@ function initEndpointForm() {
         status.className = 'admin-success';
         status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
         if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+        await loadNinerouterConnections();
         await loadEndpoints();
         await _selectAddedModelInChat(endpoint || {});
         reset();
@@ -1564,7 +1502,7 @@ function initEndpointForm() {
     });
   };
   _wireClearOnFocus('adm-epLocalApiKey');
-  _wireClearOnFocus('adm-epApiKey');
+  _wireClearOnFocus('adm-nrApiKey');
 
   // Drop the Ollama provider logo into the Ollama Quickstart button. Reuses
   // the same SVG the provider picker uses, so brand parity stays free.
@@ -3164,6 +3102,7 @@ function initAll() {
 function refreshAll() {
   loadUsers();
   loadEndpoints();
+  loadNinerouterConnections();
   loadBuiltinTools();
   loadMcpServers();
   loadTokens();

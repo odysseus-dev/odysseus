@@ -2260,81 +2260,51 @@
             </div>
           </div>
 
-          <!-- ── API card ───────────────────────────────────────────── -->
+          <!-- Agents: 9router connections card. Catalog + Connect use Odysseus
+               GET/POST /api/ninerouter/connections (same-origin). Never iframe
+               9router, never save a Base URL, never POST /api/model-endpoints
+               from this card. API keys are one-shot (#adm-nrApiKey). Device
+               flows (chatgpt-subscription, copilot) stay runProviderDeviceFlow. -->
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="12" r="8"/><path d="M19 5v6"/><path d="M16 8h6"/><path d="M7 12h8"/></svg>Add API Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
-              <span style="flex:1"></span>
-              <button class="admin-btn-sm" id="adm-epApiTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
-              </button>
-              <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="font-size:11px;font-weight:normal;">Cancel</button>
-              <div style="position:relative;display:inline-block;">
-                <button class="admin-btn-sm" id="adm-epApiMoreBtn" title="More options" aria-haspopup="true" aria-expanded="false" style="font-size:11px;font-weight:normal;padding:4px 8px;line-height:1;">
-                  <svg width="14" height="4" viewBox="0 0 14 4" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="7" cy="2" r="1.4"/><circle cx="12" cy="2" r="1.4"/></svg>
-                </button>
-                <div id="adm-epApiMoreMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:50;min-width:200px;padding:4px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.22);flex-direction:column;gap:1px;">
-                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.55;padding:6px 9px 2px;">Connection mode</div>
-                  <button class="admin-btn-sm adm-more-item adm-kind-opt" data-kind="proxy" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;">
-                    <svg class="adm-kind-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    <span>Proxy</span>
-                    <span style="margin-left:auto;opacity:0.5;font-size:10px;">routed via server</span>
-                  </button>
-                  <button class="admin-btn-sm adm-more-item adm-kind-opt" data-kind="api" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;">
-                    <svg class="adm-kind-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="visibility:hidden;"><polyline points="20 6 9 17 4 12"/></svg>
-                    <span>API (direct)</span>
-                    <span style="margin-left:auto;opacity:0.5;font-size:10px;">browser→provider</span>
-                  </button>
-                </div>
-              </div>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="12" r="8"/><path d="M19 5v6"/><path d="M16 8h6"/><path d="M7 12h8"/></svg>9router connections
             </h2>
-            <div class="admin-toggle-sub" style="margin:0 0 10px 2px;">Connect a cloud provider (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.).</div>
+            <div class="admin-toggle-sub" style="margin:0 0 10px 2px;">Connect cloud providers through in-stack 9router. Keys are posted once and not stored here.</div>
+            <div id="adm-ninerouter-connections" class="adm-ep-section" style="margin-bottom:12px;"></div>
             <div class="adm-add-section">
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
                   <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker" style="flex:1 1 220px;min-width:0;margin-bottom:0;">
-                    <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider" style="border-top-right-radius:0;border-bottom-right-radius:0;border-top-left-radius:6px;border-bottom-left-radius:6px;border-left:1px solid var(--border);border-right:1px solid var(--border);">
+                    <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider" style="border-radius:6px;border:1px solid var(--border);">
                       <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
                       <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off" style="border-left:0;border-top-left-radius:0;border-bottom-left-radius:0;border-top-right-radius:6px;border-bottom-right-radius:6px;">
                     <div class="adm-provider-menu hidden" id="adm-provider-menu"></div>
                   </div>
                 </div>
-                <select id="adm-epKind" style="display:none">
-                  <option value="proxy">proxy</option>
-                  <option value="api" selected>api</option>
-                </select>
                 <select id="adm-epProvider" style="display:none">
-                  <option value="">Custom URL</option>
-                  <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
-                  <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
-                  <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
+                  <option value="openai" data-logo="openai" selected>OpenAI</option>
+                  <option value="anthropic" data-logo="anthropic">Anthropic</option>
+                  <option value="groq" data-logo="groq">Groq</option>
+                  <option value="deepseek" data-logo="deepseek">DeepSeek</option>
+                  <option value="openrouter" data-logo="openrouter">OpenRouter</option>
+                  <option value="mistral" data-logo="mistral">Mistral</option>
+                  <option value="together" data-logo="together">Together AI</option>
+                  <option value="fireworks" data-logo="fireworks">Fireworks AI</option>
+                  <option value="gemini" data-logo="gemini">Google Gemini</option>
+                  <option value="xai" data-logo="grok">xAI Grok</option>
                   <option value="copilot" data-logo="github" data-auth-flow="copilot">GitHub Copilot</option>
                   <option value="chatgpt-subscription" data-logo="openai" data-auth-flow="chatgpt-subscription">ChatGPT Subscription</option>
-                  <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
-                  <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
-                  <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>
-                  <option value="https://api.mistral.ai/v1" data-logo="mistral">Mistral</option>
-                  <option value="https://api.together.xyz/v1" data-logo="together">Together AI</option>
-                  <option value="https://api.fireworks.ai/inference/v1" data-logo="fireworks">Fireworks AI</option>
-                  <option value="https://generativelanguage.googleapis.com/v1beta/openai" data-logo="gemini">Google Gemini</option>
-                  <option value="https://api.x.ai/v1" data-logo="grok">xAI Grok</option>
-                  <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
-                  <option value="https://opencode.ai/zen/v1" data-logo="opencode">OpenCode Zen</option>
-                  <option value="https://opencode.ai/zen/go/v1" data-logo="opencode">OpenCode Go</option>
-                  <option value="https://api.z.ai/api/coding/paas/v4" data-logo="zhipu">Z.AI Coding Plan</option>
-                  <option value="https://integrate.api.nvidia.com/v1" data-logo="nvidia">NVIDIA</option>
                 </select>
-                <div class="admin-model-form-row" id="adm-epApiKey-row">
+                <div class="admin-model-form-row" id="adm-nrApiKey-row">
                   <div style="position:relative;flex:1;display:flex;align-items:center;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:0.55;pointer-events:none;"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
-                    <input id="adm-epApiKey" type="password" placeholder="API key, e.g. sk-proj-AbCdEf…" autocomplete="off" style="flex:1;padding-left:28px;height:32px;box-sizing:border-box;">
+                    <input id="adm-nrApiKey" type="password" placeholder="API key (one-shot — not stored in Odysseus)" autocomplete="off" style="flex:1;padding-left:28px;height:32px;box-sizing:border-box;">
                   </div>
-                  <button class="admin-btn-add" id="adm-epAddBtn" style="height:32px;min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;box-sizing:border-box;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add
+                  <button class="admin-btn-add" id="adm-nrConnectBtn" style="height:32px;min-width:72px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;box-sizing:border-box;">
+                    Connect
                   </button>
                 </div>
-                <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
+                <div id="adm-nrMsg" class="adm-ep-inline-msg"></div>
                 <div id="adm-deviceAuthStatus" class="adm-ep-inline-msg" style="min-height:0;margin-top:0;"></div>
               </div>
             </div>

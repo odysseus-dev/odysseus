@@ -21,40 +21,32 @@ def test_copilot_and_chatgpt_subscription_are_dropdown_device_auth_options():
 
 
 def test_provider_selection_is_inert_and_add_button_starts_device_flow():
-    change_block = _between(_ADMIN, "provider.addEventListener('change'", "urlInput.addEventListener('input'")
-    add_block = _between(_ADMIN, "el('adm-epAddBtn').addEventListener('click'", "async function _startProviderDeviceAuth")
+    change_block = _between(_ADMIN, "provider.addEventListener('change'", "nrConnectBtn.addEventListener('click'")
+    add_block = _between(_ADMIN, "nrConnectBtn.addEventListener('click'", "async function _startProviderDeviceAuth")
 
     assert "_startProviderDeviceAuth" not in change_block
     assert "_startProviderDeviceAuth(deviceAuthProvider" in add_block
 
 
-def test_google_add_omits_auto_refresh_mode_for_backend_manual_default():
-    refresh_helper = _between(
-        _ADMIN,
-        "function _modelRefreshModeForApiEndpoint",
-        "function _normalizeBaseUrl",
-    )
+def test_ninerouter_connect_posts_connections_not_model_endpoints():
     add_block = _between(
         _ADMIN,
-        "el('adm-epAddBtn').addEventListener('click'",
+        "nrConnectBtn.addEventListener('click'",
         "async function _startProviderDeviceAuth",
     )
 
-    assert "generativelanguage.googleapis.com" in refresh_helper
-    assert "return '';" in refresh_helper
-    assert "_modelRefreshModeForApiEndpoint(url, endpointKind)" in add_block
-    assert "if (refreshMode) fd.append('model_refresh_mode', refreshMode)" in add_block
+    assert "/api/ninerouter/connections" in add_block
+    assert "fd.append('provider'" in add_block
+    assert "fd.append('api_key'" in add_block
+    assert "/api/model-endpoints" not in add_block
 
 
-def test_device_auth_selection_disables_and_dims_api_test_button():
+def test_device_auth_selection_disables_one_shot_api_key():
     form_block = _between(_ADMIN, "function _setApiFormForProvider()", "function _renderPickerMenu()")
 
-    assert "testBtn.disabled = true" in form_block
-    assert "testBtn.style.opacity = '0.45'" in form_block
-    assert "testBtn.style.cursor = 'not-allowed'" in form_block
-    assert "testBtn.disabled = false" in form_block
-    assert "testBtn.style.opacity = ''" in form_block
-    assert "testBtn.style.cursor = ''" in form_block
+    assert "apiKey.disabled = true" in form_block
+    assert "apiKey.disabled = false" in form_block
+    assert "No API key needed" in form_block
 
 
 def test_device_auth_keeps_manual_auth_button_without_auto_opening_tab():
