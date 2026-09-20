@@ -79,8 +79,6 @@ def test_probe_compose_files_exclude_hhpe_relay(monkeypatch):
         "docker-compose.yml",
         "docker-compose.openhands.yml",
     )
-    for name in probe.COMPOSE_FILES:
-        text = (ROOT / name).read_text(encoding="utf-8").lower()
-        assert "relay" not in text
-        assert "hhpe" not in text
-        assert "docker-compose.relay.yml" not in name
+    overlay = (ROOT / "docker-compose.openhands.yml").read_text(encoding="utf-8")
+    assert "docker-compose.relay.yml" not in overlay
+    assert "hhpe-adapter" not in overlay

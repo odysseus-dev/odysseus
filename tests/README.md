@@ -250,10 +250,9 @@ compose HHPE relay files. Connect providers on overlay 9router only after
 `python3 scripts/openhands_probe.py stack` is healthy.
 
 ```bash
+# Mac: compose shape only. Live `up` is the Linux VM runbook.
 docker compose -f docker-compose.yml -f docker-compose.openhands.yml config --quiet
-docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never
-python3 scripts/openhands_probe.py stack --json
-python3 -m pytest tests/integration/openhands/test_stack_contract.py tests/integration/openhands/test_9router_reachability.py -v
+python3 -m pytest tests/integration/openhands/test_stack_contract.py tests/integration/openhands/test_9router_reachability.py --noconftest -q
 ```
 
 Pins live in `deploy/openhands/versions.env`. Update them only from official

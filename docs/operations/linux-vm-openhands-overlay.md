@@ -9,7 +9,8 @@ Do not point the overlay at the Mac host 9router.
 
 - Fusion VM: `Ubuntu 64-bit` (guest hostname `hhpe-forge`)
 - SSH: `orchestration-vm` as `agent`
-- Docker: `sudo -n docker` (`agent` is not in group `docker`)
+- Docker: `agent` is not in group `docker`. Put a `sudo -n docker` wrapper first on `PATH`, then every `docker` / probe call works without mixing sudo:
+  `printf '%s\n' '#!/bin/sh' 'exec sudo -n docker "$@"' > ~/.local/bin/docker && chmod +x ~/.local/bin/docker && export PATH="$HOME/.local/bin:$PATH"`
 - Checkout: `/home/agent/work/odysseus` (not `external/vendors/odysseus`)
 
 Power the VM on before claiming a deploy failure.
@@ -22,9 +23,10 @@ Odysseus. Leave relay volumes; do not compose `docker-compose.relay.yml`.
 
 ```bash
 ssh orchestration-vm
-sudo docker compose ls
+export PATH="$HOME/.local/bin:$PATH"
+docker compose ls
 # If CONFIG FILES include docker-compose.relay.yml, down that project only.
-sudo docker compose \
+docker compose \
   -f /home/oldmac-vm/GitHub/hhpe-hrg-project/external/vendors/odysseus/docker-compose.yml \
   -f /home/oldmac-vm/GitHub/hhpe-hrg-project/external/services/odysseus/hhpe-adapter/docker-compose.relay.yml \
   down
@@ -46,16 +48,18 @@ rsync -az --delete \
 ssh orchestration-vm
 cd /home/agent/work/odysseus
 test -f .env || cp .env.example .env
+export PATH="$HOME/.local/bin:$PATH"
 python3 scripts/install_openhands_runtime_bin.py
-sudo -n docker compose -f docker-compose.yml -f docker-compose.openhands.yml build odysseus
-sudo -n docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never
-sudo -n docker compose -f docker-compose.yml -f docker-compose.openhands.yml ls
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml build odysseus
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml ls
 python3 scripts/openhands_probe.py stack --json
 ```
 
 Keep `APP_BIND=127.0.0.1`, `APP_PORT=7000`, `AUTH_ENABLED=true`, Canvas on
 `127.0.0.1:8000`. Agent Server, Automation, and overlay 9router stay unpublished.
-Reach 9router with `docker compose exec`.
+Reach 9router with
+`docker compose -f docker-compose.yml -f docker-compose.openhands.yml exec -T 9router`.
 
 `docker compose ls` for this project must list only `docker-compose.yml` and
 `docker-compose.openhands.yml`.

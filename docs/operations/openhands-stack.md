@@ -7,11 +7,16 @@ Do not compose HHPE relay files. Providers wait until `openhands_probe.py stack`
 
 ## Startup
 
+On this machine, bring the overlay up on the Linux VM only. Follow
+[linux-vm-openhands-overlay.md](linux-vm-openhands-overlay.md). After SSH:
+
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never
 python3 scripts/openhands_probe.py stack --json
-python3 scripts/openhands_probe.py acceptance --json
 ```
+
+`acceptance` needs overlay providers; do not run it until those exist. Do not
+`up` the overlay on the Mac.
 
 Agent Server and Automation ports stay unpublished. Use `docker compose exec` for in-network checks. Canvas binds to `OPENHANDS_CANVAS_BIND` / `OPENHANDS_CANVAS_PORT`.
 
