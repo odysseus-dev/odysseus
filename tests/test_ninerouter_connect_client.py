@@ -22,6 +22,13 @@ def test_connect_allowlist_rejects_inference_and_dashboard():
         normalize_connect_path("GET", "/dashboard/providers")
 
 
+def test_connect_allowlist_rejects_dotdot_traversal():
+    with pytest.raises(NineRouterMetadataError, match="allowlist"):
+        normalize_connect_path("GET", "/api/oauth/../v1/models")
+    with pytest.raises(NineRouterMetadataError, match="allowlist"):
+        normalize_connect_path("GET", "/api/oauth/../dashboard/providers")
+
+
 def test_connect_allowlist_accepts_probed_provider_paths():
     assert normalize_connect_path("GET", "/api/providers") == "/api/providers"
     assert normalize_connect_path("POST", "/api/providers") == "/api/providers"

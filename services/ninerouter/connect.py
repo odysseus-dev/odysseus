@@ -18,9 +18,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import posixpath
+import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse
+
+_PROVIDER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_CONNECTION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 import httpx
 
@@ -71,11 +76,17 @@ def normalize_connect_path(method: str, path: str) -> str:
     raw = (path or "").strip() or "/"
     parsed = urlparse(raw if raw.startswith("/") else f"/{raw}")
     cleaned = parsed.path or "/"
+    cleaned = posixpath.normpath(cleaned)
+    if not cleaned.startswith("/"):
+        cleaned = "/" + cleaned
     if cleaned != "/" and cleaned.endswith("/"):
         cleaned = cleaned.rstrip("/")
-    if cleaned.startswith("/v1/") or cleaned == "/v1" or "chat/completions" in cleaned:
-        raise NineRouterMetadataError("path is outside the 9router connect allowlist")
-    if cleaned.startswith("/dashboard"):
+    if (
+        cleaned.startswith("/v1/")
+        or cleaned == "/v1"
+        or "chat/completions" in cleaned
+        or "/dashboard" in cleaned
+    ):
         raise NineRouterMetadataError("path is outside the 9router connect allowlist")
     if verb == "GET" and (cleaned in CONNECT_GET_EXACT or cleaned.startswith(CONNECT_GET_PREFIXES)):
         return cleaned
@@ -84,6 +95,22 @@ def normalize_connect_path(method: str, path: str) -> str:
     if verb == "DELETE" and cleaned.startswith(CONNECT_DELETE_PREFIXES) and cleaned != "/api/providers":
         return cleaned
     raise NineRouterMetadataError("path is outside the 9router connect allowlist")
+
+
+def _safe_provider(provider: str) -> str:
+    """Reject path-injection in 9router provider slugs."""
+    slug = (provider or "").strip()
+    if not _PROVIDER_RE.match(slug):
+        raise NineRouterConnectError("invalid 9router provider id")
+    return slug
+
+
+def _safe_connection_id(connection_id: str) -> str:
+    """Reject path-injection in opaque connection ids."""
+    cid = (connection_id or "").strip()
+    if not _CONNECTION_ID_RE.match(cid):
+        raise NineRouterConnectError("invalid connection_id")
+    return cid
 
 
 def derive_cli_token(data_dir: str) -> str:
@@ -233,7 +260,7 @@ class NineRouterConnectClient:
         payload = self._request(
             "POST",
             "/api/providers",
-            {"provider": provider, "apiKey": api_key},
+            {"provider": _safe_provider(provider), "apiKey": api_key},
         )
         row = self._one_row(payload)
         if not str(row.get("id") or "").strip():
@@ -244,7 +271,7 @@ class NineRouterConnectClient:
         """Start OAuth; returns IdP ``authorization_url`` plus 9router ``state``."""
         from urllib.parse import quote
 
-        path = f"/api/oauth/{provider}/authorize?redirect_uri={quote(redirect_uri, safe='')}"
+        path = f"/api/oauth/{_safe_provider(provider)}/authorize?redirect_uri={quote(redirect_uri, safe='')}"
         payload = self._request("GET", path)
         if not isinstance(payload, dict):
             raise NineRouterConnectError("oauth start did not return JSON")
@@ -259,12 +286,10 @@ class NineRouterConnectClient:
         body: dict[str, Any] = {"code": code}
         if state:
             body["state"] = state
-        payload = self._request("POST", f"/api/oauth/{provider}/exchange", body)
+        payload = self._request("POST", f"/api/oauth/{_safe_provider(provider)}/exchange", body)
         return self._one_row(payload)
 
     def delete_connection(self, connection_id: str) -> None:
         """Delete a 9router connection by opaque id."""
-        cid = (connection_id or "").strip()
-        if not cid:
-            raise NineRouterConnectError("connection_id is required")
+        cid = _safe_connection_id(connection_id)
         self._request("DELETE", f"/api/providers/{cid}")
