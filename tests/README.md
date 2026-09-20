@@ -243,6 +243,12 @@ Agent Server and the model-job worker currently mint them through a temporary
 sqlite mount; that is a temporary bridge, not the long-term control API.
 Odysseus overlay environment must not receive the inference key.
 
+Live overlay target on this machine is the Fusion Ubuntu VM. See
+`docs/operations/linux-vm-openhands-overlay.md`. Do not start overlay 9router
+on the Mac host (existing 9router already binds `127.0.0.1:20128`). Do not
+compose HHPE relay files. Connect providers on overlay 9router only after
+`python3 scripts/openhands_probe.py stack` is healthy.
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.openhands.yml config --quiet
 docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never

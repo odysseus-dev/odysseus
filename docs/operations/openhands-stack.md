@@ -1,5 +1,10 @@
 # OpenHands stack operations
 
+Live overlay bring-up for this machine is the Linux VM path in
+[linux-vm-openhands-overlay.md](linux-vm-openhands-overlay.md).
+Do not start overlay 9router on the Mac (host 9router already binds loopback 20128).
+Do not compose HHPE relay files. Providers wait until `openhands_probe.py stack` is healthy.
+
 ## Startup
 
 ```bash

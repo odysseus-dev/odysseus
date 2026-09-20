@@ -62,3 +62,25 @@ def test_probe_accepts_compose_json_lines(monkeypatch):
     monkeypatch.setattr(probe, "_compose", lambda *args: type("Result", (), {"returncode": 0, "stdout": next(responses), "stderr": ""})())
 
     assert {result.name for result in probe.probe_stack()} == set(probe.SERVICES)
+
+
+def test_probe_compose_files_exclude_hhpe_relay(monkeypatch):
+    """Overlay startup is this repo's two compose files, never an HHPE relay."""
+
+    spec = importlib.util.spec_from_file_location(
+        "openhands_probe", ROOT / "scripts/openhands_probe.py"
+    )
+    assert spec and spec.loader
+    probe = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, probe)
+    spec.loader.exec_module(probe)
+
+    assert probe.COMPOSE_FILES == (
+        "docker-compose.yml",
+        "docker-compose.openhands.yml",
+    )
+    for name in probe.COMPOSE_FILES:
+        text = (ROOT / name).read_text(encoding="utf-8").lower()
+        assert "relay" not in text
+        assert "hhpe" not in text
+        assert "docker-compose.relay.yml" not in name
