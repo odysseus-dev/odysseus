@@ -262,19 +262,21 @@ def test_metadata_client_allowlists_health_providers_usage_only():
     assert "/v1/chat/completions" not in seen
 
 
-def test_start_device_flow_redirects_to_9router_hosted_pkce(monkeypatch):
+def test_start_device_flow_opens_upstream_idp_not_9router_dashboard(monkeypatch):
     monkeypatch.setattr(csr, "get_current_user", lambda _request: "alice")
-    monkeypatch.setattr(
-        csr.chatgpt_subscription,
-        "ninerouter_public_url",
-        lambda: "http://9router.example:20128",
-    )
 
+    class Fake:
+        def start_oauth(self, provider, redirect_uri):
+            assert provider
+            assert "callback" in redirect_uri
+            return {"authorization_url": "https://auth.openai.com/authorize?client_id=x"}
+
+    monkeypatch.setattr(csr, "NineRouterConnectClient", lambda: Fake())
     start = csr._start_device_flow(SimpleNamespace(), {})
     redirect = start.response.get("redirect_url") or start.response.get("verification_uri")
-    assert redirect == "http://9router.example:20128/dashboard/providers"
+    assert redirect.startswith("https://auth.openai.com/")
+    assert "/dashboard/providers" not in redirect
     assert start.pending["owner"] == "alice"
-    assert "device_auth_id" not in start.pending
     assert "code_verifier" not in start.pending
 
 

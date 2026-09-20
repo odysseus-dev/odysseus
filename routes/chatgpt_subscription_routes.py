@@ -1,4 +1,13 @@
-"""Product connection UX that redirects to 9router-hosted PKCE."""
+"""ChatGPT Subscription device-flow via stack 9router OAuth.
+
+Agents: start must return an upstream IdP URL from
+``NineRouterConnectClient.start_oauth``. Never send the browser to
+``/dashboard/providers``. Callback is Odysseus
+``/api/ninerouter/connections/oauth/callback`` (same path as
+``routes/ninerouter_connection_routes.py``). Poll still lists redacted
+metadata providers and provisions a projection (no tokens). Tests
+monkeypatch ``NineRouterConnectClient`` on this module.
+"""
 
 import logging
 from typing import Any, Dict, List, Mapping, Optional
@@ -11,6 +20,7 @@ from routes.device_flow import (
     PendingDeviceFlowStore,
     create_device_flow_router,
 )
+from services.ninerouter.connect import NineRouterConnectClient
 from src.auth_helpers import get_current_user
 from src import chatgpt_subscription
 
@@ -18,11 +28,8 @@ logger = logging.getLogger(__name__)
 
 _DEVICE_FLOW_STORE = PendingDeviceFlowStore()
 
-# Spike against unmodified 9router 0.5.69 (do not vendor its source):
-# /dashboard/providers hosts connect after /login; GET /api/oauth/{provider}/authorize
-# accepts redirect_uri (default http://localhost:8080/callback) but requires a
-# 9router dashboard session. Odysseus only redirects the browser there.
-_NINEROUTER_PKCE_PATH = "/dashboard/providers"
+# Odysseus browser callback (IdP redirect_uri). Must not be 9router dashboard.
+_OAUTH_CALLBACK_PATH = "/api/ninerouter/connections/oauth/callback"
 
 
 def _provision_connection(projection: Dict[str, Any], owner: Optional[str]) -> Dict[str, Any]:
@@ -77,13 +84,23 @@ def _match_pending_connection(providers: Any, pending: Mapping[str, Any]) -> Opt
 
 
 def _start_device_flow(request: Request, _form) -> DeviceFlowStart:
+    """Start ChatGPT OAuth; return IdP authorization_url, never 9router dashboard."""
     owner = get_current_user(request) or None
-    redirect_url = f"{chatgpt_subscription.ninerouter_public_url()}{_NINEROUTER_PKCE_PATH}"
+    # SimpleNamespace tests omit base_url; real FastAPI Request always has it.
+    base = str(getattr(request, "base_url", "") or "").rstrip("/")
+    redirect_uri = f"{base}{_OAUTH_CALLBACK_PATH}"
+    started = NineRouterConnectClient().start_oauth("codex", redirect_uri)
+    auth_url = ""
+    if isinstance(started, dict):
+        auth_url = str(started.get("authorization_url") or "")
+    pending: Dict[str, Any] = {"owner": owner, "redirect_url": auth_url}
+    if isinstance(started, dict) and started.get("state"):
+        pending["state"] = started["state"]
     return DeviceFlowStart(
-        pending={"owner": owner, "redirect_url": redirect_url},
+        pending=pending,
         response={
-            "redirect_url": redirect_url,
-            "verification_uri": redirect_url,
+            "redirect_url": auth_url,
+            "verification_uri": auth_url,
         },
         interval=5,
         expires_in=900,
