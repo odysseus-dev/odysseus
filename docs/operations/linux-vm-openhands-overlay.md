@@ -41,6 +41,7 @@ rsync -az --delete \
   --exclude '.pytest_cache' --exclude '__pycache__' \
   --exclude 'data/huggingface' --exclude 'data/local' \
   --exclude 'data/openhands-runtime-bin/hermes-agent' \
+  --exclude '.env' \
   ./ orchestration-vm:/home/agent/work/odysseus/
 ssh orchestration-vm
 cd /home/agent/work/odysseus
