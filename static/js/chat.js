@@ -1384,18 +1384,18 @@ import { loadPanel } from './panels.js';
       // so that a recent Settings change takes effect without a page reload.
       try {
         let dc = (typeof window !== 'undefined' && window.__odysseusDefaultChat) || null;
-        if (!dc || !dc.endpoint_url || !dc.model) {
+        if (!dc || !dc.model) {
           try {
             dc = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
           } catch (_) {}
         }
         try {
-          if (!dc || !dc.endpoint_url || !dc.model) {
+          if (!dc || !dc.model) {
             _sendPerf.mark('default_chat_fetch_begin');
             const dcRes = await fetch('/api/default-chat');
             dc = await dcRes.json();
             _sendPerf.mark('default_chat_fetch_done');
-            if (dc && dc.endpoint_url && dc.model) {
+            if (dc && dc.model) {
               try {
                 window.__odysseusDefaultChat = dc;
                 localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
@@ -1405,9 +1405,9 @@ import { loadPanel } from './panels.js';
         } catch (_) {
           dc = (typeof window !== 'undefined' && window.__odysseusDefaultChat) || null;
         }
-        if (dc.endpoint_url && dc.model) {
+        if (dc && dc.model) {
           _sendPerf.mark('direct_chat_create_begin');
-          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+          await sessionModule.createDirectChat(dc.endpoint_url || '', dc.model, dc.endpoint_id || '', { source: 'default' });
           _sendPerf.mark('direct_chat_create_done');
           const ok = await sessionModule.materializePendingSession();
           _sendPerf.mark('direct_chat_materialize_done');

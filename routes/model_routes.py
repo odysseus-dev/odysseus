@@ -801,6 +801,23 @@ def _classify_endpoint(base_url: str, endpoint_kind: str = "auto") -> str:
     return "api"
 
 
+def _is_public_cloud_inference_url(base_url: str) -> bool:
+    """True for public cloud inference hosts. Docker/LAN short names stay leftover local."""
+    if _classify_endpoint(base_url, "auto") == "local":
+        return False
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return True
+    if not host:
+        return True
+    if "." not in host:
+        return False
+    if host.endswith(".local") or host.endswith(".internal"):
+        return False
+    return True
+
+
 def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
     """Return explicit kind, with a legacy proxy heuristic for keyed /v1 URLs."""
     kind = _endpoint_kind(ep)
@@ -1401,6 +1418,30 @@ def curated_chat_route_payload(providers: Any = None) -> Dict[str, Any]:
         except Exception:
             payload = []
     return {"default": "automatic", "routes": build_curated_chat_routes(payload)}
+
+
+# Overlay interactive chat is a 9router curated route. Leftover ModelEndpoint
+# names (Ollama ids, etc.) must not become the composer default.
+OVERLAY_CHAT_ROUTES = frozenset({"automatic", "fast", "balanced", "best"})
+
+
+def overlay_chat_route(model: str | None) -> str:
+    """Return a curated 9router route id; unknown leftover names become automatic."""
+    raw = str(model or "").strip().lower()
+    if raw in OVERLAY_CHAT_ROUTES:
+        return raw
+    return "automatic"
+
+
+def overlay_default_chat_payload(model: str | None) -> Dict[str, str]:
+    """GET /api/default-chat shape for overlay OpenHands + 9router chat."""
+    route = overlay_chat_route(model)
+    return {
+        "endpoint_id": "",
+        "endpoint_url": "",
+        "model": route,
+        "route": route,
+    }
 
 
 def _api_key_fingerprint(api_key: Optional[str]) -> str:
@@ -2081,6 +2122,12 @@ def setup_model_routes(model_discovery):
             name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
 
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        if _is_public_cloud_inference_url(base_url):
+            raise HTTPException(
+                400,
+                "Cloud providers connect through Settings → Inference → 9router. "
+                "Odysseus does not store cloud API keys.",
+            )
         refresh_mode = _normalize_endpoint_refresh_mode(model_refresh_mode, requested_kind, base_url)
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
@@ -2468,24 +2515,14 @@ def setup_model_routes(model_discovery):
 
     @router.get("/default-chat")
     def get_default_chat(request: Request):
-        # SECURITY: resolve the default endpoint + model from the CALLER's
-        # per-user prefs ONLY. We deliberately do NOT fall back to the
-        # global `default_model` / `default_endpoint_id` in settings.json
-        # for authenticated users — that's what was leaking the previous
-        # admin's pick into every new account's composer. If the user has
-        # no per-user default yet, we resolve via the owner-scoped endpoint
-        # lookup below (last-resort: first enabled endpoint THIS user owns).
-        # Unauthenticated single-user mode keeps the old behavior.
+        # Overlay interactive chat: 9router curated route only. Do not resolve
+        # leftover ModelEndpoint rows — that was a second chat catalog.
+        # Per-user default_model still wins over global unless sharing is on.
         from src.auth_helpers import get_current_user as _gcu
         try:
             _user = _gcu(request) or ""
         except Exception:
             _user = ""
-        # Admins resolve via the global defaults (they own them, and the
-        # scoped resolution was making the picker disappear for them).
-        # Regular users get per-user prefs with NO global fallback for the
-        # model/endpoint values — that's what was leaking the previous
-        # admin's pick into every new account's composer.
         settings = _load_settings()
         _is_admin = False
         try:
@@ -2494,60 +2531,16 @@ def setup_model_routes(model_discovery):
                 _is_admin = bool(auth_mgr.is_admin(_user))
         except Exception:
             _is_admin = False
+        model = ""
         if _user and not _is_admin:
             from routes.prefs_routes import _load_for_user
             _user_prefs = _load_for_user(_user) or {}
-            ep_id = (_user_prefs.get("default_endpoint_id") or "").strip()
             model = (_user_prefs.get("default_model") or "").strip()
-            # If user has no personal default, fall back to global default
-            # But only based on the "share_defaults_with_users" flag
-            # (only if share_defaults_with_users is enabled)
-            if settings.get("share_defaults_with_users", False):
-                if not ep_id:
-                    ep_id = settings.get("default_endpoint_id", "")
-                if not model:
-                    model = settings.get("default_model", "")
+            if not model and settings.get("share_defaults_with_users", False):
+                model = settings.get("default_model", "") or ""
         else:
-            ep_id = settings.get("default_endpoint_id", "")
-            model = settings.get("default_model", "")
-        db = SessionLocal()
-        try:
-            ep = None
-            if ep_id:
-                ep_q = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
-                )
-                # Honor the same owner-scope rule as /api/models — a per-user
-                # default that points at an endpoint owned by a different user
-                # mustn't silently resolve. Admins are exempt (they manage the
-                # global pool).
-                if _user and not _is_admin:
-                    ep_q = owner_filter(ep_q, ModelEndpoint, _user)
-                ep = ep_q.first()
-            # Last resort: first enabled endpoint owned by THIS user. Do not
-            # include null-owner/shared endpoints here: a brand-new user with
-            # no explicit default should not auto-open a pending chat using an
-            # existing shared/admin endpoint. Shared endpoints remain visible
-            # in the picker and still work when explicitly selected/saved.
-            if not ep:
-                _last_q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                if _user and not _is_admin:
-                    _last_q = owner_filter(_last_q, ModelEndpoint, _user, include_shared=False)
-                ep = _last_q.first()
-            if not ep:
-                return {"endpoint_id": "", "endpoint_url": "", "model": ""}
-            base = _normalize_base(ep.base_url)
-            chat_url = build_chat_url(base)
-            if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
-                try:
-                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
-                    if visible:
-                        model = visible[0]
-                except Exception:
-                    pass
-            return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
-        finally:
-            db.close()
+            model = settings.get("default_model", "") or ""
+        return overlay_default_chat_payload(model)
 
     @router.patch("/model-endpoints/{ep_id}")
     async def toggle_model_endpoint(ep_id: str, request: Request):

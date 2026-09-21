@@ -46,23 +46,16 @@ export const SETTINGS_GROUPS = Object.freeze([
 export const SETTINGS_PANELS = Object.freeze([
   definePanel({
     id: 'services',
-    label: 'Add Models',
+    label: 'Inference',
     group: 'models',
     controller: 'admin',
-    keywords: ['models', 'provider', 'endpoint'],
-  }),
-  definePanel({
-    id: 'added-models',
-    label: 'Added Models',
-    group: 'models',
-    controller: 'admin',
-    keywords: ['models', 'configured', 'provider', 'endpoint'],
+    keywords: ['models', 'provider', 'endpoint', '9router', 'local', 'ollama', 'inference', 'routes'],
   }),
   definePanel({
     id: 'ai',
     label: 'AI Defaults',
     group: 'models',
-    keywords: ['ai', 'defaults', 'model', 'vision', 'image', 'tts', 'stt'],
+    keywords: ['ai', 'defaults', 'model', 'vision', 'image', 'tts', 'stt', 'leftover', '9router', 'openhands'],
   }),
   definePanel({
     id: 'search',
@@ -76,7 +69,7 @@ export const SETTINGS_PANELS = Object.freeze([
     label: 'Integrations',
     group: 'communications',
     controller: 'admin',
-    keywords: ['integrations', 'connections', 'services'],
+    keywords: ['integrations', 'connections', 'services', 'plugin', 'codex', 'claude', 'inbound'],
   }),
   definePanel({
     id: 'email',

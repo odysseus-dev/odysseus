@@ -123,7 +123,15 @@ async function _ensureDefaultPendingChat() {
     if (seq !== _defaultPendingSeq) return;
     const latest = _deps.getPendingChat && _deps.getPendingChat();
     if (latest && latest.modelId && latest.source !== 'default' && latest.source !== 'fallback') return;
-    _deps.setPendingChat(_automaticRoute());
+    let modelId = 'automatic';
+    try {
+      const dcRes = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
+      if (dcRes.ok) {
+        const dc = await dcRes.json();
+        if (dc && dc.model) modelId = String(dc.model);
+      }
+    } catch (_) {}
+    _deps.setPendingChat({ url: '', modelId, endpointId: '', source: 'default' });
     updateModelPicker();
   } finally {
     _defaultChatPickInFlight = false;

@@ -15727,7 +15727,7 @@ span[id$="-logo"] svg:not([width]) {
 
 [data-settings-panel] .admin-card > h2 > svg,
 #theme-popup .admin-card > h2 > svg,
-[data-settings-panel="added-models"] .adm-ep-section-head > svg {
+[data-settings-panel="services"] .adm-ep-section-head > svg {
   color: var(--accent, var(--red));
 }
 .admin-ep-actions {

@@ -256,7 +256,6 @@ function buildFixture(document) {
 
   const panelIds = [
     'services',
-    'added-models',
     'ai',
     'search',
     'integrations',
@@ -375,7 +374,6 @@ function moduleSource(relativePath) {
     'Settings registry preserves the existing sidebar panel order',
     registryPanelIds === [
       'services',
-      'added-models',
       'ai',
       'search',
       'integrations',
@@ -403,7 +401,7 @@ function moduleSource(relativePath) {
 
   check(
     'Settings registry keeps services, models, integrations and admin panels on the existing admin controller',
-    ['services', 'added-models', 'integrations', 'tools', 'users', 'system']
+    ['services', 'integrations', 'tools', 'users', 'system']
       .every(id => context.isAdminManagedSettingsTab(id))
       && ['ai', 'search', 'email', 'reminders', 'appearance', 'shortcuts', 'account']
         .every(id => !context.isAdminManagedSettingsTab(id)),
@@ -412,7 +410,7 @@ function moduleSource(relativePath) {
   check(
     'Settings registry distinguishes admin-only visibility from admin-controlled routing',
     ['tools', 'users', 'system'].every(id => context.isAdminOnlySettingsTab(id))
-      && ['services', 'added-models', 'integrations']
+      && ['services', 'integrations']
         .every(id => !context.isAdminOnlySettingsTab(id)),
   );
 
@@ -439,7 +437,7 @@ function moduleSource(relativePath) {
     'Settings search resolves metadata terms in registry order',
     context.searchSettingsPanels('provider', { isAdmin: true })
       .map(panel => panel.id)
-      .join(',') === 'services,added-models,search',
+      .join(',') === 'services,search',
   );
 
   check(

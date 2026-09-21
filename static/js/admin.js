@@ -1219,7 +1219,6 @@ function initEndpointForm() {
   _wireKeyToggle('adm-epLocalKeyBtn', 'adm-epLocalApiKey-row');
 
   // Delegated link handler for jumping between settings tabs.
-  //   [data-go-added-models]              → quick shortcut for the Added Models tab
   //   [data-go-settings-tab="X"]          → any tab whose nav button has data-settings-tab="X"
   //   [data-go-scroll-to="#elementId"]    → after switching, scroll the element into view
   document.addEventListener('click', (e) => {
@@ -1240,11 +1239,6 @@ function initEndpointForm() {
       }
       return;
     }
-    const link = e.target.closest('[data-go-added-models]');
-    if (!link) return;
-    e.preventDefault();
-    const btn = document.querySelector('[data-settings-tab="added-models"]');
-    if (btn) btn.click();
   });
 
   // Generic open/close helper for the kebab dropdowns in this card.
@@ -1337,7 +1331,7 @@ function initEndpointForm() {
   // open/close + outside-click + Esc.
   _wireKebab('adm-epLocalMoreBtn', 'adm-epLocalMoreMenu');
 
-  // ── Added Models toolbar: Probe + Clear offline ────────────────────
+  // ── Local leftover toolbar: Probe + Clear offline ──────────────────
   // Both buttons act over the currently-rendered endpoint list. The
   // online/offline marker is stamped on each row's [data-adm-ep-online]
   // attribute by loadEndpoints(), so both buttons just iterate the DOM
@@ -1580,7 +1574,7 @@ function initEndpointForm() {
             : d.online
             ? `Added — found ${count} model${count !== 1 ? 's' : ''}`
             : 'Added (offline — will retry on next load)';
-          msg.innerHTML = `${baseText} <a href="#" data-go-added-models style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Added Models →</a>`;
+          msg.innerHTML = `${baseText} <a href="#" data-go-settings-tab="services" data-go-scroll-to="#adm-epList-local" style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Local leftover →</a>`;
           msg.className = d.online ? 'admin-success' : 'admin-error';
         } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
       } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
