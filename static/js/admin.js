@@ -2366,6 +2366,7 @@ function initMcpForm() {
     if (transport === 'stdio' && !command) { msg.textContent = 'Command is required for stdio'; msg.className = 'admin-error'; return; }
     if (transport === 'sse' && !url) { msg.textContent = 'URL is required for SSE'; msg.className = 'admin-error'; return; }
     try { JSON.parse(env); } catch { msg.textContent = 'Env must be valid JSON'; msg.className = 'admin-error'; return; }
+    try { JSON.parse(args); } catch { msg.textContent = 'Args must be valid JSON, e.g. ["-y", "pkg"]'; msg.className = 'admin-error'; return; }
     const fd = new FormData();
     fd.append('name', name); fd.append('transport', transport); fd.append('command', command); fd.append('args', args); fd.append('env', env); fd.append('url', url);
     // If preset has oauthFile config, send credentials for file generation
@@ -2386,6 +2387,10 @@ function initMcpForm() {
     try {
       const res = await fetch('/api/mcp/servers', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
+      if (!res.ok) {
+        msg.textContent = data.detail || `Failed (${res.status})`; msg.className = 'admin-error';
+        return;
+      }
       if (data.needs_oauth) {
         msg.innerHTML = `Added ${esc(name)} — <a href="/api/mcp/oauth/authorize/${data.id}" target="_blank" style="color:var(--red);font-weight:600;">Authorize with Google</a> to connect`;
         msg.className = 'admin-success';

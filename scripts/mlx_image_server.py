@@ -327,7 +327,12 @@ def list_models():
 
 @app.post("/v1/images/generations")
 def generate(req: ImageRequest):
-    model = req.model or _args.model
+    # The served model is the one this process was launched with. `req.model`
+    # is accepted for OpenAI wire compatibility and ignored, matching
+    # scripts/diffusion_server.py: honouring it would let a caller point the
+    # generator at any local directory or Hugging Face repo, and the HiDream
+    # branch runs a python script from inside that directory.
+    model = _args.model
     width, height = _size(req.size)
     out_images = []
     count = max(1, min(int(req.n or 1), 4))
@@ -393,7 +398,7 @@ async def edit_image(
     size: str = Form("1024x1024"),
     response_format: str = Form("b64_json"),
 ):
-    active_model = model or _args.model
+    active_model = _args.model  # pinned; see generate()
     if _is_lama_inpaint(active_model) or _is_ddcolor(active_model):
         image_raw = await image.read()
         mask_raw = await mask.read() if mask is not None else None

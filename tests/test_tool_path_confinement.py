@@ -161,12 +161,14 @@ def test_blocks_netrc():
         _resolve_tool_path("~/.netrc")
 
 
-def test_allows_project_data(tmp_path):
-    """Paths under project data/ must resolve cleanly."""
+def test_allows_agent_workspace(tmp_path):
+    """Paths under the agent's workspace in project data/ must resolve
+    cleanly. The rest of data/ is application state and is rejected;
+    tests/test_agent_state_dir_confinement.py covers that side."""
     from src.tool_execution import _resolve_tool_path
-    from src.constants import DATA_DIR
-    target = os.path.join(DATA_DIR, "test-confinement-ok.txt")
-    os.makedirs(DATA_DIR, exist_ok=True)
+    from src.constants import AGENT_WORKSPACE_DIR
+    target = os.path.join(AGENT_WORKSPACE_DIR, "test-confinement-ok.txt")
+    os.makedirs(AGENT_WORKSPACE_DIR, exist_ok=True)
     with open(target, "w") as f:
         f.write("ok")
     try:

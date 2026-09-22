@@ -6,4 +6,4 @@
 # A per-area ownership map (security/auth, CI, frontend, agent internals, with
 # multiple named owners per line) is being worked out in issue #593; once
 # agreed it replaces this file. Until then, required reviews and the security
-# CI gate (docs/security-ci.md) remain in force via branch protection.
+# CI gate (website/security-ci.md) remain in force via branch protection.

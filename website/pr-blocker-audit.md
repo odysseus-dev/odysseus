@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 # PR Blocker Audit
 
 `scripts/pr_blocker_audit.py` is a small, read-only triage helper for maintainers who need to inspect open pull request overlap before reviewing or starting related work.

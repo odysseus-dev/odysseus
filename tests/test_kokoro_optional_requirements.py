@@ -30,7 +30,7 @@ def test_kokoro_feature_markers_match_supported_python_range(python_version, sel
 
 
 def test_setup_documents_container_constraint_and_install_command():
-    setup = (ROOT / "docs" / "setup.md").read_text(encoding="utf-8")
+    setup = (ROOT / "website" / "setup.md").read_text(encoding="utf-8")
 
     assert "pip install -r requirements-optional.txt" in setup
     assert "default Docker image currently uses Python 3.14" in setup

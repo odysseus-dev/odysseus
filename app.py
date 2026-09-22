@@ -313,6 +313,7 @@ if AUTH_ENABLED:
 
     def _refresh_token_cache():
         """Rebuild the prefix→[(id,hash)] map from the DB."""
+        global _token_cache
         from collections import defaultdict
         new_map = defaultdict(list)
         db = SessionLocal()
@@ -331,8 +332,8 @@ if AUTH_ENABLED:
                 new_map[r.token_prefix].append((r.id, r.token_hash, owner_key, scopes))
         finally:
             db.close()
-        _token_cache.clear()
-        _token_cache.update(new_map)
+        _token_cache = dict(new_map)
+        app.state._token_cache = _token_cache
         app.state._token_cache_dirty = False
 
     # Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
