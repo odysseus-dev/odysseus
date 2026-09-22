@@ -9,7 +9,10 @@ deletion mirror the in-memory rule.
 """
 from types import SimpleNamespace
 
-from routes.history_routes import _merge_continue_rows_to_delete
+from routes.history_routes import (
+    _merge_continue_metadata,
+    _merge_continue_rows_to_delete,
+)
 
 
 def _m(role, content=""):
@@ -39,3 +42,36 @@ def test_plain_user_between_not_deleted():
     a1, usr, a2 = _m("assistant", "a1"), _m("user", "a real follow-up question"), _m("assistant", "a2")
     rows = _merge_continue_rows_to_delete([a1, usr, a2], a1, a2)
     assert rows == [a2] and usr not in rows
+
+
+def test_round_limit_metadata_is_cleared_after_successful_continue():
+    first_meta = {
+        "completion_status": "incomplete",
+        "incomplete_reason": "round_limit",
+        "rounds_exhausted": 20,
+    }
+    merged = _merge_continue_metadata(first_meta, {"model": "test"})
+
+    assert "completion_status" not in merged
+    assert "incomplete_reason" not in merged
+    assert "rounds_exhausted" not in merged
+
+
+def test_new_round_limit_metadata_survives_repeated_continue():
+    first_meta = {
+        "completion_status": "incomplete",
+        "incomplete_reason": "round_limit",
+        "rounds_exhausted": 20,
+    }
+    second_meta = {
+        "completion_status": "incomplete",
+        "incomplete_reason": "round_limit",
+        "rounds_exhausted": 20,
+        "model": "test",
+    }
+
+    merged = _merge_continue_metadata(first_meta, second_meta)
+
+    assert merged["completion_status"] == "incomplete"
+    assert merged["incomplete_reason"] == "round_limit"
+    assert merged["rounds_exhausted"] == 20
