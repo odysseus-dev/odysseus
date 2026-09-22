@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List, Optional
 
-from fastapi import APIRouter, Request, HTTPException, Form, Query
+from fastapi import APIRouter, Request, HTTPException, Form, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -40,7 +40,13 @@ from src.foreground_model_routing import (
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import effective_user, get_current_user
+from src.auth_helpers import (
+    effective_user,
+    get_current_user,
+    is_delegated_credential,
+    require_api_token_scope,
+    require_chat_api_token_scope,
+)
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -68,6 +74,8 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
+from src.tool_approval_scopes import stamp_chat_session_grant
+from src.tool_security import delegated_credential_blocked_tools
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +95,87 @@ def _stream_failure_status(chunk: str) -> Optional[int]:
     except json.JSONDecodeError:
         return None
     return None
+
+
+def _reject_delegated_tool_approval(request: Request) -> None:
+    """Refuse an approval answered by a bearer API token.
+
+    A tool approval records that a HUMAN authorized one dangerous action. A
+    token is a delegated credential handed to an integration, so when it
+    answers the prompt it triggered, nobody is asked and the gate collapses
+    into an extra round trip. Owner and session already match here: the token
+    is answering on behalf of the account that minted it.
+    """
+    if is_delegated_credential(request):
+        raise HTTPException(
+            403,
+            "Tool approvals require an interactive session. "
+            "API tokens cannot authorize a gated action.",
+        )
+
+
+def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
+    """Persist a consumed approval decision on its existing tool event."""
+
+    approval_key = str(approval_id or "")
+    normalized_decision = str(decision or "").strip().lower()
+    if not approval_key or normalized_decision not in {"approve", "approve_task", "deny"}:
+        return False
+
+    message_id = None
+    resolved_metadata = None
+    for item in reversed(getattr(sess, "history", []) or []):
+        metadata = getattr(item, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        tool_events = metadata.get("tool_events")
+        if not isinstance(tool_events, list):
+            continue
+        for event in reversed(tool_events):
+            ask_user = event.get("ask_user") if isinstance(event, dict) else None
+            if not isinstance(ask_user, dict):
+                continue
+            if str(ask_user.get("approval_id") or "") != approval_key:
+                continue
+            ask_user["resolved"] = normalized_decision
+            stamp_chat_session_grant(
+                ask_user,
+                getattr(sess, "id", ""),
+                normalized_decision,
+            )
+            message_id = metadata.get("_db_id")
+            resolved_metadata = {
+                key: value for key, value in metadata.items() if key != "_db_id"
+            }
+            break
+        if resolved_metadata is not None:
+            break
+
+    if resolved_metadata is None or not message_id:
+        return False
+
+    db = SessionLocal()
+    try:
+        db_message = db.query(DBChatMessage).filter(
+            DBChatMessage.id == message_id,
+            DBChatMessage.session_id == str(getattr(sess, "id", "")),
+        ).first()
+        if db_message is None:
+            return False
+        db_message.meta_data = json.dumps(resolved_metadata)
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to persist tool approval resolution")
+        return False
+    finally:
+        db.close()
+
+
+async def _tool_approval_resolution_stream(decision: str) -> AsyncGenerator[str, None]:
+    yield f"data: {json.dumps({'type': 'tool_approval_resolved', 'decision': decision})}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 def _chat_candidate_request_factory(
@@ -671,13 +760,17 @@ def setup_chat_routes(
     webhook_manager=None,
     skills_manager=None,
 ) -> APIRouter:
-    router = APIRouter(tags=["chat"])
+    router = APIRouter(
+        tags=["chat"],
+        dependencies=[Depends(require_chat_api_token_scope)],
+    )
 
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, Any])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, Any]:
+        require_api_token_scope(request, "chat")
         _set_user_time_from_request(request)
 
         message = chat_request.message
@@ -868,6 +961,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat_stream")
     async def chat_stream(request: Request) -> StreamingResponse:
+        require_api_token_scope(request, "chat")
         body = None
         try:
             if request.headers.get("content-type", "").startswith("application/json"):
@@ -917,6 +1011,7 @@ def setup_chat_routes(
         exact_tool_approval = None
         pending_tool_approval = None
         retired_tool_approval_taint = False
+        external_untrusted_context_seen = False
         tool_approval_continuation = False
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
@@ -1050,14 +1145,14 @@ def setup_chat_routes(
             )
 
         try:
-            # Attachment-only sends: skip the message-required check when the
-            # user has attached one or more files (the attachment IS the action).
+            # Attachment-only sends and approval controls may omit message text.
             _has_atts = (
                 bool(body and isinstance(body.get("attachments"), list) and body["attachments"])
                 or bool(form_data.get("attachments"))
             )
             message, session = coerce_message_and_session(
-                body, message, session, session_manager, allow_empty=_has_atts,
+                body, message, session, session_manager,
+                allow_empty=(_has_atts or bool(tool_approval_id)),
             )
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
@@ -1065,6 +1160,7 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
             owner = effective_user(request)
             if tool_approval_id:
+                _reject_delegated_tool_approval(request)
                 pending_tool_approval = tool_approval_store.peek(tool_approval_id)
                 normalized_owner = str(owner or "").strip().casefold()
                 if (
@@ -1076,8 +1172,14 @@ def setup_chat_routes(
                         409,
                         "This tool approval is invalid, expired, or belongs to another thread.",
                     )
+                pending_taint = bool(
+                    pending_tool_approval.external_untrusted_context_seen
+                )
+                external_untrusted_context_seen = (
+                    external_untrusted_context_seen or pending_taint
+                )
                 decision = str(tool_approval_decision or "").strip().lower()
-                if decision not in {"approve", "deny"}:
+                if decision not in {"approve", "approve_task", "deny"}:
                     raise HTTPException(400, "Invalid tool approval decision.")
                 if plan_mode:
                     raise HTTPException(
@@ -1091,37 +1193,46 @@ def setup_chat_routes(
                     session_id=session,
                 )
                 tool_approval_continuation = True
-                if decision == "approve" and exact_tool_approval is None:
+                if (
+                    decision in {"approve", "approve_task"}
+                    and exact_tool_approval is None
+                ):
                     raise HTTPException(
                         409,
                         "This tool approval could not be consumed.",
                     )
-                if decision == "approve":
-                    message = (
-                        f"Approved the exact {pending_tool_approval.tool_name} action "
-                        "shown above once."
+                if not _mark_tool_approval_resolved(
+                    sess,
+                    tool_approval_id,
+                    decision,
+                ):
+                    logger.warning(
+                        "Tool approval %s was consumed but its persisted card could not be marked resolved",
+                        tool_approval_id,
                     )
-                    # The sealed server record, not mutable composer state,
-                    # restores the original action workspace.
-                    workspace = pending_tool_approval.workspace or None
-                    workspace_rejected = None
-                    if pending_tool_approval.document_id:
-                        active_doc_id = pending_tool_approval.document_id
-                    # The approval click is the per-turn opt-in for this exact
-                    # sealed action. Restore only the coarse request toggle
-                    # that would otherwise disable it because the synthetic
-                    # "Approved…" message no longer resembles the original
-                    # shell/web request. Current privilege, global-disable,
-                    # incognito, compare, and tool-policy gates still run.
-                    if pending_tool_approval.tool_name == "bash":
-                        allow_bash = "true"
-                    if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
-                        allow_web_search = "true"
-                        _search_enabled = True
-                else:
-                    message = (
-                        f"Denied the {pending_tool_approval.tool_name} action shown above."
+                if decision == "deny":
+                    return StreamingResponse(
+                        _tool_approval_resolution_stream(decision),
+                        media_type="text/event-stream",
                     )
+                # Approval is a control-plane continuation, not a new user turn.
+                # Reuse the sealed interrupted request only for internal context,
+                # retrieval, and policy reconstruction; never persist or display it.
+                message = pending_tool_approval.continuation_query
+                # The sealed server record, not mutable composer state,
+                # restores the original action workspace.
+                workspace = pending_tool_approval.workspace or None
+                workspace_rejected = None
+                if pending_tool_approval.document_id:
+                    active_doc_id = pending_tool_approval.document_id
+                # Restore only the coarse request toggle needed by the exact
+                # sealed action. Current privilege, global-disable, incognito,
+                # compare, and tool-policy gates still run.
+                if pending_tool_approval.tool_name == "bash":
+                    allow_bash = "true"
+                if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
+                    allow_web_search = "true"
+                    _search_enabled = True
                 chat_mode = "agent"
             else:
                 # A normal user message supersedes the card that was waiting
@@ -1131,6 +1242,9 @@ def setup_chat_routes(
                 retired_tool_approval_taint = tool_approval_store.retire_for_session(
                     owner=owner,
                     session_id=session,
+                )
+                external_untrusted_context_seen = (
+                    external_untrusted_context_seen or retired_tool_approval_taint
                 )
             _reconcile_selected_route_from_request(request, sess, session, form_data, owner=owner)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
@@ -1261,6 +1375,14 @@ def setup_chat_routes(
             agent_mode=(chat_mode == "agent"),
             allow_tool_preprocessing=allow_tool_preprocessing,
             defer_context_shaping=foreground_policy.enabled,
+            continuation_context_message=(
+                pending_tool_approval.continuation_query
+                if exact_tool_approval
+                and pending_tool_approval
+                and pending_tool_approval.continuation_query
+                else None
+            ),
+            persist_user_message=not tool_approval_continuation,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
@@ -1356,6 +1478,12 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
+        # Minting is admin-only, so every owner-keyed check below answers
+        # "admin" for a token. Cap it at the non-admin policy instead.
+        # stream_agent_loop repeats this from delegated_credential.
+        _delegated_credential = is_delegated_credential(request)
+        if _delegated_credential:
+            disabled_tools.update(delegated_credential_blocked_tools())
         # Only disable bash when the caller *explicitly* set it to a falsy
         # value. When unset (None), defer to per-user privilege checks below.
         # Web search is per-turn opt-in: either the chat pre-search setting
@@ -1663,7 +1791,11 @@ def setup_chat_routes(
                 if foreground_policy.enabled
                 else ctx.messages
             )
-            messages = _ensure_current_request_is_latest_user(context_source, message)
+            messages = (
+                list(context_source)
+                if tool_approval_continuation
+                else _ensure_current_request_is_latest_user(context_source, message)
+            )
 
             # Auto-compact notification
             if ctx.was_compacted:
@@ -2134,7 +2266,10 @@ def setup_chat_routes(
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
-                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    allow_background_extraction=(
+                                        not tool_policy.block_all_tool_calls
+                                        and not tool_approval_continuation
+                                    ),
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -2223,17 +2358,18 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        relevant_tools=(
+                            set(pending_tool_approval.selected_tools)
+                            if exact_tool_approval
+                            and pending_tool_approval
+                            and pending_tool_approval.selected_tools
+                            else None
+                        ),
                         forced_tools=_forced_tools,
                         uploaded_files=ctx.uploaded_files,
                         defer_context_shaping=_foreground_policy.enabled,
-                        external_untrusted_context_seen=bool(
-                            retired_tool_approval_taint
-                            or (
-                                tool_approval_continuation
-                                and pending_tool_approval
-                                and pending_tool_approval.external_untrusted_context_seen
-                            )
-                        ),
+                        external_untrusted_context_seen=external_untrusted_context_seen,
+                        delegated_credential=_delegated_credential,
                         exact_approval=exact_tool_approval,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
@@ -2401,8 +2537,14 @@ def setup_chat_routes(
                                     agent_tool_calls=_agent_tool_calls,
                                     skills_manager=skills_manager,
                                     owner=_user,
-                                    extract_skills=user_requested_agent,
-                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    extract_skills=(
+                                        user_requested_agent
+                                        and not tool_approval_continuation
+                                    ),
+                                    allow_background_extraction=(
+                                        not tool_policy.block_all_tool_calls
+                                        and not tool_approval_continuation
+                                    ),
                                 )
                             _stream_set(session, status="done")
                             yield chunk

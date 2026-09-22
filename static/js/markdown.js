@@ -10,6 +10,127 @@ import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js'
 
 var escapeHtml = uiModule.esc;
 
+// Mermaid and KaTeX are vendored under /static/lib and fetched on first use.
+// Loading them from <head> cost every session ~985 KB on the wire even though
+// most chats never contain a diagram or a formula. Both loaders memoise the
+// *promise* rather than the resolved library, so concurrent callers share one
+// fetch and a double trigger cannot start two loads. A failed load clears the
+// memo so the next diagram/formula retries instead of being poisoned forever.
+const MERMAID_SRC = '/static/lib/mermaid.min.js';
+const KATEX_SRC = '/static/lib/katex/katex.min.js';
+const KATEX_CSS = '/static/lib/katex/katex.min.css';
+// Marks math emitted before KaTeX finished loading; renderMath() swaps these
+// for typeset output. The source stays as readable text inside the span, so a
+// load that never completes degrades to plain text rather than to nothing.
+const MATH_PENDING_CLASS = 'ody-math-pending';
+
+// KaTeX has no entity syntax: it reads a bare "&" as an alignment marker and
+// errors out on anything that is not a valid column break, so "a &lt; b" comes
+// back as a red .katex-error instead of a formula. mdToHtml escapes the whole
+// string before the math pass, which leaves two spellings of the same
+// character at the delimiters — a typed "<" arrives as "&lt;", while a typed
+// "&lt;" arrives as "&amp;lt;" — and both have to reach KaTeX as "<".
+//
+// One alternation, longest form first, so nothing this writes is scanned
+// again. Chained .replace() calls cannot do it: unescaping "&amp;" first lets
+// the next pass eat the "&lt;" it just produced (the double-unescape CodeQL
+// flags), and unescaping it last leaves the entity spelling intact and breaks
+// the render. The code-block pass upstream keeps its chained order on purpose
+// — Markdown does not decode entities inside code, so "&lt;" there is meant to
+// stay visible.
+const MATH_SOURCE_ENTITY_RE = /&amp;(?:lt|gt|amp|quot|#39);|&lt;|&gt;|&amp;/g;
+const MATH_SOURCE_ENTITIES = {
+  '&amp;lt;': '<',
+  '&amp;gt;': '>',
+  '&amp;amp;': '&',
+  '&amp;quot;': '"',
+  '&amp;#39;': "'",
+  '&lt;': '<',
+  '&gt;': '>',
+  '&amp;': '&',
+};
+
+function decodeMathSource(text) {
+  return String(text).replace(MATH_SOURCE_ENTITY_RE, (entity) => MATH_SOURCE_ENTITIES[entity]);
+}
+
+let _mermaidPromise = null;
+let _katexPromise = null;
+let _mathFlushScheduled = false;
+
+function _loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.addEventListener('load', () => resolve(), { once: true });
+    script.addEventListener('error', () => reject(new Error('Failed to load ' + src)), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+function _loadStylesheet(href) {
+  // Resolves either way: without the stylesheet KaTeX still produces correct
+  // markup, just unstyled, which beats failing the whole math render.
+  return new Promise((resolve) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.addEventListener('load', () => resolve(), { once: true });
+    link.addEventListener('error', () => resolve(), { once: true });
+    document.head.appendChild(link);
+  });
+}
+
+/**
+ * Load Mermaid on first use and initialize it once.
+ */
+export function ensureMermaid() {
+  return (_mermaidPromise ??= _loadScript(MERMAID_SRC)
+    .then(() => {
+      if (!window.mermaid) throw new Error('mermaid global missing after load');
+      window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+      return window.mermaid;
+    })
+    .catch((err) => {
+      _mermaidPromise = null;
+      throw err;
+    }));
+}
+
+/**
+ * Load KaTeX (script + stylesheet) on first use.
+ */
+export function ensureKatex() {
+  return (_katexPromise ??= Promise.all([_loadScript(KATEX_SRC), _loadStylesheet(KATEX_CSS)])
+    .then(() => {
+      if (!window.katex) throw new Error('katex global missing after load');
+      return window.katex;
+    })
+    .catch((err) => {
+      _katexPromise = null;
+      throw err;
+    }));
+}
+
+// mdToHtml() is synchronous and its callers insert the returned string into the
+// DOM themselves, so the placeholders are usually not attached yet when this
+// fires. Loading first and scanning afterwards covers that gap: by the time
+// KaTeX is in, the caller's innerHTML assignment has long since happened.
+//
+// setTimeout, not requestAnimationFrame: this has nothing to do with paint, and
+// rAF is throttled to a stop in a background tab (and never fires at all in a
+// headless browser), which would leave math untypeset until the tab is focused.
+function _scheduleMathFlush() {
+  if (_mathFlushScheduled) return;
+  _mathFlushScheduled = true;
+  setTimeout(() => {
+    _mathFlushScheduled = false;
+    ensureKatex()
+      .then(() => renderMath(document))
+      .catch((e) => console.warn('KaTeX load error:', e));
+  }, 0);
+}
+
 function safeLinkUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (url.startsWith('#')) {
@@ -631,49 +752,45 @@ export function mdToHtml(src, opts) {
 
   // KaTeX math rendering (after code blocks are extracted, so math in code is safe)
   const mathBlocks = [];
-  if (window.katex) {
-    // Display math: \[ ... \]  — GPT-style delimiter (gpt-5.x, Claude, etc.).
-    // Handle before $$/$ so all common delimiters render.
-    s = s.replace(/\\\[([\s\S]*?)\\\]/g, (match, math) => {
-      try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-        const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
-        mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: true, throwOnError: false }));
-        return placeholder;
-      } catch (e) { return match; }
-    });
-    // Inline math: \( ... \)  — GPT-style inline delimiter. Single-line only
-    // ([^\n]) so a stray escaped paren in prose can't swallow across lines.
-    s = s.replace(/\\\(([^\n]*?)\\\)/g, (match, math) => {
-      try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-        const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
-        mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: false, throwOnError: false }));
-        return placeholder;
-      } catch (e) { return match; }
-    });
-    // Display math: $$...$$
-    s = s.replace(/\$\$([\s\S]*?)\$\$/g, (match, math) => {
-      try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-        const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
-        mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: true, throwOnError: false }));
-        return placeholder;
-      } catch (e) { return match; }
-    });
-    // Inline math: $...$ — single line only, and Pandoc-style delimiter rules so
-    // currency doesn't render as math ("$5 to $10"): the opening $ must be
-    // immediately followed by a non-space, the closing $ must be immediately
-    // preceded by a non-space and not followed by a digit.
-    s = s.replace(/(?<![\$\d])\$(?!\$)(?=\S)([^\$\n]+?)(?<=\S)\$(?!\$|\d)/g, (match, math) => {
-      try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-        const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
-        mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: false, throwOnError: false }));
-        return placeholder;
-      } catch (e) { return match; }
-    });
-  }
+  let sawPendingMath = false;
+
+  // Typeset straight away when KaTeX is already in, otherwise bank the source in
+  // an inert placeholder for renderMath() to swap once the library lands.
+  const pushMath = (math, displayMode) => {
+    const raw = decodeMathSource(math).trim();
+    const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
+    if (window.katex) {
+      mathBlocks.push(katex.renderToString(raw, { displayMode, throwOnError: false }));
+    } else {
+      sawPendingMath = true;
+      mathBlocks.push(`<span class="${MATH_PENDING_CLASS}" data-display="${displayMode}">${escapeHtml(raw)}</span>`);
+    }
+    return placeholder;
+  };
+
+  // Display math: \[ ... \]  — GPT-style delimiter (gpt-5.x, Claude, etc.).
+  // Handle before $$/$ so all common delimiters render.
+  s = s.replace(/\\\[([\s\S]*?)\\\]/g, (match, math) => {
+    try { return pushMath(math, true); } catch (e) { return match; }
+  });
+  // Inline math: \( ... \)  — GPT-style inline delimiter. Single-line only
+  // ([^\n]) so a stray escaped paren in prose can't swallow across lines.
+  s = s.replace(/\\\(([^\n]*?)\\\)/g, (match, math) => {
+    try { return pushMath(math, false); } catch (e) { return match; }
+  });
+  // Display math: $$...$$
+  s = s.replace(/\$\$([\s\S]*?)\$\$/g, (match, math) => {
+    try { return pushMath(math, true); } catch (e) { return match; }
+  });
+  // Inline math: $...$ — single line only, and Pandoc-style delimiter rules so
+  // currency doesn't render as math ("$5 to $10"): the opening $ must be
+  // immediately followed by a non-space, the closing $ must be immediately
+  // preceded by a non-space and not followed by a digit.
+  s = s.replace(/(?<![\$\d])\$(?!\$)(?=\S)([^\$\n]+?)(?<=\S)\$(?!\$|\d)/g, (match, math) => {
+    try { return pushMath(math, false); } catch (e) { return match; }
+  });
+
+  if (sawPendingMath) _scheduleMathFlush();
 
   // Handle pipe tables
   s = s.replace(/(?:^|\n)([^\n]*\|[^\n]*\|[^\n]*)(?:\n([^\n]*\|[^\n]*\|[^\n]*))*/g, (table) => {
@@ -826,19 +943,47 @@ export function renderContent(content) {
 }
 
 /**
- * Initialize any unprocessed Mermaid diagrams in a container (or whole document)
+ * Initialize any unprocessed Mermaid diagrams in a container (or whole document).
+ * Returns a promise so callers can await the (lazy) library load if they need to.
  */
 export function renderMermaid(container) {
-  if (!window.mermaid) return;
-  initMermaid();
   const target = container || document;
-  const pending = target.querySelectorAll('pre.mermaid:not([data-processed])');
-  if (pending.length === 0) return;
-  try {
-    window.mermaid.run({ nodes: pending });
-  } catch (e) {
-    console.warn('Mermaid render error:', e);
-  }
+  if (!target || typeof target.querySelectorAll !== 'function') return Promise.resolve();
+  // Cheap pre-check: no fence on the page means Mermaid is never fetched.
+  if (target.querySelectorAll('pre.mermaid:not([data-processed])').length === 0) return Promise.resolve();
+  return ensureMermaid()
+    .then((mermaid) => {
+      // Re-query after the load: during streaming the renderer replaces the
+      // message body repeatedly, so the nodes seen before the fetch are stale.
+      const nodes = [...target.querySelectorAll('pre.mermaid:not([data-processed])')]
+        .filter((node) => node.isConnected);
+      if (nodes.length === 0) return;
+      return mermaid.run({ nodes });
+    })
+    .catch((e) => { console.warn('Mermaid render error:', e); });
+}
+
+/**
+ * Typeset any math that mdToHtml() had to defer because KaTeX was not loaded
+ * yet. Once KaTeX is in, mdToHtml() renders inline and this finds nothing.
+ */
+export function renderMath(container) {
+  const target = container || document;
+  if (!target || typeof target.querySelectorAll !== 'function') return Promise.resolve();
+  if (target.querySelectorAll('.' + MATH_PENDING_CLASS).length === 0) return Promise.resolve();
+  return ensureKatex()
+    .then((katex) => {
+      target.querySelectorAll('.' + MATH_PENDING_CLASS).forEach((el) => {
+        const displayMode = el.getAttribute('data-display') === 'true';
+        try {
+          el.outerHTML = katex.renderToString(el.textContent || '', { displayMode, throwOnError: false });
+        } catch (e) {
+          // Leave the source visible — readable, just not typeset.
+          el.classList.remove(MATH_PENDING_CLASS);
+        }
+      });
+    })
+    .catch((e) => { console.warn('KaTeX render error:', e); });
 }
 
 const markdownModule = {
@@ -853,19 +998,13 @@ const markdownModule = {
   extractThinkingBlocks,
   normalizeThinkingMarkup,
   startsWithReasoningPrefix,
-  renderMermaid
+  renderMermaid,
+  renderMath,
+  ensureMermaid,
+  ensureKatex
 };
 
 export default markdownModule;
-
-// Mermaid is loaded async so it cannot delay the app shell.
-function initMermaid() {
-  if (!window.mermaid || window.__odysseusMermaidReady) return;
-  window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
-  window.__odysseusMermaidReady = true;
-}
-window.odysseusInitMermaid = initMermaid;
-initMermaid();
 
 // Persist which thinking sections were expanded across page refreshes.
 // IDs are render-generated (Date.now-based) so we key by a stable hash of

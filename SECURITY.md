@@ -10,7 +10,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
-- Set `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- Leave `SECURE_COOKIES` unset unless you need to override it: session cookies are marked `Secure` whenever the request arrives over HTTPS. Set `SECURE_COOKIES=true` to force it on (for a proxy Odysseus cannot see the scheme of), or `SECURE_COOKIES=false` to force it off while you still serve plain HTTP alongside HTTPS.
 - Use HTTPS when exposing the app beyond localhost.
 - Put the authenticated Odysseus web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
 - Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only.

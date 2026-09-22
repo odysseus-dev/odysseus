@@ -462,13 +462,38 @@ class ChatProcessor:
         skip_url_fetch = len(message) > 2000 or len(non_yt_urls) > 3
         if not skip_url_fetch:
             for url in non_yt_urls:
-                result = fetch_webpage_content(url)
+                try:
+                    result = fetch_webpage_content(url)
+                except Exception:
+                    # The URL and exception can both contain signed-query
+                    # credentials or response-controlled text. Keep the log
+                    # diagnostic stable as well as the model-facing context.
+                    logger.warning("Automatic URL fetch failed while building context")
+                    result = {"success": False, "error": ""}
                 if result.get('success'):
                     content = result.get('content', '')[:10000]
                     preface.append(untrusted_context_message(
                         f"web page: {url}",
                         f"Content from {url}:\n\n{content}",
                         provenance_origin="external",
+                    ))
+                else:
+                    # A failed automatic URL fetch is context too. Never pass
+                    # exception text or response-controlled diagnostics back to
+                    # the model: reduce the result to a small transport-owned
+                    # status and explicitly state that the page was not read.
+                    error = str(result.get("error") or "")
+                    status = "the page was unavailable"
+                    status_match = re.match(r"^HTTP\s+(\d{3})\b", error)
+                    if status_match:
+                        status = f"the server returned HTTP {status_match.group(1)}"
+                    elif error.startswith("TooLarge:"):
+                        status = "the response exceeded the fetch size limit"
+                    elif error.startswith("Rate limit"):
+                        status = "the request was rate limited"
+                    preface.append(untrusted_context_message(
+                        "web page fetch failure",
+                        f"A linked page was not read: {status}.",
                     ))
 
         # Skills index — progressive disclosure. Only injected when the

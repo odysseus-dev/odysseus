@@ -524,6 +524,8 @@ async def run_teacher_inline(
     tool_policy: Any = None,
     active_document: Any = None,
     active_email: Optional[Dict[str, str]] = None,
+    external_untrusted_context_seen: bool = False,
+    delegated_credential: bool = False,
 ):
     """Async generator. Yields SSE event strings.
 
@@ -636,6 +638,8 @@ async def run_teacher_inline(
         tool_policy=tool_policy,
         active_document=active_document,
         active_email=active_email,
+        external_untrusted_context_seen=external_untrusted_context_seen,
+        delegated_credential=delegated_credential,
         _is_teacher_run=True,
     ):
         # Swallow teacher's own [DONE] — outer loop emits the real one

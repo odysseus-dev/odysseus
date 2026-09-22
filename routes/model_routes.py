@@ -1351,14 +1351,14 @@ def _legacy_visible_api_models(ep) -> List[str]:
 def _picker_models_for_endpoint(ep, base_url: str, kind: str):
     """Return model IDs that should appear in the picker for an endpoint.
 
-    API providers expose remote inventory from /v1/models. Treat that cache as
-    inventory, not approval: only manually pinned API models should appear in
-    the picker. Local/self-hosted endpoints keep the older hide-list behavior.
+    API providers expose remote inventory from /v1/models. Default to that
+    visible inventory until an explicit pinned-model allow-list is saved.
+    Local/self-hosted endpoints keep the older hide-list behavior.
     """
     pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
     if _picker_requires_pinning(base_url, kind):
         if not _has_explicit_pinned_models(ep):
-            pinned = _legacy_visible_api_models(ep) if _hidden_model_ids(ep) else []
+            pinned = _legacy_visible_api_models(ep)
         return pinned, pinned
     return _visible_models(
         _cached_model_ids(ep),
@@ -2342,9 +2342,7 @@ def setup_model_routes(model_discovery):
                 else:
                     response.headers["X-Model-Refresh-Status"] = "failed"
                     response.headers["X-Model-Refresh-Warning"] = "Model refresh failed or returned no models; kept cached models."
-            pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
-            if picker_requires_pinning and not _has_explicit_pinned_models(ep):
-                pinned = _legacy_visible_api_models(ep)
+            _, pinned = _picker_models_for_endpoint(ep, base, kind)
             pinned_set = set(pinned)
             return [
                 {

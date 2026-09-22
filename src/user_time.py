@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Dict, Optional
 
 
@@ -65,19 +65,31 @@ def format_utc_offset(offset_min: Optional[int]) -> str:
     return f"{sign}{hours:02d}:{minutes:02d}"
 
 
-def user_timezone() -> timezone:
-    """Return the best known user timezone as a fixed-offset tzinfo."""
+def _zoneinfo_from_name():
+    """Return ZoneInfo for the request's IANA name, or None if missing/invalid."""
+    name = get_user_tz_name()
+    if not name:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def user_timezone() -> tzinfo:
+    """Return the best known user timezone.
+
+    A valid IANA name wins over x-tz-offset. The offset is a fixed number and
+    can disagree with the name (wrong sign, stale client); the name carries DST.
+    """
+    zone = _zoneinfo_from_name()
+    if zone is not None:
+        return zone
     offset = get_user_tz_offset()
-    if offset is None:
-        name = get_user_tz_name()
-        if name:
-            try:
-                from zoneinfo import ZoneInfo
-                return ZoneInfo(name)
-            except Exception:
-                pass
-        return datetime.now().astimezone().tzinfo or timezone.utc
-    return timezone(timedelta(minutes=offset))
+    if offset is not None:
+        return timezone(timedelta(minutes=offset))
+    return datetime.now().astimezone().tzinfo or timezone.utc
 
 
 def now_user_local(now_utc: Optional[datetime] = None) -> datetime:
@@ -100,14 +112,13 @@ def _clock_label(dt: datetime) -> str:
 
 def timezone_label(dt: Optional[datetime] = None) -> str:
     """Return a concise display label such as Australia/Brisbane, UTC+10:00."""
-    offset = get_user_tz_offset()
-    if offset is None:
-        if dt is None:
-            dt = datetime.now().astimezone()
-        offset = int((dt.utcoffset() or timedelta()).total_seconds() // 60)
+    if dt is None:
+        dt = now_user_local()
+    offset = int((dt.utcoffset() or timedelta()).total_seconds() // 60)
     offset_label = f"UTC{format_utc_offset(offset)}"
-    name = get_user_tz_name()
-    return f"{name}, {offset_label}" if name else offset_label
+    if _zoneinfo_from_name() is not None:
+        return f"{get_user_tz_name()}, {offset_label}"
+    return offset_label
 
 
 def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:

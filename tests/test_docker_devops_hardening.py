@@ -1,9 +1,14 @@
 """Static regressions for Docker/devops hardening contracts."""
 
 import ast
+import os
 import re
+import shutil
+import subprocess
+import uuid
 from pathlib import Path
 
+import pytest
 import yaml
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
@@ -113,6 +118,85 @@ def test_docker_entrypoint_ownership_repair_stays_inside_expected_mounts():
     assert "mount_root_for" in script
     assert "is_broad_mount_root" in script
     assert "Skipping recursive ownership repair" in script
+
+
+def test_docker_entrypoint_repairs_cache_parent_without_recursive_walk():
+    """Pin the hard-coded container-path contract without running entrypoint as root."""
+    script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    app_repair = script.index("repair_app_tree_ownership\n")
+    cache_parent_repair = script.index(
+        'chown "$PUID:$PGID" /app/.cache 2>/dev/null || true'
+    )
+    mounted_cache_root_repair = script.index(
+        'chown "$PUID:$PGID" /app/.cache/huggingface 2>/dev/null || true'
+    )
+
+    assert app_repair < cache_parent_repair < mounted_cache_root_repair
+    assert 'repair_tree_ownership "/app/.cache"' not in script
+    assert 'repair_bind_mount_ownership "/app/.cache/huggingface"' not in script
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is unavailable")
+def test_docker_entrypoint_cache_parent_with_nested_volume():
+    """Run the real entrypoint against a disposable nested-volume layout."""
+    image = os.environ.get("ODYSSEUS_DOCKER_TEST_IMAGE", "odysseus-odysseus:latest")
+    if subprocess.run(
+        ["docker", "image", "inspect", image],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).returncode != 0:
+        pytest.skip(f"Docker test image is unavailable: {image}")
+
+    volume = f"odysseus-cache-parent-test-{uuid.uuid4().hex}"
+    subprocess.run(
+        ["docker", "volume", "create", volume],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    try:
+        subprocess.run(
+            [
+                "docker", "run", "--rm", "--pull=never",
+                "--entrypoint", "sh",
+                "-v", f"{volume}:/fixture",
+                image,
+                "-c", "mkdir -p /fixture/nested && touch /fixture/nested/sentinel",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm", "--pull=never",
+                "-e", "PUID=23456",
+                "-e", "PGID=23456",
+                "-v", f"{volume}:/app/.cache/huggingface",
+                image,
+                "sh", "-c",
+                "mkdir -p /app/.cache/vllm && "
+                "touch /app/.cache/vllm/probe && "
+                "printf 'CACHE_TEST %s %s %s %s\\n' "
+                "\"$(stat -c %u /app/.cache)\" "
+                "\"$(stat -c %u /app/.cache/vllm/probe)\" "
+                "\"$(stat -c %u /app/.cache/huggingface)\" "
+                "\"$(stat -c %u /app/.cache/huggingface/nested/sentinel)\"",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        subprocess.run(
+            ["docker", "volume", "rm", "-f", volume],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert "CACHE_TEST 23456 23456 23456 0" in result.stdout
 
 
 def test_dockerignore_excludes_secrets_editor_backups():

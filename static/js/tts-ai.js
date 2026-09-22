@@ -1,6 +1,8 @@
 // static/js/tts-ai.js
 // AI Text-to-Speech Module — supports server TTS and browser Web Speech API
 
+import { getSettings } from './appConfig.js';
+
 class AITTSManager {
     constructor() {
         this.currentAudio = null;
@@ -30,10 +32,11 @@ class AITTSManager {
 
     async checkAvailability() {
         try {
-            // Check user setting first — if TTS is disabled in settings, don't show buttons
+            // Check user setting first — if TTS is disabled in settings, don't show buttons.
+            // settings.js re-calls this right after saving TTS settings; it invalidates
+            // the shared cache before doing so, so this still sees the new value.
             try {
-                const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-                const settings = await settingsRes.json();
+                const settings = await getSettings();
                 if (settings.tts_enabled === false) {
                     this.available = false;
                     this._provider = 'disabled';

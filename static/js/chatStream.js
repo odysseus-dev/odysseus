@@ -9,6 +9,35 @@ import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
 import documentModule from './document.js?v=20260815approvalsave1';
 
+// Tool approvals are control-plane submits for the current chat. chat.js
+// deliberately leaves the composer untouched, then programmatically clicks the
+// shared send button after it records the sealed approval id/decision. That
+// button is polymorphic: with an empty composer it can mean New chat or Record
+// voice instead of Send. Intercept only the programmatic approval click and
+// route it through the form submit path, which already reaches chat.js directly.
+document.addEventListener('odysseus:tool-approval', () => {
+  const sendButton = document.querySelector('.send-btn');
+  const chatForm = document.getElementById('chat-form');
+  if (!sendButton || !chatForm) return;
+
+  const interceptApprovalClick = (event) => {
+    // A real user click must retain the normal send/new-chat/STT behavior.
+    if (event.isTrusted) return;
+    sendButton.removeEventListener('click', interceptApprovalClick, true);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (chatForm.requestSubmit) chatForm.requestSubmit();
+    else chatForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  };
+
+  sendButton.addEventListener('click', interceptApprovalClick, true);
+  // Fail-safe cleanup if the approval continuation never reaches its deferred
+  // synthetic click (for example because the surrounding view is torn down).
+  setTimeout(() => {
+    sendButton.removeEventListener('click', interceptApprovalClick, true);
+  }, 60000);
+}, true);
+
 /**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
  * Extracted from the duplicated ui_control + tool_output.ui_event handlers.

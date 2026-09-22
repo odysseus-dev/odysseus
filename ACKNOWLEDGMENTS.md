@@ -65,6 +65,16 @@ Vendored in `static/lib/` and served directly:
 | [jsPDF](https://github.com/parallax/jsPDF) (bundled in html2pdf) | PDF generation | MIT |
 | [html2canvas](https://github.com/niklasvh/html2canvas) (bundled in html2pdf) | DOM → canvas rasterization | MIT |
 | [node-qrcode](https://github.com/soldair/node-qrcode) (`qrcode.min.js`) | QR-code rendering (2FA setup) | MIT |
+| [KaTeX](https://github.com/KaTeX/KaTeX) v0.16.22 (`katex/katex.min.{js,css}` + `katex/fonts/*.woff2`) | Math typesetting | MIT ([`licenses/KaTeX-MIT-LICENSE.txt`](licenses/KaTeX-MIT-LICENSE.txt)) |
+| [Mermaid](https://github.com/mermaid-js/mermaid) v11.16.1 (`mermaid.min.js`) | Diagrams from text | MIT ([`licenses/Mermaid-MIT-LICENSE.txt`](licenses/Mermaid-MIT-LICENSE.txt)) |
+
+KaTeX and Mermaid are loaded on first use by `static/js/markdown.js` rather than
+from `index.html`, so a session that renders no math and no diagram never fetches
+either. Only the `.woff2` KaTeX fonts are shipped, matching `static/fonts/`; the
+`.woff` and `.ttf` variants its stylesheet also lists are never requested by a
+browser that supports `woff2`. The bundles are the published npm artifacts,
+unmodified — `.gitattributes` turns the whitespace check off for `static/lib/`
+so they can stay byte-identical to upstream.
 
 ## Front-end libraries loaded at runtime (CDN)
 
@@ -72,8 +82,6 @@ Referenced from `cdn.jsdelivr.net` / `cdnjs.cloudflare.com` at runtime — not v
 
 | Library | Purpose | License |
 |---|---|---|
-| [KaTeX](https://github.com/KaTeX/KaTeX) 0.16.22 | Math typesetting | MIT |
-| [Mermaid](https://github.com/mermaid-js/mermaid) 11 | Diagrams from text | MIT |
 | [Pyodide](https://github.com/pyodide/pyodide) 0.27.5 | In-browser Python runtime | MPL-2.0 |
 | [PDFObject](https://github.com/pipwerks/PDFObject) 2.1.1 | Inline PDF embedding | MIT |
 

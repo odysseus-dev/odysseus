@@ -6,6 +6,7 @@ notice, per-call override clamped to the hard cap, and a pre-buffer refusal
 when Content-Length already exceeds the hard ceiling.
 """
 import json
+import ipaddress
 from contextlib import contextmanager
 
 import pytest
@@ -90,7 +91,11 @@ class _FakeStream:
 def no_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(content_mod, "CONTENT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(content_mod, "_cache_result", lambda *a, **k: None)
-    monkeypatch.setattr(content_mod, "_public_http_url", lambda u: True)
+    monkeypatch.setattr(
+        content_mod,
+        "_resolve_public_ips",
+        lambda _url: [ipaddress.ip_address("93.184.216.34")],
+    )
 
 
 def _patch_stream(monkeypatch, fake):

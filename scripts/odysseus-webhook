@@ -2,7 +2,7 @@
 """odysseus-webhook — shell wrapper for scheduled-task webhook tokens.
 
 Tasks in the scheduled-task system can carry a `webhook_token`. Any
-HTTP POST to `/api/webhook/<token>` fires the task. This CLI lists,
+HTTP POST to `/api/tasks/<task-id>/webhook/<token>` fires the task. This CLI lists,
 rotates, and revokes those tokens.
 
     odysseus-webhook list                       # tasks that have a token
@@ -21,6 +21,7 @@ quiet_logs()
 
 import argparse, json, logging, os, secrets, sys
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     from core.database import SessionLocal, ScheduledTask
@@ -51,6 +52,14 @@ def _summary(t: "ScheduledTask", reveal: bool = False) -> dict:
         "webhook_token": _mask_token(tok, reveal),
         "has_token": bool(tok),
     }
+
+
+def _task_webhook_url(base: str, task_id: str, token: str) -> str:
+    """Build the live task-route URL without leaking ids into path syntax."""
+    root = (base or "http://localhost:7000").rstrip("/")
+    task_part = quote(str(task_id), safe="")
+    token_part = quote(str(token), safe="")
+    return f"{root}/api/tasks/{task_part}/webhook/{token_part}"
 
 
 def cmd_list(args):
@@ -109,8 +118,7 @@ def cmd_url(args):
             fail(f"no task with id {args.id!r}")
         if not t.webhook_token:
             fail(f"task {args.id!r} has no webhook token (rotate one first)")
-        base = (args.base or "http://localhost:7000").rstrip("/")
-        url = f"{base}/api/webhook/{t.webhook_token}"
+        url = _task_webhook_url(args.base, t.id, t.webhook_token)
         emit({
             "task_id": t.id,
             "name": t.name,

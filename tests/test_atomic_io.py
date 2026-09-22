@@ -123,7 +123,7 @@ def test_atomic_write_json_concurrent_writers_do_not_collide(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# atomic_write_json — failure path: target preserved on serialization error.
+# atomic_write_json — failure paths
 # ---------------------------------------------------------------------------
 def test_atomic_write_json_preserves_target_when_serialization_fails(tmp_path):
     target = tmp_path / "data.json"
@@ -136,6 +136,26 @@ def test_atomic_write_json_preserves_target_when_serialization_fails(tmp_path):
         atomic_write_json(str(target), {"bad": {1, 2, 3}})
 
     assert target.read_text(encoding="utf-8") == before
+    # Temp file should be cleaned up
+    assert _tmp_siblings(tmp_path, "data.json") == []
+
+
+def test_atomic_write_json_preserves_target_when_replace_fails(tmp_path, monkeypatch):
+    target = tmp_path / "data.json"
+    atomic_write_json(str(target), {"existing": "value"})
+    before = target.read_text(encoding="utf-8")
+
+    def boom(src, dst):
+        raise PermissionError("replace failed")
+
+    monkeypatch.setattr(atomic_io.os, "replace", boom)
+
+    with pytest.raises(PermissionError, match="replace failed"):
+        atomic_write_json(str(target), {"new": "content"})
+
+    assert target.read_text(encoding="utf-8") == before
+    # Temp file should be cleaned up
+    assert _tmp_siblings(tmp_path, "data.json") == []
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +207,7 @@ def test_atomic_write_text_rejects_non_string_before_tmp_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# atomic_write_text — failure path: target preserved when replace fails.
+# atomic_write_text — failure paths
 # ---------------------------------------------------------------------------
 def test_atomic_write_text_preserves_target_when_replace_fails(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
@@ -195,11 +215,32 @@ def test_atomic_write_text_preserves_target_when_replace_fails(tmp_path, monkeyp
     before = target.read_text(encoding="utf-8")
 
     def boom(src, dst):
-        raise OSError("replace failed")
+        raise PermissionError("replace failed")
 
     monkeypatch.setattr(atomic_io.os, "replace", boom)
 
-    with pytest.raises(OSError):
+    with pytest.raises(PermissionError, match="replace failed"):
         atomic_write_text(str(target), "new content that never lands")
 
     assert target.read_text(encoding="utf-8") == before
+    # Temp file should be cleaned up
+    assert _tmp_siblings(tmp_path, "note.txt") == []
+
+
+def test_cleanup_error_swallows_and_preserves_original_exception(tmp_path, monkeypatch):
+    target = tmp_path / "note.txt"
+    atomic_write_text(str(target), "original content")
+
+    def replace_boom(src, dst):
+        raise PermissionError("replace failed")
+
+    def unlink_boom(path):
+        raise OSError("unlink failed")
+
+    monkeypatch.setattr(atomic_io.os, "replace", replace_boom)
+    monkeypatch.setattr(atomic_io.os, "unlink", unlink_boom)
+
+    # If BOTH the replace fails AND the cleanup unlink fails,
+    # the original replace error should surface, completely swallowing the unlink error.
+    with pytest.raises(PermissionError, match="replace failed"):
+        atomic_write_text(str(target), "new content")

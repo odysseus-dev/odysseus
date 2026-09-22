@@ -8,8 +8,8 @@
 import Storage from './storage.js';
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
-import chatRenderer from './chatRenderer.js?v=20260815toolapproval4';
-import chatStream from './chatStream.js?v=20260815approvalsave1';
+import chatRenderer from './chatRenderer.js?v=20260819approvalcontrol1';
+import chatStream from './chatStream.js?v=20260819approvalcontrol1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
@@ -62,20 +62,18 @@ import { loadPanel } from './panels.js';
   let _contextHeaderBound = false;
   let _pendingToolApproval = null;
 
-  function _submitToolApprovalWhenIdle(approvalId, label) {
+  function _submitToolApprovalWhenIdle(approvalId) {
     if (
       !_pendingToolApproval
       || _pendingToolApproval.approval_id !== approvalId
     ) return;
     if (isStreaming || _sendInFlight) {
-      setTimeout(() => _submitToolApprovalWhenIdle(approvalId, label), 120);
+      setTimeout(() => _submitToolApprovalWhenIdle(approvalId), 120);
       return;
     }
     const input = document.getElementById('message');
     if (input) {
       _pendingToolApproval.draft = input.value || '';
-      input.value = label;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
     }
     const sendButton = document.querySelector('.send-btn');
     if (sendButton) sendButton.click();
@@ -84,16 +82,13 @@ import { loadPanel } from './panels.js';
   document.addEventListener('odysseus:tool-approval', (event) => {
     const detail = event && event.detail ? event.detail : {};
     const decision = String(detail.decision || '').toLowerCase();
-    if (!detail.approval_id || !['approve', 'deny'].includes(decision)) return;
+    if (!detail.approval_id || !['approve', 'approve_task', 'deny'].includes(decision)) return;
     _pendingToolApproval = {
       approval_id: String(detail.approval_id),
       decision,
       document_id: String(detail.document_id || ''),
     };
-    _submitToolApprovalWhenIdle(
-      _pendingToolApproval.approval_id,
-      detail.label || (decision === 'approve' ? 'Allow once' : 'Deny'),
-    );
+    _submitToolApprovalWhenIdle(_pendingToolApproval.approval_id);
   });
 
   function _fmtContextNumber(n) {
@@ -1309,10 +1304,10 @@ import { loadPanel } from './panels.js';
     }
 
     const el = uiModule.el;
-    const msg = el('message').value;
+    const msg = approvalForSend ? '' : el('message').value;
     // Allow empty text when a regen carries over the original message's
     // attachment ids — a photo-only message still has something to send.
-    if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
+    if (!msg.trim() && !approvalForSend && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
 
     // --- Slash commands: execute directly without AI (no session needed) ---
     if (!approvalForSend && isCommand(msg.trim())) {
@@ -1590,7 +1585,7 @@ import { loadPanel } from './panels.js';
 
       const userDisplay = _displayOverride || msg;
       _displayOverride = null;
-      const skipBubble = _hideUserBubble;
+      const skipBubble = _hideUserBubble || !!approvalForSend;
       _hideUserBubble = false;
       // Auto-recovery counter: carries across a turn's auto-continues, but resets
       // when the user genuinely sends a new message (so each task gets a fresh cap).
@@ -1833,7 +1828,7 @@ import { loadPanel } from './panels.js';
       if (_inject.suffix) _finalMsgWithInject = _finalMsgWithInject + ' ' + _inject.suffix;
 
       const fd = new FormData();
-      fd.append('message', _finalMsgWithInject);
+      fd.append('message', approvalForSend ? '' : _finalMsgWithInject);
       fd.append('session', streamSessionId);
       if (approvalForSend) {
         fd.append('tool_approval_id', approvalForSend.approval_id);
@@ -2873,7 +2868,7 @@ import { loadPanel } from './panels.js';
                 if (spinner && spinner.element) spinner.destroy();
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
@@ -2888,6 +2883,14 @@ import { loadPanel } from './panels.js';
                   _cancelThinkingTimer();
                   _replaceThinkingSpinner('Preparing agent');
                 }
+                continue;
+              }
+              if (json.type === 'tool_approval_resolved') {
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                if (spinner && spinner.element) spinner.destroy();
+                if (!_isBg && roundHolder && roundHolder !== holder) roundHolder.remove();
+                if (!_isBg && holder) holder.remove();
                 continue;
               }
               if (json.delta) {

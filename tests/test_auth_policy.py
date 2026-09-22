@@ -242,12 +242,26 @@ def _login_endpoint(auth_manager):
     raise AssertionError("login route not found")
 
 
+def _login_request(scheme="http", forwarded_proto=None):
+    """Stand-in for fastapi.Request carrying the fields login reads: the
+    client host (rate limiter), and the URL scheme plus `X-Forwarded-Proto`
+    (cookie Secure flag)."""
+    headers = {}
+    if forwarded_proto is not None:
+        headers["x-forwarded-proto"] = forwarded_proto
+    return SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        url=SimpleNamespace(scheme=scheme),
+        headers=headers,
+    )
+
+
 def test_remember_cookie_max_age_matches_token_ttl(tmp_path):
     auth_mod = _auth_module()
     mgr = _make_manager(tmp_path)
     mgr.create_user("alice", "alice-password", is_admin=False)
     endpoint, LoginRequest = _login_endpoint(mgr)
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    request = _login_request()
     response = _CapturingResponse()
     body = LoginRequest(username="alice", password="alice-password", remember=True)
 
@@ -262,7 +276,7 @@ def test_no_remember_omits_cookie_max_age(tmp_path):
     mgr = _make_manager(tmp_path)
     mgr.create_user("bob", "bob-password", is_admin=False)
     endpoint, LoginRequest = _login_endpoint(mgr)
-    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    request = _login_request()
     response = _CapturingResponse()
     body = LoginRequest(username="bob", password="bob-password", remember=False)
 
@@ -270,3 +284,80 @@ def test_no_remember_omits_cookie_max_age(tmp_path):
 
     # Without "remember", the cookie is a session cookie (no max_age).
     assert "max_age" not in response.cookie_kwargs
+
+
+# ── Session cookie Secure flag ─────────────────────────────────────────
+
+
+def _login_secure_flag(tmp_path, scheme, forwarded_proto=None):
+    """Log a user in over ``scheme`` and return the cookie's Secure flag."""
+    mgr = _make_manager(tmp_path)
+    mgr.create_user("carol", "carol-password", is_admin=False)
+    endpoint, LoginRequest = _login_endpoint(mgr)
+    response = _CapturingResponse()
+    body = LoginRequest(username="carol", password="carol-password")
+    request = _login_request(scheme, forwarded_proto)
+
+    asyncio.run(endpoint(body=body, request=request, response=response))
+
+    return response.cookie_kwargs["secure"]
+
+
+def test_https_login_marks_cookie_secure_without_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("SECURE_COOKIES", raising=False)
+
+    # A session token handed out over HTTPS must not be allowed to travel
+    # back in cleartext just because nobody set an env var.
+    assert _login_secure_flag(tmp_path, "https") is True
+
+
+def test_plain_http_login_leaves_cookie_insecure_without_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("SECURE_COOKIES", raising=False)
+
+    # Marking it Secure here would make the browser drop the cookie and
+    # break login on a plain-HTTP install.
+    assert _login_secure_flag(tmp_path, "http") is False
+
+
+def test_forwarded_proto_https_marks_cookie_secure(tmp_path, monkeypatch):
+    monkeypatch.delenv("SECURE_COOKIES", raising=False)
+
+    # A terminator that is not on an address uvicorn trusts leaves the
+    # connection scheme as http, so the header is the only signal there.
+    assert _login_secure_flag(tmp_path, "http", forwarded_proto="https") is True
+    # Chained proxies send a list; the client-facing hop is the first entry.
+    assert _login_secure_flag(tmp_path, "http", forwarded_proto="https, http") is True
+
+
+def test_forwarded_proto_http_leaves_plain_http_login_insecure(tmp_path, monkeypatch):
+    monkeypatch.delenv("SECURE_COOKIES", raising=False)
+
+    # The header is not a downgrade switch: either signal saying https is
+    # enough, the same test core/middleware.py applies before sending HSTS.
+    assert _login_secure_flag(tmp_path, "http", forwarded_proto="http") is False
+    assert _login_secure_flag(tmp_path, "https", forwarded_proto="http") is True
+
+
+def test_empty_secure_cookies_still_derives_from_scheme(tmp_path, monkeypatch):
+    # docker-compose injects `SECURE_COOKIES=${SECURE_COOKIES:-}`, which sets
+    # the variable to "" when the host has not defined it. Empty means
+    # unconfigured, not "off".
+    monkeypatch.setenv("SECURE_COOKIES", "")
+
+    assert _login_secure_flag(tmp_path, "https") is True
+
+
+def test_secure_cookies_true_forces_secure_on_plain_http(tmp_path, monkeypatch):
+    # The documented knob keeps working for a proxy whose scheme the app
+    # cannot see, e.g. one that is not on a trusted loopback address.
+    monkeypatch.setenv("SECURE_COOKIES", "true")
+
+    assert _login_secure_flag(tmp_path, "http") is True
+
+
+def test_secure_cookies_false_forces_insecure_on_https(tmp_path, monkeypatch):
+    # The escape hatch for an install still answering on both HTTP and
+    # HTTPS: an explicit false wins over the request scheme.
+    monkeypatch.setenv("SECURE_COOKIES", "false")
+
+    assert _login_secure_flag(tmp_path, "https") is False
