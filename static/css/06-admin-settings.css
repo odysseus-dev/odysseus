@@ -1178,8 +1178,8 @@ span[id$="-logo"] svg:not([width]) {
     opacity: 0;
     transform-origin: center center;
     position: absolute;
-    right: calc(16px + env(safe-area-inset-right, 0px));
-    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    right: calc(16px + var(--safe-right));
+    bottom: calc(18px + var(--safe-bottom));
     height: var(--fab-size);
     min-width: var(--fab-size);
     padding: 0 20px 0 18px;
@@ -1295,16 +1295,22 @@ span[id$="-logo"] svg:not([width]) {
    instead of becoming a side panel. */
 #doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
   position: fixed !important;
-  top: 0 !important;
-  left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  top: var(--safe-top) !important;
+  left: calc(var(--safe-left) + var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  right: var(--safe-right) !important;
+  bottom: var(--safe-bottom) !important;
   width: auto !important;
   max-width: none !important;
-  height: 100vh !important;
-  max-height: 100vh !important;
+  height: auto !important;
+  max-height: none !important;
   border-radius: 0 !important;
   transform: none !important;
+}
+@media (min-width: 769px) {
+  body.hamburger-right #doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+    left: var(--safe-left) !important;
+    right: calc(var(--safe-right) + var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  }
 }
 #doclib-modal.doclib-fullscreen .modal-header,
 #doclib-modal.doclib-fullscreen .lib-tabs,
@@ -1412,10 +1418,10 @@ span[id$="-logo"] svg:not([width]) {
    panes reserve room with margins so left + right docks can be active at the
    same time without skewing the entire body box. */
 body.right-dock-active {
-  padding-right: 0;
+  padding-right: var(--safe-right);
 }
 body.left-dock-active {
-  padding-left: 0;
+  padding-left: var(--safe-left);
 }
 body.left-dock-active:not(.email-doc-split-active) .chat-container {
   margin-left: var(--left-dock-w, 0px);

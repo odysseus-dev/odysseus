@@ -562,8 +562,8 @@ body.bg-pattern-ascii-fireflies {
     /* Fixed hamburger — always visible, toggles sidebar */
     .hamburger-btn {
       position: fixed;
-      top: 12px;
-      left: 9px;
+      top: calc(12px + var(--safe-top));
+      left: calc(9px + var(--safe-left));
       right: auto;
       z-index: 210;
       width: 30px;
@@ -583,7 +583,7 @@ body.bg-pattern-ascii-fireflies {
     }
     body.hamburger-right .hamburger-btn {
       left: auto;
-      right: 9px;
+      right: calc(9px + var(--safe-right));
     }
     .mobile-new-chat-btn {
       display: none;
@@ -654,6 +654,25 @@ body.bg-pattern-ascii-fireflies {
       margin: 0;
       border-right: none;
       border-left: 1px solid var(--border);
+    }
+    /* Edge columns bleed into the safe-area strips instead of leaving bare background */
+    @media (min-width: 769px) {
+      .sidebar:not(.hidden) {
+        margin-bottom: calc(-1 * var(--safe-bottom));
+        padding-bottom: var(--safe-bottom);
+      }
+      .sidebar:not(.hidden):not(.right-side) {
+        margin-left: calc(-1 * var(--safe-left));
+        padding-left: var(--safe-left);
+      }
+      .sidebar.right-side:not(.hidden) {
+        margin-right: calc(-1 * var(--safe-right));
+        padding-right: var(--safe-right);
+      }
+      .icon-rail {
+        margin-bottom: calc(-1 * var(--safe-bottom));
+        padding-bottom: calc(8px + var(--safe-bottom));
+      }
     }
     .icon-rail-divider {
       width: 24px;
@@ -4800,7 +4819,7 @@ body.bg-pattern-ascii-fireflies {
 
     .toast {
       position:fixed;
-      top: 16px; right: 16px;
+      top: calc(16px + var(--safe-top)); right: calc(16px + var(--safe-right));
       left: auto; bottom: auto;
       background:var(--panel); color:var(--fg);
       border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -4984,8 +5003,8 @@ body.bg-pattern-ascii-fireflies {
     .toast.toast-panel-offset.exiting { transform: translateX(-120%); }
     @media (max-width: 768px) {
       .toast {
-        top: 12px;
-        right: 12px;
+        top: calc(12px + var(--safe-top));
+        right: calc(12px + var(--safe-right));
         max-width: calc(100vw - 24px);
         /* Receive touches so the swipe-to-dismiss gesture works (desktop keeps
            pointer-events:none so the toast never blocks clicks). Horizontal pan
@@ -5109,6 +5128,7 @@ body.bg-pattern-ascii-fireflies {
            --sidebar-bg. */
         background: var(--sidebar-bg, var(--panel)) !important;
         backdrop-filter: none !important;
+        padding: var(--safe-top) 0 var(--safe-bottom) var(--safe-left);
       }
       .sidebar.hidden {
         width: 80% !important;
@@ -5122,6 +5142,8 @@ body.bg-pattern-ascii-fireflies {
       .sidebar.right-side {
         left: auto; right: 0;
         box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+        padding-left: 0;
+        padding-right: var(--safe-right);
       }
       html.ody-sidebar-off .sidebar,
       html.ody-mobile-startup-sidebar-hidden .sidebar {
@@ -5315,9 +5337,9 @@ body.bg-pattern-ascii-fireflies {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: calc(6px + var(--safe-top));
         left: auto !important;
-        right: 4px !important;
+        right: calc(4px + var(--safe-right)) !important;
         -webkit-tap-highlight-color: transparent;
       }
       .hamburger-btn:hover,
@@ -5330,8 +5352,8 @@ body.bg-pattern-ascii-fireflies {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
-        left: 8px;
+        top: calc(12px + var(--safe-top));
+        left: calc(8px + var(--safe-left));
         z-index: 210;
         width: 32px;
         height: 32px;
@@ -5400,10 +5422,6 @@ body.bg-pattern-ascii-fireflies {
         padding: 6px !important;
         border-radius: 12px !important;
       }
-      /* Safe area padding for notched devices */
-      .chat-input-bar {
-        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-      }
       /* Mode toggle — larger touch targets */
       .mode-toggle {
         height: 34px;
@@ -5447,15 +5465,15 @@ body.bg-pattern-ascii-fireflies {
            URL-bar show/hide. Order matters: later same-specificity rule
            wins, so dvh must come after vh. */
         max-height: 100vh !important;
-        max-height: 100dvh !important;
+        max-height: calc(var(--app-height) - var(--sheet-top)) !important;
         height: 100vh;
-        height: 100dvh;
+        height: calc(var(--app-height) - var(--sheet-top));
         border-radius: 14px 14px 0 0 !important;
         border: none !important;
         border-top: 1px solid var(--border) !important;
         box-shadow: none !important;
         padding: 6px !important;
-        padding-bottom: env(safe-area-inset-bottom, 6px) !important;
+        padding-bottom: var(--safe-bottom) !important;
         margin: 0 !important;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
@@ -5536,7 +5554,7 @@ body.bg-pattern-ascii-fireflies {
            (against the flex-sized grid) as a definite height, so grid/flex
            children never filled. An explicit px height is unambiguous. */
         margin: 0 !important;
-        padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+        padding: 8px 10px calc(8px + var(--safe-bottom)) !important;
         background: var(--bg) !important;
         /* Flex column. JS (_fillSkillCardHeight) sets EXPLICIT px heights on
            the preview + <pre>; in a flex column an explicit-height item
@@ -5615,7 +5633,7 @@ body.bg-pattern-ascii-fireflies {
       /* Small bottom padding now that the load-more no longer steals space —
          the action bar sits low, just clearing the home-indicator safe area. */
       #doclib-modal [data-doclib-panel="documents"] .doclib-card.doclib-card-expanded .doclib-card-preview {
-        padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important;
+        padding-bottom: calc(18px + var(--safe-bottom)) !important;
       }
       #doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview pre,
       #doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview .doclib-card-pdf-frame,
@@ -6127,6 +6145,7 @@ body.bg-pattern-ascii-fireflies {
       z-index:250;
       backdrop-filter:none;
       pointer-events:none;
+      padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
     }
     /* Cookbook always sits above Gallery so the "Serve a model in
        Cookbook…" flow (and any other "open Cookbook from inside another
@@ -6159,6 +6178,17 @@ body.bg-pattern-ascii-fireflies {
         /* Slide in sync with the sidebar's 0.25s collapse/expand so the
            centered window glides instead of jumping when the nav toggles. */
         transition: left 0.25s ease, width 0.25s ease;
+      }
+      /* A right-side nav reserves its width on the right instead */
+      body.hamburger-right :is(#calendar-modal, #gallery-modal, #tasks-modal, #memory-modal, #doclib-modal,
+        #compare-model-overlay, #research-overlay, #theme-modal, #settings-modal, #email-lib-modal) {
+        left: 0;
+      }
+      /* Windows never grow past the area between the nav and the safe areas */
+      :is(#calendar-modal, #gallery-modal, #tasks-modal, #memory-modal, #doclib-modal,
+        #compare-model-overlay, #research-overlay, #theme-modal, #settings-modal, #email-lib-modal)
+        > :is(.modal-content, .memory-modal-content, .settings-modal-content, .doclib-modal-content) {
+        max-width: calc(100vw - var(--safe-left) - var(--safe-right) - var(--icon-rail-w, 48px) - var(--sidebar-w, 0px));
       }
     }
     .modal-content {
@@ -6689,8 +6719,8 @@ body.bg-pattern-ascii-fireflies {
     /* Agent indicator */
     #agent-indicator {
       position: fixed;
-      top: 20px;
-      right: 20px;
+      top: calc(20px + var(--safe-top));
+      right: calc(20px + var(--safe-right));
       background: var(--bg);
       color: var(--fg);
       border: 1px solid var(--border);
@@ -7016,7 +7046,7 @@ body.bg-pattern-ascii-fireflies {
     #compare-model-overlay .modal-content {
       display: flex;
       flex-direction: column;
-      max-height: min(720px, calc(100dvh - 48px));
+      max-height: min(720px, calc(var(--app-height) - 48px));
       overflow: hidden;
       min-height: 180px;
     }
@@ -7433,7 +7463,7 @@ body.bg-pattern-ascii-fireflies {
 
     #recording-indicator {
       position: fixed;
-      top: 10px;
+      top: calc(10px + var(--safe-top));
       left: 0;
       right: 0;
       background: rgba(0, 0, 0, 0.8);

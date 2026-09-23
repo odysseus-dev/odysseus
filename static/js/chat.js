@@ -6861,13 +6861,6 @@ import { invalidateSettings } from './appConfig.js';
           }
         });
       }
-      // Smooth viewport resize when keyboard opens/closes
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', () => {
-          document.documentElement.style.setProperty('--vh', window.visualViewport.height + 'px');
-        });
-        document.documentElement.style.setProperty('--vh', window.visualViewport.height + 'px');
-      }
     }
 
     // If the browser discarded and restored this tab, reload the current session
