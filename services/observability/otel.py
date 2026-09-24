@@ -8,6 +8,7 @@ installs the provider and returns tracers.
 """
 
 import os
+from urllib.parse import urlparse
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -28,7 +29,8 @@ def configure_tracer(service_name: str) -> None:
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
     if not endpoint:
         return
-    if _COLLECTOR_HOST_MARK not in endpoint:
+    host = (urlparse(endpoint).hostname or "").lower()
+    if host != _COLLECTOR_HOST_MARK:
         raise ValueError(
             "OTEL_EXPORTER_OTLP_ENDPOINT must contain otel-collector"
         )
