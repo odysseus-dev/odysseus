@@ -1278,10 +1278,12 @@ class TaskScheduler:
     CHECKIN_MCP_PATTERNS = [
         {"detect": "list_emails",   "section": "Email",    "tool": "list_emails",
          "args": {"mailbox": "INBOX", "limit": 10, "unread_only": True},
+         "builtin_args": {"folder": "INBOX", "max_results": 10, "unread_only": True},
          "label_from_identity": True,
          "formatter": "_format_email_output"},
         {"detect": "search_emails", "section": "Email",    "tool": "search_emails",
          "args": {"query": "is:unread", "limit": 10},
+         "builtin_args": {"query": "is:unread", "max_results": 10},
          "label_from_identity": True,
          "formatter": "_format_email_output"},
         {"detect": "get_feed",      "section": "RSS",      "tool": "get_feed",
@@ -1449,7 +1451,7 @@ class TaskScheduler:
         if mcp:
             discovered = set()
             for server_id, tools in mcp._tools.items():
-                if mcp.is_builtin(server_id):
+                if mcp.is_builtin(server_id) and server_id != "email":
                     continue
                 conn = mcp._connections.get(server_id, {})
                 if conn.get("status") != "connected":
@@ -1466,21 +1468,44 @@ class TaskScheduler:
                     label = f"{pattern['section']} ({identity})" if identity else pattern["section"]
                     qualified = f"mcp__{server_id}__{pattern['tool']}"
                     args = dict(pattern.get("args", {}))
-                    args["account"] = "default"
+                    if mcp.is_builtin(server_id):
+                        # The built-in server names these differently, and it
+                        # resolves the default account from a null selector —
+                        # the literal "default" is matched as a substring
+                        # against account names and finds nothing.
+                        args.update(pattern.get("builtin_args", {}))
+                    else:
+                        args["account"] = "default"
+                    if qualified.startswith("mcp__email__") and task.owner:
+                        from src.tool_execution import _EMAIL_MCP_OWNER_ARG
+                        args[_EMAIL_MCP_OWNER_ARG] = task.owner
                     try:
                         # Cache 3 min: different scheduled tasks firing at the
                         # same minute share the same MCP snapshot.
                         async def _call_mcp(_q=qualified, _args=args):
                             return await mcp.call_tool(_q, _args)
                         cache_key = ("mcp_snapshot", qualified, json.dumps(args, sort_keys=True))
+                        _t_src = time.monotonic()
                         result = await _cached(cache_key, 180, _call_mcp)
+                        _elapsed = time.monotonic() - _t_src
                         if result.get("exit_code", 0) != 0:
+                            logger.warning(
+                                "[checkin] source %s failed in %.1fs: %s",
+                                qualified, _elapsed,
+                                (result.get("stderr") or result.get("error") or "")[:300],
+                            )
                             continue
                         content = result.get("stdout") or result.get("output") or ""
+                        logger.info(
+                            "[checkin] source %s ok in %.1fs (%d chars)",
+                            qualified, _elapsed, len(content),
+                        )
                         if content.strip():
                             raw[label] = content[:3000]
                     except Exception:
-                        pass
+                        logger.warning(
+                            "[checkin] source %s raised", qualified, exc_info=True
+                        )
 
         # Build the data dump and hand it to the LLM
         data_dump = f"Current time: {time_str}\n\n"
@@ -1500,10 +1525,14 @@ class TaskScheduler:
             "Use tools to take action if needed. Keep it concise — no raw data dumps."
         )
 
+        from src.tool_index import ASSISTANT_ALWAYS_AVAILABLE
+        from src.agent_loop import _ADMIN_TOOLS
+        relevant_tools = set(ASSISTANT_ALWAYS_AVAILABLE)
+
         return await self._run_agent_loop(
             endpoint_url, model, task, session_id,
             system_prompt=(crew.personality or "").strip() if crew else None,
-            disabled_tools=None, relevant_tools=None,
+            disabled_tools=set(_ADMIN_TOOLS), relevant_tools=relevant_tools,
             override_user_message=context,
         )
 
