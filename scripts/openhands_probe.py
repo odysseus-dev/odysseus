@@ -21,7 +21,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPOSE_FILES = ("docker-compose.yml", "docker-compose.openhands.yml")
+# Overlay project files passed to `docker compose -f`. Observability is the
+# unpublished Collector/Tempo/Grafana/Prometheus/Langfuse stack. Never add
+# docker-compose.relay.yml or any HHPE relay file here.
+COMPOSE_FILES = (
+    "docker-compose.yml",
+    "docker-compose.openhands.yml",
+    "docker-compose.observability.yml",
+)
 SERVICES = {
     "openhands-agent-server": "OPENHANDS_AGENT_SERVER_IMAGE",
     "openhands-automation": "OPENHANDS_AUTOMATION_IMAGE",

@@ -1,0 +1,36 @@
+# Tempo local trace store for the overlay. OTLP receivers only.
+# Grafana reads HTTP :3200. The Collector writes gRPC :4317.
+# Both listeners are inside the container; Compose publishes only 3200
+# on 127.0.0.1.
+
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # Cut the head block on a short interval so local queries see traces
+  # without waiting for the production default.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Local retention. Blocks older than this are deleted.
+    block_retention: 48h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
