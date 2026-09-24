@@ -47,7 +47,13 @@ def test_configure_traceloop_content_false_without_endpoint(monkeypatch):
     assert os.environ.get("TRACELOOP_TRACE_CONTENT") == "false"
 
 
-def test_configure_does_not_require_traceloop_api_key(monkeypatch):
+def test_configure_overwrites_traceloop_trace_content_true(monkeypatch):
+    monkeypatch.setenv("TRACELOOP_TRACE_CONTENT", "true")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    from services.observability.otel import configure_tracer
+
+    configure_tracer("odysseus")
+    assert os.environ.get("TRACELOOP_TRACE_CONTENT") == "false"
     monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _COLLECTOR_ENDPOINT)
     from services.observability.otel import configure_tracer

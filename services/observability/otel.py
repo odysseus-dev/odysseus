@@ -36,7 +36,7 @@ def configure_tracer(service_name: str) -> None:
     so outbound HTTP (including 9router) emits client spans on the same OTLP
     exporter. No ``TRACELOOP_API_KEY`` or Traceloop SaaS export is used.
     """
-    os.environ.setdefault("TRACELOOP_TRACE_CONTENT", "false")
+    os.environ["TRACELOOP_TRACE_CONTENT"] = "false"
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
     if not endpoint:
         return
