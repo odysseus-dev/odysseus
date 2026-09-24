@@ -3,9 +3,13 @@
 Agents: Odysseus and the model-job worker must not be given Tempo or Langfuse
 URLs. ``configure_tracer`` reads ``OTEL_EXPORTER_OTLP_ENDPOINT`` and refuses any
 set value that does not name ``otel-collector``. Unset means no exporter (local
-runs and unit tests stay quiet). Callers start spans with ``get_tracer`` and
-must set attributes through ``apply_span_attributes`` so secrets and prompt
-bodies are dropped first. ``ODYSSEUS_SYNTHETIC=1`` adds ``odysseus.synthetic``.
+runs and unit tests stay quiet). After a provider is installed, outbound ``httpx``
+calls are auto-instrumented (9router and other HTTP clients). OpenLLMetry-style
+libraries run without Traceloop cloud: ``TRACELOOP_TRACE_CONTENT`` defaults to
+``false`` and ``Traceloop.init`` is never called. Callers start spans with
+``get_tracer`` and must set attributes through ``apply_span_attributes`` so
+secrets and prompt bodies are dropped first. ``ODYSSEUS_SYNTHETIC=1`` adds
+``odysseus.synthetic``.
 """
 
 import os
@@ -27,7 +31,12 @@ def configure_tracer(service_name: str) -> None:
     The exporter URL is ``{endpoint}/v1/traces``. A set endpoint that does not
     contain ``otel-collector`` raises ``ValueError`` so traces cannot leak to
     Tempo or any other backend the app was pointed at by mistake.
+
+    When the provider is installed, ``HTTPXClientInstrumentor`` patches ``httpx``
+    so outbound HTTP (including 9router) emits client spans on the same OTLP
+    exporter. No ``TRACELOOP_API_KEY`` or Traceloop SaaS export is used.
     """
+    os.environ.setdefault("TRACELOOP_TRACE_CONTENT", "false")
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
     if not endpoint:
         return
@@ -43,6 +52,9 @@ def configure_tracer(service_name: str) -> None:
     )
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+    HTTPXClientInstrumentor().instrument()
 
 
 def get_tracer(name: str):
