@@ -13,6 +13,9 @@ On the guest:
 
 Exit 0 only when 9router completions and an OpenHands conversation both return
 assistant text. Prints JSON. Never logs the virtual key.
+
+``run_native_pipe`` is the Hello/Hi step used by
+``scripts/overlay_stability_probe.py``. This file stays the standalone pipe.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ PREFER = ("cx/gpt-5.5", "cx/gpt-5.4", "cx/gpt-5.4-mini")
 
 
 def _http(url: str, *, method: str = "GET", body: dict | None = None, headers: dict | None = None, timeout: float = 30) -> tuple[int, dict | str]:
+    """HTTP JSON helper. Callers must not put the virtual key into logs."""
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method)
     for name, value in (headers or {}).items():
@@ -54,6 +58,7 @@ def _http(url: str, *, method: str = "GET", body: dict | None = None, headers: d
 
 
 def _assistant_text(events: list) -> str:
+    """Join assistant MessageEvent text. User events are ignored."""
     parts: list[str] = []
     for item in events:
         if item.get("kind") != "MessageEvent" or item.get("source") == "user":
@@ -74,23 +79,35 @@ def _assistant_text(events: list) -> str:
 
 
 def _pick_catalog_id(ids: list[str]) -> str:
+    """Prefer cx/gpt-5.5. Skip gpt-6-astra and -review. Never pin openai/auto."""
     chosen = next((item for item in PREFER if item in ids), "")
     if not chosen:
         chosen = next((item for item in ids if not any(skip in item for skip in SKIP)), ids[0] if ids else "")
     return chosen
 
 
-def main() -> int:
-    report: dict = {"ok": False, "steps": []}
+def _read_sidecar_key() -> str:
+    """Return the sidecar virtual key, or empty. Callers must not log it."""
+    if not KEY_FILE.is_file():
+        return ""
+    return KEY_FILE.read_text(encoding="utf-8").strip()
+
+
+def run_native_pipe() -> dict:
+    """One-word 9router completion plus OpenHands Hello/Hi.
+
+    Returns ``{ok, session_id, steps}`` and an ``error`` string when the
+    sidecar is missing. The virtual key is never copied into the dict.
+    ``session_id`` is the Agent Server conversation id.
+    """
+    report: dict = {"ok": False, "session_id": None, "steps": []}
+    key = _read_sidecar_key()
     if not KEY_FILE.is_file():
         report["error"] = "native-llm-api-key sidecar missing"
-        print(json.dumps(report, indent=2))
-        return 1
-    key = KEY_FILE.read_text(encoding="utf-8").strip()
+        return report
     if not key:
         report["error"] = "native-llm-api-key empty"
-        print(json.dumps(report, indent=2))
-        return 1
+        return report
     auth = {"Authorization": f"Bearer {key}"}
 
     status, models = _http(f"{NINE}/v1/models", headers=auth)
@@ -106,8 +123,7 @@ def main() -> int:
         "litellm_id": litellm_id,
     })
     if status != 200 or not catalog_id:
-        print(json.dumps(report, indent=2))
-        return 1
+        return report
 
     status, completion = _http(
         f"{NINE}/v1/chat/completions",
@@ -132,8 +148,7 @@ def main() -> int:
         "error": (completion.get("error") if isinstance(completion, dict) else completion),
     })
     if status != 200 or not reply.strip():
-        print(json.dumps(report, indent=2))
-        return 1
+        return report
 
     status, created = _http(
         f"{AGENT}/api/conversations",
@@ -161,10 +176,10 @@ def main() -> int:
         timeout=30,
     )
     cid = created.get("id") if isinstance(created, dict) else None
+    report["session_id"] = str(cid) if cid else None
     report["steps"].append({"name": "create", "http": status, "conversation_id": cid})
     if status not in {200, 201} or not cid:
-        print(json.dumps(report, indent=2))
-        return 1
+        return report
 
     text = ""
     exec_status = ""
@@ -186,7 +201,16 @@ def main() -> int:
         "text": text[:400],
     })
     report["ok"] = bool(text) and exec_status in {"finished", "completed"}
-    print(json.dumps(report, indent=2))
+    return report
+
+
+def main() -> int:
+    """Print the pipe report. Exit 0 only when ``ok`` is true."""
+    report = run_native_pipe()
+    public = {"ok": report["ok"], "steps": report["steps"]}
+    if report.get("error"):
+        public["error"] = report["error"]
+    print(json.dumps(public, indent=2))
     return 0 if report["ok"] else 1
 
 

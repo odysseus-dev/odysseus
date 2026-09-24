@@ -50,11 +50,32 @@ cd /home/agent/work/odysseus
 test -f .env || cp .env.example .env
 export PATH="$HOME/.local/bin:$PATH"
 python3 scripts/install_openhands_runtime_bin.py
-docker compose -f docker-compose.yml -f docker-compose.openhands.yml build odysseus
-docker compose -f docker-compose.yml -f docker-compose.openhands.yml up -d --wait --pull never
-docker compose -f docker-compose.yml -f docker-compose.openhands.yml ls
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml -f docker-compose.observability.yml build odysseus
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml -f docker-compose.observability.yml up -d --wait --pull never
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml -f docker-compose.observability.yml ls
 python3 scripts/openhands_probe.py stack --json
 ```
+
+## Stability probe (headless)
+
+Overlay Docker is **not** Mac Docker. From the Mac checkout:
+
+```bash
+./scripts/run_overlay_stability_probe.sh
+```
+
+That SSHs to `orchestration-vm` and execs `scripts/overlay_stability_probe.py`
+inside `odysseus`. The wrapper passes three compose files
+(`docker-compose.yml`, `docker-compose.openhands.yml`,
+`docker-compose.observability.yml`) and the guest project's config-file list.
+Do not compose `docker-compose.relay.yml`.
+
+Exit 0 means the JSON report has `"ok": true`: health, Native settings on an
+`openai/cx/…` model (never `openai/auto`), a non-empty sidecar reported only
+as a boolean, a catalog pick that skips `gpt-6-astra` and `-review`,
+`cloud_rows` of 0, and the Native Hello/Hi pipe. The report includes
+`trace_id` from the `overlay.stability` span (`odysseus.synthetic=true`).
+The script never prints the virtual key.
 
 ## Native chat probe (headless)
 
@@ -69,14 +90,16 @@ That SSHs to `orchestration-vm` and execs inside `odysseus`. A local
 `docker compose exec` on the Mac fails with `Cannot connect to the Docker daemon`.
 
 Exit 0 means 9router completions and OpenHands both returned assistant text.
+The stability probe calls this pipe as its Hello/Hi step.
 
 Keep `APP_BIND=127.0.0.1`, `APP_PORT=7000`, `AUTH_ENABLED=true`, Canvas on
 `127.0.0.1:8000`. Agent Server, Automation, and overlay 9router stay unpublished.
 Reach 9router with
-`docker compose -f docker-compose.yml -f docker-compose.openhands.yml exec -T 9router`.
+`docker compose -f docker-compose.yml -f docker-compose.openhands.yml -f docker-compose.observability.yml exec -T 9router`.
 
-`docker compose ls` for this project must list only `docker-compose.yml` and
-`docker-compose.openhands.yml`.
+`docker compose ls` for this project must list `docker-compose.yml`,
+`docker-compose.openhands.yml`, and `docker-compose.observability.yml`.
+It must not list `docker-compose.relay.yml`.
 
 ## After health
 
