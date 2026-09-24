@@ -2239,7 +2239,10 @@ def _purge_leftover_cloud_model_endpoints() -> None:
         finally:
             db.close()
     except Exception as exc:
-        logging.getLogger(__name__).warning("cloud ModelEndpoint purge skipped: %s", exc)
+        logging.getLogger(__name__).warning(
+            "cloud ModelEndpoint purge skipped: %s",
+            type(exc).__name__,
+        )
 
 
 def _migrate_backfill_task_folders():

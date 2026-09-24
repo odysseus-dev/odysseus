@@ -181,11 +181,20 @@ class _FakeDb:
 
 def test_purge_deletes_cloud_rows_and_keeps_local(monkeypatch):
     """Slice D leftover: openai.com keys leave Odysseus; ollama stays."""
+    provider_auth_calls = []
+
+    def _record_provider_auth(db, auth_id, exclude_ep_id=None):
+        provider_auth_calls.append((auth_id, exclude_ep_id))
+        return False
+
+    monkeypatch.setattr(
+        model_routes, "_delete_orphaned_provider_auth", _record_provider_auth
+    )
     cloud = SimpleNamespace(
         id="ep-cloud",
         base_url="https://api.openai.com/v1",
         api_key="sk-secret",
-        provider_auth_id=None,
+        provider_auth_id="auth-chatgpt",
     )
     local = SimpleNamespace(
         id="ep-local",
@@ -210,6 +219,8 @@ def test_purge_deletes_cloud_rows_and_keeps_local(monkeypatch):
     db = _FakeDb([cloud, local], [sess])
     result = model_routes.purge_leftover_cloud_model_endpoints(db)
     assert result["deleted"] == 1
+    assert result["sessions"] == 1
+    assert provider_auth_calls == [("auth-chatgpt", "ep-cloud")]
     assert db.committed is True
     assert cloud in db.deleted
     assert local not in db.deleted

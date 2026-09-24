@@ -1452,8 +1452,11 @@ def _session_uses_leftover_endpoint_url(session_url: str, base_url: str) -> bool
     variants = {
         base,
         base + "/chat/completions",
-        build_chat_url(base).rstrip("/"),
     }
+    try:
+        variants.add(build_chat_url(base).rstrip("/"))
+    except Exception:
+        pass
     return sess in variants or sess.startswith(base + "/")
 
 
@@ -1482,29 +1485,57 @@ def purge_leftover_cloud_model_endpoints(db) -> dict:
                 str(getattr(ep, "base_url", "") or ""),
             ):
                 sess.endpoint_url = overlay_url
-                sess.model = overlay_chat_route(getattr(sess, "model", None))
+                sess.model = "automatic"
                 sess.headers = {}
                 n_sess += 1
                 break
     settings = _load_settings()
     touched = False
+    all_prefs = None
+    prefs_dirty = False
+    try:
+        from routes.prefs_routes import _load as _load_prefs
+
+        all_prefs = _load_prefs()
+    except Exception as exc:
+        logger.warning(
+            "Failed to load user prefs for cloud endpoint purge: %s",
+            type(exc).__name__,
+        )
     for ep in cloud:
         if _clear_endpoint_settings_for_endpoint(
             settings, str(ep.id), include_speech=True
         ):
             touched = True
-        try:
-            from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
-
-            all_prefs = _load_prefs()
-            if _clear_user_pref_endpoint_refs(all_prefs, str(ep.id)):
-                _save_prefs(all_prefs)
-        except Exception:
-            pass
+        if all_prefs is not None:
+            try:
+                if _clear_user_pref_endpoint_refs(all_prefs, str(ep.id)):
+                    prefs_dirty = True
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clear user prefs for endpoint %s during cloud purge: %s",
+                    ep.id,
+                    type(exc).__name__,
+                )
+        _delete_orphaned_provider_auth(
+            db,
+            getattr(ep, "provider_auth_id", None),
+            exclude_ep_id=str(ep.id),
+        )
         db.delete(ep)
+    db.commit()
     if touched:
         _save_settings(settings)
-    db.commit()
+    if prefs_dirty and all_prefs is not None:
+        try:
+            from routes.prefs_routes import _save as _save_prefs
+
+            _save_prefs(all_prefs)
+        except Exception as exc:
+            logger.warning(
+                "Failed to save user prefs after cloud endpoint purge: %s",
+                type(exc).__name__,
+            )
     logger.info(
         "purged leftover cloud ModelEndpoint rows deleted=%s sessions=%s",
         len(cloud),
